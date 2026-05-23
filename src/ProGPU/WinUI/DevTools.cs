@@ -449,19 +449,9 @@ public class MagnifyingGlassVisual : FrameworkElement
         var strokeBrush = ThemeManager.GetBrush("TextPrimary");
         var pen = new Pen(strokeBrush, 1.5f);
         
-        var path = new PathGeometry();
-        var fig = new PathFigure(new Vector2(8f, 4.5f), isClosed: true);
-        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(8f, 8f), new Vector2(4.5f, 8f)));
-        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(1f, 8f), new Vector2(1f, 4.5f)));
-        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(1f, 1f), new Vector2(4.5f, 1f)));
-        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(8f, 1f), new Vector2(8f, 4.5f)));
-        path.Figures.Add(fig);
-
-        var handleFig = new PathFigure(new Vector2(7f, 7f), isClosed: false);
-        handleFig.Segments.Add(new LineSegment(new Vector2(11f, 11f)));
-        path.Figures.Add(handleFig);
-
-        context.DrawPath(null, pen, path);
+        // Draw the magnifying glass lens (circle) and handle (line) directly on the GPU
+        context.DrawCircle(null, pen, new Vector2(4.5f, 4.5f), 3.5f);
+        context.DrawLine(pen, new Vector2(7f, 7f), new Vector2(11f, 11f));
         base.OnRender(context);
     }
 }
@@ -481,16 +471,9 @@ public class CloseIconVisual : FrameworkElement
         var strokeBrush = ThemeManager.GetBrush("TextPrimary");
         var pen = new Pen(strokeBrush, 1.5f);
         
-        var path = new PathGeometry();
-        var fig1 = new PathFigure(new Vector2(1f, 1f), isClosed: false);
-        fig1.Segments.Add(new LineSegment(new Vector2(9f, 9f)));
-        path.Figures.Add(fig1);
-
-        var fig2 = new PathFigure(new Vector2(9f, 1f), isClosed: false);
-        fig2.Segments.Add(new LineSegment(new Vector2(1f, 9f)));
-        path.Figures.Add(fig2);
-
-        context.DrawPath(null, pen, path);
+        // Draw the crossing close lines directly on the GPU
+        context.DrawLine(pen, new Vector2(1f, 1f), new Vector2(9f, 9f));
+        context.DrawLine(pen, new Vector2(9f, 1f), new Vector2(1f, 9f));
         base.OnRender(context);
     }
 }

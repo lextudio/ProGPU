@@ -38,22 +38,6 @@ public class ProgressRing : Control
     {
         return new Vector2(Width, Height);
     }
-
-    private static PathGeometry CreateCirclePath(float cx, float cy, float r)
-    {
-        var geo = new PathGeometry();
-        var fig = new PathFigure(new Vector2(cx + r, cy), isClosed: true);
-        
-        float k = 0.552284749831f * r;
-        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx + r, cy + k), new Vector2(cx + k, cy + r), new Vector2(cx, cy + r)));
-        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx - k, cy + r), new Vector2(cx - r, cy + k), new Vector2(cx - r, cy)));
-        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx - r, cy - k), new Vector2(cx - k, cy - r), new Vector2(cx, cy - r)));
-        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx + k, cy - r), new Vector2(cx + r, cy - k), new Vector2(cx + r, cy)));
-        
-        geo.Figures.Add(fig);
-        return geo;
-    }
-
     public override void OnRender(DrawingContext context)
     {
         if (IsActive)
@@ -78,8 +62,7 @@ public class ProgressRing : Control
                 // Segoe Accent Blue with dynamic alpha opacity
                 var dotColor = new SolidColorBrush(0x0078D400 | alpha);
 
-                var dotPath = CreateCirclePath(x, y, dotRadius);
-                context.DrawPath(dotColor, null, dotPath);
+                context.FillCircle(dotColor, new Vector2(x, y), dotRadius);
             }
 
             // Animate spin speed smoothly at 60 FPS

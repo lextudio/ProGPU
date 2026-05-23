@@ -187,10 +187,10 @@ public class NavigationViewItem : Control
                 else if (Icon == "🔲" || Text == "Layout Panels")
                 {
                     // 2x2 grid of small rounded rectangles
-                    context.DrawPath(translucentBrush, primaryPen, CreateRoundedRect(startX + 1f, startY + 1f, 6f, 6f, 1.5f));
-                    context.DrawPath(translucentBrush, primaryPen, CreateRoundedRect(startX + 9f, startY + 1f, 6f, 6f, 1.5f));
-                    context.DrawPath(translucentBrush, primaryPen, CreateRoundedRect(startX + 1f, startY + 9f, 6f, 6f, 1.5f));
-                    context.DrawPath(translucentBrush, primaryPen, CreateRoundedRect(startX + 9f, startY + 9f, 6f, 6f, 1.5f));
+                    context.DrawRoundedRectangle(translucentBrush, primaryPen, new Rect(startX + 1f, startY + 1f, 6f, 6f), 1.5f);
+                    context.DrawRoundedRectangle(translucentBrush, primaryPen, new Rect(startX + 9f, startY + 1f, 6f, 6f), 1.5f);
+                    context.DrawRoundedRectangle(translucentBrush, primaryPen, new Rect(startX + 1f, startY + 9f, 6f, 6f), 1.5f);
+                    context.DrawRoundedRectangle(translucentBrush, primaryPen, new Rect(startX + 9f, startY + 9f, 6f, 6f), 1.5f);
 
                     drewCustomIcon = true;
                 }
@@ -213,9 +213,9 @@ public class NavigationViewItem : Control
                     var axis = PathGeometry.Parse(Invariant($"M {startX} {startY + 15} H {startX + 16}"));
                     context.DrawPath(null, secondaryPen, axis);
 
-                    context.DrawPath(translucentBrush, primaryPen, CreateRoundedRect(startX + 1f, startY + 10f, 3f, 5f, 1f));
-                    context.DrawPath(translucentHeavyBrush, primaryPen, CreateRoundedRect(startX + 6f, startY + 5f, 3f, 10f, 1f));
-                    context.DrawPath(textPrimary, primaryPen, CreateRoundedRect(startX + 11f, startY + 1f, 3f, 14f, 1f));
+                    context.DrawRoundedRectangle(translucentBrush, primaryPen, new Rect(startX + 1f, startY + 10f, 3f, 5f), 1f);
+                    context.DrawRoundedRectangle(translucentHeavyBrush, primaryPen, new Rect(startX + 6f, startY + 5f, 3f, 10f), 1f);
+                    context.DrawRoundedRectangle(textPrimary, primaryPen, new Rect(startX + 11f, startY + 1f, 3f, 14f), 1f);
 
                     drewCustomIcon = true;
                 }
@@ -315,14 +315,10 @@ public class NavigationViewItem : Control
                 {
                     // Clean artist palette outline with blending color blobs
                     var palette = PathGeometry.Parse(Invariant($"M {startX + 2} {startY + 8} Q {startX + 2} {startY + 2} {startX + 8} {startY + 2} Q {startX + 14} {startY + 2} {startX + 14} {startY + 8} Q {startX + 14} {startY + 14} {startX + 8} {startY + 14} Q {startX + 5} {startY + 14} {startX + 5} {startY + 11} Q {startX + 5} {startY + 8} {startX + 2} {startY + 8} Z"));
-                    var blob1 = CreateRoundedRect(startX + 5f, startY + 4f, 2.5f, 2.5f, 1f);
-                    var blob2 = CreateRoundedRect(startX + 10f, startY + 5f, 2.5f, 2.5f, 1f);
-                    var blob3 = CreateRoundedRect(startX + 9f, startY + 10f, 2.5f, 2.5f, 1f);
-
                     context.DrawPath(translucentBrush, primaryPen, palette);
-                    context.DrawPath(accentBrush, null, blob1);
-                    context.DrawPath(new SolidColorBrush(new Vector4(0.2f, 0.7f, 0.3f, 1.0f)), null, blob2);
-                    context.DrawPath(textPrimary, null, blob3);
+                    context.DrawRoundedRectangle(accentBrush, null, new Rect(startX + 5f, startY + 4f, 2.5f, 2.5f), 1f);
+                    context.DrawRoundedRectangle(new SolidColorBrush(new Vector4(0.2f, 0.7f, 0.3f, 1.0f)), null, new Rect(startX + 10f, startY + 5f, 2.5f, 2.5f), 1f);
+                    context.DrawRoundedRectangle(textPrimary, null, new Rect(startX + 9f, startY + 10f, 2.5f, 2.5f), 1f);
 
                     drewCustomIcon = true;
                 }
@@ -411,10 +407,5 @@ public class NavigationViewItem : Control
         }
 
         base.OnRender(context);
-    }
-
-    private static PathGeometry CreateRoundedRect(float x, float y, float w, float h, float r)
-    {
-        return PathGeometry.Parse(Invariant($"M {x+r} {y} H {x+w-r} Q {x+w} {y} {x+w} {y+r} V {y+h-r} Q {x+w} {y+h} {x+w-r} {y+h} H {x+r} Q {x} {y+h} {x} {y+h-r} V {y+r} Q {x} {y} {x+r} {y} Z"));
     }
 }
