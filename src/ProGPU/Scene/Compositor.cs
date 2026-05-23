@@ -774,7 +774,7 @@ public unsafe class Compositor : IDisposable
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
-            var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+            var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
             uint idxStart = (uint)_vectorVerticesList.Count;
 
@@ -795,7 +795,7 @@ public unsafe class Compositor : IDisposable
         if (cmd.Pen != null)
         {
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
-            var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(1f, 1f, 1f, 1f);
+            var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
             uint idxStart = (uint)_vectorVerticesList.Count;
 
@@ -1222,7 +1222,7 @@ public unsafe class Compositor : IDisposable
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
-            var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+            var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(center.X, center.Y, 0f, 0f);
 
             uint idxStart = (uint)_vectorVerticesList.Count;
 
@@ -1243,7 +1243,7 @@ public unsafe class Compositor : IDisposable
         if (cmd.Pen != null)
         {
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
-            var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+            var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(center.X, center.Y, 0f, 0f);
 
             uint idxStart = (uint)_vectorVerticesList.Count;
 
@@ -1302,7 +1302,7 @@ public unsafe class Compositor : IDisposable
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
-            var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+            var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
             uint idxStart = (uint)_vectorVerticesList.Count;
 
@@ -1323,7 +1323,7 @@ public unsafe class Compositor : IDisposable
         if (cmd.Pen != null)
         {
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
-            var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+            var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
             uint idxStart = (uint)_vectorVerticesList.Count;
 

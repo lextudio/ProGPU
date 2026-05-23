@@ -16,12 +16,10 @@ public struct RasterGlyph
 
 public static class GlyphRasterizer
 {
-    public const float SdfBaseSize = 64f;
-
-    public static RasterGlyph Rasterize(PathGeometry outline, TtfFont font, float emSize = SdfBaseSize)
+    public static RasterGlyph Rasterize(PathGeometry outline, TtfFont font, float emSize)
     {
-        // 1. Calculate scaling factors using the fixed SdfBaseSize
-        float scale = SdfBaseSize / font.UnitsPerEm;
+        // 1. Calculate scaling factors using the exact target emSize
+        float scale = emSize / font.UnitsPerEm;
 
         // Extract and flatten contours, scaling coordinates with a fine tolerance of 0.15f
         var flattenedContours = outline.Flatten(0.15f);
@@ -53,8 +51,8 @@ public static class GlyphRasterizer
             return new RasterGlyph { Width = 0, Height = 0, BearX = 0, BearY = 0, AlphaMap = Array.Empty<byte>() };
         }
 
-        // 2. Add padding/margin of 8px on all sides of the glyph bounding box
-        int padding = 8;
+        // 2. Add padding/margin of 4px on all sides of the glyph bounding box for perfect AA
+        int padding = 4;
         int xStart = (int)Math.Floor(minX) - padding;
         int xEnd = (int)Math.Ceiling(maxX) + padding;
         int yStart = (int)Math.Floor(minY) - padding;
@@ -62,6 +60,11 @@ public static class GlyphRasterizer
 
         int width = xEnd - xStart;
         int height = yEnd - yStart;
+
+        if (width <= 0 || height <= 0)
+        {
+            return new RasterGlyph { Width = 0, Height = 0, BearX = 0, BearY = 0, AlphaMap = Array.Empty<byte>() };
+        }
 
         byte[] alphaMap = new byte[width * height];
 
@@ -107,51 +110,19 @@ public static class GlyphRasterizer
             return winding != 0;
         }
 
-        // 4. Compute SDF: For each pixel, compute the exact signed distance to all line segments
-        float spread = 8.0f;
-
+        // 4. Evaluate subpixel coverage using 4x SSAA (supersampling) around +0.5 per pixel
         for (int y = 0; y < height; y++)
         {
-            float pixelY = yStart + y + 0.5f; // Sample at pixel center
             int rowOffset = y * width;
-
             for (int x = 0; x < width; x++)
             {
-                float pixelX = xStart + x + 0.5f; // Sample at pixel center
-                Vector2 p = new Vector2(pixelX, pixelY);
+                float coverage = 0.0f;
+                if (IsPointInContours(new Vector2(xStart + x + 0.25f, yStart + y + 0.25f))) coverage += 0.25f;
+                if (IsPointInContours(new Vector2(xStart + x + 0.75f, yStart + y + 0.25f))) coverage += 0.25f;
+                if (IsPointInContours(new Vector2(xStart + x + 0.25f, yStart + y + 0.75f))) coverage += 0.25f;
+                if (IsPointInContours(new Vector2(xStart + x + 0.75f, yStart + y + 0.75f))) coverage += 0.25f;
 
-                float minDistanceSq = float.MaxValue;
-
-                foreach (var contour in scaledContours)
-                {
-                    int count = contour.Count;
-                    if (count < 2) continue;
-
-                    bool isExplicitlyClosed = contour[0] == contour[count - 1];
-                    int numSegments = isExplicitlyClosed ? count - 1 : count;
-
-                    for (int i = 0; i < numSegments; i++)
-                    {
-                        Vector2 v1 = contour[i];
-                        Vector2 v2 = contour[(i + 1) % count];
-                        if (v1 == v2) continue;
-
-                        float distSq = SegmentDistanceSquared(p, v1, v2);
-                        if (distSq < minDistanceSq)
-                        {
-                            minDistanceSq = distSq;
-                        }
-                    }
-                }
-
-                float minDist = (minDistanceSq == float.MaxValue) ? 0f : (float)Math.Sqrt(minDistanceSq);
-                bool inside = IsPointInContours(p);
-
-                float signedDist = inside ? minDist : -minDist;
-                float sdf = 0.5f + 0.5f * (signedDist / spread);
-                float clampedSdf = Math.Clamp(sdf, 0.0f, 1.0f);
-
-                alphaMap[rowOffset + x] = (byte)Math.Round(clampedSdf * 255.0f);
+                alphaMap[rowOffset + x] = (byte)Math.Round(coverage * 255.0f);
             }
         }
 
@@ -163,20 +134,5 @@ public static class GlyphRasterizer
             BearY = yStart,
             AlphaMap = alphaMap
         };
-    }
-
-    private static float SegmentDistanceSquared(Vector2 p, Vector2 a, Vector2 b)
-    {
-        Vector2 ab = b - a;
-        Vector2 ap = p - a;
-        float abLenSq = ab.LengthSquared();
-        if (abLenSq < 1e-6f)
-        {
-            return ap.LengthSquared();
-        }
-        float t = Vector2.Dot(ap, ab) / abLenSq;
-        t = Math.Clamp(t, 0f, 1f);
-        Vector2 closest = a + t * ab;
-        return Vector2.DistanceSquared(p, closest);
     }
 }

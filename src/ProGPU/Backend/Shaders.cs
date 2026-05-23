@@ -200,17 +200,22 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             finalColor = vec4<f32>(input.color.rgb, input.color.a * brush.opacity);
         }
     } else {
+        var evalCoord = input.texCoord;
+        if (sType < 3u) {
+            evalCoord = input.color.xy + input.texCoord;
+        }
+
         var t: f32 = 0.0;
         if (brush.brushType == 1u) {
             // Linear Gradient
             let gradVec = brush.gradientEnd - brush.gradientStart;
             let lenSq = dot(gradVec, gradVec);
             if (lenSq > 0.0001) {
-                t = dot(input.texCoord - brush.gradientStart, gradVec) / lenSq;
+                t = dot(evalCoord - brush.gradientStart, gradVec) / lenSq;
             }
         } else if (brush.brushType == 2u) {
             // Radial Gradient
-            let dist = distance(input.texCoord, brush.gradientCenter);
+            let dist = distance(evalCoord, brush.gradientCenter);
             if (brush.gradientRadius > 0.0001) {
                 t = dist / brush.gradientRadius;
             }
@@ -271,14 +276,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let dist = textureSample(atlasTexture, atlasSampler, input.texCoord).r;
-    let sig_dist = (dist - 0.5) * 16.0; // 2 * spread (spread is 8.0)
-    let dims = vec2<f32>(textureDimensions(atlasTexture));
-    let uv_dx = dpdx(input.texCoord) * dims;
-    let uv_dy = dpdy(input.texCoord) * dims;
-    let screen_width = length(vec2<f32>(length(uv_dx), length(uv_dy)));
-    let dist_in_screen = sig_dist / max(screen_width, 0.0001);
-    let alpha = smoothstep(-0.5, 0.5, dist_in_screen);
+    let alpha = textureSample(atlasTexture, atlasSampler, input.texCoord).r;
     return vec4<f32>(input.color.rgb, input.color.a * alpha);
 }
 ";

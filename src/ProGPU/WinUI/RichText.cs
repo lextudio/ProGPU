@@ -319,7 +319,6 @@ public class RichTextBlock : FrameworkElement
         float cursorX = Padding.Left;
         float cursorY = Padding.Top;
 
-        var lines = new List<List<PositionedRichChar>>();
         var currentLine = new List<PositionedRichChar>();
         int lastWordStart = -1;
         float lastWordStartCursorX = Padding.Left;
@@ -327,73 +326,93 @@ public class RichTextBlock : FrameworkElement
         float availableWidth = maxWidth - Padding.Horizontal;
         bool hasResetLineIndent = false;
 
-        void CommitLines(List<List<PositionedRichChar>> linesToCommit, float availW)
+        void CommitLine(List<PositionedRichChar> line, bool isLastLine)
         {
-            for (int l = 0; l < linesToCommit.Count; l++)
+            if (line.Count == 0)
             {
-                var line = linesToCommit[l];
-                if (line.Count == 0) continue;
+                cursorY += lineSpacing;
+                return;
+            }
 
-                float lineW = 0f;
-                var lastPc = line[^1];
-                float lastAdv = 0f;
-                if (lastPc.Info.EmbeddedElement != null)
+            // 1. Calculate dynamic line height
+            float maxElementHeight = 0f;
+            foreach (var pc in line)
+            {
+                if (pc.Info.EmbeddedElement != null)
                 {
-                    lastAdv = lastPc.Info.EmbeddedElement.DesiredSize.X + 4f;
+                    maxElementHeight = Math.Max(maxElementHeight, pc.Info.EmbeddedElement.DesiredSize.Y);
                 }
-                else
-                {
-                    lastAdv = Font.GetAdvanceWidth(Font.GetGlyphIndex(lastPc.Info.Character), lastPc.Info.FontSize);
-                }
-                lineW = lastPc.Position.X + lastAdv - Padding.Left;
+            }
+            float completedLineHeight = Math.Max(lineSpacing, maxElementHeight);
 
-                float shiftX = 0f;
-                if (TextAlignment == TextAlignment.Right)
+            // 2. Adjust Y-coordinates and center vertically
+            foreach (var pc in line)
+            {
+                float h = pc.Info.EmbeddedElement != null ? pc.Info.EmbeddedElement.DesiredSize.Y : lineSpacing;
+                pc.Position.Y = cursorY + (completedLineHeight - h) / 2f;
+            }
+
+            // 3. Horizontal Alignment (shiftX and Justify)
+            float lineW = 0f;
+            var lastPc = line[^1];
+            float lastAdv = 0f;
+            if (lastPc.Info.EmbeddedElement != null)
+            {
+                lastAdv = lastPc.Info.EmbeddedElement.DesiredSize.X + 4f;
+            }
+            else
+            {
+                lastAdv = Font.GetAdvanceWidth(Font.GetGlyphIndex(lastPc.Info.Character), lastPc.Info.FontSize);
+            }
+            lineW = lastPc.Position.X + lastAdv - Padding.Left;
+
+            float shiftX = 0f;
+            if (TextAlignment == TextAlignment.Right)
+            {
+                shiftX = availableWidth - lineW;
+            }
+            else if (TextAlignment == TextAlignment.Center)
+            {
+                shiftX = (availableWidth - lineW) / 2f;
+            }
+            else if (TextAlignment == TextAlignment.Justify)
+            {
+                int spaceCount = 0;
+                for (int k = 0; k < line.Count - 1; k++)
                 {
-                    shiftX = availW - lineW;
+                    if (line[k].Info.Character == ' ' || line[k].Info.Character == '\t')
+                        spaceCount++;
                 }
-                else if (TextAlignment == TextAlignment.Center)
+
+                if (!isLastLine && spaceCount > 0 && lineW < availableWidth)
                 {
-                    shiftX = (availW - lineW) / 2f;
-                }
-                else if (TextAlignment == TextAlignment.Justify)
-                {
-                    bool isLastLine = (l == linesToCommit.Count - 1);
-                    int spaceCount = 0;
-                    for (int k = 0; k < line.Count - 1; k++)
+                    float extraW = availableWidth - lineW;
+                    float spaceAddition = extraW / spaceCount;
+                    float runningAddition = 0f;
+                    for (int k = 0; k < line.Count; k++)
                     {
-                        if (line[k].Info.Character == ' ' || line[k].Info.Character == '\t')
-                            spaceCount++;
-                    }
-
-                    if (!isLastLine && spaceCount > 0 && lineW < availW)
-                    {
-                        float extraW = availW - lineW;
-                        float spaceAddition = extraW / spaceCount;
-                        float runningAddition = 0f;
-                        for (int k = 0; k < line.Count; k++)
+                        var pc = line[k];
+                        pc.Position.X += runningAddition;
+                        if (pc.Info.Character == ' ' || pc.Info.Character == '\t')
                         {
-                            var pc = line[k];
-                            pc.Position.X += runningAddition;
-                            if (pc.Info.Character == ' ' || pc.Info.Character == '\t')
-                            {
-                                runningAddition += spaceAddition;
-                            }
+                            runningAddition += spaceAddition;
                         }
                     }
                 }
-
-                if (shiftX > 0f && !float.IsInfinity(shiftX))
-                {
-                    foreach (var pc in line)
-                    {
-                        pc.Position.X += shiftX;
-                    }
-                }
-
-                _positionedChars.AddRange(line);
             }
-            linesToCommit.Clear();
+
+            if (shiftX > 0f && !float.IsInfinity(shiftX))
+            {
+                foreach (var pc in line)
+                {
+                    pc.Position.X += shiftX;
+                }
+            }
+
+            _positionedChars.AddRange(line);
+
+            // 4. Increment cursorY by completedLineHeight
+            cursorY += completedLineHeight;
         }
 
         for (int i = 0; i < charList.Count; i++)
@@ -403,10 +422,9 @@ public class RichTextBlock : FrameworkElement
 
             if (c == '\n')
             {
-                lines.Add(currentLine);
+                CommitLine(currentLine, true);
                 currentLine = new List<PositionedRichChar>();
                 cursorX = Padding.Left;
-                cursorY += lineSpacing;
                 lastWordStart = -1;
                 hasResetLineIndent = false;
                 continue;
@@ -416,10 +434,9 @@ public class RichTextBlock : FrameworkElement
             {
                 if (currentLine.Count > 0)
                 {
-                    lines.Add(currentLine);
+                    CommitLine(currentLine, true);
                     currentLine = new List<PositionedRichChar>();
                 }
-                CommitLines(lines, availableWidth);
                 cursorX = Padding.Left;
                 LayoutTable(table, ref cursorY, availableWidth, rc.LeftIndent);
                 lastWordStart = -1;
@@ -466,12 +483,11 @@ public class RichTextBlock : FrameworkElement
                     var wrapped = currentLine.GetRange(lastWordStart, wrapCount);
                     currentLine.RemoveRange(lastWordStart, wrapCount);
 
-                    lines.Add(currentLine);
+                    CommitLine(currentLine, false);
                     currentLine = new List<PositionedRichChar>();
 
                     float wrapStart = Padding.Left + (wrapped.Count > 0 ? wrapped[0].Info.LeftIndent : rc.LeftIndent);
                     cursorX = wrapStart;
-                    cursorY += lineSpacing;
                     hasResetLineIndent = true;
 
                     foreach (var wc in wrapped)
@@ -515,11 +531,10 @@ public class RichTextBlock : FrameworkElement
                 else
                 {
                     // hard wrap
-                    lines.Add(currentLine);
+                    CommitLine(currentLine, false);
                     currentLine = new List<PositionedRichChar>();
                     float wrapStart = Padding.Left + rc.LeftIndent;
                     cursorX = wrapStart;
-                    cursorY += lineSpacing;
                     hasResetLineIndent = true;
                 }
             }
@@ -541,10 +556,8 @@ public class RichTextBlock : FrameworkElement
 
         if (currentLine.Count > 0)
         {
-            lines.Add(currentLine);
+            CommitLine(currentLine, true);
         }
-
-        CommitLines(lines, availableWidth);
 
         // Clean up children that are no longer referenced
         foreach (var child in currentChildren)
@@ -794,10 +807,41 @@ public class RichTextBlock : FrameworkElement
         float cursorY = cellPadding;
         float maxTextW = cellWidth - cellPadding * 2f;
 
-        var lines = new List<List<PositionedRichChar>>();
         var currentLine = new List<PositionedRichChar>();
         int lastWordStart = -1;
         float lastWordStartCursorX = cellPadding;
+
+        void CommitCellLine(List<PositionedRichChar> line)
+        {
+            if (line.Count == 0)
+            {
+                cursorY += lineSpacing;
+                return;
+            }
+
+            // 1. Calculate dynamic line height
+            float maxElementHeight = 0f;
+            foreach (var pc in line)
+            {
+                if (pc.Info.EmbeddedElement != null)
+                {
+                    maxElementHeight = Math.Max(maxElementHeight, pc.Info.EmbeddedElement.DesiredSize.Y);
+                }
+            }
+            float completedLineHeight = Math.Max(lineSpacing, maxElementHeight);
+
+            // 2. Adjust Y-coordinates and center vertically
+            foreach (var pc in line)
+            {
+                float h = pc.Info.EmbeddedElement != null ? pc.Info.EmbeddedElement.DesiredSize.Y : lineSpacing;
+                pc.Position.Y = cursorY + (completedLineHeight - h) / 2f;
+            }
+
+            positionedChars.AddRange(line);
+
+            // 3. Increment cursorY by completedLineHeight
+            cursorY += completedLineHeight;
+        }
 
         for (int i = 0; i < charList.Count; i++)
         {
@@ -806,10 +850,9 @@ public class RichTextBlock : FrameworkElement
 
             if (c == '\n')
             {
-                lines.Add(currentLine);
+                CommitCellLine(currentLine);
                 currentLine = new List<PositionedRichChar>();
                 cursorX = cellPadding;
-                cursorY += lineSpacing;
                 lastWordStart = -1;
                 continue;
             }
@@ -844,11 +887,10 @@ public class RichTextBlock : FrameworkElement
                     var wrapped = currentLine.GetRange(lastWordStart, wrapCount);
                     currentLine.RemoveRange(lastWordStart, wrapCount);
 
-                    lines.Add(currentLine);
+                    CommitCellLine(currentLine);
                     currentLine = new List<PositionedRichChar>();
 
                     cursorX = cellPadding;
-                    cursorY += lineSpacing;
 
                     foreach (var wc in wrapped)
                     {
@@ -879,10 +921,9 @@ public class RichTextBlock : FrameworkElement
                 }
                 else
                 {
-                    lines.Add(currentLine);
+                    CommitCellLine(currentLine);
                     currentLine = new List<PositionedRichChar>();
                     cursorX = cellPadding;
-                    cursorY += lineSpacing;
                 }
             }
 
@@ -893,23 +934,10 @@ public class RichTextBlock : FrameworkElement
 
         if (currentLine.Count > 0)
         {
-            lines.Add(currentLine);
+            CommitCellLine(currentLine);
         }
 
-        foreach (var line in lines)
-        {
-            positionedChars.AddRange(line);
-        }
-
-        if (positionedChars.Count > 0)
-        {
-            float maxCharY = 0f;
-            foreach (var pc in positionedChars)
-            {
-                maxCharY = Math.Max(maxCharY, pc.Position.Y + pc.Info.FontSize);
-            }
-            cellHeight = maxCharY + cellPadding;
-        }
+        cellHeight = cursorY + cellPadding;
 
         return positionedChars;
     }

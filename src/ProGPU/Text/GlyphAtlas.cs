@@ -33,7 +33,7 @@ public class GlyphAtlas : IDisposable
     private uint _currentY = 2;
     private uint _currentRowHeight = 0;
 
-    private readonly Dictionary<(TtfFont font, uint codePoint), GlyphInfo> _glyphs = new();
+    private readonly Dictionary<(TtfFont font, uint codePoint, float size), GlyphInfo> _glyphs = new();
     
     private bool _isDisposed;
 
@@ -63,8 +63,8 @@ public class GlyphAtlas : IDisposable
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GlyphAtlas));
         
-        var key = (font, codePoint);
-        if (!_glyphs.TryGetValue(key, out var baseInfo))
+        var key = (font, codePoint, size);
+        if (!_glyphs.TryGetValue(key, out var info))
         {
             ushort glyphIdx = font.GetGlyphIndex(codePoint);
 
@@ -72,15 +72,15 @@ public class GlyphAtlas : IDisposable
             // Instead, we just provide proper layout bounds, and the compositor will render it using color vector paths.
             if (font.HasColorLayers(glyphIdx))
             {
-                baseInfo = new GlyphInfo
+                info = new GlyphInfo
                 {
                     X = 0,
                     Y = 0,
-                    Width = (uint)GlyphRasterizer.SdfBaseSize,
-                    Height = (uint)GlyphRasterizer.SdfBaseSize,
+                    Width = (uint)size,
+                    Height = (uint)size,
                     BearX = 0,
-                    BearY = -GlyphRasterizer.SdfBaseSize * 0.8f, // align nicely with font baseline
-                    Advance = GlyphRasterizer.SdfBaseSize,
+                    BearY = -size * 0.8f, // align nicely with font baseline
+                    Advance = size,
                     TexCoordMin = Vector2.Zero,
                     TexCoordMax = Vector2.Zero
                 };
@@ -92,23 +92,25 @@ public class GlyphAtlas : IDisposable
                 // Handle space or control characters (empty outlines)
                 if (outline == null || codePoint == ' ' || codePoint == '\t' || codePoint == '\n' || codePoint == '\r')
                 {
-                    baseInfo = new GlyphInfo
+                    float advance = font.GetAdvanceWidth(glyphIdx, size);
+                    info = new GlyphInfo
                     {
                         X = 0, Y = 0, Width = 0, Height = 0,
-                        BearX = 0, BearY = 0, Advance = 0f,
+                        BearX = 0, BearY = 0, Advance = advance,
                         TexCoordMin = Vector2.Zero, TexCoordMax = Vector2.Zero
                     };
                 }
                 else
                 {
-                    // Rasterize outline into base size SDF alpha map
-                    var glyph = GlyphRasterizer.Rasterize(outline, font, GlyphRasterizer.SdfBaseSize);
+                    // Rasterize outline at the exact target size
+                    var glyph = GlyphRasterizer.Rasterize(outline, font, size);
                     if (glyph.Width == 0 || glyph.Height == 0)
                     {
-                        baseInfo = new GlyphInfo
+                        float advance = font.GetAdvanceWidth(glyphIdx, size);
+                        info = new GlyphInfo
                         {
                             X = 0, Y = 0, Width = 0, Height = 0,
-                            BearX = 0, BearY = 0, Advance = 0f,
+                            BearX = 0, BearY = 0, Advance = advance,
                             TexCoordMin = Vector2.Zero, TexCoordMax = Vector2.Zero
                         };
                     }
@@ -159,8 +161,9 @@ public class GlyphAtlas : IDisposable
                         float texelSize = 1.0f / _atlasSize;
                         var uvMin = new Vector2(posX * texelSize, posY * texelSize);
                         var uvMax = new Vector2((posX + gW) * texelSize, (posY + gH) * texelSize);
+                        float advance = font.GetAdvanceWidth(glyphIdx, size);
 
-                        baseInfo = new GlyphInfo
+                        info = new GlyphInfo
                         {
                             X = posX,
                             Y = posY,
@@ -168,48 +171,17 @@ public class GlyphAtlas : IDisposable
                             Height = gH,
                             BearX = glyph.BearX,
                             BearY = glyph.BearY,
-                            Advance = 0f,
+                            Advance = advance,
                             TexCoordMin = uvMin,
                             TexCoordMax = uvMax
                         };
                     }
                 }
             }
-            _glyphs[key] = baseInfo;
+            _glyphs[key] = info;
         }
 
-        // Scale layout parameters (BearX, BearY, Width, Height) from SdfBaseSize to the requested font size.
-        // The Advance should be fetched at the requested target size.
-        float advance;
-        ushort idx = font.GetGlyphIndex(codePoint);
-        if (font.HasColorLayers(idx))
-        {
-            advance = size;
-        }
-        else
-        {
-            advance = font.GetAdvanceWidth(idx, size);
-        }
-
-        float scale = size / GlyphRasterizer.SdfBaseSize;
-
-        uint scaledWidth = (uint)Math.Round(baseInfo.Width * scale);
-        uint scaledHeight = (uint)Math.Round(baseInfo.Height * scale);
-        if (baseInfo.Width > 0 && scaledWidth == 0) scaledWidth = 1;
-        if (baseInfo.Height > 0 && scaledHeight == 0) scaledHeight = 1;
-
-        return new GlyphInfo
-        {
-            X = baseInfo.X,
-            Y = baseInfo.Y,
-            Width = scaledWidth,
-            Height = scaledHeight,
-            BearX = baseInfo.BearX * scale,
-            BearY = baseInfo.BearY * scale,
-            Advance = advance,
-            TexCoordMin = baseInfo.TexCoordMin,
-            TexCoordMax = baseInfo.TexCoordMax
-        };
+        return info;
     }
 
     public void Dispose()
