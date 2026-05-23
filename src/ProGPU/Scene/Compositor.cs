@@ -355,6 +355,10 @@ public unsafe class Compositor : IDisposable
         // 4. Upload CPU batches to dynamic GPU buffers
         if (_vectorVerticesList.Count > 0)
         {
+            if (_vectorIndicesList.Count % 2 == 1)
+            {
+                _vectorIndicesList.Add(_vectorIndicesList.Count > 0 ? _vectorIndicesList[^1] : (ushort)0);
+            }
             EnsureBufferSize(ref _vectorVertexBuffer, (uint)_vectorVerticesList.Count * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex);
             EnsureBufferSize(ref _vectorIndexBuffer, (uint)_vectorIndicesList.Count * 2, BufferUsage.Index);
             
@@ -364,6 +368,10 @@ public unsafe class Compositor : IDisposable
 
         if (_textVerticesList.Count > 0)
         {
+            if (_textIndicesList.Count % 2 == 1)
+            {
+                _textIndicesList.Add(_textIndicesList.Count > 0 ? _textIndicesList[^1] : (ushort)0);
+            }
             EnsureBufferSize(ref _textVertexBuffer, (uint)_textVerticesList.Count * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex);
             EnsureBufferSize(ref _textIndexBuffer, (uint)_textIndicesList.Count * 2, BufferUsage.Index);
 
@@ -373,6 +381,10 @@ public unsafe class Compositor : IDisposable
 
         if (_textureVerticesList.Count > 0)
         {
+            if (_textureIndicesList.Count % 2 == 1)
+            {
+                _textureIndicesList.Add(_textureIndicesList.Count > 0 ? _textureIndicesList[^1] : (ushort)0);
+            }
             EnsureBufferSize(ref _textureVertexBuffer, (uint)_textureVerticesList.Count * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex);
             EnsureBufferSize(ref _textureIndexBuffer, (uint)_textureIndicesList.Count * 2, BufferUsage.Index);
 
