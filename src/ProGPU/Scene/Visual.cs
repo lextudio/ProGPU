@@ -16,6 +16,10 @@ public class Visual
     private Matrix4x4 _transform = Matrix4x4.Identity;
     private bool _isDirty = true;
     private bool _cacheAsLayer;
+    private Vector3 _scale = Vector3.One;
+    private float _rotation = 0f;
+    private Vector3 _centerPoint = Vector3.Zero;
+    private readonly Dictionary<string, CompositionAnimation> _activeAnimations = new();
 
     public ContainerVisual? Parent { get; internal set; }
 
@@ -97,6 +101,45 @@ public class Visual
         }
     }
 
+    public Vector3 Scale
+    {
+        get => _scale;
+        set
+        {
+            if (_scale != value)
+            {
+                _scale = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public float Rotation
+    {
+        get => _rotation;
+        set
+        {
+            if (_rotation != value)
+            {
+                _rotation = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Vector3 CenterPoint
+    {
+        get => _centerPoint;
+        set
+        {
+            if (_centerPoint != value)
+            {
+                _centerPoint = value;
+                Invalidate();
+            }
+        }
+    }
+
     // Composition layer texture view
     public GpuTexture? LayerTexture { get; internal set; }
 
@@ -114,8 +157,131 @@ public class Visual
 
     public Matrix4x4 GetLocalTransform()
     {
-        var translation = Matrix4x4.CreateTranslation(Offset.X, Offset.Y, 0f);
-        return Transform * translation;
+        var translationToOrigin = Matrix4x4.CreateTranslation(-CenterPoint.X, -CenterPoint.Y, -CenterPoint.Z);
+        var scaleMatrix = Matrix4x4.CreateScale(Scale);
+        var rotationMatrix = Matrix4x4.CreateRotationZ(Rotation);
+        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(Offset.X + CenterPoint.X, Offset.Y + CenterPoint.Y, CenterPoint.Z);
+
+        var modelMatrix = translationToOrigin * scaleMatrix * rotationMatrix * translationToOffsetAndRestoreCenter;
+        return Transform * modelMatrix;
+    }
+
+    public void StartAnimation(string propertyName, CompositionAnimation animation)
+    {
+        _activeAnimations[propertyName] = animation;
+        Invalidate();
+    }
+
+    public void StopAnimation(string propertyName)
+    {
+        if (_activeAnimations.Remove(propertyName))
+        {
+            Invalidate();
+        }
+    }
+
+    public void UpdateAnimations(float elapsedSeconds)
+    {
+        TickAnimations(elapsedSeconds);
+
+        if (this is ContainerVisual container)
+        {
+            var children = container.Children;
+            for (int i = 0; i < children.Count; i++)
+            {
+                children[i].UpdateAnimations(elapsedSeconds);
+            }
+        }
+    }
+
+    public void TickAnimations(float elapsedSeconds)
+    {
+        if (_activeAnimations.Count == 0) return;
+
+        bool changed = false;
+
+        foreach (var kvp in _activeAnimations)
+        {
+            var propertyName = kvp.Key;
+            var animation = kvp.Value;
+
+            animation.Tick(elapsedSeconds);
+
+            var value = animation.CurrentValue;
+            if (value == null) continue;
+
+            switch (propertyName.ToLowerInvariant())
+            {
+                case "opacity":
+                    if (value is float fOpacity)
+                    {
+                        if (_opacity != fOpacity)
+                        {
+                            _opacity = fOpacity;
+                            changed = true;
+                        }
+                    }
+                    break;
+
+                case "rotation":
+                    if (value is float fRotation)
+                    {
+                        if (_rotation != fRotation)
+                        {
+                            _rotation = fRotation;
+                            changed = true;
+                        }
+                    }
+                    break;
+
+                case "offset":
+                    if (value is Vector2 vOffset)
+                    {
+                        if (_offset != vOffset)
+                        {
+                            _offset = vOffset;
+                            changed = true;
+                        }
+                    }
+                    break;
+
+                case "size":
+                    if (value is Vector2 vSize)
+                    {
+                        if (_size != vSize)
+                        {
+                            _size = vSize;
+                            changed = true;
+                        }
+                    }
+                    break;
+
+                case "scale":
+                    if (value is Vector3 vScale)
+                    {
+                        if (_scale != vScale)
+                        {
+                            _scale = vScale;
+                            changed = true;
+                        }
+                    }
+                    else if (value is Vector2 vScale2)
+                    {
+                        var vScale3 = new Vector3(vScale2, 1.0f);
+                        if (_scale != vScale3)
+                        {
+                            _scale = vScale3;
+                            changed = true;
+                        }
+                    }
+                    break;
+            }
+        }
+
+        if (changed)
+        {
+            Invalidate();
+        }
     }
 }
 

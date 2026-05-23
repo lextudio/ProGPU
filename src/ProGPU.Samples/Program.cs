@@ -81,6 +81,11 @@ public static unsafe class Program
 
     public static void Main()
     {
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = System.Globalization.CultureInfo.InvariantCulture;
+        System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        System.Threading.Thread.CurrentThread.CurrentUICulture = System.Globalization.CultureInfo.InvariantCulture;
+
         var options = WindowOptions.Default;
         options.Size = new Vector2D<int>(1280, 800);
         options.Title = "ProGPU Substrate - High-Performance WinUI Gallery Dashboard";
@@ -230,12 +235,14 @@ public static unsafe class Program
         var textItem = new NavigationViewItem("Text & Documents", "📄", CreateTextDocumentsView());
         var dataItem = new NavigationViewItem("Data Virtualization", "📊", CreateDataVirtualizationView());
         var computeItem = new NavigationViewItem("Compute FX", "⚙", CreateComputeFxView());
+        var motionAnimationsItem = new NavigationViewItem("Motion & Animations", "🎬", CreateMotionAnimationsView());
 
         _navigationView.MenuItems.Add(basicInputItem);
         _navigationView.MenuItems.Add(panelsItem);
         _navigationView.MenuItems.Add(textItem);
         _navigationView.MenuItems.Add(dataItem);
         _navigationView.MenuItems.Add(computeItem);
+        _navigationView.MenuItems.Add(motionAnimationsItem);
 
         _navigationView.SelectionChanged += (s, e) =>
         {
@@ -997,6 +1004,40 @@ public static unsafe class Program
         return grid;
     }
 
+    private static FrameworkElement CreateMotionAnimationsView()
+    {
+        var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+        grid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
+        grid.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Showcase cards
+
+        var descText = new RichTextBlock { Font = _font, FontSize = 12f, Margin = new Thickness(0, 0, 0, 10) };
+        descText.Inlines.Add(new Run("This page showcases modern high-performance GPU-accelerated motion and composition animations, including keyframe loops, spring wobbles, and dynamic expressions."));
+        grid.AddChild(descText);
+        ProGPU.WinUI.Grid.SetRow(descText, 0);
+
+        var cardsGrid = new ProGPU.WinUI.Grid();
+        cardsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
+        cardsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
+        cardsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
+
+        var keyframeCard = new KeyframeShowcaseCard(_font!);
+        cardsGrid.AddChild(keyframeCard);
+        ProGPU.WinUI.Grid.SetColumn(keyframeCard, 0);
+
+        var springCard = new SpringWobbleShowcaseCard(_font!);
+        cardsGrid.AddChild(springCard);
+        ProGPU.WinUI.Grid.SetColumn(springCard, 1);
+
+        var expressionCard = new ExpressionTrackingShowcaseCard(_font!);
+        cardsGrid.AddChild(expressionCard);
+        ProGPU.WinUI.Grid.SetColumn(expressionCard, 2);
+
+        grid.AddChild(cardsGrid);
+        ProGPU.WinUI.Grid.SetRow(cardsGrid, 1);
+
+        return grid;
+    }
+
     private static GearCanvasVisual? _gearCanvasVisual;
 
     private static void SetupInput()
@@ -1017,6 +1058,9 @@ public static unsafe class Program
 
     private static void OnWindowUpdate(double delta)
     {
+        _rootGrid?.UpdateAnimations((float)delta);
+        _rootGrid?.Invalidate();
+
         if (_animateGear)
         {
             _gearRotation += (float)delta * 1.2f;
@@ -1329,3 +1373,531 @@ public class GpuTextureCanvas : FrameworkElement
         }
     }
 }
+
+// ==========================================
+// Motion & Animation System Classes
+// ==========================================
+
+public interface IAnimatedElement
+{
+    void Update(float delta);
+}
+
+public static class VisualExtensions
+{
+    public static void UpdateAnimations(this Visual visual, float delta)
+    {
+        if (visual == null) return;
+
+        if (visual is IAnimatedElement animated)
+        {
+            animated.Update(delta);
+        }
+
+        if (visual is ContainerVisual container)
+        {
+            int count = container.Children.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (i < container.Children.Count)
+                {
+                    container.Children[i].UpdateAnimations(delta);
+                }
+            }
+        }
+    }
+}
+
+public class SpringScalarNaturalMotionAnimation
+{
+    public float TargetValue { get; set; }
+    public float CurrentValue { get; set; }
+    public float Velocity { get; set; }
+    public float Stiffness { get; set; } = 150f;
+    public float Damping { get; set; } = 15f;
+    public float Mass { get; set; } = 1f;
+
+    public void Update(float delta)
+    {
+        if (delta > 0.1f) delta = 0.1f;
+
+        float force = -Stiffness * (CurrentValue - TargetValue) - Damping * Velocity;
+        float acceleration = force / Mass;
+        Velocity += acceleration * delta;
+        CurrentValue += Velocity * delta;
+    }
+}
+
+public class ExpressionAnimation
+{
+    private readonly Func<float> _expression;
+
+    public ExpressionAnimation(Func<float> expression)
+    {
+        _expression = expression;
+    }
+
+    public float Evaluate() => _expression();
+}
+
+public class KeyframeAnimation<T>
+{
+    public List<(float Key, T Value)> Keyframes { get; } = new();
+    public float Duration { get; set; } = 1f;
+    public bool Loop { get; set; } = true;
+    public float Time { get; set; }
+
+    public void Update(float delta)
+    {
+        Time += delta;
+        if (Time > Duration)
+        {
+            if (Loop)
+            {
+                Time %= Duration;
+            }
+            else
+            {
+                Time = Duration;
+            }
+        }
+    }
+
+    public T Evaluate(Func<T, T, float, T> interpolator)
+    {
+        if (Keyframes.Count == 0) return default!;
+        if (Keyframes.Count == 1) return Keyframes[0].Value;
+
+        float normalizedTime = Time / Duration;
+
+        int nextIndex = 0;
+        while (nextIndex < Keyframes.Count && Keyframes[nextIndex].Key < normalizedTime)
+        {
+            nextIndex++;
+        }
+
+        if (nextIndex == 0) return Keyframes[0].Value;
+        if (nextIndex >= Keyframes.Count) return Keyframes[Keyframes.Count - 1].Value;
+
+        var prev = Keyframes[nextIndex - 1];
+        var next = Keyframes[nextIndex];
+
+        float segmentDuration = next.Key - prev.Key;
+        float t = segmentDuration > 0 ? (normalizedTime - prev.Key) / segmentDuration : 0f;
+
+        return interpolator(prev.Value, next.Value, t);
+    }
+}
+
+public class KeyframeShowcaseCard : Border, IAnimatedElement
+{
+    private readonly TtfFont _font;
+    private readonly KeyframeAnimation<Vector2> _offsetAnimation;
+    private readonly KeyframeAnimation<float> _opacityAnimation;
+    private readonly KeyframeAnimation<float> _rotationAnimation;
+
+    private readonly Border _slidingCard;
+    private readonly RichTextBlock _fadingText;
+    private readonly GearVisual _gearVisual;
+
+    public KeyframeShowcaseCard(TtfFont font)
+    {
+        _font = font;
+        Background = new SolidColorBrush(0xFFFFFF08);
+        BorderBrush = new SolidColorBrush(0xFFFFFF15);
+        BorderThickness = new Thickness(1f);
+        CornerRadius = 8f;
+        Padding = new Thickness(12);
+        Margin = new Thickness(6);
+
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+
+        var title = new RichTextBlock { Font = font, FontSize = 14f, Margin = new Thickness(0, 0, 0, 5) };
+        title.Inlines.Add(new Bold(new Run("Keyframe Showcase")));
+        stack.AddChild(title);
+
+        var desc = new RichTextBlock { Font = font, FontSize = 11f, Margin = new Thickness(0, 0, 0, 15) };
+        desc.Inlines.Add(new Run("Looping scalar/vector translations. Notice the sliding offset card, fading opacity text, and spinning gear."));
+        stack.AddChild(desc);
+
+        // 1. Sliding card
+        var slidingContainer = new Border
+        {
+            Height = 80f,
+            Background = new SolidColorBrush(0x0C0C12FF),
+            CornerRadius = 6f,
+            Margin = new Thickness(0, 0, 0, 15),
+            Padding = new Thickness(8)
+        };
+        var canvas = new Canvas { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+        _slidingCard = new Border
+        {
+            Width = 60f,
+            Height = 40f,
+            Background = new SolidColorBrush(0x0078D4FF),
+            CornerRadius = 4f
+        };
+        var slidingText = new RichTextBlock { Font = font, FontSize = 10f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        slidingText.Inlines.Add(new Bold(new Run("Slide")));
+        _slidingCard.Child = slidingText;
+        canvas.AddChild(_slidingCard);
+        slidingContainer.Child = canvas;
+        stack.AddChild(slidingContainer);
+
+        // 2. Fading opacity text
+        var fadingContainer = new Border
+        {
+            Height = 50f,
+            Background = new SolidColorBrush(0x0C0C12FF),
+            CornerRadius = 6f,
+            Margin = new Thickness(0, 0, 0, 15),
+            Padding = new Thickness(8),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        _fadingText = new RichTextBlock
+        {
+            Font = font,
+            FontSize = 14f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _fadingText.Inlines.Add(new Bold(new Run("FADING OPACITY TEXT")));
+        fadingContainer.Child = _fadingText;
+        stack.AddChild(fadingContainer);
+
+        // 3. Spinning Gear
+        var gearContainer = new Border
+        {
+            Height = 120f,
+            Background = new SolidColorBrush(0x0C0C12FF),
+            CornerRadius = 6f,
+            Padding = new Thickness(8),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        _gearVisual = new GearVisual
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        gearContainer.Child = _gearVisual;
+        stack.AddChild(gearContainer);
+
+        Child = stack;
+
+        // Initialize keyframes
+        _offsetAnimation = new KeyframeAnimation<Vector2> { Duration = 3f, Loop = true };
+        _offsetAnimation.Keyframes.Add((0f, new Vector2(10f, 10f)));
+        _offsetAnimation.Keyframes.Add((0.25f, new Vector2(120f, 10f)));
+        _offsetAnimation.Keyframes.Add((0.5f, new Vector2(120f, 30f)));
+        _offsetAnimation.Keyframes.Add((0.75f, new Vector2(10f, 30f)));
+        _offsetAnimation.Keyframes.Add((1f, new Vector2(10f, 10f)));
+
+        _opacityAnimation = new KeyframeAnimation<float> { Duration = 2.5f, Loop = true };
+        _opacityAnimation.Keyframes.Add((0f, 0.1f));
+        _opacityAnimation.Keyframes.Add((0.5f, 1.0f));
+        _opacityAnimation.Keyframes.Add((1f, 0.1f));
+
+        _rotationAnimation = new KeyframeAnimation<float> { Duration = 4f, Loop = true };
+        _rotationAnimation.Keyframes.Add((0f, 0f));
+        _rotationAnimation.Keyframes.Add((0.5f, (float)Math.PI));
+        _rotationAnimation.Keyframes.Add((1f, (float)(Math.PI * 2f)));
+    }
+
+    public void Update(float delta)
+    {
+        _offsetAnimation.Update(delta);
+        _opacityAnimation.Update(delta);
+        _rotationAnimation.Update(delta);
+
+        Vector2 currentOffset = _offsetAnimation.Evaluate((a, b, t) => Vector2.Lerp(a, b, t));
+        Canvas.SetLeft(_slidingCard, currentOffset.X);
+        Canvas.SetTop(_slidingCard, currentOffset.Y);
+
+        float currentOpacity = _opacityAnimation.Evaluate((a, b, t) => a + (b - a) * t);
+        _fadingText.Opacity = currentOpacity;
+
+        float currentRotation = _rotationAnimation.Evaluate((a, b, t) => a + (b - a) * t);
+        _gearVisual.GearRotation = currentRotation;
+
+        Invalidate();
+    }
+}
+
+public class SpringWobbleShowcaseCard : Border, IAnimatedElement
+{
+    private readonly SpringScalarNaturalMotionAnimation _springX;
+    private readonly SpringScalarNaturalMotionAnimation _springY;
+    private readonly Button _triggerBtn;
+    private readonly Border _wobbleCard;
+
+    public SpringWobbleShowcaseCard(TtfFont font)
+    {
+        _springX = new SpringScalarNaturalMotionAnimation
+        {
+            CurrentValue = 1.0f,
+            TargetValue = 1.0f,
+            Stiffness = 180f,
+            Damping = 10f,
+            Mass = 1.0f
+        };
+        _springY = new SpringScalarNaturalMotionAnimation
+        {
+            CurrentValue = 1.0f,
+            TargetValue = 1.0f,
+            Stiffness = 180f,
+            Damping = 10f,
+            Mass = 1.0f
+        };
+
+        Background = new SolidColorBrush(0xFFFFFF08);
+        BorderBrush = new SolidColorBrush(0xFFFFFF15);
+        BorderThickness = new Thickness(1f);
+        CornerRadius = 8f;
+        Padding = new Thickness(12);
+        Margin = new Thickness(6);
+
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+
+        var title = new RichTextBlock { Font = font, FontSize = 14f, Margin = new Thickness(0, 0, 0, 5) };
+        title.Inlines.Add(new Bold(new Run("Spring Wobble Showcase")));
+        stack.AddChild(title);
+
+        var desc = new RichTextBlock { Font = font, FontSize = 11f, Margin = new Thickness(0, 0, 0, 15) };
+        desc.Inlines.Add(new Run("Natural spring mass-damping physics. Click the button to trigger a high-frequency elastic spring wobble on Scale."));
+        stack.AddChild(desc);
+
+        var wobbleContainer = new Border
+        {
+            Height = 150f,
+            Background = new SolidColorBrush(0x0C0C12FF),
+            CornerRadius = 6f,
+            Margin = new Thickness(0, 0, 0, 15),
+            Padding = new Thickness(20),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+
+        _wobbleCard = new Border
+        {
+            Width = 120f,
+            Height = 80f,
+            Background = new SolidColorBrush(0x0078D4FF),
+            BorderBrush = new SolidColorBrush(0xFFFFFFFF),
+            BorderThickness = new Thickness(1.5f),
+            CornerRadius = 10f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var wobbleText = new RichTextBlock { Font = font, FontSize = 12f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        wobbleText.Inlines.Add(new Bold(new Run("WOBBLE ME!")));
+        _wobbleCard.Child = wobbleText;
+        wobbleContainer.Child = _wobbleCard;
+        stack.AddChild(wobbleContainer);
+
+        _triggerBtn = new Button { Width = 150f, Height = 36f, CornerRadius = 6f, HorizontalAlignment = HorizontalAlignment.Center };
+        var btnText = new RichTextBlock { Font = font, FontSize = 12f };
+        btnText.Inlines.Add(new Bold(new Run("Trigger Spring")));
+        _triggerBtn.Content = btnText;
+
+        _triggerBtn.Click += (s, e) =>
+        {
+            _springX.CurrentValue = 0.5f;
+            _springY.CurrentValue = 1.5f;
+            _springX.TargetValue = 1.0f;
+            _springY.TargetValue = 1.0f;
+            _springX.Velocity = 20f;
+            _springY.Velocity = -20f;
+        };
+        stack.AddChild(_triggerBtn);
+
+        Child = stack;
+    }
+
+    public void Update(float delta)
+    {
+        _springX.Update(delta);
+        _springY.Update(delta);
+
+        Vector2 size = _wobbleCard.Size;
+        Vector2 center = size / 2f;
+
+        float sx = _springX.CurrentValue;
+        float sy = _springY.CurrentValue;
+
+        sx = Math.Max(0.1f, Math.Min(3.0f, sx));
+        sy = Math.Max(0.1f, Math.Min(3.0f, sy));
+
+        var transform = Matrix4x4.CreateTranslation(-center.X, -center.Y, 0)
+                        * Matrix4x4.CreateScale(sx, sy, 1f)
+                        * Matrix4x4.CreateTranslation(center.X, center.Y, 0);
+        _wobbleCard.Transform = transform;
+    }
+}
+
+public class ExpressionTrackingShowcaseCard : Border, IAnimatedElement
+{
+    private readonly ProGPU.WinUI.Slider _slider;
+    private readonly ExpressionAnimation _scaleExpression;
+    private readonly ExpressionAnimation _rotationExpression;
+    private readonly Border _trackingCard;
+
+    public ExpressionTrackingShowcaseCard(TtfFont font)
+    {
+        Background = new SolidColorBrush(0xFFFFFF08);
+        BorderBrush = new SolidColorBrush(0xFFFFFF15);
+        BorderThickness = new Thickness(1f);
+        CornerRadius = 8f;
+        Padding = new Thickness(12);
+        Margin = new Thickness(6);
+
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+
+        var title = new RichTextBlock { Font = font, FontSize = 14f, Margin = new Thickness(0, 0, 0, 5) };
+        title.Inlines.Add(new Bold(new Run("Expression Showcase")));
+        stack.AddChild(title);
+
+        var desc = new RichTextBlock { Font = font, FontSize = 11f, Margin = new Thickness(0, 0, 0, 15) };
+        desc.Inlines.Add(new Run("Dynamic ExpressionAnimation binding. Move the slider below to drive the card's Scale and Rotation in real time."));
+        stack.AddChild(desc);
+
+        var trackingContainer = new Border
+        {
+            Height = 150f,
+            Background = new SolidColorBrush(0x0C0C12FF),
+            CornerRadius = 6f,
+            Margin = new Thickness(0, 0, 0, 15),
+            Padding = new Thickness(20),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+
+        _trackingCard = new Border
+        {
+            Width = 100f,
+            Height = 80f,
+            Background = new SolidColorBrush(0x00E5FFFF),
+            BorderBrush = new SolidColorBrush(0xFFFFFFFF),
+            BorderThickness = new Thickness(1.5f),
+            CornerRadius = 10f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var cardText = new RichTextBlock { Font = font, FontSize = 12f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        cardText.Inlines.Add(new Bold(new Run("TRACKING")));
+        _trackingCard.Child = cardText;
+        trackingContainer.Child = _trackingCard;
+        stack.AddChild(trackingContainer);
+
+        var sliderTitle = new RichTextBlock { Font = font, FontSize = 12f, Margin = new Thickness(0, 0, 0, 5) };
+        sliderTitle.Inlines.Add(new Bold(new Run("Driver Slider: 50%")));
+        stack.AddChild(sliderTitle);
+
+        _slider = new ProGPU.WinUI.Slider { Minimum = 0f, Maximum = 100f, Value = 50f, Width = 220f, HorizontalAlignment = HorizontalAlignment.Center };
+        _slider.ValueChanged += (s, e) =>
+        {
+            sliderTitle.Inlines.Clear();
+            sliderTitle.Inlines.Add(new Bold(new Run($"Driver Slider: {_slider.Value:F0}%")));
+            sliderTitle.Invalidate();
+        };
+        stack.AddChild(_slider);
+
+        Child = stack;
+
+        _scaleExpression = new ExpressionAnimation(() => 0.6f + (_slider.Value / 100f) * 0.8f);
+        _rotationExpression = new ExpressionAnimation(() => (_slider.Value / 100f) * (float)Math.PI * 2f);
+    }
+
+    public void Update(float delta)
+    {
+        float scale = _scaleExpression.Evaluate();
+        float rotation = _rotationExpression.Evaluate();
+
+        Vector2 size = _trackingCard.Size;
+        Vector2 center = size / 2f;
+
+        var transform = Matrix4x4.CreateTranslation(-center.X, -center.Y, 0)
+                        * Matrix4x4.CreateScale(scale, scale, 1f)
+                        * Matrix4x4.CreateRotationZ(rotation)
+                        * Matrix4x4.CreateTranslation(center.X, center.Y, 0);
+        _trackingCard.Transform = transform;
+    }
+}
+
+public class GearVisual : FrameworkElement
+{
+    public float GearRotation { get; set; }
+
+    public GearVisual()
+    {
+        Width = 100f;
+        Height = 100f;
+    }
+
+    public static PathGeometry CreateGearPathWithRotation(Vector2 center, float innerRadius, float outerRadius, int teethCount, float toothDepth, float rotation)
+    {
+        var path = new PathGeometry();
+        var fig = new PathFigure { IsClosed = true, IsFilled = true };
+
+        float angleStep = (float)(Math.PI * 2.0 / teethCount);
+
+        for (int i = 0; i < teethCount; i++)
+        {
+            float angle = i * angleStep + rotation;
+
+            float a0 = angle;
+            float a1 = angle + angleStep * 0.25f;
+            float a2 = angle + angleStep * 0.55f;
+            float a3 = angle + angleStep * 0.8f;
+
+            Vector2 pt0 = center + new Vector2((float)Math.Cos(a0), (float)Math.Sin(a0)) * innerRadius;
+            Vector2 pt1 = center + new Vector2((float)Math.Cos(a1), (float)Math.Sin(a1)) * outerRadius;
+            Vector2 pt2 = center + new Vector2((float)Math.Cos(a2), (float)Math.Sin(a2)) * outerRadius;
+            Vector2 pt3 = center + new Vector2((float)Math.Cos(a3), (float)Math.Sin(a3)) * innerRadius;
+
+            if (i == 0)
+            {
+                fig.StartPoint = pt0;
+            }
+            else
+            {
+                fig.Segments.Add(new LineSegment(pt0));
+            }
+
+            fig.Segments.Add(new LineSegment(pt1));
+            fig.Segments.Add(new LineSegment(pt2));
+            fig.Segments.Add(new LineSegment(pt3));
+        }
+
+        path.Figures.Add(fig);
+
+        var cutoutFig = new PathFigure { IsClosed = true, IsFilled = true };
+        float cutRadius = innerRadius * 0.6f;
+        int circleSegments = 32;
+        for (int i = 0; i < circleSegments; i++)
+        {
+            float a = -(float)(i * Math.PI * 2.0 / circleSegments) + rotation;
+            Vector2 pt = center + new Vector2((float)Math.Cos(a), (float)Math.Sin(a)) * cutRadius;
+
+            if (i == 0)
+                cutoutFig.StartPoint = pt;
+            else
+                cutoutFig.Segments.Add(new LineSegment(pt));
+        }
+        path.Figures.Add(cutoutFig);
+
+        return path;
+    }
+
+    public override void OnRender(DrawingContext context)
+    {
+        Vector2 center = Size / 2f;
+        if (center.X <= 0 || center.Y <= 0) return;
+
+        context.DrawRectangle(new SolidColorBrush(0x00000000), null, new Rect(Vector2.Zero, Size));
+
+        var p = CreateGearPathWithRotation(center, 25f, 40f, 10, 8f, GearRotation);
+        context.DrawPath(new SolidColorBrush(0x0078D4FF), new Pen(new SolidColorBrush(0xFFFFFFFF), 1.5f), p);
+    }
+}
+
