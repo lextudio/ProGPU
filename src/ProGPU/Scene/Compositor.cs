@@ -200,13 +200,17 @@ public unsafe class Compositor : IDisposable
         var textShaderModule = _pipelineCache.GetOrCreateShader("Text", Shaders.TextShader, "TextShader");
         var texShaderModule = _pipelineCache.GetOrCreateShader("Texture", Shaders.TextureShader, "TextureShader");
 
-        // 6. Define Vertex Buffer Layout descriptors (format stride 36 bytes)
+        // 6. Define Vertex Buffer Layout descriptors (format stride 56 bytes)
         var vertexAttribs = new VertexAttribute[]
         {
             new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // Position
             new() { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }, // Color
             new() { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }, // TexCoord
-            new() { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 } // BrushIndex
+            new() { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 }, // BrushIndex
+            new() { Format = VertexFormat.Float32x2, Offset = 36, ShaderLocation = 4 }, // ShapeSize
+            new() { Format = VertexFormat.Float32, Offset = 44, ShaderLocation = 5 }, // CornerRadius
+            new() { Format = VertexFormat.Float32, Offset = 48, ShaderLocation = 6 }, // StrokeThickness
+            new() { Format = VertexFormat.Float32, Offset = 52, ShaderLocation = 7 } // ShapeType
         };
 
         fixed (VertexAttribute* attribsPtr = vertexAttribs)
@@ -215,7 +219,7 @@ public unsafe class Compositor : IDisposable
             {
                 ArrayStride = (uint)Marshal.SizeOf<VectorVertex>(),
                 StepMode = VertexStepMode.Vertex,
-                AttributeCount = 4,
+                AttributeCount = 8,
                 Attributes = attribsPtr
             };
 
@@ -753,28 +757,26 @@ public unsafe class Compositor : IDisposable
     {
         int startIndex = _vectorVerticesList.Count;
         var r = cmd.Rect;
+        float wHalf = r.Width / 2f;
+        float hHalf = r.Height / 2f;
+        var shapeSize = new Vector2(r.Width, r.Height);
+
+        var v0_pos = Vector2.Transform(new Vector2(r.X, r.Y), transform);
+        var v1_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
+        var v2_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
+        var v3_pos = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
 
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            var v0 = Vector2.Transform(new Vector2(r.X, r.Y), transform);
-            var v1 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
-            var v2 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
-            var v3 = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
-
-            var local0 = new Vector2(r.X, r.Y);
-            var local1 = new Vector2(r.X + r.Width, r.Y);
-            var local2 = new Vector2(r.X + r.Width, r.Y + r.Height);
-            var local3 = new Vector2(r.X, r.Y + r.Height);
-
             ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            _vectorVerticesList.Add(new VectorVertex(v0, solidColor, local0, bIdx));
-            _vectorVerticesList.Add(new VectorVertex(v1, solidColor, local1, bIdx));
-            _vectorVerticesList.Add(new VectorVertex(v2, solidColor, local2, bIdx));
-            _vectorVerticesList.Add(new VectorVertex(v3, solidColor, local3, bIdx));
+            _vectorVerticesList.Add(new VectorVertex(v0_pos, solidColor, new Vector2(-wHalf, -hHalf), bIdx, shapeSize, 0f, 0f, 0f));
+            _vectorVerticesList.Add(new VectorVertex(v1_pos, solidColor, new Vector2(wHalf, -hHalf), bIdx, shapeSize, 0f, 0f, 0f));
+            _vectorVerticesList.Add(new VectorVertex(v2_pos, solidColor, new Vector2(wHalf, hHalf), bIdx, shapeSize, 0f, 0f, 0f));
+            _vectorVerticesList.Add(new VectorVertex(v3_pos, solidColor, new Vector2(-wHalf, hHalf), bIdx, shapeSize, 0f, 0f, 0f));
 
             _vectorIndicesList.Add(idxStart);
             _vectorIndicesList.Add((ushort)(idxStart + 1));
@@ -787,43 +789,23 @@ public unsafe class Compositor : IDisposable
 
         if (cmd.Pen != null)
         {
-            int penStartIndex = _vectorVerticesList.Count;
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            var outline = new List<Vector2>
-            {
-                new(r.X, r.Y),
-                new(r.X + r.Width, r.Y),
-                new(r.X + r.Width, r.Y + r.Height),
-                new(r.X, r.Y + r.Height)
-            };
+            ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            var transformedOutline = new List<Vector2>(outline.Count);
-            foreach (var p in outline)
-            {
-                transformedOutline.Add(Vector2.Transform(p, transform));
-            }
+            _vectorVerticesList.Add(new VectorVertex(v0_pos, penSolidColor, new Vector2(-wHalf, -hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
+            _vectorVerticesList.Add(new VectorVertex(v1_pos, penSolidColor, new Vector2(wHalf, -hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
+            _vectorVerticesList.Add(new VectorVertex(v2_pos, penSolidColor, new Vector2(wHalf, hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
+            _vectorVerticesList.Add(new VectorVertex(v3_pos, penSolidColor, new Vector2(-wHalf, hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
 
-            StrokeTessellator.TessellateStroke(
-                transformedOutline,
-                cmd.Pen.Thickness,
-                penSolidColor,
-                isClosed: true,
-                _vectorVerticesList,
-                _vectorIndicesList
-            );
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 1));
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
 
-            if (Matrix4x4.Invert(transform, out var invTransform))
-            {
-                for (int i = penStartIndex; i < _vectorVerticesList.Count; i++)
-                {
-                    var v = _vectorVerticesList[i];
-                    v.TexCoord = Vector2.Transform(v.Position, invTransform);
-                    v.BrushIndex = penBrushIdx;
-                    _vectorVerticesList[i] = v;
-                }
-            }
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((ushort)(idxStart + 3));
         }
 
         if (_activeClipRect.HasValue)
@@ -871,6 +853,7 @@ public unsafe class Compositor : IDisposable
                     var v = _vectorVerticesList[i];
                     v.TexCoord = Vector2.Transform(v.Position, invTransform);
                     v.BrushIndex = bIdx;
+                    v.ShapeType = 4f;
                     _vectorVerticesList[i] = v;
                 }
             }
@@ -908,6 +891,7 @@ public unsafe class Compositor : IDisposable
                     var v = _vectorVerticesList[i];
                     v.TexCoord = Vector2.Transform(v.Position, invTransform);
                     v.BrushIndex = penBrushIdx;
+                    v.ShapeType = 4f;
                     _vectorVerticesList[i] = v;
                 }
             }
@@ -954,6 +938,7 @@ public unsafe class Compositor : IDisposable
                 var v = _vectorVerticesList[i];
                 v.TexCoord = Vector2.Transform(v.Position, invTransform);
                 v.BrushIndex = penBrushIdx;
+                v.ShapeType = 4f;
                 _vectorVerticesList[i] = v;
             }
         }
@@ -975,64 +960,53 @@ public unsafe class Compositor : IDisposable
         var center = cmd.Position2;
         var rx = cmd.RadiusX;
         var ry = cmd.RadiusY;
+        var shapeSize = new Vector2(2f * rx, 2f * ry);
 
-        var points = new List<Vector2>(64);
-        for (int i = 0; i < 64; i++)
-        {
-            float angle = (float)(i * 2 * Math.PI / 64);
-            points.Add(new Vector2(center.X + rx * (float)Math.Cos(angle), center.Y + ry * (float)Math.Sin(angle)));
-        }
+        var v0_pos = Vector2.Transform(new Vector2(center.X - rx, center.Y - ry), transform);
+        var v1_pos = Vector2.Transform(new Vector2(center.X + rx, center.Y - ry), transform);
+        var v2_pos = Vector2.Transform(new Vector2(center.X + rx, center.Y + ry), transform);
+        var v3_pos = Vector2.Transform(new Vector2(center.X - rx, center.Y + ry), transform);
 
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            var transPoints = new List<Vector2>(64);
-            foreach (var pt in points) transPoints.Add(Vector2.Transform(pt, transform));
+            ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            FillTessellator.TessellateFill(transPoints, solidColor, _vectorVerticesList, _vectorIndicesList);
+            _vectorVerticesList.Add(new VectorVertex(v0_pos, solidColor, new Vector2(-rx, -ry), bIdx, shapeSize, 0f, 0f, 1f));
+            _vectorVerticesList.Add(new VectorVertex(v1_pos, solidColor, new Vector2(rx, -ry), bIdx, shapeSize, 0f, 0f, 1f));
+            _vectorVerticesList.Add(new VectorVertex(v2_pos, solidColor, new Vector2(rx, ry), bIdx, shapeSize, 0f, 0f, 1f));
+            _vectorVerticesList.Add(new VectorVertex(v3_pos, solidColor, new Vector2(-rx, ry), bIdx, shapeSize, 0f, 0f, 1f));
 
-            if (Matrix4x4.Invert(transform, out var invTransform))
-            {
-                for (int i = startIndex; i < _vectorVerticesList.Count; i++)
-                {
-                    var v = _vectorVerticesList[i];
-                    v.TexCoord = Vector2.Transform(v.Position, invTransform);
-                    v.BrushIndex = bIdx;
-                    _vectorVerticesList[i] = v;
-                }
-            }
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 1));
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((ushort)(idxStart + 3));
         }
 
         if (cmd.Pen != null)
         {
-            int penStartIndex = _vectorVerticesList.Count;
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            var transPoints = new List<Vector2>(64);
-            foreach (var pt in points) transPoints.Add(Vector2.Transform(pt, transform));
+            ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            StrokeTessellator.TessellateStroke(
-                transPoints,
-                cmd.Pen.Thickness,
-                penSolidColor,
-                isClosed: true,
-                _vectorVerticesList,
-                _vectorIndicesList
-            );
+            _vectorVerticesList.Add(new VectorVertex(v0_pos, penSolidColor, new Vector2(-rx, -ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
+            _vectorVerticesList.Add(new VectorVertex(v1_pos, penSolidColor, new Vector2(rx, -ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
+            _vectorVerticesList.Add(new VectorVertex(v2_pos, penSolidColor, new Vector2(rx, ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
+            _vectorVerticesList.Add(new VectorVertex(v3_pos, penSolidColor, new Vector2(-rx, ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
 
-            if (Matrix4x4.Invert(transform, out var invTransform))
-            {
-                for (int i = penStartIndex; i < _vectorVerticesList.Count; i++)
-                {
-                    var v = _vectorVerticesList[i];
-                    v.TexCoord = Vector2.Transform(v.Position, invTransform);
-                    v.BrushIndex = penBrushIdx;
-                    _vectorVerticesList[i] = v;
-                }
-            }
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 1));
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((ushort)(idxStart + 3));
         }
 
         if (_activeClipRect.HasValue)
@@ -1064,79 +1038,55 @@ public unsafe class Compositor : IDisposable
             return;
         }
 
-        var points = new List<Vector2>(32);
-        
-        for (int i = 0; i < 8; i++)
-        {
-            float angle = (float)(Math.PI + i * Math.PI / 2.0 / 7.0);
-            points.Add(new Vector2(r.X + radius + radius * (float)Math.Cos(angle), r.Y + radius + radius * (float)Math.Sin(angle)));
-        }
-        for (int i = 0; i < 8; i++)
-        {
-            float angle = (float)(1.5 * Math.PI + i * Math.PI / 2.0 / 7.0);
-            points.Add(new Vector2(r.X + r.Width - radius + radius * (float)Math.Cos(angle), r.Y + radius + radius * (float)Math.Sin(angle)));
-        }
-        for (int i = 0; i < 8; i++)
-        {
-            float angle = (float)(0.0 + i * Math.PI / 2.0 / 7.0);
-            points.Add(new Vector2(r.X + r.Width - radius + radius * (float)Math.Cos(angle), r.Y + r.Height - radius + radius * (float)Math.Sin(angle)));
-        }
-        for (int i = 0; i < 8; i++)
-        {
-            float angle = (float)(0.5 * Math.PI + i * Math.PI / 2.0 / 7.0);
-            points.Add(new Vector2(r.X + radius + radius * (float)Math.Cos(angle), r.Y + r.Height - radius + radius * (float)Math.Sin(angle)));
-        }
+        float wHalf = r.Width / 2f;
+        float hHalf = r.Height / 2f;
+        var shapeSize = new Vector2(r.Width, r.Height);
+
+        var v0_pos = Vector2.Transform(new Vector2(r.X, r.Y), transform);
+        var v1_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
+        var v2_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
+        var v3_pos = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
 
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            var transPoints = new List<Vector2>(32);
-            foreach (var pt in points) transPoints.Add(Vector2.Transform(pt, transform));
+            ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            FillTessellator.TessellateFill(transPoints, solidColor, _vectorVerticesList, _vectorIndicesList);
+            _vectorVerticesList.Add(new VectorVertex(v0_pos, solidColor, new Vector2(-wHalf, -hHalf), bIdx, shapeSize, radius, 0f, 2f));
+            _vectorVerticesList.Add(new VectorVertex(v1_pos, solidColor, new Vector2(wHalf, -hHalf), bIdx, shapeSize, radius, 0f, 2f));
+            _vectorVerticesList.Add(new VectorVertex(v2_pos, solidColor, new Vector2(wHalf, hHalf), bIdx, shapeSize, radius, 0f, 2f));
+            _vectorVerticesList.Add(new VectorVertex(v3_pos, solidColor, new Vector2(-wHalf, hHalf), bIdx, shapeSize, radius, 0f, 2f));
 
-            if (Matrix4x4.Invert(transform, out var invTransform))
-            {
-                for (int i = startIndex; i < _vectorVerticesList.Count; i++)
-                {
-                    var v = _vectorVerticesList[i];
-                    v.TexCoord = Vector2.Transform(v.Position, invTransform);
-                    v.BrushIndex = bIdx;
-                    _vectorVerticesList[i] = v;
-                }
-            }
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 1));
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((ushort)(idxStart + 3));
         }
 
         if (cmd.Pen != null)
         {
-            int penStartIndex = _vectorVerticesList.Count;
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            var transPoints = new List<Vector2>(32);
-            foreach (var pt in points) transPoints.Add(Vector2.Transform(pt, transform));
+            ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            StrokeTessellator.TessellateStroke(
-                transPoints,
-                cmd.Pen.Thickness,
-                penSolidColor,
-                isClosed: true,
-                _vectorVerticesList,
-                _vectorIndicesList
-            );
+            _vectorVerticesList.Add(new VectorVertex(v0_pos, penSolidColor, new Vector2(-wHalf, -hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
+            _vectorVerticesList.Add(new VectorVertex(v1_pos, penSolidColor, new Vector2(wHalf, -hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
+            _vectorVerticesList.Add(new VectorVertex(v2_pos, penSolidColor, new Vector2(wHalf, hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
+            _vectorVerticesList.Add(new VectorVertex(v3_pos, penSolidColor, new Vector2(-wHalf, hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
 
-            if (Matrix4x4.Invert(transform, out var invTransform))
-            {
-                for (int i = penStartIndex; i < _vectorVerticesList.Count; i++)
-                {
-                    var v = _vectorVerticesList[i];
-                    v.TexCoord = Vector2.Transform(v.Position, invTransform);
-                    v.BrushIndex = penBrushIdx;
-                    _vectorVerticesList[i] = v;
-                }
-            }
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 1));
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+
+            _vectorIndicesList.Add(idxStart);
+            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((ushort)(idxStart + 3));
         }
 
         if (_activeClipRect.HasValue)
