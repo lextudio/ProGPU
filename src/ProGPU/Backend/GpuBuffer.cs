@@ -52,7 +52,21 @@ public unsafe class GpuBuffer : IDisposable
 
         fixed (T* ptr = data)
         {
-            _context.Wgpu.QueueWriteBuffer(_context.Queue, BufferPtr, offsetBytes, ptr, dataSize);
+            if (dataSize % 4 == 0)
+            {
+                _context.Wgpu.QueueWriteBuffer(_context.Queue, BufferPtr, offsetBytes, ptr, dataSize);
+            }
+            else
+            {
+                uint paddedSize = (dataSize + 3) & ~3u;
+                byte* temp = stackalloc byte[(int)paddedSize];
+                System.Buffer.MemoryCopy(ptr, temp, paddedSize, dataSize);
+                for (uint i = dataSize; i < paddedSize; i++)
+                {
+                    temp[i] = 0;
+                }
+                _context.Wgpu.QueueWriteBuffer(_context.Queue, BufferPtr, offsetBytes, temp, paddedSize);
+            }
         }
     }
 
