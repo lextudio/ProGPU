@@ -62,6 +62,9 @@ public unsafe class Compositor : IDisposable
 
     private bool _isDisposed;
 
+    private readonly Stack<Rect> _clipStack = new();
+    private Rect? _activeClipRect;
+
     public GlyphAtlas Atlas => _atlas;
     public TextureFormat RenderFormat { get; private set; }
 
@@ -271,6 +274,9 @@ public unsafe class Compositor : IDisposable
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
         _textureDrawCalls.Clear();
+
+        _clipStack.Clear();
+        _activeClipRect = null;
 
         // 3. Compile entire visual tree scene graph into drawing batches
         CompileVisualTree(root, Matrix4x4.Identity);
@@ -525,6 +531,43 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.DrawTexture:
                     CompileTextureCommand(cmd, globalTransform);
                     break;
+                case RenderCommandType.PushClip:
+                    {
+                        var localClip = cmd.Rect;
+                        var vTopLeft = Vector2.Transform(new Vector2(localClip.X, localClip.Y), globalTransform);
+                        var vBottomRight = Vector2.Transform(new Vector2(localClip.X + localClip.Width, localClip.Y + localClip.Height), globalTransform);
+                        
+                        float x1 = Math.Min(vTopLeft.X, vBottomRight.X);
+                        float y1 = Math.Min(vTopLeft.Y, vBottomRight.Y);
+                        float x2 = Math.Max(vTopLeft.X, vBottomRight.X);
+                        float y2 = Math.Max(vTopLeft.Y, vBottomRight.Y);
+                        
+                        var screenClip = new Rect(x1, y1, x2 - x1, y2 - y1);
+
+                        if (_activeClipRect.HasValue)
+                        {
+                            float cx1 = Math.Max(_activeClipRect.Value.X, screenClip.X);
+                            float cy1 = Math.Max(_activeClipRect.Value.Y, screenClip.Y);
+                            float cx2 = Math.Min(_activeClipRect.Value.X + _activeClipRect.Value.Width, screenClip.X + screenClip.Width);
+                            float cy2 = Math.Min(_activeClipRect.Value.Y + _activeClipRect.Value.Height, screenClip.Y + screenClip.Height);
+                            _activeClipRect = new Rect(cx1, cy1, Math.Max(0f, cx2 - cx1), Math.Max(0f, cy2 - cy1));
+                        }
+                        else
+                        {
+                            _activeClipRect = screenClip;
+                        }
+                        _clipStack.Push(_activeClipRect.Value);
+                    }
+                    break;
+                case RenderCommandType.PopClip:
+                    {
+                        if (_clipStack.Count > 0)
+                        {
+                            _clipStack.Pop();
+                            _activeClipRect = _clipStack.Count > 0 ? _clipStack.Peek() : null;
+                        }
+                    }
+                    break;
             }
         }
 
@@ -540,6 +583,7 @@ public unsafe class Compositor : IDisposable
 
     private void CompileRectCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        int startIndex = _vectorVerticesList.Count;
         var r = cmd.Rect;
         var brush = cmd.Brush as SolidColorBrush;
         var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
@@ -599,11 +643,22 @@ public unsafe class Compositor : IDisposable
                 _vectorIndicesList
             );
         }
+
+        if (_activeClipRect.HasValue)
+        {
+            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            {
+                var v = _vectorVerticesList[i];
+                v.Position = ClampToClip(v.Position);
+                _vectorVerticesList[i] = v;
+            }
+        }
     }
 
     private void CompilePathCommand(RenderCommand cmd, Matrix4x4 transform)
     {
         if (cmd.Path == null) return;
+        int startIndex = _vectorVerticesList.Count;
         var flattened = cmd.Path.Flatten(0.2f);
 
         if (cmd.Brush != null)
@@ -650,6 +705,16 @@ public unsafe class Compositor : IDisposable
                     _vectorVerticesList,
                     _vectorIndicesList
                 );
+            }
+        }
+
+        if (_activeClipRect.HasValue)
+        {
+            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            {
+                var v = _vectorVerticesList[i];
+                v.Position = ClampToClip(v.Position);
+                _vectorVerticesList[i] = v;
             }
         }
     }
@@ -701,6 +766,46 @@ public unsafe class Compositor : IDisposable
             var uv2 = new Vector2(info.TexCoordMax.X, info.TexCoordMax.Y);
             var uv3 = new Vector2(info.TexCoordMin.X, info.TexCoordMax.Y);
 
+            if (_activeClipRect.HasValue)
+            {
+                float rx1 = v0.X;
+                float ry1 = v0.Y;
+                float rx2 = v2.X;
+                float ry2 = v2.Y;
+
+                float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
+                float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
+                float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
+                float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
+
+                if (cx2 <= cx1 || cy2 <= cy1) continue; // Completely clipped!
+
+                float dx = rx2 - rx1;
+                float dy = ry2 - ry1;
+
+                uv0 = new Vector2(
+                    info.TexCoordMin.X + (cx1 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                    info.TexCoordMin.Y + (cy1 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                );
+                uv1 = new Vector2(
+                    info.TexCoordMin.X + (cx2 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                    info.TexCoordMin.Y + (cy1 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                );
+                uv2 = new Vector2(
+                    info.TexCoordMin.X + (cx2 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                    info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                );
+                uv3 = new Vector2(
+                    info.TexCoordMin.X + (cx1 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                    info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                );
+
+                v0 = new Vector2(cx1, cy1);
+                v1 = new Vector2(cx2, cy1);
+                v2 = new Vector2(cx2, cy2);
+                v3 = new Vector2(cx1, cy2);
+            }
+
             _textVerticesList.Add(new VectorVertex(v0, color, uv0));
             _textVerticesList.Add(new VectorVertex(v1, color, uv1));
             _textVerticesList.Add(new VectorVertex(v2, color, uv2));
@@ -734,6 +839,34 @@ public unsafe class Compositor : IDisposable
         var uv1 = new Vector2(1f, 0f);
         var uv2 = new Vector2(1f, 1f);
         var uv3 = new Vector2(0f, 1f);
+
+        if (_activeClipRect.HasValue)
+        {
+            float rx1 = v0.X;
+            float ry1 = v0.Y;
+            float rx2 = v2.X;
+            float ry2 = v2.Y;
+
+            float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
+            float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
+            float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
+            float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
+
+            if (cx2 <= cx1 || cy2 <= cy1) return; // Completely clipped!
+
+            float dx = rx2 - rx1;
+            float dy = ry2 - ry1;
+
+            uv0 = new Vector2((cx1 - rx1) / dx, (cy1 - ry1) / dy);
+            uv1 = new Vector2((cx2 - rx1) / dx, (cy1 - ry1) / dy);
+            uv2 = new Vector2((cx2 - rx1) / dx, (cy2 - ry1) / dy);
+            uv3 = new Vector2((cx1 - rx1) / dx, (cy2 - ry1) / dy);
+
+            v0 = new Vector2(cx1, cy1);
+            v1 = new Vector2(cx2, cy1);
+            v2 = new Vector2(cx2, cy2);
+            v3 = new Vector2(cx1, cy2);
+        }
 
         _textureVerticesList.Add(new VectorVertex(v0, color, uv0));
         _textureVerticesList.Add(new VectorVertex(v1, color, uv1));
@@ -866,6 +999,15 @@ public unsafe class Compositor : IDisposable
             _context.Wgpu.TextureRelease(_msaaTexture);
             _msaaTexture = null;
         }
+    }
+
+    private Vector2 ClampToClip(Vector2 p)
+    {
+        if (!_activeClipRect.HasValue) return p;
+        var r = _activeClipRect.Value;
+        float x = Math.Max(r.X, Math.Min(r.X + r.Width, p.X));
+        float y = Math.Max(r.Y, Math.Min(r.Y + r.Height, p.Y));
+        return new Vector2(x, y);
     }
 
     ~Compositor()

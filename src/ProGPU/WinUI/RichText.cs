@@ -124,7 +124,9 @@ public class RichTextBlock : FrameworkElement
         float measuredW = 0f;
         foreach (var pc in _positionedChars)
         {
-            measuredW = Math.Max(measuredW, pc.Position.X + pc.Info.FontSize / 2f);
+            ushort idx = Font.GetGlyphIndex(pc.Info.Character);
+            float adv = Font.GetAdvanceWidth(idx, pc.Info.FontSize);
+            measuredW = Math.Max(measuredW, pc.Position.X + adv);
             measuredH = Math.Max(measuredH, pc.Position.Y + pc.Info.FontSize);
         }
 

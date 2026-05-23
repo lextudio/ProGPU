@@ -17,18 +17,27 @@ public class ComboBox : Control
     private string _placeholderText = "Select item...";
     private TtfFont? _font;
     private float _fontSize = 14f;
+    private Border? _dropDownPopup;
 
     public ObservableCollection<ComboBoxItem> Items { get; }
 
     public bool IsDropDownOpen
     {
-        get => _isDropDownOpen;
+        get
+        {
+            // If the popup is closed from the outside, keep state synced
+            if (_isDropDownOpen && _dropDownPopup != null && !PopupService.ActivePopups.Contains(_dropDownPopup))
+            {
+                _isDropDownOpen = false;
+            }
+            return _isDropDownOpen;
+        }
         set
         {
             if (_isDropDownOpen != value)
             {
                 _isDropDownOpen = value;
-                UpdateVisualTree();
+                UpdatePopupState();
             }
         }
     }
@@ -97,7 +106,7 @@ public class ComboBox : Control
         }
         if (IsDropDownOpen)
         {
-            UpdateVisualTree();
+            UpdatePopupState();
         }
     }
 
@@ -110,14 +119,62 @@ public class ComboBox : Control
         }
     }
 
-    private void UpdateVisualTree()
+    private Vector2 GetAbsolutePosition()
     {
-        ClearChildren();
+        Vector2 pos = Offset;
+        Visual? current = Parent;
+        while (current != null)
+        {
+            pos += current.Offset;
+            current = current.Parent;
+        }
+        return pos;
+    }
+
+    private void UpdatePopupState()
+    {
         if (_isDropDownOpen)
         {
-            foreach (var item in Items)
+            if (_dropDownPopup == null)
             {
-                AddChild(item);
+                var stack = new StackPanel { Orientation = Orientation.Vertical };
+                foreach (var item in Items)
+                {
+                    stack.AddChild(item);
+                }
+
+                _dropDownPopup = new Border
+                {
+                    Background = new SolidColorBrush(0x1F1F1FFF),
+                    BorderBrush = new SolidColorBrush(0xFFFFFF1F),
+                    BorderThickness = new Thickness(1f),
+                    CornerRadius = 4f,
+                    Child = stack
+                };
+            }
+            else
+            {
+                var stack = (StackPanel)_dropDownPopup.Child!;
+                stack.ClearChildren();
+                foreach (var item in Items)
+                {
+                    stack.AddChild(item);
+                }
+            }
+
+            var absPos = GetAbsolutePosition();
+            float mainH = HeightConstraint ?? 32f;
+            float w = WidthConstraint ?? Size.X;
+            _dropDownPopup.Width = w;
+            _dropDownPopup.Height = Items.Count * 32f + 2f;
+
+            PopupService.ShowPopup(_dropDownPopup, new Vector2(absPos.X, absPos.Y + mainH + 2f));
+        }
+        else
+        {
+            if (_dropDownPopup != null)
+            {
+                PopupService.HidePopup(_dropDownPopup);
             }
         }
         Invalidate();
@@ -194,38 +251,13 @@ public class ComboBox : Control
     {
         float w = WidthConstraint ?? Math.Max(120f, availableSize.X);
         float h = HeightConstraint ?? 32f;
-
-        if (IsDropDownOpen)
-        {
-            // Dropdown adds its height dynamically for container allocation
-            float dropDownHeight = Items.Count * 32f;
-            foreach (var item in Items)
-            {
-                item.Measure(new Vector2(w, 32f));
-            }
-        }
-
         return new Vector2(w, h);
     }
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
         float mainH = HeightConstraint ?? 32f;
-        
-        if (IsDropDownOpen)
-        {
-            float currentY = mainH;
-            foreach (var item in Items)
-            {
-                item.Arrange(new Rect(0, currentY, arrangeRect.Width, 32f));
-                currentY += 32f;
-            }
-            Size = new Vector2(arrangeRect.Width, currentY);
-        }
-        else
-        {
-            Size = new Vector2(arrangeRect.Width, mainH);
-        }
+        Size = new Vector2(arrangeRect.Width, mainH);
     }
 
     public TtfFont? GetActiveFont()
@@ -314,19 +346,6 @@ public class ComboBox : Control
 
             // Draw Down Arrow (▼) character
             context.DrawText("▼", activeFont, FontSize - 2f, new SolidColorBrush(0xFFFFFFB0), new Vector2(Size.X - 22f, textY + 1f));
-        }
-
-        // 3. Draw Dropdown panel background if open
-        if (IsDropDownOpen)
-        {
-            float dropDownHeight = Items.Count * 32f;
-            Rect dropDownRect = new Rect(0, headerH, Size.X, dropDownHeight);
-
-            // Mica style dropdown back panel with subtle borders
-            var dropDownBg = new SolidColorBrush(0x1F1F1FFF);
-            var dropDownBorder = new Pen(new SolidColorBrush(0xFFFFFF1F), 1f);
-
-            context.DrawRectangle(dropDownBg, dropDownBorder, dropDownRect);
         }
 
         base.OnRender(context);

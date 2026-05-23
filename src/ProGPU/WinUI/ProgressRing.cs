@@ -37,13 +37,28 @@ public class ProgressRing : Control
         return new Vector2(Width, Height);
     }
 
+    private static PathGeometry CreateCirclePath(float cx, float cy, float r)
+    {
+        var geo = new PathGeometry();
+        var fig = new PathFigure(new Vector2(cx + r, cy), isClosed: true);
+        
+        float k = 0.552284749831f * r;
+        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx + r, cy + k), new Vector2(cx + k, cy + r), new Vector2(cx, cy + r)));
+        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx - k, cy + r), new Vector2(cx - r, cy + k), new Vector2(cx - r, cy)));
+        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx - r, cy - k), new Vector2(cx - k, cy - r), new Vector2(cx, cy - r)));
+        fig.Segments.Add(new CubicBezierSegment(new Vector2(cx + k, cy - r), new Vector2(cx + r, cy - k), new Vector2(cx + r, cy)));
+        
+        geo.Figures.Add(fig);
+        return geo;
+    }
+
     public override void OnRender(DrawingContext context)
     {
         if (IsActive)
         {
             float cx = Size.X / 2f;
             float cy = Size.Y / 2f;
-            float radius = (Size.X - 6f) / 2f; // Keep dot bounds inside control
+            float radius = (Size.X - 8f) / 2f; // Keep dot bounds inside control nicely
             float dotRadius = 3f;
 
             // Draw 8 circular dots in a loop with a tail fading opacity sweep
@@ -61,7 +76,7 @@ public class ProgressRing : Control
                 // Segoe Accent Blue with dynamic alpha opacity
                 var dotColor = new SolidColorBrush(0x0078D400 | alpha);
 
-                var dotPath = CreateRoundedRect(x - dotRadius, y - dotRadius, dotRadius * 2f, dotRadius * 2f, dotRadius);
+                var dotPath = CreateCirclePath(x, y, dotRadius);
                 context.DrawPath(dotColor, null, dotPath);
             }
 
@@ -73,10 +88,5 @@ public class ProgressRing : Control
         }
 
         base.OnRender(context);
-    }
-
-    private static PathGeometry CreateRoundedRect(float x, float y, float w, float h, float r)
-    {
-        return PathGeometry.Parse(System.FormattableString.Invariant($"M {x+r} {y} H {x+w-r} Q {x+w} {y} {x+w} {y+r} V {y+h-r} Q {x+w} {y+h} {x+w-r} {y+h} H {x+r} Q {x} {y+h} {x} {y+h-r} V {y+r} Q {x} {y} {x+r} {y} Z"));
     }
 }

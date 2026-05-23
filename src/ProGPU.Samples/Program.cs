@@ -94,7 +94,6 @@ public static unsafe class Program
         _window = Window.Create(options);
 
         _window.Load += OnWindowLoad;
-        _window.Update += OnWindowUpdate;
         _window.Render += OnWindowRender;
         _window.Resize += OnWindowResize;
 
@@ -1089,6 +1088,8 @@ public static unsafe class Program
     {
         if (_rootGrid == null || _wgpuContext == null || _window == null) return;
         if (_screenCompositor == null || _offscreenCompositor == null || _compute == null) return;
+
+        OnWindowUpdate(delta);
 
         _frameStopwatch.Restart();
 
