@@ -6,6 +6,7 @@ using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Vector;
 using ProGPU.Text;
+using static System.FormattableString;
 
 namespace ProGPU.WinUI;
 
@@ -154,19 +155,19 @@ public class NavigationViewItem : Control
                 {
                     // Clean computer mouse outline (rounded rect) with a scroll wheel line and active left click panel
                     var pen = new Pen(new SolidColorBrush(0xFFFFFFFF), 1f);
-                    var mouseOutline = PathGeometry.Parse($"M {startX + 6} {startY + 1} H {startX + 10} Q {startX + 13} {startY + 1} {startX + 13} {startY + 4} V {startY + 12} Q {startX + 13} {startY + 15} {startX + 10} {startY + 15} H {startX + 6} Q {startX + 3} {startY + 15} {startX + 3} {startY + 12} V {startY + 4} Q {startX + 3} {startY + 1} {startX + 6} {startY + 1} Z");
+                    var mouseOutline = PathGeometry.Parse(Invariant($"M {startX + 6} {startY + 1} H {startX + 10} Q {startX + 13} {startY + 1} {startX + 13} {startY + 4} V {startY + 12} Q {startX + 13} {startY + 15} {startX + 10} {startY + 15} H {startX + 6} Q {startX + 3} {startY + 15} {startX + 3} {startY + 12} V {startY + 4} Q {startX + 3} {startY + 1} {startX + 6} {startY + 1} Z"));
                     context.DrawPath(new SolidColorBrush(0xFFFFFF15), pen, mouseOutline);
 
                     // Active left click panel (semi-translucent fill)
-                    var leftClick = PathGeometry.Parse($"M {startX + 6} {startY + 1} H {startX + 8} V {startY + 8} H {startX + 3} V {startY + 4} Q {startX + 3} {startY + 1} {startX + 6} {startY + 1} Z");
+                    var leftClick = PathGeometry.Parse(Invariant($"M {startX + 6} {startY + 1} H {startX + 8} V {startY + 8} H {startX + 3} V {startY + 4} Q {startX + 3} {startY + 1} {startX + 6} {startY + 1} Z"));
                     context.DrawPath(new SolidColorBrush(0xFFFFFF80), null, leftClick);
 
                     // Horizontal and vertical split lines
-                    var splitLines = PathGeometry.Parse($"M {startX + 3} {startY + 8} H {startX + 13} M {startX + 8} {startY + 1} V {startY + 8}");
+                    var splitLines = PathGeometry.Parse(Invariant($"M {startX + 3} {startY + 8} H {startX + 13} M {startX + 8} {startY + 1} V {startY + 8}"));
                     context.DrawPath(null, pen, splitLines);
 
                     // Scroll wheel
-                    var wheel = PathGeometry.Parse($"M {startX + 7.2f} {startY + 3} H {startX + 8.8f} V {startY + 6} H {startX + 7.2f} Z");
+                    var wheel = PathGeometry.Parse(Invariant($"M {startX + 7.2f} {startY + 3} H {startX + 8.8f} V {startY + 6} H {startX + 7.2f} Z"));
                     context.DrawPath(new SolidColorBrush(0xFFFFFFFF), null, wheel);
 
                     drewCustomIcon = true;
@@ -187,9 +188,9 @@ public class NavigationViewItem : Control
                 else if (Icon == "📄" || Text == "Text & Documents")
                 {
                     // Document sheet with folded corner and horizontal lines
-                    var docOutline = PathGeometry.Parse($"M {startX + 2} {startY + 1} H {startX + 10} L {startX + 14} {startY + 5} V {startY + 15} H {startX + 2} Z");
-                    var docFold = PathGeometry.Parse($"M {startX + 10} {startY + 1} V {startY + 5} H {startX + 14} Z");
-                    var docLines = PathGeometry.Parse($"M {startX + 4} {startY + 8} H {startX + 12} M {startX + 4} {startY + 10} H {startX + 12} M {startX + 4} {startY + 12} H {startX + 9}");
+                    var docOutline = PathGeometry.Parse(Invariant($"M {startX + 2} {startY + 1} H {startX + 10} L {startX + 14} {startY + 5} V {startY + 15} H {startX + 2} Z"));
+                    var docFold = PathGeometry.Parse(Invariant($"M {startX + 10} {startY + 1} V {startY + 5} H {startX + 14} Z"));
+                    var docLines = PathGeometry.Parse(Invariant($"M {startX + 4} {startY + 8} H {startX + 12} M {startX + 4} {startY + 10} H {startX + 12} M {startX + 4} {startY + 12} H {startX + 9}"));
 
                     context.DrawPath(new SolidColorBrush(0xFFFFFF15), new Pen(new SolidColorBrush(0xFFFFFFFF), 1f), docOutline);
                     context.DrawPath(new SolidColorBrush(0xFFFFFFFF), new Pen(new SolidColorBrush(0xFFFFFFFF), 1f), docFold);
@@ -201,7 +202,7 @@ public class NavigationViewItem : Control
                 {
                     // Bar chart showing 3 ascending bars
                     var axisPen = new Pen(new SolidColorBrush(0xFFFFFF60), 1f);
-                    var axis = PathGeometry.Parse($"M {startX} {startY + 15} H {startX + 16}");
+                    var axis = PathGeometry.Parse(Invariant($"M {startX} {startY + 15} H {startX + 16}"));
                     context.DrawPath(null, axisPen, axis);
 
                     var pen = new Pen(new SolidColorBrush(0xFFFFFFFF), 1f);
@@ -259,7 +260,7 @@ public class NavigationViewItem : Control
                     context.DrawPath(new SolidColorBrush(0xFFFFFF30), new Pen(new SolidColorBrush(0xFFFFFFFF), 1f), gearGeo);
 
                     // Draw inner hole circle of the gear:
-                    var innerHole = PathGeometry.Parse($"M {cx - 2f} {cy} Q {cx - 2f} {cy - 2f} {cx} {cy - 2f} Q {cx + 2f} {cy - 2f} {cx + 2f} {cy} Q {cx + 2f} {cy + 2f} {cx} {cy + 2f} Q {cx - 2f} {cy + 2f} {cx - 2f} {cy} Z");
+                    var innerHole = PathGeometry.Parse(Invariant($"M {cx - 2f} {cy} Q {cx - 2f} {cy - 2f} {cx} {cy - 2f} Q {cx + 2f} {cy - 2f} {cx + 2f} {cy} Q {cx + 2f} {cy + 2f} {cx} {cy + 2f} Q {cx - 2f} {cy + 2f} {cx - 2f} {cy} Z"));
                     context.DrawPath(null, new Pen(new SolidColorBrush(0xFFFFFFFF), 1f), innerHole);
 
                     drewCustomIcon = true;
@@ -294,6 +295,6 @@ public class NavigationViewItem : Control
 
     private static PathGeometry CreateRoundedRect(float x, float y, float w, float h, float r)
     {
-        return PathGeometry.Parse($"M {x+r} {y} H {x+w-r} Q {x+w} {y} {x+w} {y+r} V {y+h-r} Q {x+w} {y+h} {x+w-r} {y+h} H {x+r} Q {x} {y+h} {x} {y+h-r} V {y+r} Q {x} {y} {x+r} {y} Z");
+        return PathGeometry.Parse(Invariant($"M {x+r} {y} H {x+w-r} Q {x+w} {y} {x+w} {y+r} V {y+h-r} Q {x+w} {y+h} {x+w-r} {y+h} H {x+r} Q {x} {y+h} {x} {y+h-r} V {y+r} Q {x} {y} {x+r} {y} Z"));
     }
 }
