@@ -248,6 +248,9 @@ public unsafe class Compositor : IDisposable
     {
         if (_isDisposed) return;
 
+        // Automatically measure and arrange active popups with window dimensions before rendering
+        ProGPU.WinUI.PopupService.MeasureAndArrangePopups(new Vector2(width, height));
+
         // 1. Calculate orthographic projection matrix for modern 2D rendering
         // Maps X in [0, width] to [-1, 1], and Y in [0, height] to [1, -1]
         var projection = new Matrix4x4(
@@ -271,6 +274,47 @@ public unsafe class Compositor : IDisposable
 
         // 3. Compile entire visual tree scene graph into drawing batches
         CompileVisualTree(root, Matrix4x4.Identity);
+
+        // Compile active popups on top
+        for (int i = 0; i < ProGPU.WinUI.PopupService.ActivePopups.Count; i++)
+        {
+            CompileVisualTree(ProGPU.WinUI.PopupService.ActivePopups[i], Matrix4x4.Identity);
+        }
+
+        // Render floating glassmorphic tooltip overlay on top of everything if active
+        var activeToolTip = ProGPU.WinUI.InputSystem.ActiveToolTip;
+        if (activeToolTip != null)
+        {
+            activeToolTip.Measure(new Vector2(width, height));
+            
+            var mousePos = ProGPU.WinUI.InputSystem.LastMousePosition;
+            float tooltipX = mousePos.X + 12f;
+            float tooltipY = mousePos.Y + 20f;
+            
+            // Adjust coordinates to ensure tooltip stays inside window bounds
+            if (tooltipX + activeToolTip.DesiredSize.X > width)
+            {
+                tooltipX = width - activeToolTip.DesiredSize.X - 8f;
+            }
+            if (tooltipX < 0f) tooltipX = 8f;
+            
+            if (tooltipY + activeToolTip.DesiredSize.Y > height)
+            {
+                tooltipY = mousePos.Y - activeToolTip.DesiredSize.Y - 8f;
+            }
+            if (tooltipY < 0f) tooltipY = 8f;
+            
+            activeToolTip.Offset = new Vector2(tooltipX, tooltipY);
+            activeToolTip.Arrange(new Rect(activeToolTip.Offset, activeToolTip.DesiredSize));
+            
+            CompileVisualTree(activeToolTip, Matrix4x4.Identity);
+        }
+
+        // Compile active popup visual overlays topmost
+        foreach (var popup in ProGPU.WinUI.PopupService.ActivePopups)
+        {
+            CompileVisualTree(popup, Matrix4x4.Identity);
+        }
 
         // 4. Upload CPU batches to dynamic GPU buffers
         if (_vectorVerticesList.Count > 0)

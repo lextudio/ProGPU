@@ -36,6 +36,7 @@ public class FrameworkElement : LayoutNode
     public object? Tag { get; set; }
     public bool IsHitTestVisible { get; set; } = true;
     public bool IsEnabled { get; set; } = true;
+    public object? ToolTip { get; set; }
 
     public float Width
     {

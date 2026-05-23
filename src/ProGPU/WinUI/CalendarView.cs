@@ -1,0 +1,287 @@
+using System;
+using System.Numerics;
+using ProGPU.Layout;
+using ProGPU.Scene;
+using ProGPU.Vector;
+
+namespace ProGPU.WinUI;
+
+public class CalendarView : Control
+{
+    private DateTime _displayDate = DateTime.Today;
+    private DateTime? _selectedDate = DateTime.Today;
+    private int _hoveredDayIndex = -1; // Index in 0..41 grid
+
+    // Buttons for month navigation
+    private Rect _prevBtnRect;
+    private Rect _nextBtnRect;
+    private bool _isPrevHovered;
+    private bool _isNextHovered;
+
+    public DateTime DisplayDate
+    {
+        get => _displayDate;
+        set { _displayDate = value; Invalidate(); }
+    }
+
+    public DateTime? SelectedDate
+    {
+        get => _selectedDate;
+        set
+        {
+            if (_selectedDate != value)
+            {
+                _selectedDate = value;
+                if (value.HasValue)
+                {
+                    _displayDate = value.Value;
+                }
+                Invalidate();
+                SelectedDatesChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public event EventHandler? SelectedDatesChanged;
+
+    public CalendarView()
+    {
+        Width = 240f;
+        Height = 270f;
+        Background = new SolidColorBrush(0x13131AFF); // Fluent v3 Acrylic-dark
+        BorderBrush = new SolidColorBrush(0xFFFFFF12); // Translucent border
+        BorderThickness = new Thickness(1f);
+        CornerRadius = 6f;
+    }
+
+    protected override Vector2 MeasureOverride(Vector2 availableSize)
+    {
+        return new Vector2(Width, Height);
+    }
+
+    private Rect[] GetDayRects(out float cellW, out float cellH)
+    {
+        float gridY = 70f; // Start of month days grid
+        float gridW = Size.X - 16f;
+        float gridH = Size.Y - gridY - 8f;
+        cellW = gridW / 7f;
+        cellH = gridH / 6f;
+
+        var rects = new Rect[42];
+        for (int i = 0; i < 42; i++)
+        {
+            int row = i / 7;
+            int col = i % 7;
+            float x = 8f + col * cellW;
+            float y = gridY + row * cellH;
+            rects[i] = new Rect(x, y, cellW, cellH);
+        }
+        return rects;
+    }
+
+    public override void OnPointerMoved(PointerRoutedEventArgs e)
+    {
+        var localPos = e.Position;
+        
+        // 1. Check prev/next month button hovers
+        bool wasPrevHovered = _isPrevHovered;
+        bool wasNextHovered = _isNextHovered;
+        _isPrevHovered = _prevBtnRect.Contains(localPos);
+        _isNextHovered = _nextBtnRect.Contains(localPos);
+
+        if (wasPrevHovered != _isPrevHovered || wasNextHovered != _isNextHovered)
+        {
+            Invalidate();
+        }
+
+        // 2. Check calendar day grid hovers
+        float cellW, cellH;
+        var dayRects = GetDayRects(out cellW, out cellH);
+        int oldHoverIndex = _hoveredDayIndex;
+        _hoveredDayIndex = -1;
+
+        for (int i = 0; i < 42; i++)
+        {
+            if (dayRects[i].Contains(localPos))
+            {
+                _hoveredDayIndex = i;
+                break;
+            }
+        }
+
+        if (oldHoverIndex != _hoveredDayIndex)
+        {
+            Invalidate();
+        }
+
+        base.OnPointerMoved(e);
+    }
+
+    public override void OnPointerPressed(PointerRoutedEventArgs e)
+    {
+        var localPos = e.Position;
+
+        // 1. Navigation Button Clicks
+        if (_prevBtnRect.Contains(localPos))
+        {
+            DisplayDate = _displayDate.AddMonths(-1);
+            e.Handled = true;
+            return;
+        }
+        if (_nextBtnRect.Contains(localPos))
+        {
+            DisplayDate = _displayDate.AddMonths(1);
+            e.Handled = true;
+            return;
+        }
+
+        // 2. Day Cell Clicks
+        float cellW, cellH;
+        var dayRects = GetDayRects(out cellW, out cellH);
+        for (int i = 0; i < 42; i++)
+        {
+            if (dayRects[i].Contains(localPos))
+            {
+                var targetDate = GetDateForIndex(i);
+                SelectedDate = targetDate;
+                e.Handled = true;
+                break;
+            }
+        }
+
+        base.OnPointerPressed(e);
+    }
+
+    public override void OnPointerReleased(PointerRoutedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+    }
+
+    private DateTime GetDateForIndex(int index)
+    {
+        var firstOfMonth = new DateTime(_displayDate.Year, _displayDate.Month, 1);
+        int dayOfWeekOffset = (int)firstOfMonth.DayOfWeek; // 0 for Sunday
+        
+        // Days backward to start grid from Sunday
+        int daysBack = dayOfWeekOffset; 
+        return firstOfMonth.AddDays(index - daysBack);
+    }
+
+    public override void OnRender(DrawingContext context)
+    {
+        var font = PopupService.DefaultFont;
+        if (font == null)
+        {
+            base.OnRender(context);
+            return;
+        }
+
+        // 1. Render main container card backdrop and border outline
+        var rect = new Rect(Vector2.Zero, Size);
+        context.DrawPath(
+            Background, 
+            new Pen(BorderBrush ?? new SolidColorBrush(0xFFFFFF12), BorderThickness.Left), 
+            CreateRoundedRect(rect.X, rect.Y, rect.Width, rect.Height, CornerRadius)
+        );
+
+        // 2. Render month navigation header bar
+        string monthTitle = _displayDate.ToString("MMMM yyyy");
+        context.DrawText(monthTitle, font, 14f, new SolidColorBrush(0xFFFFFFFF), new Vector2(16f, 12f));
+
+        // Arrow button rectangles
+        float arrowY = 10f;
+        _prevBtnRect = new Rect(Size.X - 68f, arrowY, 24f, 24f);
+        _nextBtnRect = new Rect(Size.X - 36f, arrowY, 24f, 24f);
+
+        // Prev month button (◀)
+        var prevBrush = _isPrevHovered ? new SolidColorBrush(0xFFFFFF30) : new SolidColorBrush(0xFFFFFF10);
+        context.DrawPath(prevBrush, null, CreateRoundedRect(_prevBtnRect.X, _prevBtnRect.Y, 24f, 24f, 4f));
+        context.DrawText("◀", font, 10f, new SolidColorBrush(0xFFFFFFFF), new Vector2(_prevBtnRect.X + 7f, _prevBtnRect.Y + 6f));
+
+        // Next month button (▶)
+        var nextBrush = _isNextHovered ? new SolidColorBrush(0xFFFFFF30) : new SolidColorBrush(0xFFFFFF10);
+        context.DrawPath(nextBrush, null, CreateRoundedRect(_nextBtnRect.X, _nextBtnRect.Y, 24f, 24f, 4f));
+        context.DrawText("▶", font, 10f, new SolidColorBrush(0xFFFFFFFF), new Vector2(_nextBtnRect.X + 7f, _nextBtnRect.Y + 6f));
+
+        // 3. Render day-of-week header column names
+        string[] daysOfWeek = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" };
+        float cellW, cellH;
+        var dayRects = GetDayRects(out cellW, out cellH);
+        
+        for (int i = 0; i < 7; i++)
+        {
+            float headerX = 8f + i * cellW + (cellW - 14f) / 2f;
+            context.DrawText(daysOfWeek[i], font, 11f, new SolidColorBrush(0xFFFFFF80), new Vector2(headerX, 48f));
+        }
+
+        // Horizontal separator line under day names (1px thin rectangle)
+        context.DrawRectangle(new SolidColorBrush(0xFFFFFF10), null, new Rect(8f, 64f, Size.X - 16f, 1f));
+
+        // 4. Render month days grid
+        var firstOfMonth = new DateTime(_displayDate.Year, _displayDate.Month, 1);
+        int currentMonth = _displayDate.Month;
+
+        for (int i = 0; i < 42; i++)
+        {
+            var cellRect = dayRects[i];
+            var date = GetDateForIndex(i);
+
+            bool isSelected = SelectedDate.HasValue && SelectedDate.Value.Date == date.Date;
+            bool isToday = DateTime.Today.Date == date.Date;
+            bool isCurrentMonth = date.Month == currentMonth;
+            bool isHovered = _hoveredDayIndex == i;
+
+            // Highlight backgrounds
+            if (isSelected)
+            {
+                // Active blue solid background
+                var fill = new SolidColorBrush(0x0078D4FF);
+                context.DrawPath(fill, null, CreateRoundedRect(cellRect.X + 2f, cellRect.Y + 2f, cellRect.Width - 4f, cellRect.Height - 4f, 4f));
+            }
+            else if (isHovered)
+            {
+                // Subtle glowing glass card border on hover
+                var fill = new SolidColorBrush(0xFFFFFF15);
+                var pen = new Pen(new SolidColorBrush(0xFFFFFF30), 1f);
+                context.DrawPath(fill, pen, CreateRoundedRect(cellRect.X + 2f, cellRect.Y + 2f, cellRect.Width - 4f, cellRect.Height - 4f, 4f));
+            }
+            else if (isToday)
+            {
+                // White accent border for today
+                var pen = new Pen(new SolidColorBrush(0xFFFFFFFF), 1f);
+                context.DrawPath(null, pen, CreateRoundedRect(cellRect.X + 2f, cellRect.Y + 2f, cellRect.Width - 4f, cellRect.Height - 4f, 4f));
+            }
+
+            // Foreground text color
+            SolidColorBrush textBrush;
+            if (isSelected)
+            {
+                textBrush = new SolidColorBrush(0xFFFFFFFF);
+            }
+            else if (isCurrentMonth)
+            {
+                textBrush = new SolidColorBrush(0xFFFFFFFF);
+            }
+            else
+            {
+                // Muted/translucent grey for days outside the current month boundaries
+                textBrush = new SolidColorBrush(0xFFFFFF50);
+            }
+
+            string dayText = date.Day.ToString();
+            // Center number in cell
+            float textOffsetW = dayText.Length == 1 ? 5f : 8f;
+            float numX = cellRect.X + (cellRect.Width - textOffsetW - 6f) / 2f;
+            float numY = cellRect.Y + (cellRect.Height - 12f) / 2f;
+
+            context.DrawText(dayText, font, 11f, textBrush, new Vector2(numX, numY));
+        }
+
+        base.OnRender(context);
+    }
+
+    private static PathGeometry CreateRoundedRect(float x, float y, float w, float h, float r)
+    {
+        return PathGeometry.Parse(System.FormattableString.Invariant($"M {x+r} {y} H {x+w-r} Q {x+w} {y} {x+w} {y+r} V {y+h-r} Q {x+w} {y+h} {x+w-r} {y+h} H {x+r} Q {x} {y+h} {x} {y+h-r} V {y+r} Q {x} {y} {x+r} {y} Z"));
+    }
+}

@@ -16,6 +16,10 @@ public static class InputSystem
     private static FrameworkElement? _capturedElement;
     private static bool _isShiftPressed;
 
+    private static System.Threading.CancellationTokenSource? _hoverCancellation;
+    private static ToolTip? _activeToolTip;
+    private static FrameworkElement? _hoveredElementForTimer;
+
     public static FrameworkElement? Root
     {
         get => _root;
@@ -24,6 +28,20 @@ public static class InputSystem
 
     public static FrameworkElement? HoveredElement => _hoveredElement;
     public static FrameworkElement? FocusedElement => _focusedElement;
+    public static Vector2 LastMousePosition => _lastMousePos;
+
+    public static ToolTip? ActiveToolTip
+    {
+        get => _activeToolTip;
+        private set
+        {
+            if (_activeToolTip != value)
+            {
+                _activeToolTip = value;
+                _root?.Invalidate();
+            }
+        }
+    }
 
     public static void CapturePointer(FrameworkElement? element)
     {
@@ -75,6 +93,14 @@ public static class InputSystem
 
     public static FrameworkElement? HitTest(Vector2 screenPoint)
     {
+        // First, check active popups in reverse order (topmost first)
+        for (int i = PopupService.ActivePopups.Count - 1; i >= 0; i--)
+        {
+            var popup = PopupService.ActivePopups[i];
+            var hit = HitTestInternal(popup, screenPoint, Vector2.Zero);
+            if (hit != null) return hit;
+        }
+
         if (_root == null) return null;
         return HitTestInternal(_root, screenPoint, Vector2.Zero);
     }
@@ -185,6 +211,7 @@ public static class InputSystem
             }
 
             _hoveredElement = hit;
+            ResetHoverTimer(hit);
         }
 
         if (_hoveredElement != null)
@@ -199,9 +226,38 @@ public static class InputSystem
 
     private static void OnMouseDown(MouseButton button)
     {
+        _hoverCancellation?.Cancel();
+        _hoverCancellation = null;
+        DismissToolTip();
+
         if (button != MouseButton.Left) return;
 
         var hit = HitTest(_lastMousePos);
+
+        // Click-outside auto-dismissal for popups
+        if (PopupService.ActivePopups.Count > 0)
+        {
+            var topmostPopup = PopupService.ActivePopups[^1];
+            bool isInsidePopup = false;
+            var current = hit;
+            while (current != null)
+            {
+                if (current == topmostPopup)
+                {
+                    isInsidePopup = true;
+                    break;
+                }
+                current = current.Parent as FrameworkElement;
+            }
+
+            if (!isInsidePopup && topmostPopup is not ContentDialog)
+            {
+                PopupService.HidePopup(topmostPopup);
+                // Re-hit-test since the popup has been closed
+                hit = HitTest(_lastMousePos);
+            }
+        }
+
         if (hit != null)
         {
             hit.OnPointerPressed(new PointerRoutedEventArgs
@@ -248,6 +304,10 @@ public static class InputSystem
 
     private static void OnMouseScroll(Vector2 scroll)
     {
+        _hoverCancellation?.Cancel();
+        _hoverCancellation = null;
+        DismissToolTip();
+
         var hit = HitTest(_lastMousePos);
         if (hit != null)
         {
@@ -262,6 +322,10 @@ public static class InputSystem
 
     private static void OnKeyDown(Key key)
     {
+        _hoverCancellation?.Cancel();
+        _hoverCancellation = null;
+        DismissToolTip();
+
         if (key == Key.ShiftLeft || key == Key.ShiftRight)
         {
             _isShiftPressed = true;
@@ -354,6 +418,64 @@ public static class InputSystem
             {
                 GatherFocusableElements(child, list);
             }
+        }
+    }
+
+    private static void ResetHoverTimer(FrameworkElement? element)
+    {
+        _hoverCancellation?.Cancel();
+        _hoverCancellation = null;
+        
+        _hoveredElementForTimer = element;
+
+        if (element == null || element.ToolTip == null)
+        {
+            DismissToolTip();
+            return;
+        }
+
+        if (ActiveToolTip != null && _hoveredElementForTimer == element)
+        {
+            return;
+        }
+
+        DismissToolTip();
+
+        var cts = new System.Threading.CancellationTokenSource();
+        _hoverCancellation = cts;
+        
+        System.Threading.Tasks.Task.Delay(500, cts.Token).ContinueWith(t =>
+        {
+            if (t.Status == System.Threading.Tasks.TaskStatus.RanToCompletion && !cts.IsCancellationRequested)
+            {
+                ShowToolTip(element);
+            }
+        }, System.Threading.Tasks.TaskScheduler.Default);
+    }
+
+    private static void ShowToolTip(FrameworkElement element)
+    {
+        var rawToolTip = element.ToolTip;
+        if (rawToolTip == null) return;
+
+        ToolTip tooltip;
+        if (rawToolTip is ToolTip tooltipInstance)
+        {
+            tooltip = tooltipInstance;
+        }
+        else
+        {
+            tooltip = new ToolTip { Content = rawToolTip };
+        }
+
+        ActiveToolTip = tooltip;
+    }
+
+    public static void DismissToolTip()
+    {
+        if (ActiveToolTip != null)
+        {
+            ActiveToolTip = null;
         }
     }
 }
