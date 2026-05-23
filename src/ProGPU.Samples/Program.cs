@@ -33,6 +33,10 @@ public static unsafe class Program
     private static Compositor? _devToolsCompositor;
 
     private static TtfFont? _font;
+    private static TtfFont? _fontTimes;
+    private static TtfFont? _fontCourier;
+    private static TtfFont? _fontGeorgia;
+    private static TtfFont? _fontComic;
     private static ProGPU.WinUI.Grid? _rootGrid;
     private static ProGPU.WinUI.Grid? _topLevelGrid;
     private static ProGPU.WinUI.DevTools? _devToolsPanel;
@@ -84,6 +88,10 @@ public static unsafe class Program
     public static float GetBlurRadius() => _blurRadius;
     public static float GetShadowRadius() => _shadowRadius;
     public static TtfFont? GetFont() => _font;
+    public static TtfFont? GetFontTimes() => _fontTimes;
+    public static TtfFont? GetFontCourier() => _fontCourier;
+    public static TtfFont? GetFontGeorgia() => _fontGeorgia;
+    public static TtfFont? GetFontComic() => _fontComic;
 
     public static void Main()
     {
@@ -144,6 +152,24 @@ public static unsafe class Program
         {
             throw new FileNotFoundException("Arial.ttf is required to execute typography. Ensure standard Arial TrueType font path is available.");
         }
+
+        // Load other supplementary fonts safely with fallback to primary font
+        string timesPath = "/System/Library/Fonts/Supplemental/Times New Roman.ttf";
+        if (File.Exists(timesPath)) _fontTimes = new TtfFont(timesPath);
+        else _fontTimes = _font;
+
+        string courierPath = "/System/Library/Fonts/Supplemental/Courier New.ttf";
+        if (File.Exists(courierPath)) _fontCourier = new TtfFont(courierPath);
+        else _fontCourier = _font;
+
+        string georgiaPath = "/System/Library/Fonts/Supplemental/Georgia.ttf";
+        if (File.Exists(georgiaPath)) _fontGeorgia = new TtfFont(georgiaPath);
+        else _fontGeorgia = _font;
+
+        string comicPath = "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf";
+        if (File.Exists(comicPath)) _fontComic = new TtfFont(comicPath);
+        else _fontComic = _font;
+
 
         _canvasSourceTexture = new GpuTexture(_wgpuContext, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc);
@@ -294,6 +320,8 @@ public static unsafe class Program
         var fileStorageItem = new NavigationViewItem("File Storage", "📁", SamplePagePresenter.CreateFileStorageShowcaseView());
         var stylesShowcaseItem = new NavigationViewItem("Styles Showcase", "💅", SamplePagePresenter.CreateStylesShowcaseView());
         var motionMarkItem = new NavigationViewItem("MotionMark Showcase", "🏁", SamplePagePresenter.CreateMotionMarkShowcaseView());
+        var scriptsItem = new NavigationViewItem("Typography & Scripts", "🔤", SamplePagePresenter.CreateTypographyScriptsView());
+        var textInputItem = new NavigationViewItem("Interactive Input", "⌨️", SamplePagePresenter.CreateInteractiveInputView());
 
         _navigationView.MenuItems.Add(basicInputItem);
         _navigationView.MenuItems.Add(panelsItem);
@@ -309,6 +337,9 @@ public static unsafe class Program
         _navigationView.MenuItems.Add(fileStorageItem);
         _navigationView.MenuItems.Add(stylesShowcaseItem);
         _navigationView.MenuItems.Add(motionMarkItem);
+        _navigationView.MenuItems.Add(scriptsItem);
+        _navigationView.MenuItems.Add(textInputItem);
+
 
         _navigationView.SelectionChanged += (s, e) =>
         {
@@ -3544,7 +3575,451 @@ public static class SamplePagePresenter
 
         return stack;
     }
+
+    public static FrameworkElement CreateTypographyScriptsView()
+    {
+        var scroll = new ScrollViewer { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+        var stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(16) };
+        scroll.Content = stack;
+
+        var title = new RichTextBlock { Font = Program.GetFont(), FontSize = 18f, Margin = new Thickness(0, 0, 0, 8) };
+        title.Inlines.Add(new Bold(new Run("🔤 Advanced Typography, Unicode & Language Scripts")));
+        stack.AddChild(title);
+
+        var description = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20), Foreground = ThemeManager.GetBrush("TextSecondary") };
+        description.Inlines.Add(new Run("This page showcases the high-performance rendering of different language scripts, custom system fonts, and Unicode symbol outlines on the GPU. Settings altered in the configuration card apply dynamically to all script panels."));
+        stack.AddChild(description);
+
+        var grid = new ProGPU.WinUI.Grid();
+        grid.ColumnDefinitions.Add(new GridLength(280f, GridUnitType.Absolute)); // Settings Sidebar
+        grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Scripts Dashboard
+
+        // Left Panel: Configuration Card
+        var settingsCard = new Border
+        {
+            CornerRadius = 8f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("ControlBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 16, 0),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        var settingsStack = new StackPanel { Orientation = Orientation.Vertical };
+        settingsCard.Child = settingsStack;
+
+        // ComboBox for Font Family
+        var fontLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 6) };
+        fontLabel.Inlines.Add(new Bold(new Run("Choose Font Family:")));
+        settingsStack.AddChild(fontLabel);
+
+        var fontCombo = new ComboBox { Font = Program.GetFont(), WidthConstraint = 240f, Margin = new Thickness(0, 0, 0, 16) };
+        var itemArial = new ComboBoxItem("Arial (Primary)");
+        var itemTimes = new ComboBoxItem("Times New Roman");
+        var itemCourier = new ComboBoxItem("Courier New");
+        var itemGeorgia = new ComboBoxItem("Georgia");
+        var itemComic = new ComboBoxItem("Comic Sans MS");
+        fontCombo.Items.Add(itemArial);
+        fontCombo.Items.Add(itemTimes);
+        fontCombo.Items.Add(itemCourier);
+        fontCombo.Items.Add(itemGeorgia);
+        fontCombo.Items.Add(itemComic);
+        fontCombo.SelectedItem = itemArial;
+        settingsStack.AddChild(fontCombo);
+
+        // Slider for Size
+        var sizeLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        sizeLabel.Inlines.Add(new Bold(new Run("Global Font Size: 16")));
+        settingsStack.AddChild(sizeLabel);
+
+        var sizeSlider = new ProGPU.WinUI.Slider { Minimum = 12f, Maximum = 32f, Value = 16f, Margin = new Thickness(0, 0, 0, 16) };
+        settingsStack.AddChild(sizeSlider);
+
+        // ComboBox for Alignment
+        var alignLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 6) };
+        alignLabel.Inlines.Add(new Bold(new Run("Text Alignment:")));
+        settingsStack.AddChild(alignLabel);
+
+        var alignCombo = new ComboBox { Font = Program.GetFont(), WidthConstraint = 240f, Margin = new Thickness(0, 0, 0, 16) };
+        var alignLeft = new ComboBoxItem("Left");
+        var alignCenter = new ComboBoxItem("Center");
+        var alignRight = new ComboBoxItem("Right");
+        var alignJustify = new ComboBoxItem("Justify");
+        alignCombo.Items.Add(alignLeft);
+        alignCombo.Items.Add(alignCenter);
+        alignCombo.Items.Add(alignRight);
+        alignCombo.Items.Add(alignJustify);
+        alignCombo.SelectedItem = alignLeft;
+        settingsStack.AddChild(alignCombo);
+
+        grid.AddChild(settingsCard);
+        ProGPU.WinUI.Grid.SetColumn(settingsCard, 0);
+
+        // Right Panel: Scripts List
+        var dashboardStack = new StackPanel { Orientation = Orientation.Vertical };
+        grid.AddChild(dashboardStack);
+        ProGPU.WinUI.Grid.SetColumn(dashboardStack, 1);
+
+        var textBlocks = new List<RichTextBlock>();
+
+        // Card 1: Latin
+        var latinCard = new Border
+        {
+            CornerRadius = 6f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("CardBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 0, 16f)
+        };
+        var latinStack = new StackPanel { Orientation = Orientation.Vertical };
+        latinCard.Child = latinStack;
+        var latinHeader = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
+        latinHeader.Inlines.Add(new Bold(new Run("Latin & English Formatted Runs")));
+        latinStack.AddChild(latinHeader);
+        var latinBody = new RichTextBlock { Font = Program.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        latinBody.Inlines.Add(new Run("Standard Roman characters can be formatted into custom runs: "));
+        latinBody.Inlines.Add(new Bold(new Run("Bold weight run, ")));
+        latinBody.Inlines.Add(new Italic(new Run("Italicized slant run, ")));
+        latinBody.Inlines.Add(new Run("or "));
+        latinBody.Inlines.Add(new Underline(new Run("Underlined highlight segments.")));
+        latinStack.AddChild(latinBody);
+        textBlocks.Add(latinBody);
+        dashboardStack.AddChild(latinCard);
+
+        // Card 2: Cyrillic
+        var cyrillicCard = new Border
+        {
+            CornerRadius = 6f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("CardBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 0, 16f)
+        };
+        var cyrillicStack = new StackPanel { Orientation = Orientation.Vertical };
+        cyrillicCard.Child = cyrillicStack;
+        var cyrillicHeader = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
+        cyrillicHeader.Inlines.Add(new Bold(new Run("Cyrillic Script (Russian Poetry & Pangram)")));
+        cyrillicStack.AddChild(cyrillicHeader);
+        var cyrillicBody = new RichTextBlock { Font = Program.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        cyrillicBody.Inlines.Add(new Run("Съешь же ещё этих мягких французских булок, да выпей чаю. Широкая электрификация южных губерний даст мощный толчок подъёму сельского хозяйства."));
+        cyrillicStack.AddChild(cyrillicBody);
+        textBlocks.Add(cyrillicBody);
+        dashboardStack.AddChild(cyrillicCard);
+
+        // Card 3: Greek
+        var greekCard = new Border
+        {
+            CornerRadius = 6f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("CardBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 0, 16f)
+        };
+        var greekStack = new StackPanel { Orientation = Orientation.Vertical };
+        greekCard.Child = greekStack;
+        var greekHeader = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
+        greekHeader.Inlines.Add(new Bold(new Run("Hellenic / Greek Script & Mathematical Formulas")));
+        greekStack.AddChild(greekHeader);
+        var greekBody = new RichTextBlock { Font = Program.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        greekBody.Inlines.Add(new Run("Φύλλα δάφνης στην κεφαλή των ποιητών. E = mc² | ∫(x²)dx = x³/3 | e^(iπ) + 1 = 0 | Σ(n) for n=1 to ∞."));
+        greekStack.AddChild(greekBody);
+        textBlocks.Add(greekBody);
+        dashboardStack.AddChild(greekCard);
+
+        // Card 4: Japanese CJK
+        var cjkCard = new Border
+        {
+            CornerRadius = 6f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("CardBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 0, 16f)
+        };
+        var cjkStack = new StackPanel { Orientation = Orientation.Vertical };
+        cjkCard.Child = cjkStack;
+        var cjkHeader = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
+        cjkHeader.Inlines.Add(new Bold(new Run("Japanese CJK Outlines (Hiragana, Katakana & Kanji)")));
+        cjkStack.AddChild(cjkHeader);
+        var cjkBody = new RichTextBlock { Font = Program.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        cjkBody.Inlines.Add(new Run("色は匂へと散りぬるを我が世誰ぞ常ならむ有為の奥山今日越えて浅き夢見じ酔ひもせず。プロジーピーユーへようこそ！"));
+        cjkStack.AddChild(cjkBody);
+        textBlocks.Add(cjkBody);
+        dashboardStack.AddChild(cjkCard);
+
+        // Card 5: Emoji Vector outlines
+        var emojiCard = new Border
+        {
+            CornerRadius = 6f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("CardBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 0, 8f)
+        };
+        var emojiStack = new StackPanel { Orientation = Orientation.Vertical };
+        emojiCard.Child = emojiStack;
+        var emojiHeader = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
+        emojiHeader.Inlines.Add(new Bold(new Run("Real Font-Driven Color Emoji / Unicode Outlines")));
+        emojiStack.AddChild(emojiHeader);
+        var emojiBody = new RichTextBlock { Font = Program.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        emojiBody.Inlines.Add(new Run("Unicode premium symbols: ★, ♠, ♦, ♣, ♥, ✔, ▲, ▼ parsed directly from the system TTF binary and rendered onto the GPU canvas with zero CPU triangulation overhead!"));
+        emojiStack.AddChild(emojiBody);
+        textBlocks.Add(emojiBody);
+        dashboardStack.AddChild(emojiCard);
+
+        // Dynamic Settings Hookups
+        Action updateVisuals = () =>
+        {
+            TtfFont f = fontCombo.SelectedItem?.Text switch
+            {
+                "Arial (Primary)" => Program.GetFont()!,
+                "Times New Roman" => Program.GetFontTimes() ?? Program.GetFont()!,
+                "Courier New" => Program.GetFontCourier() ?? Program.GetFont()!,
+                "Georgia" => Program.GetFontGeorgia() ?? Program.GetFont()!,
+                "Comic Sans MS" => Program.GetFontComic() ?? Program.GetFont()!,
+                _ => Program.GetFont()!
+            };
+
+            float sz = sizeSlider.Value;
+            sizeLabel.Inlines.Clear();
+            sizeLabel.Inlines.Add(new Bold(new Run($"Global Font Size: {sz:F0}")));
+            sizeLabel.Invalidate();
+
+            TextAlignment align = alignCombo.SelectedItem?.Text switch
+            {
+                "Left" => TextAlignment.Left,
+                "Center" => TextAlignment.Center,
+                "Right" => TextAlignment.Right,
+                "Justify" => TextAlignment.Justify,
+                _ => TextAlignment.Left
+            };
+
+            foreach (var tb in textBlocks)
+            {
+                tb.Font = f;
+                tb.FontSize = sz;
+                tb.TextAlignment = align;
+                tb.Invalidate();
+            }
+        };
+
+        fontCombo.SelectionChanged += (s, e) => updateVisuals();
+        sizeSlider.ValueChanged += (s, e) => updateVisuals();
+        alignCombo.SelectionChanged += (s, e) => updateVisuals();
+
+        // Run initial sizing update
+        updateVisuals();
+
+        stack.AddChild(grid);
+        return scroll;
+    }
+
+    public static FrameworkElement CreateInteractiveInputView()
+    {
+        var grid = new ProGPU.WinUI.Grid();
+        grid.ColumnDefinitions.Add(new GridLength(260f, GridUnitType.Absolute)); // Sidebar templates
+        grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Interactive text inputs
+
+        var leftStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(16, 16, 0, 16) };
+        grid.AddChild(leftStack);
+        ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+
+        var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(16) };
+        grid.AddChild(rightStack);
+        ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+
+        // Title and Header
+        var title = new RichTextBlock { Font = Program.GetFont(), FontSize = 18f, Margin = new Thickness(0, 0, 0, 8) };
+        title.Inlines.Add(new Bold(new Run("⌨️ Multi-Script Interactive Text Input")));
+        rightStack.AddChild(title);
+
+        var description = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20), Foreground = ThemeManager.GetBrush("TextSecondary") };
+        description.Inlines.Add(new Run("Type, edit, and navigate through different scripts interactively. The caret details HUD decodes Unicode surrogate-pairs behind the cursor in real-time."));
+        rightStack.AddChild(description);
+
+        // Sidebar content: Templates Card
+        var templatesCard = new Border
+        {
+            CornerRadius = 8f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("ControlBackground"),
+            Padding = new Thickness(16f),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        leftStack.AddChild(templatesCard);
+
+        var templatesStack = new StackPanel { Orientation = Orientation.Vertical };
+        templatesCard.Child = templatesStack;
+
+        var sidebarTitle = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 12f) };
+        sidebarTitle.Inlines.Add(new Bold(new Run("Load Sample Template:")));
+        templatesStack.AddChild(sidebarTitle);
+
+        // Inputs Setup
+        var inputBox = new TextBox 
+        { 
+            Font = Program.GetFont(), 
+            Text = "Type or choose a visual template...", 
+            WidthConstraint = 480f, 
+            HeightConstraint = 36f, 
+            FontSize = 14f,
+            Margin = new Thickness(0, 0, 0, 20) 
+        };
+
+        var richPlayground = new RichEditBox 
+        { 
+            Font = Program.GetFont(), 
+            WidthConstraint = 480f, 
+            HeightConstraint = 160f,
+            FontSize = 14f,
+            Margin = new Thickness(0, 0, 0, 20) 
+        };
+
+        // Templates Action Buttons
+        var btnLatin = new Button { WidthConstraint = 210f, HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 8) };
+        var btnLatinText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        btnLatinText.Inlines.Add(new Run("Standard English"));
+        btnLatin.Content = btnLatinText;
+        templatesStack.AddChild(btnLatin);
+
+        var btnCyrillic = new Button { WidthConstraint = 210f, HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 8) };
+        var btnCyrillicText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        btnCyrillicText.Inlines.Add(new Run("Russian (Cyrillic)"));
+        btnCyrillic.Content = btnCyrillicText;
+        templatesStack.AddChild(btnCyrillic);
+
+        var btnGreek = new Button { WidthConstraint = 210f, HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 8) };
+        var btnGreekText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        btnGreekText.Inlines.Add(new Run("Greek (Hellenic)"));
+        btnGreek.Content = btnGreekText;
+        templatesStack.AddChild(btnGreek);
+
+        var btnJapanese = new Button { WidthConstraint = 210f, HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 8) };
+        var btnJapaneseText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        btnJapaneseText.Inlines.Add(new Run("Japanese CJK"));
+        btnJapanese.Content = btnJapaneseText;
+        templatesStack.AddChild(btnJapanese);
+
+        var btnSymbols = new Button { WidthConstraint = 210f, HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 8) };
+        var btnSymbolsText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        btnSymbolsText.Inlines.Add(new Run("Unicode Symbols"));
+        btnSymbols.Content = btnSymbolsText;
+        templatesStack.AddChild(btnSymbols);
+
+        // Sidebar templates click logic
+        btnLatin.Click += (s, e) => { inputBox.Text = "ProGPU features high-performance typographic runs!"; inputBox.CaretIndex = inputBox.Text.Length; };
+        btnCyrillic.Click += (s, e) => { inputBox.Text = "Привет от ProGPU! Высокопроизводительный рендеринг текста."; inputBox.CaretIndex = inputBox.Text.Length; };
+        btnGreek.Click += (s, e) => { inputBox.Text = "Καλώς ορίσατε στο ProGPU! Υψηλής απόδοσης γραφικά vector."; inputBox.CaretIndex = inputBox.Text.Length; };
+        btnJapanese.Click += (s, e) => { inputBox.Text = "プロジーピーユーへようこそ！最高速度のGPU描画エンジン。"; inputBox.CaretIndex = inputBox.Text.Length; };
+        btnSymbols.Click += (s, e) => { inputBox.Text = "Dynamic symbols: ★ ♠ ♦ ♣ ♥ ✔ ▲ ▼ outlines parsed on GPU!"; inputBox.CaretIndex = inputBox.Text.Length; };
+
+        // Right Content: TextBox & RichEditBox
+        var labelInput = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 6) };
+        labelInput.Inlines.Add(new Bold(new Run("Interactive TextBox (Single-Line Inputs):")));
+        rightStack.AddChild(labelInput);
+        rightStack.AddChild(inputBox);
+
+        var labelRich = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 6) };
+        labelRich.Inlines.Add(new Bold(new Run("Interactive RichEditBox Playground (Select and format text with Ctrl+B/I/U):")));
+        rightStack.AddChild(labelRich);
+        rightStack.AddChild(richPlayground);
+
+        // HUD panel for Caret Details
+        var hudPanel = new Border
+        {
+            CornerRadius = 6f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("CardBackground"),
+            Padding = new Thickness(14f),
+            WidthConstraint = 480f
+        };
+        var hudStack = new StackPanel { Orientation = Orientation.Vertical };
+        hudPanel.Child = hudStack;
+
+        var hudTitle = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
+        hudTitle.Inlines.Add(new Bold(new Run("Caret HUD Status Subsystem")));
+        hudStack.AddChild(hudTitle);
+
+        var hudCharCount = new RichTextBlock { Font = Program.GetFont(), FontSize = 11.5f, Foreground = ThemeManager.GetBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 4f) };
+        hudCharCount.Inlines.Add(new Run("Text Length: 0 characters"));
+        hudStack.AddChild(hudCharCount);
+
+        var hudCaretPos = new RichTextBlock { Font = Program.GetFont(), FontSize = 11.5f, Foreground = ThemeManager.GetBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 4f) };
+        hudCaretPos.Inlines.Add(new Run("Caret Position: 0"));
+        hudStack.AddChild(hudCaretPos);
+
+        var hudCodePoint = new RichTextBlock { Font = Program.GetFont(), FontSize = 11.5f, Foreground = ThemeManager.GetBrush("SystemAccentColor") };
+        hudCodePoint.Inlines.Add(new Run("Active CodePoint behind cursor: U+0000 ('N/A')"));
+        hudStack.AddChild(hudCodePoint);
+
+        rightStack.AddChild(hudPanel);
+
+        // Update logic
+        Action updateHud = () =>
+        {
+            string txt = inputBox.Text;
+            int caret = inputBox.CaretIndex;
+
+            hudCharCount.Inlines.Clear();
+            hudCharCount.Inlines.Add(new Run($"Text Length: {txt.Length} characters"));
+            hudCharCount.Invalidate();
+
+            hudCaretPos.Inlines.Clear();
+            hudCaretPos.Inlines.Add(new Run($"Caret Position: {caret}"));
+            hudCaretPos.Invalidate();
+
+            string activeCharText = "Active CodePoint behind cursor: U+0000 ('N/A')";
+            if (caret > 0 && caret <= txt.Length)
+            {
+                int index = caret - 1;
+                int codePoint = txt[index];
+                if (char.IsLowSurrogate(txt[index]) && index > 0 && char.IsHighSurrogate(txt[index - 1]))
+                {
+                    codePoint = char.ConvertToUtf32(txt[index - 1], txt[index]);
+                }
+                string displayChar = char.IsControl((char)codePoint) ? "Control" : char.ConvertFromUtf32(codePoint);
+                activeCharText = $"Active CodePoint behind cursor: U+{codePoint:X4} ('{displayChar}')";
+            }
+            hudCodePoint.Inlines.Clear();
+            hudCodePoint.Inlines.Add(new Run(activeCharText));
+            hudCodePoint.Invalidate();
+            
+            hudPanel.Invalidate();
+        };
+
+        // Hook TextBox events to trigger real-time HUD updates
+        inputBox.TextChanged += (s, e) => updateHud();
+        inputBox.CharacterReceived += (s, e) => updateHud();
+        inputBox.KeyDown += (s, e) => updateHud();
+        inputBox.PointerPressed += (s, e) => updateHud();
+
+        // Load rich text runs in playground
+        richPlayground.Inlines.Add(new Run("This formatting playground supports keyboard-driven formats. Use "));
+        richPlayground.Inlines.Add(new Bold(new Run("Ctrl+B (Bold)")));
+        richPlayground.Inlines.Add(new Run(", "));
+        richPlayground.Inlines.Add(new Italic(new Run("Ctrl+I (Italic)")));
+        richPlayground.Inlines.Add(new Run(", or "));
+        richPlayground.Inlines.Add(new Underline(new Run("Ctrl+U (Underline)")));
+        richPlayground.Inlines.Add(new Run(" to toggle active formats dynamically!"));
+
+        // Hook up RichEditBox events
+        richPlayground.CharacterReceived += (s, e) => updateHud();
+        richPlayground.KeyDown += (s, e) => updateHud();
+        richPlayground.PointerPressed += (s, e) => updateHud();
+
+        // Run initial HUD update
+        updateHud();
+
+        return grid;
+    }
 }
+
 
 public class MotionMarkShowcaseVisual : FrameworkElement
 {
