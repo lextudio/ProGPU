@@ -3027,13 +3027,13 @@ public class DrawingShowcaseVisual : FrameworkElement
 
         // 1. Drawing Lines (Cell 0)
         float x0 = 0f;
-        context.DrawText("Lines", Program.GetFont(), 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x0 + 10f, 10f));
+        context.DrawText("Lines", Program.GetFont()!, 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x0 + 10f, 10f));
         context.DrawLine(new Pen(ThemeManager.GetBrush("SystemAccentColor"), 3f), new Vector2(x0 + 20f, centerY - 50f), new Vector2(x0 + cellWidth - 20f, centerY + 50f));
         context.DrawLine(new Pen(ThemeManager.GetBrush("TextPrimary"), 1f), new Vector2(x0 + 20f, centerY + 50f), new Vector2(x0 + cellWidth - 20f, centerY - 50f));
 
         // 2. Drawing Rounded Rectangles (Cell 1)
         float x1 = cellWidth;
-        context.DrawText("Rounded Rects", Program.GetFont(), 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x1 + 10f, 10f));
+        context.DrawText("Rounded Rects", Program.GetFont()!, 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x1 + 10f, 10f));
         
         var linearGrad = new LinearGradientBrush(
             new Vector2(0f, 0f), new Vector2(1f, 1f),
@@ -3047,7 +3047,7 @@ public class DrawingShowcaseVisual : FrameworkElement
 
         // 3. Drawing Circles & Ellipses (Cell 2)
         float x2 = cellWidth * 2f;
-        context.DrawText("Circles & Ellipses", Program.GetFont(), 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x2 + 10f, 10f));
+        context.DrawText("Circles & Ellipses", Program.GetFont()!, 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x2 + 10f, 10f));
         
         var radialGrad = new RadialGradientBrush(
             new Vector2(0.5f, 0.5f), 0.5f,
@@ -3062,7 +3062,7 @@ public class DrawingShowcaseVisual : FrameworkElement
 
         // 4. Combined Graphics Art (Cell 3)
         float x3 = cellWidth * 3f;
-        context.DrawText("Dynamic WebGPU Art", Program.GetFont(), 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x3 + 10f, 10f));
+        context.DrawText("Dynamic WebGPU Art", Program.GetFont()!, 12f, ThemeManager.GetBrush("TextSecondary"), new Vector2(x3 + 10f, 10f));
         
         // Multi-layered visual geometry overlay using radial & linear brushes
         var artBg = new LinearGradientBrush(

@@ -14,7 +14,6 @@ public static class DevToolsInputSystem
     private static FrameworkElement? _focusedElement;
     private static Vector2 _lastMousePos;
     private static FrameworkElement? _capturedElement;
-    private static bool _isShiftPressed;
 
     public static void Initialize(IInputContext input, FrameworkElement root)
     {
@@ -254,10 +253,7 @@ public static class DevToolsInputSystem
 
     private static void OnKeyDown(Key key)
     {
-        if (key == Key.ShiftLeft || key == Key.ShiftRight)
-        {
-            _isShiftPressed = true;
-        }
+
 
         if (_focusedElement != null)
         {
@@ -267,10 +263,7 @@ public static class DevToolsInputSystem
 
     private static void OnKeyUp(Key key)
     {
-        if (key == Key.ShiftLeft || key == Key.ShiftRight)
-        {
-            _isShiftPressed = false;
-        }
+
 
         if (_focusedElement != null)
         {
