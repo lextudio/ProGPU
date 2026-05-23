@@ -50,14 +50,28 @@ public unsafe class Compositor : IDisposable
     private GpuBuffer _textureVertexBuffer;
     private GpuBuffer _textureIndexBuffer;
 
-    // CPU-side collection lists for Batching
+    public enum DrawCallType
+    {
+        Vector,
+        Texture,
+        Text
+    }
+
+    public struct CompositorDrawCall
+    {
+        public DrawCallType Type;
+        public uint IndexStart;
+        public uint IndexCount;
+        public GpuTexture? Texture;
+    }
+
     private readonly List<VectorVertex> _vectorVerticesList = new();
     private readonly List<ushort> _vectorIndicesList = new();
     private readonly List<VectorVertex> _textVerticesList = new();
     private readonly List<ushort> _textIndicesList = new();
     private readonly List<VectorVertex> _textureVerticesList = new();
     private readonly List<ushort> _textureIndicesList = new();
-    private readonly List<(GpuTexture texture, uint indexStart, uint indexCount)> _textureDrawCalls = new();
+    private readonly List<CompositorDrawCall> _drawCalls = new();
     private readonly Dictionary<nint, nint> _textureBindGroups = new();
 
     private bool _isDisposed;
@@ -71,7 +85,18 @@ public unsafe class Compositor : IDisposable
     public int TextIndexCount => _textIndicesList.Count;
     public int TextureVertexCount => _textureVerticesList.Count;
     public int TextureIndexCount => _textureIndicesList.Count;
-    public int TextureDrawCallCount => _textureDrawCalls.Count;
+    public int TextureDrawCallCount
+    {
+        get
+        {
+            int count = 0;
+            foreach (var dc in _drawCalls)
+            {
+                if (dc.Type == DrawCallType.Texture) count++;
+            }
+            return count;
+        }
+    }
 
     public GlyphAtlas Atlas => _atlas;
     public TextureFormat RenderFormat { get; private set; }
@@ -281,21 +306,49 @@ public unsafe class Compositor : IDisposable
         _textIndicesList.Clear();
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
-        _textureDrawCalls.Clear();
+        _drawCalls.Clear();
 
         _clipStack.Clear();
         _activeClipRect = null;
 
-        // 3. Compile entire visual tree scene graph into drawing batches
+        // 3. Compile Layer 0: Root Visual Scene
+        uint vecStart = (uint)_vectorIndicesList.Count;
+        uint textStart = (uint)_textIndicesList.Count;
         CompileVisualTree(root, Matrix4x4.Identity);
-
-        // Compile active popups on top
-        for (int i = 0; i < ProGPU.WinUI.PopupService.ActivePopups.Count; i++)
+        
+        uint vecCount = (uint)_vectorIndicesList.Count - vecStart;
+        if (vecCount > 0)
         {
-            CompileVisualTree(ProGPU.WinUI.PopupService.ActivePopups[i], Matrix4x4.Identity);
+            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStart, IndexCount = vecCount });
+        }
+        uint textCount = (uint)_textIndicesList.Count - textStart;
+        if (textCount > 0)
+        {
+            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStart, IndexCount = textCount });
         }
 
-        // Render floating glassmorphic tooltip overlay on top of everything if active
+        // 4. Compile Layer 1: Active Popups (in proper Z-order)
+        for (int i = 0; i < ProGPU.WinUI.PopupService.ActivePopups.Count; i++)
+        {
+            var popup = ProGPU.WinUI.PopupService.ActivePopups[i];
+            uint vecStartPopup = (uint)_vectorIndicesList.Count;
+            uint textStartPopup = (uint)_textIndicesList.Count;
+            
+            CompileVisualTree(popup, Matrix4x4.Identity);
+            
+            uint vecCountPopup = (uint)_vectorIndicesList.Count - vecStartPopup;
+            if (vecCountPopup > 0)
+            {
+                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartPopup, IndexCount = vecCountPopup });
+            }
+            uint textCountPopup = (uint)_textIndicesList.Count - textStartPopup;
+            if (textCountPopup > 0)
+            {
+                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartPopup, IndexCount = textCountPopup });
+            }
+        }
+
+        // 5. Compile Layer 2: Tooltips
         var activeToolTip = ProGPU.WinUI.InputSystem.ActiveToolTip;
         if (activeToolTip != null)
         {
@@ -305,7 +358,6 @@ public unsafe class Compositor : IDisposable
             float tooltipX = mousePos.X + 12f;
             float tooltipY = mousePos.Y + 20f;
             
-            // Adjust coordinates to ensure tooltip stays inside window bounds
             if (tooltipX + activeToolTip.DesiredSize.X > width)
             {
                 tooltipX = width - activeToolTip.DesiredSize.X - 8f;
@@ -321,18 +373,29 @@ public unsafe class Compositor : IDisposable
             activeToolTip.Offset = new Vector2(tooltipX, tooltipY);
             activeToolTip.Arrange(new Rect(activeToolTip.Offset, activeToolTip.DesiredSize));
             
+            uint vecStartTip = (uint)_vectorIndicesList.Count;
+            uint textStartTip = (uint)_textIndicesList.Count;
+            
             CompileVisualTree(activeToolTip, Matrix4x4.Identity);
+            
+            uint vecCountTip = (uint)_vectorIndicesList.Count - vecStartTip;
+            if (vecCountTip > 0)
+            {
+                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartTip, IndexCount = vecCountTip });
+            }
+            uint textCountTip = (uint)_textIndicesList.Count - textStartTip;
+            if (textCountTip > 0)
+            {
+                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartTip, IndexCount = textCountTip });
+            }
         }
 
-        // Compile active popup visual overlays topmost
-        foreach (var popup in ProGPU.WinUI.PopupService.ActivePopups)
-        {
-            CompileVisualTree(popup, Matrix4x4.Identity);
-        }
-
-        // Compile AdornerLayer bounds highlights topmost
+        // 6. Compile Layer 3: Adorner / DevTools bounds highlights
         if (ProGPU.WinUI.DevToolsService.IsDevToolsActive)
         {
+            uint vecStartAdorner = (uint)_vectorIndicesList.Count;
+            uint textStartAdorner = (uint)_textIndicesList.Count;
+
             var diagContext = new DrawingContext();
             ProGPU.WinUI.AdornerLayer.Render(diagContext, width, height);
             foreach (var cmd in diagContext.Commands)
@@ -350,9 +413,20 @@ public unsafe class Compositor : IDisposable
                         break;
                 }
             }
+
+            uint vecCountAdorner = (uint)_vectorIndicesList.Count - vecStartAdorner;
+            if (vecCountAdorner > 0)
+            {
+                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartAdorner, IndexCount = vecCountAdorner });
+            }
+            uint textCountAdorner = (uint)_textIndicesList.Count - textStartAdorner;
+            if (textCountAdorner > 0)
+            {
+                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartAdorner, IndexCount = textCountAdorner });
+            }
         }
 
-        // 4. Upload CPU batches to dynamic GPU buffers
+        // Upload CPU batches to dynamic GPU buffers
         if (_vectorVerticesList.Count > 0)
         {
             if (_vectorIndicesList.Count % 2 == 1)
@@ -422,77 +496,70 @@ public unsafe class Compositor : IDisposable
 
         var pass = _context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
 
-        // Batch 1: Render all Vector geometry (solid shapes, gradients, curves)
-        if (_vectorIndicesList.Count > 0)
+        DrawCallType? currentType = null;
+
+        foreach (var dc in _drawCalls)
         {
-            _context.Wgpu.RenderPassEncoderSetPipeline(pass, _vectorPipeline);
-            
-            // Bind uniforms
-            fixed (BindGroup** pGrp = &_vectorUniformBindGroup)
+            if (dc.Type == DrawCallType.Vector)
             {
-                _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                if (currentType != DrawCallType.Vector)
+                {
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, _vectorPipeline);
+                    fixed (BindGroup** pGrp = &_vectorUniformBindGroup)
+                    {
+                        _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                    }
+                    var buffer = _vectorVertexBuffer.BufferPtr;
+                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _vectorIndexBuffer.Size);
+                    currentType = DrawCallType.Vector;
+                }
+                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
-
-            // Bind vertices & indices
-            var buffer = _vectorVertexBuffer.BufferPtr;
-            ulong offset = 0;
-            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, offset, _vectorVertexBuffer.Size);
-            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _vectorIndexBuffer.Size);
-
-            // Execute draw call (O(1) drawing driver submission)
-            _context.Wgpu.RenderPassEncoderDrawIndexed(pass, (uint)_vectorIndicesList.Count, 1, 0, 0, 0);
-        }
-
-        // Batch 1.5: Render all Texture geometry (offscreen RGBA8 layer quads)
-        if (_textureDrawCalls.Count > 0)
-        {
-            _context.Wgpu.RenderPassEncoderSetPipeline(pass, _texturePipeline);
-
-            // Bind Uniforms
-            fixed (BindGroup** pGrp = &_textureUniformBindGroup)
+            else if (dc.Type == DrawCallType.Text)
             {
-                _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                if (currentType != DrawCallType.Text)
+                {
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, _textPipeline);
+                    fixed (BindGroup** pGrp = &_textUniformBindGroup)
+                    {
+                        _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                    }
+                    fixed (BindGroup** pAtlas = &_atlasBindGroup)
+                    {
+                        _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pAtlas, 0, null);
+                    }
+                    var buffer = _textVertexBuffer.BufferPtr;
+                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _textIndexBuffer.Size);
+                    currentType = DrawCallType.Text;
+                }
+                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
-
-            // Bind vertex & index buffers
-            var buffer = _textureVertexBuffer.BufferPtr;
-            ulong offset = 0;
-            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, offset, _textureVertexBuffer.Size);
-            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _textureIndexBuffer.Size);
-
-            // Execute draw calls
-            foreach (var drawCall in _textureDrawCalls)
+            else if (dc.Type == DrawCallType.Texture && dc.Texture != null)
             {
-                var viewPtr = drawCall.texture.ViewPtr;
+                _context.Wgpu.RenderPassEncoderSetPipeline(pass, _texturePipeline);
+                fixed (BindGroup** pGrp = &_textureUniformBindGroup)
+                {
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                }
+                var buffer = _textureVertexBuffer.BufferPtr;
+                _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textureVertexBuffer.Size);
+                _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _textureIndexBuffer.Size);
+                currentType = DrawCallType.Texture;
+
+                var viewPtr = dc.Texture.ViewPtr;
                 nint viewKey = (nint)viewPtr;
 
                 if (!_textureBindGroups.TryGetValue(viewKey, out var bgPtrVal))
                 {
-                    // Create dynamic BindGroup
-                    var samplerEntry = new BindGroupEntry
-                    {
-                        Binding = 0,
-                        Sampler = _atlasSampler
-                    };
-
-                    var viewEntry = new BindGroupEntry
-                    {
-                        Binding = 1,
-                        TextureView = viewPtr
-                    };
-
-                    var entries = new BindGroupEntry[2];
-                    entries[0] = samplerEntry;
-                    entries[1] = viewEntry;
+                    var samplerEntry = new BindGroupEntry { Binding = 0, Sampler = _atlasSampler };
+                    var viewEntry = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
+                    var entries = new BindGroupEntry[2] { samplerEntry, viewEntry };
 
                     fixed (BindGroupEntry* pEntries = entries)
                     {
-                        var bgDesc = new BindGroupDescriptor
-                        {
-                            Layout = _textureBindGroupLayout,
-                            EntryCount = 2,
-                            Entries = pEntries
-                        };
+                        var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayout, EntryCount = 2, Entries = pEntries };
                         var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
                         bgPtrVal = (nint)bg;
                         _textureBindGroups[viewKey] = bgPtrVal;
@@ -501,36 +568,8 @@ public unsafe class Compositor : IDisposable
 
                 var bindGroup = (BindGroup*)bgPtrVal;
                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, bindGroup, 0, null);
-
-                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, drawCall.indexCount, 1, drawCall.indexStart, 0, 0);
+                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
-        }
-
-        // Batch 2: Render all Typography Text geometry (dynamic glyph atlas textured quads)
-        if (_textIndicesList.Count > 0)
-        {
-            _context.Wgpu.RenderPassEncoderSetPipeline(pass, _textPipeline);
-
-            // Bind Uniforms
-            fixed (BindGroup** pGrp = &_textUniformBindGroup)
-            {
-                _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
-            }
-
-            // Bind Glyph Atlas texture
-            fixed (BindGroup** pAtlas = &_atlasBindGroup)
-            {
-                _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pAtlas, 0, null);
-            }
-
-            // Bind text buffers
-            var buffer = _textVertexBuffer.BufferPtr;
-            ulong offset = 0;
-            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, offset, _textVertexBuffer.Size);
-            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _textIndexBuffer.Size);
-
-            // Execute typography draw call
-            _context.Wgpu.RenderPassEncoderDrawIndexed(pass, (uint)_textIndicesList.Count, 1, 0, 0, 0);
         }
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
@@ -644,8 +683,6 @@ public unsafe class Compositor : IDisposable
     {
         int startIndex = _vectorVerticesList.Count;
         var r = cmd.Rect;
-        var brush = cmd.Brush as SolidColorBrush;
-        var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
 
         if (cmd.Brush != null)
         {
@@ -657,10 +694,15 @@ public unsafe class Compositor : IDisposable
 
             ushort idxStart = (ushort)_vectorVerticesList.Count;
 
-            _vectorVerticesList.Add(new VectorVertex(v0, color, Vector2.Zero));
-            _vectorVerticesList.Add(new VectorVertex(v1, color, Vector2.Zero));
-            _vectorVerticesList.Add(new VectorVertex(v2, color, Vector2.Zero));
-            _vectorVerticesList.Add(new VectorVertex(v3, color, Vector2.Zero));
+            var c0 = ResolveGradientColor(cmd.Brush, new Vector2(r.X, r.Y));
+            var c1 = ResolveGradientColor(cmd.Brush, new Vector2(r.X + r.Width, r.Y));
+            var c2 = ResolveGradientColor(cmd.Brush, new Vector2(r.X + r.Width, r.Y + r.Height));
+            var c3 = ResolveGradientColor(cmd.Brush, new Vector2(r.X, r.Y + r.Height));
+
+            _vectorVerticesList.Add(new VectorVertex(v0, c0, Vector2.Zero));
+            _vectorVerticesList.Add(new VectorVertex(v1, c1, Vector2.Zero));
+            _vectorVerticesList.Add(new VectorVertex(v2, c2, Vector2.Zero));
+            _vectorVerticesList.Add(new VectorVertex(v3, c3, Vector2.Zero));
 
             // Triangle 1
             _vectorIndicesList.Add(idxStart);
@@ -675,6 +717,7 @@ public unsafe class Compositor : IDisposable
 
         if (cmd.Pen != null)
         {
+            int penStartIndex = _vectorVerticesList.Count;
             var outline = new List<Vector2>
             {
                 new(r.X, r.Y),
@@ -701,6 +744,17 @@ public unsafe class Compositor : IDisposable
                 _vectorVerticesList,
                 _vectorIndicesList
             );
+
+            if (Matrix4x4.Invert(transform, out var invTransform))
+            {
+                for (int i = penStartIndex; i < _vectorVerticesList.Count; i++)
+                {
+                    var v = _vectorVerticesList[i];
+                    var localPt = Vector2.Transform(v.Position, invTransform);
+                    v.Color = ResolveGradientColor(cmd.Pen.Brush, localPt);
+                    _vectorVerticesList[i] = v;
+                }
+            }
         }
 
         if (_activeClipRect.HasValue)
@@ -740,10 +794,22 @@ public unsafe class Compositor : IDisposable
                     _vectorIndicesList
                 );
             }
+
+            if (Matrix4x4.Invert(transform, out var invTransform))
+            {
+                for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+                {
+                    var v = _vectorVerticesList[i];
+                    var localPt = Vector2.Transform(v.Position, invTransform);
+                    v.Color = ResolveGradientColor(cmd.Brush, localPt);
+                    _vectorVerticesList[i] = v;
+                }
+            }
         }
 
         if (cmd.Pen != null)
         {
+            int penStartIndex = _vectorVerticesList.Count;
             var penBrush = cmd.Pen.Brush as SolidColorBrush;
             var penColor = penBrush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
 
@@ -764,6 +830,17 @@ public unsafe class Compositor : IDisposable
                     _vectorVerticesList,
                     _vectorIndicesList
                 );
+            }
+
+            if (Matrix4x4.Invert(transform, out var invTransform))
+            {
+                for (int i = penStartIndex; i < _vectorVerticesList.Count; i++)
+                {
+                    var v = _vectorVerticesList[i];
+                    var localPt = Vector2.Transform(v.Position, invTransform);
+                    v.Color = ResolveGradientColor(cmd.Pen.Brush, localPt);
+                    _vectorVerticesList[i] = v;
+                }
             }
         }
 
@@ -940,7 +1017,13 @@ public unsafe class Compositor : IDisposable
         _textureIndicesList.Add((ushort)(idxStart + 2));
         _textureIndicesList.Add((ushort)(idxStart + 3));
 
-        _textureDrawCalls.Add((cmd.Texture, (uint)(_textureIndicesList.Count - 6), 6));
+        _drawCalls.Add(new CompositorDrawCall
+        {
+            Type = DrawCallType.Texture,
+            IndexStart = (uint)(_textureIndicesList.Count - 6),
+            IndexCount = 6,
+            Texture = cmd.Texture
+        });
     }
 
     private void EnsureBufferSize(ref GpuBuffer buffer, uint requiredSize, BufferUsage usage)
@@ -1067,6 +1150,68 @@ public unsafe class Compositor : IDisposable
         float x = Math.Max(r.X, Math.Min(r.X + r.Width, p.X));
         float y = Math.Max(r.Y, Math.Min(r.Y + r.Height, p.Y));
         return new Vector2(x, y);
+    }
+
+    private Vector4 ResolveGradientColor(Brush brush, Vector2 localPos)
+    {
+        if (brush is SolidColorBrush solid)
+        {
+            return solid.Color;
+        }
+        else if (brush is LinearGradientBrush linear)
+        {
+            if (linear.Stops == null || linear.Stops.Length == 0) return new Vector4(1f, 1f, 1f, 1f);
+            if (linear.Stops.Length == 1) return linear.Stops[0].Color;
+
+            var start = linear.StartPoint;
+            var end = linear.EndPoint;
+            var gradVec = end - start;
+            float lenSq = gradVec.LengthSquared();
+            if (lenSq < 1e-6f) return linear.Stops[0].Color;
+
+            float t = Vector2.Dot(localPos - start, gradVec) / lenSq;
+            t = Math.Clamp(t, 0f, 1f);
+
+            return InterpolateStops(linear.Stops, t) * linear.Opacity;
+        }
+        else if (brush is RadialGradientBrush radial)
+        {
+            if (radial.Stops == null || radial.Stops.Length == 0) return new Vector4(1f, 1f, 1f, 1f);
+            if (radial.Stops.Length == 1) return radial.Stops[0].Color;
+
+            float dist = Vector2.Distance(localPos, radial.Center);
+            float r = radial.Radius;
+            float t = r > 1e-6f ? dist / r : 0f;
+            t = Math.Clamp(t, 0f, 1f);
+
+            return InterpolateStops(radial.Stops, t) * radial.Opacity;
+        }
+
+        return new Vector4(1f, 1f, 1f, 1f);
+    }
+
+    private Vector4 InterpolateStops(GradientStop[] stops, float t)
+    {
+        int n = stops.Length;
+        GradientStop lower = stops[0];
+        GradientStop upper = stops[n - 1];
+
+        if (t <= lower.Offset) return lower.Color;
+        if (t >= upper.Offset) return upper.Color;
+
+        for (int i = 0; i < n - 1; i++)
+        {
+            if (t >= stops[i].Offset && t <= stops[i+1].Offset)
+            {
+                lower = stops[i];
+                upper = stops[i+1];
+                break;
+            }
+        }
+
+        float range = upper.Offset - lower.Offset;
+        float factor = range > 1e-6f ? (t - lower.Offset) / range : 0f;
+        return Vector4.Lerp(lower.Color, upper.Color, factor);
     }
 
     ~Compositor()

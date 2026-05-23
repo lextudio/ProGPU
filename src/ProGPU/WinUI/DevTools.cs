@@ -126,16 +126,19 @@ public class DevTools : Border
         toolbarGrid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Tabs spacer
         toolbarGrid.ColumnDefinitions.Add(new GridLength(32, GridUnitType.Absolute));  // Close button
 
+        var inspectStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+        inspectStack.AddChild(new MagnifyingGlassVisual());
+        inspectStack.AddChild(new TextVisual
+        {
+            Text = "Inspect",
+            FontSize = 10f,
+            Brush = new SolidColorBrush(0xFFFFFFFF),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
         _inspectBtn = new Button
         {
-            Content = new TextVisual
-            {
-                Text = "🔍 Inspect",
-                FontSize = 10f,
-                Brush = new SolidColorBrush(0xFFFFFFFF),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            },
+            Content = inspectStack,
             Background = new SolidColorBrush(0xFFFFFF10)
         };
         _inspectBtn.Click += (s, e) =>
@@ -203,14 +206,7 @@ public class DevTools : Border
 
         var closeBtn = new Button
         {
-            Content = new TextVisual
-            {
-                Text = "✕",
-                FontSize = 12f,
-                Brush = new SolidColorBrush(0xFFFFFFFF),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            },
+            Content = new CloseIconVisual(),
             Background = new SolidColorBrush(0xFFFFFF08)
         };
         closeBtn.Click += (s, e) => DevToolsService.IsDevToolsActive = false;
@@ -246,12 +242,7 @@ public class DevTools : Border
         _perfTextBlock = new RichTextBlock { FontSize = 12f, VerticalAlignment = VerticalAlignment.Stretch };
         _perfTabContent.AddChild(_perfTextBlock);
 
-        _mainGrid.AddChild(_visualTreeTabContent);
-        _mainGrid.AddChild(_propertyTabContent);
-        _mainGrid.AddChild(_perfTabContent);
-        Grid.SetRow(_visualTreeTabContent, 1);
-        Grid.SetRow(_propertyTabContent, 1);
-        Grid.SetRow(_perfTabContent, 1);
+        // We will dynamically add/remove tab content inside SwitchTab to prevent overlapping.
 
         // Default layout selection: Visual Tree
         SwitchTab("tree");
@@ -285,22 +276,31 @@ public class DevTools : Border
 
     private void SwitchTab(string tab)
     {
-        _visualTreeTabContent.WidthConstraint = tab == "tree" ? null : 0f;
-        _visualTreeTabContent.HeightConstraint = tab == "tree" ? null : 0f;
+        _mainGrid.RemoveChild(_visualTreeTabContent);
+        _mainGrid.RemoveChild(_propertyTabContent);
+        _mainGrid.RemoveChild(_perfTabContent);
 
-        _propertyTabContent.WidthConstraint = tab == "prop" ? null : 0f;
-        _propertyTabContent.HeightConstraint = tab == "prop" ? null : 0f;
-
-        _perfTabContent.WidthConstraint = tab == "perf" ? null : 0f;
-        _perfTabContent.HeightConstraint = tab == "perf" ? null : 0f;
+        if (tab == "tree")
+        {
+            _mainGrid.AddChild(_visualTreeTabContent);
+            Grid.SetRow(_visualTreeTabContent, 1);
+        }
+        else if (tab == "prop")
+        {
+            _mainGrid.AddChild(_propertyTabContent);
+            Grid.SetRow(_propertyTabContent, 1);
+        }
+        else if (tab == "perf")
+        {
+            _mainGrid.AddChild(_perfTabContent);
+            Grid.SetRow(_perfTabContent, 1);
+        }
 
         _treeTabBtn.Background = tab == "tree" ? new SolidColorBrush(0x0078D440) : new SolidColorBrush(0xFFFFFF10);
         _propTabBtn.Background = tab == "prop" ? new SolidColorBrush(0x0078D440) : new SolidColorBrush(0xFFFFFF10);
         _perfTabBtn.Background = tab == "perf" ? new SolidColorBrush(0x0078D440) : new SolidColorBrush(0xFFFFFF10);
 
-        _visualTreeTabContent.Invalidate();
-        _propertyTabContent.Invalidate();
-        _perfTabContent.Invalidate();
+        _mainGrid.Invalidate();
         Invalidate();
     }
 
@@ -435,5 +435,66 @@ public class DevTools : Border
             
             _perfTextBlock.Invalidate();
         }
+    }
+}
+
+public class MagnifyingGlassVisual : FrameworkElement
+{
+    public MagnifyingGlassVisual()
+    {
+        WidthConstraint = 12f;
+        HeightConstraint = 12f;
+        Margin = new Thickness(0, 0, 4, 0);
+        VerticalAlignment = VerticalAlignment.Center;
+    }
+
+    public override void OnRender(DrawingContext context)
+    {
+        var strokeBrush = new SolidColorBrush(0xFFFFFFFF);
+        var pen = new Pen(strokeBrush, 1.5f);
+        
+        var path = new PathGeometry();
+        var fig = new PathFigure(new Vector2(8f, 4.5f), isClosed: true);
+        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(8f, 8f), new Vector2(4.5f, 8f)));
+        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(1f, 8f), new Vector2(1f, 4.5f)));
+        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(1f, 1f), new Vector2(4.5f, 1f)));
+        fig.Segments.Add(new QuadraticBezierSegment(new Vector2(8f, 1f), new Vector2(8f, 4.5f)));
+        path.Figures.Add(fig);
+
+        var handleFig = new PathFigure(new Vector2(7f, 7f), isClosed: false);
+        handleFig.Segments.Add(new LineSegment(new Vector2(11f, 11f)));
+        path.Figures.Add(handleFig);
+
+        context.DrawPath(null, pen, path);
+        base.OnRender(context);
+    }
+}
+
+public class CloseIconVisual : FrameworkElement
+{
+    public CloseIconVisual()
+    {
+        WidthConstraint = 10f;
+        HeightConstraint = 10f;
+        HorizontalAlignment = HorizontalAlignment.Center;
+        VerticalAlignment = VerticalAlignment.Center;
+    }
+
+    public override void OnRender(DrawingContext context)
+    {
+        var strokeBrush = new SolidColorBrush(0xFFFFFFFF);
+        var pen = new Pen(strokeBrush, 1.5f);
+        
+        var path = new PathGeometry();
+        var fig1 = new PathFigure(new Vector2(1f, 1f), isClosed: false);
+        fig1.Segments.Add(new LineSegment(new Vector2(9f, 9f)));
+        path.Figures.Add(fig1);
+
+        var fig2 = new PathFigure(new Vector2(9f, 1f), isClosed: false);
+        fig2.Segments.Add(new LineSegment(new Vector2(1f, 9f)));
+        path.Figures.Add(fig2);
+
+        context.DrawPath(null, pen, path);
+        base.OnRender(context);
     }
 }

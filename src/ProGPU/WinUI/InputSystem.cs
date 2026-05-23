@@ -43,14 +43,31 @@ public static class InputSystem
         }
     }
 
+    private static bool IsInsideDevTools(FrameworkElement? element)
+    {
+        var current = element;
+        while (current != null)
+        {
+            if (current.Name == "DevToolsPanel") return true;
+            current = current.Parent as FrameworkElement;
+        }
+        return false;
+    }
+
     public static void CapturePointer(FrameworkElement? element)
     {
+        if (element != null && IsInsideDevTools(element))
+        {
+            DevToolsInputSystem.CapturePointer(element);
+            return;
+        }
         _capturedElement = element;
     }
 
     public static void ReleasePointerCapture()
     {
         _capturedElement = null;
+        DevToolsInputSystem.ReleasePointerCapture();
     }
 
     public static void Initialize(IInputContext input, FrameworkElement? root = null)
@@ -75,6 +92,12 @@ public static class InputSystem
 
     public static void SetFocus(FrameworkElement? element)
     {
+        if (element != null && IsInsideDevTools(element))
+        {
+            DevToolsInputSystem.SetFocus(element);
+            return;
+        }
+
         if (_focusedElement == element) return;
 
         var oldFocus = _focusedElement;

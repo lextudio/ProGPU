@@ -28,6 +28,10 @@ public static unsafe class Program
     private static Compositor? _offscreenCompositor;
     private static ComputeAccelerator? _compute;
 
+    private static IWindow? _devToolsWindow;
+    private static WgpuContext? _devToolsWgpuContext;
+    private static Compositor? _devToolsCompositor;
+
     private static TtfFont? _font;
     private static ProGPU.WinUI.Grid? _rootGrid;
     private static ProGPU.WinUI.Grid? _topLevelGrid;
@@ -239,6 +243,7 @@ public static unsafe class Program
         var computeItem = new NavigationViewItem("Compute FX", "⚙", CreateComputeFxView());
         var motionAnimationsItem = new NavigationViewItem("Motion & Animations", "🎬", CreateMotionAnimationsView());
         var advancedItem = new NavigationViewItem("Advanced Controls", "🛠", CreateAdvancedControlsView());
+        var compositorItem = new NavigationViewItem("Compositor API", "🎨", CreateCompositorShowcaseView());
 
         _navigationView.MenuItems.Add(basicInputItem);
         _navigationView.MenuItems.Add(panelsItem);
@@ -247,6 +252,7 @@ public static unsafe class Program
         _navigationView.MenuItems.Add(computeItem);
         _navigationView.MenuItems.Add(motionAnimationsItem);
         _navigationView.MenuItems.Add(advancedItem);
+        _navigationView.MenuItems.Add(compositorItem);
 
         _navigationView.SelectionChanged += (s, e) =>
         {
@@ -286,14 +292,14 @@ public static unsafe class Program
         _rootGrid.AddChild(statusBar);
         ProGPU.WinUI.Grid.SetRow(statusBar, 2);
 
-        // 5. TOP LEVEL CONTAINER GRID (App + Collapsible DevTools Dock)
+        // 5. TOP LEVEL CONTAINER GRID (App container)
         _topLevelGrid = new ProGPU.WinUI.Grid
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
         };
         _topLevelGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
-        _topLevelGrid.ColumnDefinitions.Add(new GridLength(0f, GridUnitType.Absolute)); // Collapsed by default
+        _topLevelGrid.ColumnDefinitions.Add(new GridLength(0f, GridUnitType.Absolute)); // Kept collapsed always
 
         _topLevelGrid.AddChild(_rootGrid);
         ProGPU.WinUI.Grid.SetColumn(_rootGrid, 0);
@@ -303,20 +309,17 @@ public static unsafe class Program
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
         };
-        _topLevelGrid.AddChild(_devToolsPanel);
-        ProGPU.WinUI.Grid.SetColumn(_devToolsPanel, 1);
 
         DevToolsService.StateChanged += (s, ev) =>
         {
             if (DevToolsService.IsDevToolsActive)
             {
-                _topLevelGrid.ColumnDefinitions[1] = new GridLength(450f, GridUnitType.Absolute);
+                OpenDevToolsWindow();
             }
             else
             {
-                _topLevelGrid.ColumnDefinitions[1] = new GridLength(0f, GridUnitType.Absolute);
+                CloseDevToolsWindow();
             }
-            _topLevelGrid.Invalidate();
         };
     }
 
@@ -1127,6 +1130,13 @@ public static unsafe class Program
 
         OnWindowUpdate(delta);
 
+        if (_devToolsWindow != null && _devToolsWindow.IsInitialized)
+        {
+            _devToolsWindow.DoEvents();
+            _devToolsWindow.DoUpdate();
+            _devToolsWindow.DoRender();
+        }
+
         _frameStopwatch.Restart();
 
         // 1. Size negotiation: Measure & Arrange entire WinUI graph
@@ -1222,13 +1232,6 @@ public static unsafe class Program
         if (targetView != null)
         {
             _screenCompositor.RenderScene(_topLevelGrid, (uint)_window.Size.X, (uint)_window.Size.Y, targetView);
-
-            if (_devToolsPanel != null && DevToolsService.IsDevToolsActive)
-            {
-                uint totalVertices = (uint)(_screenCompositor.VectorVertexCount + _screenCompositor.TextVertexCount + _screenCompositor.TextureVertexCount);
-                uint totalDrawCalls = (uint)(_screenCompositor.TextureDrawCallCount + 1); // Fills + Texts + Textures
-                _devToolsPanel.UpdatePerfPanel((float)_currentFps, (float)_cpuFrameTimeMs, totalVertices, totalDrawCalls);
-            }
             
             _wgpuContext.Wgpu.SurfacePresent(_wgpuContext.Surface);
             _wgpuContext.Wgpu.TextureViewRelease(targetView);
@@ -1240,6 +1243,112 @@ public static unsafe class Program
         if (_wgpuContext == null) return;
         _wgpuContext.ConfigureSwapChain((uint)newSize.X, (uint)newSize.Y);
         _topLevelGrid?.Invalidate();
+    }
+
+    private static void OpenDevToolsWindow()
+    {
+        if (_devToolsWindow != null) return;
+
+        var options = WindowOptions.Default;
+        options.Size = new Vector2D<int>(850, 600);
+        options.Title = "ProGPU Developer Tools";
+        options.API = GraphicsAPI.None;
+
+        _devToolsWindow = Window.Create(options);
+
+        _devToolsWindow.Load += OnDevToolsWindowLoad;
+        _devToolsWindow.Render += OnDevToolsWindowRender;
+        _devToolsWindow.Resize += OnDevToolsWindowResize;
+        _devToolsWindow.Closing += OnDevToolsWindowClosing;
+
+        _devToolsWindow.Initialize();
+    }
+
+    private static void OnDevToolsWindowLoad()
+    {
+        if (_devToolsWindow == null) return;
+
+        _devToolsWgpuContext = new WgpuContext();
+        _devToolsWgpuContext.Initialize(_devToolsWindow);
+
+        _devToolsCompositor = new Compositor(_devToolsWgpuContext, _devToolsWgpuContext.SwapChainFormat);
+
+        var inputContext = _devToolsWindow.CreateInput();
+        DevToolsInputSystem.Initialize(inputContext, _devToolsPanel!);
+
+        _devToolsPanel?.RefreshVisualTree();
+    }
+
+    private static void OnDevToolsWindowRender(double delta)
+    {
+        if (_devToolsWindow == null || _devToolsWgpuContext == null || _devToolsCompositor == null || _devToolsPanel == null) return;
+
+        _devToolsPanel.Measure(new Vector2(_devToolsWindow.Size.X, _devToolsWindow.Size.Y));
+        _devToolsPanel.Arrange(new Rect(0, 0, _devToolsWindow.Size.X, _devToolsWindow.Size.Y));
+
+        if (_screenCompositor != null)
+        {
+            uint totalVertices = (uint)(_screenCompositor.VectorVertexCount + _screenCompositor.TextVertexCount + _screenCompositor.TextureVertexCount);
+            uint totalDrawCalls = (uint)(_screenCompositor.TextureDrawCallCount + 1);
+            _devToolsPanel.UpdatePerfPanel((float)_currentFps, (float)_cpuFrameTimeMs, totalVertices, totalDrawCalls);
+        }
+
+        TextureView* targetView = null;
+        if (_devToolsWgpuContext.Surface != null)
+        {
+            var surfaceTexture = new SurfaceTexture();
+            _devToolsWgpuContext.Wgpu.SurfaceGetCurrentTexture(_devToolsWgpuContext.Surface, &surfaceTexture);
+            
+            if (surfaceTexture.Status == SurfaceGetCurrentTextureStatus.Success)
+            {
+                var viewDesc = new TextureViewDescriptor
+                {
+                    Format = _devToolsWgpuContext.SwapChainFormat,
+                    Dimension = TextureViewDimension.Dimension2D,
+                    BaseMipLevel = 0,
+                    MipLevelCount = 1,
+                    BaseArrayLayer = 0,
+                    ArrayLayerCount = 1,
+                    Aspect = TextureAspect.All
+                };
+                targetView = _devToolsWgpuContext.Wgpu.TextureCreateView(surfaceTexture.Texture, &viewDesc);
+            }
+        }
+
+        if (targetView != null)
+        {
+            _devToolsCompositor.RenderScene(_devToolsPanel, (uint)_devToolsWindow.Size.X, (uint)_devToolsWindow.Size.Y, targetView);
+            
+            _devToolsWgpuContext.Wgpu.SurfacePresent(_devToolsWgpuContext.Surface);
+            _devToolsWgpuContext.Wgpu.TextureViewRelease(targetView);
+        }
+    }
+
+    private static void OnDevToolsWindowResize(Vector2D<int> newSize)
+    {
+        if (_devToolsWgpuContext == null) return;
+        _devToolsWgpuContext.ConfigureSwapChain((uint)newSize.X, (uint)newSize.Y);
+        _devToolsPanel?.Invalidate();
+    }
+
+    private static void OnDevToolsWindowClosing()
+    {
+        DevToolsService.IsDevToolsActive = false;
+        CloseDevToolsWindow();
+    }
+
+    private static void CloseDevToolsWindow()
+    {
+        if (_devToolsWindow == null) return;
+
+        _devToolsWindow.Close();
+        _devToolsWindow.Dispose();
+        _devToolsWindow = null;
+
+        _devToolsWgpuContext?.Dispose();
+        _devToolsWgpuContext = null;
+
+        _devToolsCompositor = null;
     }
 
     private static void Cleanup()
@@ -1485,6 +1594,319 @@ public static unsafe class Program
 
         grid.AddChild(cardsGrid);
         ProGPU.WinUI.Grid.SetRow(cardsGrid, 1);
+
+        return grid;
+    }
+
+    public class GradientArtVisual : FrameworkElement, IAnimatedElement
+    {
+        private float _time = 0f;
+        private readonly PathGeometry _starPath;
+        private readonly PathGeometry _blobPath;
+
+        public GradientArtVisual()
+        {
+            // Parse a beautiful star/gear path and a blob path
+            _starPath = PathGeometry.Parse("M 100 10 L 125 70 L 190 75 L 140 120 L 155 185 L 100 150 L 45 185 L 60 120 L 10 75 L 75 70 Z");
+            _blobPath = PathGeometry.Parse("M 150 150 C 250 50 350 250 250 250 C 150 250 50 350 150 150 Z");
+            
+            HorizontalAlignment = HorizontalAlignment.Stretch;
+            VerticalAlignment = VerticalAlignment.Stretch;
+            Height = 220f;
+        }
+
+        public void Update(float delta)
+        {
+            _time += delta;
+            Invalidate();
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(new SolidColorBrush(0x0C0C12FF), null, new Rect(Vector2.Zero, Size));
+
+            // 1. Overlapping Multi-stop Linear Gradient Card
+            var startPt = new Vector2(20f + MathF.Sin(_time) * 10f, 20f);
+            var endPt = new Vector2(240f + MathF.Cos(_time) * 10f, 200f);
+            var linGrad = new LinearGradientBrush(startPt, endPt, new GradientStop[]
+            {
+                new GradientStop(new Vector4(1f, 0f, 0.5f, 1f), 0.0f),  // Deep Magenta/Red
+                new GradientStop(new Vector4(0f, 0.5f, 1f, 0.8f), 0.5f), // Translucent Bright Blue
+                new GradientStop(new Vector4(0f, 1f, 0.5f, 1f), 1.0f)   // Vivid Emerald
+            });
+            context.DrawRectangle(linGrad, new Pen(new SolidColorBrush(0xFFFFFFFF), 2f), new Rect(20, 20, 220, 180));
+
+            // 2. Overlapping Multi-stop Radial Gradient star path
+            var centerPt = new Vector2(100f + MathF.Sin(_time * 2f) * 20f, 100f + MathF.Cos(_time * 2f) * 20f);
+            var radGrad = new RadialGradientBrush(centerPt, 80f, new GradientStop[]
+            {
+                new GradientStop(new Vector4(1f, 0.9f, 0.1f, 1f), 0.0f), // Neon Yellow center
+                new GradientStop(new Vector4(1f, 0.4f, 0.0f, 0.9f), 0.5f), // Electric Orange middle
+                new GradientStop(new Vector4(0f, 0f, 0f, 0f), 1.0f)      // Transparent outer ring
+            });
+            
+            context.PushClip(new Rect(10, 10, Size.X - 20, Size.Y - 20));
+            
+            // Draw Radial Gradient star
+            context.DrawPath(radGrad, null, _starPath);
+            
+            // Draw overlapping linear gradient blob
+            var blobLin = new LinearGradientBrush(new Vector2(150, 50), new Vector2(250, 250), new GradientStop[]
+            {
+                new GradientStop(new Vector4(0.2f, 1.0f, 1.0f, 0.8f), 0.0f), // Neon Cyan
+                new GradientStop(new Vector4(0.8f, 0.2f, 1.0f, 0.7f), 1.0f)  // Neon Purple
+            });
+            context.DrawPath(blobLin, new Pen(new SolidColorBrush(0xFFFFFF33), 1.5f), _blobPath);
+
+            context.PopClip();
+        }
+    }
+
+    public class SpringInteractiveCardWidget : Border, IAnimatedElement
+    {
+        private readonly SpringScalarNaturalMotionAnimation _springX;
+        private readonly SpringScalarNaturalMotionAnimation _springY;
+        private readonly Border _widgetCard;
+
+        public SpringInteractiveCardWidget(TtfFont font)
+        {
+            _springX = new SpringScalarNaturalMotionAnimation
+            {
+                CurrentValue = 1.0f,
+                TargetValue = 1.0f,
+                Stiffness = 180f,
+                Damping = 12f,
+                Mass = 1.0f
+            };
+            _springY = new SpringScalarNaturalMotionAnimation
+            {
+                CurrentValue = 1.0f,
+                TargetValue = 1.0f,
+                Stiffness = 180f,
+                Damping = 12f,
+                Mass = 1.0f
+            };
+
+            Height = 120f;
+            Background = new SolidColorBrush(0x0C0C12FF);
+            CornerRadius = 6f;
+            Padding = new Thickness(12);
+
+            var grid = new ProGPU.WinUI.Grid();
+            grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
+            grid.ColumnDefinitions.Add(new GridLength(100f, GridUnitType.Absolute));
+
+            var controlsStack = new StackPanel { Orientation = Orientation.Vertical, VerticalAlignment = VerticalAlignment.Center };
+            
+            var sliderLabel = new RichTextBlock { Font = font, FontSize = 10f, Margin = new Thickness(0, 0, 0, 4) };
+            sliderLabel.Inlines.Add(new Run("Spring Scale Multiplier:"));
+            controlsStack.AddChild(sliderLabel);
+
+            var slider = new Slider { Minimum = 0.5f, Maximum = 2.0f, Value = 1.0f, Margin = new Thickness(0, 0, 0, 8f) };
+            slider.ValueChanged += (s, e) =>
+            {
+                _springX.TargetValue = slider.Value;
+                _springY.TargetValue = slider.Value;
+            };
+            controlsStack.AddChild(slider);
+
+            var triggerBtn = new Button { Height = 24f, CornerRadius = 4f };
+            var btnText = new RichTextBlock { Font = font, FontSize = 10f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            btnText.Inlines.Add(new Bold(new Run("Trigger Wobble")));
+            triggerBtn.Content = btnText;
+            triggerBtn.Click += (s, e) =>
+            {
+                _springX.CurrentValue = 0.4f;
+                _springY.CurrentValue = 1.8f;
+                _springX.Velocity = 15f;
+                _springY.Velocity = -15f;
+            };
+            controlsStack.AddChild(triggerBtn);
+
+            grid.AddChild(controlsStack);
+            ProGPU.WinUI.Grid.SetColumn(controlsStack, 0);
+
+            _widgetCard = new Border
+            {
+                Width = 60f,
+                Height = 60f,
+                Background = new SolidColorBrush(0x0078D4FF),
+                BorderBrush = new SolidColorBrush(0xFFFFFFFF),
+                BorderThickness = new Thickness(1.5f),
+                CornerRadius = 30f, // Perfect circle!
+                HorizontalAlignment = AlignmentCenterHelper(),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var widgetText = new RichTextBlock { Font = font, FontSize = 9f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            widgetText.Inlines.Add(new Bold(new Run("COMP")));
+            _widgetCard.Child = widgetText;
+
+            grid.AddChild(_widgetCard);
+            ProGPU.WinUI.Grid.SetColumn(_widgetCard, 1);
+
+            Child = grid;
+        }
+
+        private static HorizontalAlignment AlignmentCenterHelper() => HorizontalAlignment.Center;
+
+        public void Update(float delta)
+        {
+            _springX.Update(delta);
+            _springY.Update(delta);
+
+            Vector2 size = _widgetCard.Size;
+            Vector2 center = size / 2f;
+
+            float sx = _springX.CurrentValue;
+            float sy = _springY.CurrentValue;
+
+            sx = Math.Max(0.1f, Math.Min(3.0f, sx));
+            sy = Math.Max(0.1f, Math.Min(3.0f, sy));
+
+            // Create 2D scaling transform around card center
+            var transform = Matrix4x4.CreateTranslation(-center.X, -center.Y, 0)
+                            * Matrix4x4.CreateScale(sx, sy, 1f)
+                            * Matrix4x4.CreateTranslation(center.X, center.Y, 0);
+            _widgetCard.Transform = transform;
+        }
+    }
+
+    private static FrameworkElement CreateCompositorShowcaseView()
+    {
+        var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+        grid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
+        grid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Columns
+
+        var descText = new RichTextBlock { Font = _font, FontSize = 12f, Margin = new Thickness(0, 0, 0, 10) };
+        descText.Inlines.Add(new Bold(new Run("Composition Subsystem & Multi-Column Document Nesting\n")));
+        descText.Inlines.Add(new Run("This page showcases CPU-tessellated multi-stop gradients, dynamic clipping masks, real-time spring transformations, and interactive UI controls seamlessly embedded inline using the FlowDocument InlineUIContainer pipeline."));
+        grid.AddChild(descText);
+        ProGPU.WinUI.Grid.SetRow(descText, 0);
+
+        var columnsGrid = new ProGPU.WinUI.Grid();
+        columnsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
+        columnsGrid.ColumnDefinitions.Add(new GridLength(1.2f, GridUnitType.Star));
+
+        // COLUMN 0: COMPOSITION & GRADIENT ART
+        var leftStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6) };
+        
+        var artCard = new Border
+        {
+            Background = new SolidColorBrush(0x1F1F24FA),
+            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            BorderThickness = new Thickness(1f),
+            CornerRadius = 8f,
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        var artStack = new StackPanel { Orientation = Orientation.Vertical };
+        var artHeader = new RichTextBlock { Font = _font, FontSize = 14f, Margin = new Thickness(0, 0, 0, 8) };
+        artHeader.Inlines.Add(new Bold(new Run("High-Performance Tessellated Vector Gradients")));
+        artStack.AddChild(artHeader);
+
+        var artVisual = new GradientArtVisual();
+        artStack.AddChild(artVisual);
+        artCard.Child = artStack;
+        leftStack.AddChild(artCard);
+
+        // Spring transform controller card
+        var springCard = new Border
+        {
+            Background = new SolidColorBrush(0x1F1F24FA),
+            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            BorderThickness = new Thickness(1f),
+            CornerRadius = 8f,
+            Padding = new Thickness(16f)
+        };
+        var springStack = new StackPanel { Orientation = Orientation.Vertical };
+        var springHeader = new RichTextBlock { Font = _font, FontSize = 14f, Margin = new Thickness(0, 0, 0, 8) };
+        springHeader.Inlines.Add(new Bold(new Run("Spring & Matrix Composition Transformation")));
+        springStack.AddChild(springHeader);
+
+        var springWidget = new SpringInteractiveCardWidget(_font!);
+        springStack.AddChild(springWidget);
+        springCard.Child = springStack;
+        leftStack.AddChild(springCard);
+
+        columnsGrid.AddChild(leftStack);
+        ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+
+        // COLUMN 1: INTERACTIVE FLOW DOCUMENT WITH INLINE WIDGETS
+        var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6) };
+        
+        var docCard = new Border
+        {
+            Background = new SolidColorBrush(0x1F1F24FA),
+            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            BorderThickness = new Thickness(1f),
+            CornerRadius = 8f,
+            Padding = new Thickness(16f),
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        var docStack = new StackPanel { Orientation = Orientation.Vertical };
+        var docHeader = new RichTextBlock { Font = _font, FontSize = 14f, Margin = new Thickness(0, 0, 0, 8) };
+        docHeader.Inlines.Add(new Bold(new Run("FlowDocument Interactive Nesting")));
+        docStack.AddChild(docHeader);
+
+        var flowDoc = new FlowDocument
+        {
+            Font = _font,
+            FontSize = 11.5f,
+            ColumnCount = 2,
+            ColumnGap = 16f,
+            Height = 440f,
+            Foreground = new SolidColorBrush(0xDDDDDDFF)
+        };
+
+        // Embedded Controls definitions
+        var embedBtn = new Button { Width = 80f, Height = 22f, CornerRadius = 4f, Margin = new Thickness(0) };
+        embedBtn.Content = new RichTextBlock { Font = _font, FontSize = 10f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        ((RichTextBlock)embedBtn.Content).Inlines.Add(new Run("Click Me!"));
+        embedBtn.Click += (s, e) => {
+            System.Console.WriteLine("Embedded Button Clicked!");
+        };
+
+        var embedToggle = new ToggleSwitch { Margin = new Thickness(0), Width = 45f, Height = 20f };
+        var embedProgress = new ProgressBar { Minimum = 0f, Maximum = 100f, Value = 65f, Width = 80f, Height = 12f, CornerRadius = 3f };
+
+        var p1 = new Paragraph(
+            new Bold(new Run("Inline UI Embedding:\n")),
+            new Run("We can embed framework elements directly inside the text streams. For example, a fully functional button: "),
+            new InlineUIContainer(embedBtn),
+            new Run(" or a live toggle switch control: "),
+            new InlineUIContainer(embedToggle),
+            new Run(" that layout, measure, wrap, and arrange seamlessly.")
+        ) { MarginBottom = 10f, TextAlignment = TextAlignment.Justify };
+
+        var p2 = new Paragraph(
+            new Bold(new Run("Document Links & Stats:\n")),
+            new Run("This document also flows live progress bars: "),
+            new InlineUIContainer(embedProgress),
+            new Run(" inline alongside styled runs. Try selecting text, or interact with elements directly! Links can also be clicked, e.g. "),
+            new Hyperlink(new Bold(new Run("ProGPU Website"))) { Uri = "https://github.com/wieslawsoltes/ProGPU" },
+            new Run(" to visit the repository or trigger routed event bubbles.")
+        ) { MarginBottom = 10f, TextAlignment = TextAlignment.Justify };
+
+        flowDoc.Paragraphs.Add(p1);
+        flowDoc.Paragraphs.Add(p2);
+
+        var docBorder = new Border
+        {
+            Background = new SolidColorBrush(0x0C0C12FF),
+            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            BorderThickness = new Thickness(1f),
+            CornerRadius = 6f,
+            Child = flowDoc
+        };
+        docStack.AddChild(docBorder);
+        docCard.Child = docStack;
+        rightStack.AddChild(docCard);
+
+        columnsGrid.AddChild(rightStack);
+        ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+
+        grid.AddChild(columnsGrid);
+        ProGPU.WinUI.Grid.SetRow(columnsGrid, 1);
 
         return grid;
     }

@@ -311,6 +311,22 @@ public class NavigationViewItem : Control
 
                     drewCustomIcon = true;
                 }
+                else if (Icon == "🎨" || Text == "Compositor API")
+                {
+                    // Clean artist palette outline with blending color blobs
+                    var palette = PathGeometry.Parse(Invariant($"M {startX + 2} {startY + 8} Q {startX + 2} {startY + 2} {startX + 8} {startY + 2} Q {startX + 14} {startY + 2} {startX + 14} {startY + 8} Q {startX + 14} {startY + 14} {startX + 8} {startY + 14} Q {startX + 5} {startY + 14} {startX + 5} {startY + 11} Q {startX + 5} {startY + 8} {startX + 2} {startY + 8} Z"));
+                    var blob1 = CreateRoundedRect(startX + 5f, startY + 4f, 2.5f, 2.5f, 1f);
+                    var blob2 = CreateRoundedRect(startX + 10f, startY + 5f, 2.5f, 2.5f, 1f);
+                    var blob3 = CreateRoundedRect(startX + 9f, startY + 10f, 2.5f, 2.5f, 1f);
+
+                    var pen = new Pen(new SolidColorBrush(0xFFFFFFFF), 1f);
+                    context.DrawPath(new SolidColorBrush(0xFFFFFF15), pen, palette);
+                    context.DrawPath(new SolidColorBrush(0x0078D4FF), null, blob1);
+                    context.DrawPath(new SolidColorBrush(0x2B88D8FF), null, blob2);
+                    context.DrawPath(new SolidColorBrush(0xFFFFFFFF), null, blob3);
+
+                    drewCustomIcon = true;
+                }
 
                 if (!drewCustomIcon)
                 {

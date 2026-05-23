@@ -8,7 +8,8 @@ public enum TextAlignment
 {
     Left,
     Center,
-    Right
+    Right,
+    Justify
 }
 
 public struct TextRunGlyph
