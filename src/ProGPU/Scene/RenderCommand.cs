@@ -19,7 +19,9 @@ public enum RenderCommandType
     DrawLine,
     DrawEllipse,
     DrawCircle,
-    DrawRoundedRect
+    DrawRoundedRect,
+    DrawBezier,
+    DrawCubicBezier
 }
 
 public struct Rect
@@ -75,6 +77,8 @@ public struct RenderCommand
 
     // Advanced geometries
     public Vector2 Position2;
+    public Vector2 Position3;
+    public Vector2 Position4;
     public float RadiusX;
     public float RadiusY;
 }
@@ -219,6 +223,31 @@ public class DrawingContext
     public void FillRoundedRectangle(Brush brush, Rect rect, float radius)
     {
         DrawRoundedRectangle(brush, null, rect, radius);
+    }
+
+    public void DrawQuadraticBezier(Pen pen, Vector2 p0, Vector2 p1, Vector2 p2)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawBezier,
+            Pen = pen,
+            Position = p0,
+            Position2 = p1,
+            Position3 = p2
+        });
+    }
+
+    public void DrawCubicBezier(Pen pen, Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawCubicBezier,
+            Pen = pen,
+            Position = p0,
+            Position2 = p1,
+            Position3 = p2,
+            Position4 = p3
+        });
     }
 
     public void Clear()

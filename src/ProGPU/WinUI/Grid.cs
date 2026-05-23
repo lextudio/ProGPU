@@ -117,14 +117,14 @@ public class Grid : Panel
                 float childAvailW = cols[c].UnitType switch
                 {
                     GridUnitType.Absolute => colWidths[c],
-                    GridUnitType.Star => starColsWeight > 0 ? (cols[c].Value / starColsWeight) * remainingWidth : 0f,
+                    GridUnitType.Star => starColsWeight > 0 && !float.IsInfinity(remainingWidth) ? (cols[c].Value / starColsWeight) * remainingWidth : float.PositiveInfinity,
                     _ => availableSize.X
                 };
 
                 float childAvailH = rows[r].UnitType switch
                 {
                     GridUnitType.Absolute => rowHeights[r],
-                    GridUnitType.Star => starRowsWeight > 0 ? (rows[r].Value / starRowsWeight) * remainingHeight : 0f,
+                    GridUnitType.Star => starRowsWeight > 0 && !float.IsInfinity(remainingHeight) ? (rows[r].Value / starRowsWeight) * remainingHeight : float.PositiveInfinity,
                     _ => availableSize.Y
                 };
 
@@ -161,22 +161,54 @@ public class Grid : Panel
         // Distribute Star cells
         if (starColsWeight > 0f)
         {
+            bool isInfinite = float.IsInfinity(remainingWidth);
             for (int i = 0; i < colCount; i++)
             {
                 if (cols[i].UnitType == GridUnitType.Star)
                 {
-                    colWidths[i] = (cols[i].Value / starColsWeight) * remainingWidth;
+                    if (isInfinite)
+                    {
+                        float maxChildW = 0f;
+                        foreach (var child in Children)
+                        {
+                            if (child is LayoutNode node && GetColumn(node) == i)
+                            {
+                                maxChildW = Math.Max(maxChildW, node.DesiredSize.X);
+                            }
+                        }
+                        colWidths[i] = maxChildW;
+                    }
+                    else
+                    {
+                        colWidths[i] = (cols[i].Value / starColsWeight) * remainingWidth;
+                    }
                 }
             }
         }
 
         if (starRowsWeight > 0f)
         {
+            bool isInfinite = float.IsInfinity(remainingHeight);
             for (int i = 0; i < rowCount; i++)
             {
                 if (rows[i].UnitType == GridUnitType.Star)
                 {
-                    rowHeights[i] = (rows[i].Value / starRowsWeight) * remainingHeight;
+                    if (isInfinite)
+                    {
+                        float maxChildH = 0f;
+                        foreach (var child in Children)
+                        {
+                            if (child is LayoutNode node && GetRow(node) == i)
+                            {
+                                maxChildH = Math.Max(maxChildH, node.DesiredSize.Y);
+                            }
+                        }
+                        rowHeights[i] = maxChildH;
+                    }
+                    else
+                    {
+                        rowHeights[i] = (rows[i].Value / starRowsWeight) * remainingHeight;
+                    }
                 }
             }
         }
@@ -202,6 +234,15 @@ public class Grid : Panel
 
         float totalW = arrangeRect.Width;
         float totalH = arrangeRect.Height;
+
+        if (float.IsInfinity(totalW) || float.IsNaN(totalW))
+        {
+            totalW = Math.Max(0f, DesiredSize.X - Margin.Horizontal - Padding.Horizontal);
+        }
+        if (float.IsInfinity(totalH) || float.IsNaN(totalH))
+        {
+            totalH = Math.Max(0f, DesiredSize.Y - Margin.Vertical - Padding.Vertical);
+        }
 
         float starColsWeight = 0f;
         float starRowsWeight = 0f;

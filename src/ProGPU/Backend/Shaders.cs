@@ -80,8 +80,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         let offset = miterN * (input.strokeThickness * 0.5) * miterScale * input.cornerRadius;
         worldPos = input.position + offset;
     } else if (sType == 5u) {
-        // GPU Bezier Curve Evaluation
-        let t = input.brushIndex;
+        // GPU Quadratic Bezier Curve Evaluation
+        let t = input.color.b;
+        let signVal = input.color.a;
         let oneMinusT = 1.0 - t;
         let pos = oneMinusT * oneMinusT * input.position + 2.0 * oneMinusT * t * input.texCoord + t * t * input.shapeSize;
         let tangent = 2.0 * oneMinusT * (input.texCoord - input.position) + 2.0 * t * (input.shapeSize - input.texCoord);
@@ -90,7 +91,30 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         if (len > 0.0001) {
             normal = vec2<f32>(-tangent.y, tangent.x) / len;
         }
-        let offset = normal * (input.strokeThickness * 0.5) * input.cornerRadius;
+        let offset = normal * (input.strokeThickness * 0.5) * signVal;
+        worldPos = pos + offset;
+    } else if (sType == 6u) {
+        // GPU Cubic Bezier Curve Evaluation
+        let t = input.color.b;
+        let signVal = input.color.a;
+        let p3 = input.color.rg;
+        let oneMinusT = 1.0 - t;
+        
+        let pos = oneMinusT * oneMinusT * oneMinusT * input.position 
+                + 3.0 * oneMinusT * oneMinusT * t * input.texCoord 
+                + 3.0 * oneMinusT * t * t * input.shapeSize 
+                + t * t * t * p3;
+                
+        let tangent = 3.0 * oneMinusT * oneMinusT * (input.texCoord - input.position) 
+                    + 6.0 * oneMinusT * t * (input.shapeSize - input.texCoord) 
+                    + 3.0 * t * t * (p3 - input.shapeSize);
+                    
+        let len = length(tangent);
+        var normal = vec2<f32>(0.0, 0.0);
+        if (len > 0.0001) {
+            normal = vec2<f32>(-tangent.y, tangent.x) / len;
+        }
+        let offset = normal * (input.strokeThickness * 0.5) * signVal;
         worldPos = pos + offset;
     }
 
@@ -152,7 +176,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var finalColor = input.color;
     if (brush.brushType == 0u) {
-        finalColor = vec4<f32>(input.color.rgb, input.color.a * brush.opacity);
+        let sType = u32(round(input.shapeType));
+        if (sType == 5u || sType == 6u) {
+            finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
+        } else {
+            finalColor = vec4<f32>(input.color.rgb, input.color.a * brush.opacity);
+        }
     } else {
         var t: f32 = 0.0;
         if (brush.brushType == 1u) {

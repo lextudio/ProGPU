@@ -280,6 +280,7 @@ public static unsafe class Program
         var drawingContextItem = new NavigationViewItem("Drawing Context", "📐", SamplePagePresenter.CreateDrawingContextShowcaseView());
         var fileStorageItem = new NavigationViewItem("File Storage", "📁", SamplePagePresenter.CreateFileStorageShowcaseView());
         var stylesShowcaseItem = new NavigationViewItem("Styles Showcase", "💅", SamplePagePresenter.CreateStylesShowcaseView());
+        var motionMarkItem = new NavigationViewItem("MotionMark Showcase", "🏁", SamplePagePresenter.CreateMotionMarkShowcaseView());
 
         _navigationView.MenuItems.Add(basicInputItem);
         _navigationView.MenuItems.Add(panelsItem);
@@ -294,6 +295,7 @@ public static unsafe class Program
         _navigationView.MenuItems.Add(drawingContextItem);
         _navigationView.MenuItems.Add(fileStorageItem);
         _navigationView.MenuItems.Add(stylesShowcaseItem);
+        _navigationView.MenuItems.Add(motionMarkItem);
 
         _navigationView.SelectionChanged += (s, e) =>
         {
@@ -3327,10 +3329,531 @@ public static class SamplePagePresenter
 
         containerGrid.AddChild(rightStack);
         ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
-
         stack.AddChild(containerGrid);
 
         return stack;
+    }
+
+    public static FrameworkElement CreateMotionMarkShowcaseView()
+    {
+        var stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(12) };
+
+        var title = new RichTextBlock { Font = Program.GetFont(), FontSize = 18f, Margin = new Thickness(0, 0, 0, 10) };
+        title.Inlines.Add(new Bold(new Run("GPU Vector Benchmark - MotionMark Showcase")));
+        stack.AddChild(title);
+
+        var description = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 15) };
+        description.Inlines.Add(new Run("This page implements a native high-performance GPU vector graphics benchmark based on the MotionMark suite. Renders thousands of dynamic shapes (lines, circles, and direct GPU Beziers) with zero CPU triangulation or flattening, achieving ultimate frame rates."));
+        stack.AddChild(description);
+
+        var grid = new ProGPU.WinUI.Grid { HeightConstraint = 520f };
+        grid.ColumnDefinitions.Add(new GridLength(300, GridUnitType.Absolute)); // Column 0: Settings Panel
+        grid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));      // Column 1: Visual Canvas Card
+
+        var visual = new MotionMarkShowcaseVisual();
+
+        // 1. Settings Card
+        var settingsCard = new Border {
+            CornerRadius = 8f,
+            BorderThickness = new Thickness(1f),
+            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = ThemeManager.GetBrush("ControlBackground"),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0, 0, 16, 0)
+        };
+        var settingsStack = new StackPanel { Orientation = Orientation.Vertical };
+        settingsCard.Child = settingsStack;
+
+        // Element Count
+        var countLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        countLabel.Inlines.Add(new Bold(new Run("Element Count: 1,000")));
+        settingsStack.AddChild(countLabel);
+        
+        var countSlider = new ProGPU.WinUI.Slider();
+        countSlider.Maximum = 100000f;
+        countSlider.Minimum = 1000f;
+        countSlider.Value = 1000f;
+        countSlider.Margin = new Thickness(0, 0, 0, 16);
+        countSlider.ValueChanged += (s, e) => {
+            int val = (int)(Math.Round(countSlider.Value / 1000f) * 1000f);
+            if (val < 1000) val = 1000;
+            if (Math.Abs(countSlider.Value - val) > 0.01f)
+            {
+                countSlider.Value = val;
+                return;
+            }
+            visual.SetComplexity(val);
+            countLabel.Inlines.Clear();
+            countLabel.Inlines.Add(new Bold(new Run($"Element Count: {val:N0}")));
+            countLabel.Invalidate();
+        };
+        settingsStack.AddChild(countSlider);
+
+        // Stroke Width
+        var strokeLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        strokeLabel.Inlines.Add(new Bold(new Run("Stroke Scale: 1.0x")));
+        settingsStack.AddChild(strokeLabel);
+        
+        var strokeSlider = new ProGPU.WinUI.Slider { Minimum = 0.1f, Maximum = 5.0f, Value = 1.0f, Margin = new Thickness(0, 0, 0, 16) };
+        strokeSlider.ValueChanged += (s, e) => {
+            visual.StrokeThicknessMultiplier = strokeSlider.Value;
+            strokeLabel.Inlines.Clear();
+            strokeLabel.Inlines.Add(new Bold(new Run($"Stroke Scale: {strokeSlider.Value:F1}x")));
+            strokeLabel.Invalidate();
+        };
+        settingsStack.AddChild(strokeSlider);
+
+        // Animation Speed
+        var animLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        animLabel.Inlines.Add(new Bold(new Run("Wobble Animation Speed: 1.0x")));
+        settingsStack.AddChild(animLabel);
+        
+        var animSlider = new ProGPU.WinUI.Slider { Minimum = 0.0f, Maximum = 5.0f, Value = 1.0f, Margin = new Thickness(0, 0, 0, 16) };
+        animSlider.ValueChanged += (s, e) => {
+            visual.AnimationSpeed = animSlider.Value;
+            animLabel.Inlines.Clear();
+            animLabel.Inlines.Add(new Bold(new Run($"Wobble Animation Speed: {animSlider.Value:F1}x")));
+            animLabel.Invalidate();
+        };
+        settingsStack.AddChild(animSlider);
+
+        // Split Chance
+        var splitLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        splitLabel.Inlines.Add(new Bold(new Run("Segment Split Chance: 50%")));
+        settingsStack.AddChild(splitLabel);
+        
+        var splitSlider = new ProGPU.WinUI.Slider { Minimum = 0.0f, Maximum = 1.0f, Value = 0.5f, Margin = new Thickness(0, 0, 0, 16) };
+        splitSlider.ValueChanged += (s, e) => {
+            visual.SplitProbability = splitSlider.Value;
+            splitLabel.Inlines.Clear();
+            splitLabel.Inlines.Add(new Bold(new Run($"Segment Split Chance: {(int)(splitSlider.Value * 100)}%")));
+            splitLabel.Invalidate();
+        };
+        settingsStack.AddChild(splitSlider);
+
+        // Color Palette
+        var colorLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        colorLabel.Inlines.Add(new Bold(new Run("Color Palette:")));
+        settingsStack.AddChild(colorLabel);
+        
+        var colorCombo = new ComboBox { Font = Program.GetFont(), WidthConstraint = 260f, Margin = new Thickness(0, 0, 0, 16) };
+        colorCombo.Items.Add(new ComboBoxItem("Standard Classical"));
+        colorCombo.Items.Add(new ComboBoxItem("Fluent Vibrant"));
+        colorCombo.Items.Add(new ComboBoxItem("Rainbow / Hue Wave"));
+        colorCombo.Items.Add(new ComboBoxItem("Monochrome Dark"));
+        colorCombo.SelectionChanged += (s, e) => {
+            if (colorCombo.SelectedItem != null) {
+                visual.ColorMode = colorCombo.SelectedItem.Text switch {
+                    "Standard Classical" => 0,
+                    "Fluent Vibrant" => 1,
+                    "Rainbow / Hue Wave" => 2,
+                    "Monochrome Dark" => 3,
+                    _ => 0
+                };
+                visual.RegenerateColors();
+            }
+        };
+        settingsStack.AddChild(colorCombo);
+
+        // Segment Mix Checkboxes
+        var typeLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8) };
+        typeLabel.Inlines.Add(new Bold(new Run("Segment Types Mix:")));
+        settingsStack.AddChild(typeLabel);
+
+        var lineCheckText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11.5f };
+        lineCheckText.Inlines.Add(new Run("Lines"));
+        var lineCheck = new CheckBox { Content = lineCheckText, IsChecked = true, Margin = new Thickness(0, 0, 0, 8) };
+        lineCheck.CheckedChanged += (s, e) => {
+            visual.EnableLines = lineCheck.IsChecked;
+            visual.RegenerateSegments();
+        };
+        settingsStack.AddChild(lineCheck);
+
+        var quadCheckText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11.5f };
+        quadCheckText.Inlines.Add(new Run("Quadratic Curves"));
+        var quadCheck = new CheckBox { Content = quadCheckText, IsChecked = true, Margin = new Thickness(0, 0, 0, 8) };
+        quadCheck.CheckedChanged += (s, e) => {
+            visual.EnableQuadBeziers = quadCheck.IsChecked;
+            visual.RegenerateSegments();
+        };
+        settingsStack.AddChild(quadCheck);
+
+        var cubicCheckText = new RichTextBlock { Font = Program.GetFont(), FontSize = 11.5f };
+        cubicCheckText.Inlines.Add(new Run("Cubic Curves"));
+        var cubicCheck = new CheckBox { Content = cubicCheckText, IsChecked = true, Margin = new Thickness(0, 0, 0, 16) };
+        cubicCheck.CheckedChanged += (s, e) => {
+            visual.EnableCubicBeziers = cubicCheck.IsChecked;
+            visual.RegenerateSegments();
+        };
+        settingsStack.AddChild(cubicCheck);
+
+        // Fills vs Strokes
+        var fillToggleLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        fillToggleLabel.Inlines.Add(new Bold(new Run("Render Path Fills instead of Strokes:")));
+        settingsStack.AddChild(fillToggleLabel);
+        
+        var fillToggle = new ToggleSwitch { IsOn = false, Margin = new Thickness(0, 0, 0, 8) };
+        fillToggle.Toggled += (s, e) => {
+            visual.FillShapes = fillToggle.IsOn;
+            visual.Invalidate();
+        };
+        settingsStack.AddChild(fillToggle);
+
+        grid.AddChild(settingsCard);
+        ProGPU.WinUI.Grid.SetColumn(settingsCard, 0);
+
+        grid.AddChild(visual);
+        ProGPU.WinUI.Grid.SetColumn(visual, 1);
+
+        stack.AddChild(grid);
+
+        return stack;
+    }
+}
+
+public class MotionMarkShowcaseVisual : FrameworkElement
+{
+    public class PathSegmentElement
+    {
+        public PathSegment? OriginalSeg;
+        public PathSegment? WobbledSeg;
+        public Vector2 OriginalStartPoint;
+        public Vector2 WobbledStartPoint;
+        public Vector4 Color;
+        public float Width;
+        public bool IsSplit;
+        public GridPoint GP;
+        public int GridIndex;
+    }
+
+    public struct GridPoint
+    {
+        public int X;
+        public int Y;
+
+        public GridPoint(int x, int y)
+        {
+            X = x;
+            Y = y;
+        }
+
+        public Vector2 ToCoordinate(float width, float height)
+        {
+            float w = float.IsInfinity(width) || float.IsNaN(width) || width <= 0f ? 800f : width;
+            float h = float.IsInfinity(height) || float.IsNaN(height) || height <= 0f ? 520f : height;
+            float scaleX = w / 81f;
+            float scaleY = (h - 60f) / 41f;
+            return new Vector2((X + 0.5f) * scaleX, 30f + (Y + 0.5f) * scaleY);
+        }
+    }
+
+    private readonly List<PathSegmentElement> _elements = new();
+    private readonly Random _rand = new();
+    private float _time = 0f;
+
+    // Exposed settings
+    public int ElementCount = 1000;
+    public float StrokeThicknessMultiplier = 1.0f;
+    public float SplitProbability = 0.5f;
+    public float AnimationSpeed = 1.0f;
+    public int ColorMode = 0;
+    public bool FillShapes = false;
+    public bool EnableLines = true;
+    public bool EnableQuadBeziers = true;
+    public bool EnableCubicBeziers = true;
+
+    private static readonly (int, int)[] Offsets = { (-4, 0), (2, 0), (1, -2), (1, 2) };
+
+    private static readonly Vector4[] VelloColors = {
+        new Vector4(0.06f, 0.06f, 0.06f, 1.0f),
+        new Vector4(0.50f, 0.50f, 0.50f, 1.0f),
+        new Vector4(0.75f, 0.75f, 0.75f, 1.0f),
+        new Vector4(0.06f, 0.06f, 0.06f, 1.0f),
+        new Vector4(0.50f, 0.50f, 0.50f, 1.0f),
+        new Vector4(0.75f, 0.75f, 0.75f, 1.0f),
+        new Vector4(0.88f, 0.06f, 0.25f, 1.0f) // Crimson red accent
+    };
+
+    private static readonly Vector4[] FluentColors = {
+        new Vector4(0f, 0.47f, 0.83f, 1f),    // Segoe Blue
+        new Vector4(0.52f, 0.15f, 0.79f, 1f),  // Purple
+        new Vector4(0.91f, 0.11f, 0.38f, 1f),  // Pink
+        new Vector4(1f, 0.73f, 0f, 1f),        // Amber Yellow
+        new Vector4(0.06f, 0.69f, 0.32f, 1f)   // Green
+    };
+
+    private static readonly Vector4[] MonochromeColors = {
+        new Vector4(0.12f, 0.12f, 0.12f, 1f),
+        new Vector4(0.24f, 0.24f, 0.24f, 1f),
+        new Vector4(0.6f, 0.6f, 0.6f, 1f),
+        new Vector4(0.9f, 0.9f, 0.9f, 1f)
+    };
+
+    public MotionMarkShowcaseVisual()
+    {
+        HeightConstraint = 520f;
+        HorizontalAlignment = HorizontalAlignment.Stretch;
+    }
+
+    private GridPoint GetRandomPoint(GridPoint last)
+    {
+        var offset = Offsets[_rand.Next(Offsets.Length)];
+        int x = last.X + offset.Item1;
+        if (x < 0 || x > 80)
+        {
+            x -= offset.Item1 * 2;
+        }
+        int y = last.Y + offset.Item2;
+        if (y < 0 || y > 40)
+        {
+            y -= offset.Item2 * 2;
+        }
+        return new GridPoint(Math.Clamp(x, 0, 80), Math.Clamp(y, 0, 40));
+    }
+
+    private Vector4 GetColorForScheme()
+    {
+        return ColorMode switch
+        {
+            0 => VelloColors[_rand.Next(VelloColors.Length)],
+            1 => FluentColors[_rand.Next(FluentColors.Length)],
+            2 => HsvToRgb((float)_rand.NextDouble() * 360f, 0.85f, 0.95f),
+            3 => MonochromeColors[_rand.Next(MonochromeColors.Length)],
+            _ => VelloColors[_rand.Next(VelloColors.Length)]
+        };
+    }
+
+    private Vector4 HsvToRgb(float h, float s, float v)
+    {
+        float c = v * s;
+        float x = c * (1 - Math.Abs((h / 60f) % 2 - 1));
+        float m = v - c;
+        float r = 0, g = 0, b = 0;
+        if (h >= 0 && h < 60) { r = c; g = x; b = 0; }
+        else if (h >= 60 && h < 120) { r = x; g = c; b = 0; }
+        else if (h >= 120 && h < 180) { r = 0; g = c; b = x; }
+        else if (h >= 180 && h < 240) { r = 0; g = x; b = c; }
+        else if (h >= 240 && h < 300) { r = x; g = 0; b = c; }
+        else if (h >= 300 && h <= 360) { r = c; g = 0; b = x; }
+        return new Vector4(r + m, g + m, b + m, 1.0f);
+    }
+
+    public void SetComplexity(int count)
+    {
+        ElementCount = count;
+        Resize(count);
+    }
+
+    public void Resize(int n)
+    {
+        int oldN = _elements.Count;
+        if (n < oldN)
+        {
+            _elements.RemoveRange(n, oldN - n);
+        }
+        else if (n > oldN)
+        {
+            var lastGP = _elements.Count > 0 ? _elements[^1].GP : new GridPoint(40, 20);
+            for (int i = oldN; i < n; i++)
+            {
+                var elem = CreateElement(lastGP, ref lastGP, i);
+                _elements.Add(elem);
+            }
+        }
+        Invalidate();
+    }
+
+    public void RegenerateColors()
+    {
+        foreach (var elem in _elements)
+        {
+            elem.Color = GetColorForScheme();
+        }
+        Invalidate();
+    }
+
+    public void RegenerateSegments()
+    {
+        _elements.Clear();
+        Resize(ElementCount);
+    }
+
+    private PathSegmentElement CreateElement(GridPoint last, ref GridPoint current, int gridIndex)
+    {
+        var activeTypes = new List<int>();
+        if (EnableLines) activeTypes.Add(0);
+        if (EnableQuadBeziers) activeTypes.Add(1);
+        if (EnableCubicBeziers) activeTypes.Add(2);
+
+        int segType = 0;
+        if (activeTypes.Count > 0)
+        {
+            segType = activeTypes[_rand.Next(activeTypes.Count)];
+        }
+
+        var startPt = current.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f);
+        var next = GetRandomPoint(current);
+        PathSegment seg;
+
+        if (segType == 0) // Line
+        {
+            seg = new LineSegment(next.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f));
+            current = next;
+        }
+        else if (segType == 1) // Quad Bezier
+        {
+            var p2 = GetRandomPoint(next);
+            seg = new QuadraticBezierSegment(next.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f), p2.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f));
+            current = p2;
+        }
+        else // Cubic Bezier
+        {
+            var p2 = GetRandomPoint(next);
+            var p3 = GetRandomPoint(next);
+            seg = new CubicBezierSegment(next.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f), p2.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f), p3.ToCoordinate(Size.X > 0 ? Size.X : 1000f, Size.Y > 0 ? Size.Y : 520f));
+            current = p3;
+        }
+
+        var color = GetColorForScheme();
+        float width = (float)Math.Pow(_rand.NextDouble(), 5) * 20f + 1f;
+
+        return new PathSegmentElement
+        {
+            OriginalSeg = seg,
+            WobbledSeg = seg,
+            OriginalStartPoint = startPt,
+            WobbledStartPoint = startPt,
+            Color = color,
+            Width = width,
+            IsSplit = _rand.NextDouble() < SplitProbability,
+            GP = current,
+            GridIndex = gridIndex
+        };
+    }
+
+    protected override Vector2 MeasureOverride(Vector2 availableSize)
+    {
+        float w = availableSize.X;
+        float h = HeightConstraint ?? 520f;
+        if (float.IsInfinity(w)) w = 800f;
+        return new Vector2(w, h);
+    }
+
+    protected override void ArrangeOverride(Rect arrangeRect)
+    {
+        float w = arrangeRect.Width;
+        float h = arrangeRect.Height;
+        if (float.IsInfinity(w) || float.IsNaN(w) || w <= 0f) w = 800f;
+        if (float.IsInfinity(h) || float.IsNaN(h) || h <= 0f) h = 520f;
+
+        bool sizeChanged = Size.X != w || Size.Y != h;
+        Size = new Vector2(w, h);
+        if (sizeChanged || _elements.Count == 0)
+        {
+            RegenerateSegments();
+        }
+    }
+
+    public override void OnRender(DrawingContext context)
+    {
+        // 1. Draw card background outline
+        var borderPen = new Pen(ThemeManager.GetBrush("ControlBorder"), 1.0f);
+        var bg = ThemeManager.GetBrush("ControlBackground");
+        context.DrawRoundedRectangle(bg, borderPen, new Rect(Vector2.Zero, Size), 8f);
+
+        if (_elements.Count == 0) return;
+
+        // 2. Dynamic Wobble Animation Tick
+        _time += 0.016f * AnimationSpeed;
+        
+        for (int i = 0; i < _elements.Count; i++)
+        {
+            var elem = _elements[i];
+
+            // Vello MotionMark animation: randomly toggle split state (0.5% chance per frame)
+            if (_rand.NextDouble() > 0.995)
+            {
+                elem.IsSplit ^= true;
+            }
+            
+            float phase = _time * 2.5f + elem.GridIndex * 0.04f;
+            var offsetStart = new Vector2((float)Math.Sin(phase) * 12f, (float)Math.Cos(phase * 0.7f) * 12f);
+            var offsetEnd = new Vector2((float)Math.Sin(phase * 1.3f) * 12f, (float)Math.Cos(phase * 0.9f) * 12f);
+
+            elem.WobbledStartPoint = elem.OriginalStartPoint + offsetStart;
+
+            if (elem.OriginalSeg is LineSegment line)
+            {
+                elem.WobbledSeg = new LineSegment(line.Point + offsetEnd);
+            }
+            else if (elem.OriginalSeg is QuadraticBezierSegment quad)
+            {
+                var ctrlOffset = new Vector2((float)Math.Sin(phase * 0.6f) * 15f, (float)Math.Cos(phase * 0.8f) * 15f);
+                elem.WobbledSeg = new QuadraticBezierSegment(quad.ControlPoint + ctrlOffset, quad.Point + offsetEnd);
+            }
+            else if (elem.OriginalSeg is CubicBezierSegment cubic)
+            {
+                var ctrlOffset1 = new Vector2((float)Math.Sin(phase * 0.5f) * 15f, (float)Math.Cos(phase * 0.7f) * 15f);
+                var ctrlOffset2 = new Vector2((float)Math.Cos(phase * 0.6f) * 15f, (float)Math.Sin(phase * 0.8f) * 15f);
+                elem.WobbledSeg = new CubicBezierSegment(cubic.ControlPoint1 + ctrlOffset1, cubic.ControlPoint2 + ctrlOffset2, cubic.Point + offsetEnd);
+            }
+        }
+
+        // 3. Batch path rendering based on Vello's mmark splits
+        var path = new PathGeometry();
+        PathFigure? fig = null;
+
+        for (int i = 0; i < _elements.Count; i++)
+        {
+            var element = _elements[i];
+
+            if (fig == null)
+            {
+                fig = new PathFigure(element.WobbledStartPoint);
+            }
+
+            if (element.WobbledSeg != null)
+            {
+                fig.Segments.Add(element.WobbledSeg);
+            }
+
+            if (element.IsSplit || i == _elements.Count - 1)
+            {
+                path.Figures.Add(fig);
+                
+                var brush = new SolidColorBrush(element.Color);
+                var pen = new Pen(brush, element.Width * StrokeThicknessMultiplier);
+
+                if (FillShapes)
+                {
+                    context.DrawPath(brush, null, path);
+                }
+                else
+                {
+                    context.DrawPath(null, pen, path);
+                }
+
+                path = new PathGeometry();
+                fig = null;
+            }
+        }
+
+        // 4. Draw HUD Benchmarking panel (FPS, item count, pipeline)
+        if (Program.GetFont() != null)
+        {
+            var hudBrush = new SolidColorBrush(new Vector4(0f, 0f, 0f, 0.6f));
+            var hudRect = new Rect(15f, 15f, 250f, 85f);
+            context.DrawRoundedRectangle(hudBrush, new Pen(new SolidColorBrush(0xFFFFFF30), 1f), hudRect, 6f);
+
+            string typText = (EnableLines ? "L " : "") + (EnableQuadBeziers ? "Q " : "") + (EnableCubicBeziers ? "C " : "");
+            context.DrawText($"Active Shapes: {_elements.Count:N0}", Program.GetFont()!, 11.5f, new SolidColorBrush(Vector4.One), new Vector2(25f, 25f));
+            context.DrawText($"Modes Mix: {typText}", Program.GetFont()!, 11f, new SolidColorBrush(new Vector4(0.8f, 0.8f, 0.8f, 1.0f)), new Vector2(25f, 43f));
+            context.DrawText("Pipeline: ProGPU 100% GPU-Bound", Program.GetFont()!, 11f, ThemeManager.GetBrush("SystemAccentColor"), new Vector2(25f, 61f));
+        }
+
+        // Re-invalidate to animate smoothly at max monitor refresh rate
+        Invalidate();
+        base.OnRender(context);
     }
 }
 

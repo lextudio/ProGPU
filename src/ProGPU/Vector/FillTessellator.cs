@@ -9,7 +9,7 @@ public static class FillTessellator
         List<Vector2> path,
         Vector4 color,
         List<VectorVertex> outVertices,
-        List<ushort> outIndices)
+        List<uint> outIndices)
     {
         if (path.Count < 3) return;
 
@@ -34,9 +34,9 @@ public static class FillTessellator
         // Generate triangle fan indices (0, i, i + 1)
         for (int i = 1; i < pointsToUse - 1; i++)
         {
-            outIndices.Add((ushort)vertexStart);
-            outIndices.Add((ushort)(vertexStart + i));
-            outIndices.Add((ushort)(vertexStart + i + 1));
+            outIndices.Add((uint)vertexStart);
+            outIndices.Add((uint)(vertexStart + i));
+            outIndices.Add((uint)(vertexStart + i + 1));
         }
     }
 }

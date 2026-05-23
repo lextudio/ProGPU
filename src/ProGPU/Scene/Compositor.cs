@@ -108,11 +108,11 @@ public unsafe class Compositor : IDisposable
     }
 
     private readonly List<VectorVertex> _vectorVerticesList = new();
-    private readonly List<ushort> _vectorIndicesList = new();
+    private readonly List<uint> _vectorIndicesList = new();
     private readonly List<VectorVertex> _textVerticesList = new();
-    private readonly List<ushort> _textIndicesList = new();
+    private readonly List<uint> _textIndicesList = new();
     private readonly List<VectorVertex> _textureVerticesList = new();
-    private readonly List<ushort> _textureIndicesList = new();
+    private readonly List<uint> _textureIndicesList = new();
     private readonly List<CompositorDrawCall> _drawCalls = new();
     private readonly Dictionary<nint, nint> _textureBindGroups = new();
     private readonly List<GpuBrush> _activeBrushes = new();
@@ -167,13 +167,13 @@ public unsafe class Compositor : IDisposable
         uint vertexStride = (uint)Marshal.SizeOf<VectorVertex>();
 
         _vectorVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Vector Vertex Buffer");
-        _vectorIndexBuffer = new GpuBuffer(_context, initialIndexCount * 2, BufferUsage.Index | BufferUsage.CopyDst, "Vector Index Buffer");
+        _vectorIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Vector Index Buffer");
 
         _textVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Text Vertex Buffer");
-        _textIndexBuffer = new GpuBuffer(_context, initialIndexCount * 2, BufferUsage.Index | BufferUsage.CopyDst, "Text Index Buffer");
+        _textIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Text Index Buffer");
 
         _textureVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Texture Vertex Buffer");
-        _textureIndexBuffer = new GpuBuffer(_context, initialIndexCount * 2, BufferUsage.Index | BufferUsage.CopyDst, "Texture Index Buffer");
+        _textureIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Texture Index Buffer");
 
         InitializePipelinesAndBindGroups();
     }
@@ -480,7 +480,7 @@ public unsafe class Compositor : IDisposable
         }
         if (_vectorIndicesList.Count > 0)
         {
-            EnsureBufferSize(ref _vectorIndexBuffer, (uint)_vectorIndicesList.Count * 2, BufferUsage.Index);
+            EnsureBufferSize(ref _vectorIndexBuffer, (uint)_vectorIndicesList.Count * 4, BufferUsage.Index);
             _vectorIndexBuffer.Write(CollectionsMarshal.AsSpan(_vectorIndicesList));
         }
 
@@ -491,7 +491,7 @@ public unsafe class Compositor : IDisposable
         }
         if (_textIndicesList.Count > 0)
         {
-            EnsureBufferSize(ref _textIndexBuffer, (uint)_textIndicesList.Count * 2, BufferUsage.Index);
+            EnsureBufferSize(ref _textIndexBuffer, (uint)_textIndicesList.Count * 4, BufferUsage.Index);
             _textIndexBuffer.Write(CollectionsMarshal.AsSpan(_textIndicesList));
         }
 
@@ -502,7 +502,7 @@ public unsafe class Compositor : IDisposable
         }
         if (_textureIndicesList.Count > 0)
         {
-            EnsureBufferSize(ref _textureIndexBuffer, (uint)_textureIndicesList.Count * 2, BufferUsage.Index);
+            EnsureBufferSize(ref _textureIndexBuffer, (uint)_textureIndicesList.Count * 4, BufferUsage.Index);
             _textureIndexBuffer.Write(CollectionsMarshal.AsSpan(_textureIndicesList));
         }
 
@@ -563,7 +563,7 @@ public unsafe class Compositor : IDisposable
                     }
                     var buffer = _vectorVertexBuffer.BufferPtr;
                     _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
-                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _vectorIndexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
                     currentType = DrawCallType.Vector;
                 }
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
@@ -583,7 +583,7 @@ public unsafe class Compositor : IDisposable
                     }
                     var buffer = _textVertexBuffer.BufferPtr;
                     _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
-                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _textIndexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textIndexBuffer.Size);
                     currentType = DrawCallType.Text;
                 }
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
@@ -597,7 +597,7 @@ public unsafe class Compositor : IDisposable
                 }
                 var buffer = _textureVertexBuffer.BufferPtr;
                 _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textureVertexBuffer.Size);
-                _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint16, 0, _textureIndexBuffer.Size);
+                _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textureIndexBuffer.Size);
                 currentType = DrawCallType.Texture;
 
                 var viewPtr = dc.Texture.ViewPtr;
@@ -735,6 +735,12 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.DrawRoundedRect:
                     CompileRoundedRectCommand(cmd, globalTransform);
                     break;
+                case RenderCommandType.DrawBezier:
+                    CompileBezierCommand(cmd, globalTransform);
+                    break;
+                case RenderCommandType.DrawCubicBezier:
+                    CompileCubicBezierCommand(cmd, globalTransform);
+                    break;
             }
         }
 
@@ -771,7 +777,7 @@ public unsafe class Compositor : IDisposable
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            ushort idxStart = (ushort)_vectorVerticesList.Count;
+            uint idxStart = (uint)_vectorVerticesList.Count;
 
             _vectorVerticesList.Add(new VectorVertex(v0_pos, solidColor, new Vector2(-wHalf, -hHalf), bIdx, shapeSize, 0f, 0f, 0f));
             _vectorVerticesList.Add(new VectorVertex(v1_pos, solidColor, new Vector2(wHalf, -hHalf), bIdx, shapeSize, 0f, 0f, 0f));
@@ -779,12 +785,12 @@ public unsafe class Compositor : IDisposable
             _vectorVerticesList.Add(new VectorVertex(v3_pos, solidColor, new Vector2(-wHalf, hHalf), bIdx, shapeSize, 0f, 0f, 0f));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 1));
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 1));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
-            _vectorIndicesList.Add((ushort)(idxStart + 3));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 3));
         }
 
         if (cmd.Pen != null)
@@ -792,7 +798,7 @@ public unsafe class Compositor : IDisposable
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            ushort idxStart = (ushort)_vectorVerticesList.Count;
+            uint idxStart = (uint)_vectorVerticesList.Count;
 
             _vectorVerticesList.Add(new VectorVertex(v0_pos, penSolidColor, new Vector2(-wHalf, -hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
             _vectorVerticesList.Add(new VectorVertex(v1_pos, penSolidColor, new Vector2(wHalf, -hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
@@ -800,12 +806,12 @@ public unsafe class Compositor : IDisposable
             _vectorVerticesList.Add(new VectorVertex(v3_pos, penSolidColor, new Vector2(-wHalf, hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 1));
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 1));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
-            _vectorIndicesList.Add((ushort)(idxStart + 3));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 3));
         }
 
         if (_activeClipRect.HasValue)
@@ -819,17 +825,71 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private List<List<Vector2>> EvaluatePathFills(PathGeometry path)
+    {
+        var figures = new List<List<Vector2>>();
+        foreach (var figure in path.Figures)
+        {
+            var points = new List<Vector2>();
+            var currentPoint = figure.StartPoint;
+            points.Add(currentPoint);
+
+            foreach (var segment in figure.Segments)
+            {
+                if (segment is LineSegment line)
+                {
+                    points.Add(line.Point);
+                    currentPoint = line.Point;
+                }
+                else if (segment is QuadraticBezierSegment quad)
+                {
+                    int N = 16;
+                    for (int i = 1; i <= N; i++)
+                    {
+                        float t = i / (float)N;
+                        float oneMinusT = 1.0f - t;
+                        var pt = oneMinusT * oneMinusT * currentPoint + 2.0f * oneMinusT * t * quad.ControlPoint + t * t * quad.Point;
+                        points.Add(pt);
+                    }
+                    currentPoint = quad.Point;
+                }
+                else if (segment is CubicBezierSegment cubic)
+                {
+                    int N = 16;
+                    for (int i = 1; i <= N; i++)
+                    {
+                        float t = i / (float)N;
+                        float oneMinusT = 1.0f - t;
+                        var pt = oneMinusT * oneMinusT * oneMinusT * currentPoint 
+                               + 3.0f * oneMinusT * oneMinusT * t * cubic.ControlPoint1 
+                               + 3.0f * oneMinusT * t * t * cubic.ControlPoint2 
+                               + t * t * t * cubic.Point;
+                        points.Add(pt);
+                    }
+                    currentPoint = cubic.Point;
+                }
+            }
+
+            if (figure.IsClosed && points.Count > 1 && points[0] != points[^1])
+            {
+                points.Add(points[0]);
+            }
+            figures.Add(points);
+        }
+        return figures;
+    }
+
     private void CompilePathCommand(RenderCommand cmd, Matrix4x4 transform)
     {
         if (cmd.Path == null) return;
         int startIndex = _vectorVerticesList.Count;
-        var flattened = cmd.Path.Flatten(0.2f);
 
         if (cmd.Brush != null)
         {
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
+            var flattened = EvaluatePathFills(cmd.Path);
             foreach (var contour in flattened)
             {
                 var transContour = new List<Vector2>(contour.Count);
@@ -867,50 +927,126 @@ public unsafe class Compositor : IDisposable
 
             foreach (var figure in cmd.Path.Figures)
             {
-                var contour = figure.Flatten(0.2f);
-                int M = contour.Count;
-                if (M < 2) continue;
+                var currentPoint = figure.StartPoint;
 
-                ushort idxStart = (ushort)_vectorVerticesList.Count;
-
-                for (int j = 0; j < M; j++)
+                foreach (var segment in figure.Segments)
                 {
-                    var p = contour[j];
-                    Vector2 prev, next;
-
-                    if (figure.IsClosed)
+                    if (segment is LineSegment line)
                     {
-                        prev = (j == 0) ? contour[M - 2] : contour[j - 1];
-                        next = (j == M - 1) ? contour[1] : contour[j + 1];
+                        var p0_trans = Vector2.Transform(currentPoint, transform);
+                        var p1_trans = Vector2.Transform(line.Point, transform);
+
+                        uint idxStart = (uint)_vectorVerticesList.Count;
+
+                        _vectorVerticesList.Add(new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f));
+                        _vectorVerticesList.Add(new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f));
+                        _vectorVerticesList.Add(new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f));
+                        _vectorVerticesList.Add(new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f));
+
+                        _vectorIndicesList.Add(idxStart);
+                        _vectorIndicesList.Add((uint)(idxStart + 1));
+                        _vectorIndicesList.Add((uint)(idxStart + 2));
+
+                        _vectorIndicesList.Add((uint)(idxStart + 1));
+                        _vectorIndicesList.Add((uint)(idxStart + 3));
+                        _vectorIndicesList.Add((uint)(idxStart + 2));
+
+                        currentPoint = line.Point;
                     }
-                    else
+                    else if (segment is QuadraticBezierSegment quad)
                     {
-                        prev = (j == 0) ? p : contour[j - 1];
-                        next = (j == M - 1) ? p : contour[j + 1];
+                        var p0_trans = Vector2.Transform(currentPoint, transform);
+                        var p1_trans = Vector2.Transform(quad.ControlPoint, transform);
+                        var p2_trans = Vector2.Transform(quad.Point, transform);
+
+                        int N = 32;
+                        uint idxStart = (uint)_vectorVerticesList.Count;
+
+                        for (int i = 0; i <= N; i++)
+                        {
+                            float t = i / (float)N;
+                            var pColorLeft = new Vector4(1f, 1f, t, 1f);
+                            var pColorRight = new Vector4(1f, 1f, t, -1f);
+                            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorLeft, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 5f));
+                            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorRight, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 5f));
+                        }
+
+                        for (int i = 0; i < N; i++)
+                        {
+                            uint currentLeft = (uint)(idxStart + 2 * i);
+                            uint currentRight = (uint)(idxStart + 2 * i + 1);
+                            uint nextLeft = (uint)(idxStart + 2 * i + 2);
+                            uint nextRight = (uint)(idxStart + 2 * i + 3);
+
+                            _vectorIndicesList.Add(currentLeft);
+                            _vectorIndicesList.Add(currentRight);
+                            _vectorIndicesList.Add(nextLeft);
+
+                            _vectorIndicesList.Add(currentRight);
+                            _vectorIndicesList.Add(nextRight);
+                            _vectorIndicesList.Add(nextLeft);
+                        }
+
+                        currentPoint = quad.Point;
                     }
+                    else if (segment is CubicBezierSegment cubic)
+                    {
+                        var p0_trans = Vector2.Transform(currentPoint, transform);
+                        var p1_trans = Vector2.Transform(cubic.ControlPoint1, transform);
+                        var p2_trans = Vector2.Transform(cubic.ControlPoint2, transform);
+                        var p3_trans = Vector2.Transform(cubic.Point, transform);
 
-                    var p_trans = Vector2.Transform(p, transform);
-                    var prev_trans = Vector2.Transform(prev, transform);
-                    var next_trans = Vector2.Transform(next, transform);
+                        int N = 32;
+                        uint idxStart = (uint)_vectorVerticesList.Count;
 
-                    _vectorVerticesList.Add(new VectorVertex(p_trans, penSolidColor, prev_trans, penBrushIdx, next_trans, 1f, thickness, 3f));
-                    _vectorVerticesList.Add(new VectorVertex(p_trans, penSolidColor, prev_trans, penBrushIdx, next_trans, -1f, thickness, 3f));
+                        for (int i = 0; i <= N; i++)
+                        {
+                            float t = i / (float)N;
+                            var pColorLeft = new Vector4(p3_trans.X, p3_trans.Y, t, 1f);
+                            var pColorRight = new Vector4(p3_trans.X, p3_trans.Y, t, -1f);
+                            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorLeft, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 6f));
+                            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorRight, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 6f));
+                        }
+
+                        for (int i = 0; i < N; i++)
+                        {
+                            uint currentLeft = (uint)(idxStart + 2 * i);
+                            uint currentRight = (uint)(idxStart + 2 * i + 1);
+                            uint nextLeft = (uint)(idxStart + 2 * i + 2);
+                            uint nextRight = (uint)(idxStart + 2 * i + 3);
+
+                            _vectorIndicesList.Add(currentLeft);
+                            _vectorIndicesList.Add(currentRight);
+                            _vectorIndicesList.Add(nextLeft);
+
+                            _vectorIndicesList.Add(currentRight);
+                            _vectorIndicesList.Add(nextRight);
+                            _vectorIndicesList.Add(nextLeft);
+                        }
+
+                        currentPoint = cubic.Point;
+                    }
                 }
 
-                for (int j = 0; j < M - 1; j++)
+                if (figure.IsClosed && currentPoint != figure.StartPoint)
                 {
-                    ushort currentLeft = (ushort)(idxStart + 2 * j);
-                    ushort currentRight = (ushort)(idxStart + 2 * j + 1);
-                    ushort nextLeft = (ushort)(idxStart + 2 * j + 2);
-                    ushort nextRight = (ushort)(idxStart + 2 * j + 3);
+                    var p0_trans = Vector2.Transform(currentPoint, transform);
+                    var p1_trans = Vector2.Transform(figure.StartPoint, transform);
 
-                    _vectorIndicesList.Add(currentLeft);
-                    _vectorIndicesList.Add(currentRight);
-                    _vectorIndicesList.Add(nextLeft);
+                    uint idxStart = (uint)_vectorVerticesList.Count;
 
-                    _vectorIndicesList.Add(currentRight);
-                    _vectorIndicesList.Add(nextRight);
-                    _vectorIndicesList.Add(nextLeft);
+                    _vectorVerticesList.Add(new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f));
+                    _vectorVerticesList.Add(new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f));
+                    _vectorVerticesList.Add(new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f));
+                    _vectorVerticesList.Add(new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f));
+
+                    _vectorIndicesList.Add(idxStart);
+                    _vectorIndicesList.Add((uint)(idxStart + 1));
+                    _vectorIndicesList.Add((uint)(idxStart + 2));
+
+                    _vectorIndicesList.Add((uint)(idxStart + 1));
+                    _vectorIndicesList.Add((uint)(idxStart + 3));
+                    _vectorIndicesList.Add((uint)(idxStart + 2));
                 }
             }
         }
@@ -937,7 +1073,7 @@ public unsafe class Compositor : IDisposable
         var p1_pos = Vector2.Transform(cmd.Position2, transform);
         float thickness = cmd.Pen.Thickness;
 
-        ushort idxStart = (ushort)_vectorVerticesList.Count;
+        uint idxStart = (uint)_vectorVerticesList.Count;
 
         // Start point P0 (Left + Right offsets)
         _vectorVerticesList.Add(new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f));
@@ -948,12 +1084,117 @@ public unsafe class Compositor : IDisposable
         _vectorVerticesList.Add(new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f));
 
         _vectorIndicesList.Add(idxStart);
-        _vectorIndicesList.Add((ushort)(idxStart + 1));
-        _vectorIndicesList.Add((ushort)(idxStart + 2));
+        _vectorIndicesList.Add((uint)(idxStart + 1));
+        _vectorIndicesList.Add((uint)(idxStart + 2));
 
-        _vectorIndicesList.Add((ushort)(idxStart + 1));
-        _vectorIndicesList.Add((ushort)(idxStart + 3));
-        _vectorIndicesList.Add((ushort)(idxStart + 2));
+        _vectorIndicesList.Add((uint)(idxStart + 1));
+        _vectorIndicesList.Add((uint)(idxStart + 3));
+        _vectorIndicesList.Add((uint)(idxStart + 2));
+
+        if (_activeClipRect.HasValue)
+        {
+            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            {
+                var v = _vectorVerticesList[i];
+                v.Position = ClampToClip(v.Position);
+                _vectorVerticesList[i] = v;
+            }
+        }
+    }
+
+    private void CompileBezierCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Pen == null) return;
+        int startIndex = _vectorVerticesList.Count;
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+        float thickness = cmd.Pen.Thickness;
+
+        var p0_trans = Vector2.Transform(cmd.Position, transform);
+        var p1_trans = Vector2.Transform(cmd.Position2, transform);
+        var p2_trans = Vector2.Transform(cmd.Position3, transform);
+
+        int N = 32; // 32 steps for ultra-smooth curves
+        uint idxStart = (uint)_vectorVerticesList.Count;
+
+        for (int i = 0; i <= N; i++)
+        {
+            float t = i / (float)N;
+            // Emit left (+1) and right (-1) offset vertices
+            var pColorLeft = new Vector4(1f, 1f, t, 1f);
+            var pColorRight = new Vector4(1f, 1f, t, -1f);
+            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorLeft, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 5f));
+            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorRight, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 5f));
+        }
+
+        for (int i = 0; i < N; i++)
+        {
+            uint currentLeft = (uint)(idxStart + 2 * i);
+            uint currentRight = (uint)(idxStart + 2 * i + 1);
+            uint nextLeft = (uint)(idxStart + 2 * i + 2);
+            uint nextRight = (uint)(idxStart + 2 * i + 3);
+
+            _vectorIndicesList.Add(currentLeft);
+            _vectorIndicesList.Add(currentRight);
+            _vectorIndicesList.Add(nextLeft);
+
+            _vectorIndicesList.Add(currentRight);
+            _vectorIndicesList.Add(nextRight);
+            _vectorIndicesList.Add(nextLeft);
+        }
+
+        if (_activeClipRect.HasValue)
+        {
+            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            {
+                var v = _vectorVerticesList[i];
+                v.Position = ClampToClip(v.Position);
+                _vectorVerticesList[i] = v;
+            }
+        }
+    }
+
+    private void CompileCubicBezierCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Pen == null) return;
+        int startIndex = _vectorVerticesList.Count;
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+        float thickness = cmd.Pen.Thickness;
+
+        var p0_trans = Vector2.Transform(cmd.Position, transform);
+        var p1_trans = Vector2.Transform(cmd.Position2, transform);
+        var p2_trans = Vector2.Transform(cmd.Position3, transform);
+        var p3_trans = Vector2.Transform(cmd.Position4, transform);
+
+        int N = 32; // 32 steps for ultra-smooth curves
+        uint idxStart = (uint)_vectorVerticesList.Count;
+
+        for (int i = 0; i <= N; i++)
+        {
+            float t = i / (float)N;
+            // Emit left (+1) and right (-1) offset vertices
+            var pColorLeft = new Vector4(p3_trans.X, p3_trans.Y, t, 1f);
+            var pColorRight = new Vector4(p3_trans.X, p3_trans.Y, t, -1f);
+            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorLeft, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 6f));
+            _vectorVerticesList.Add(new VectorVertex(p0_trans, pColorRight, p1_trans, penBrushIdx, p2_trans, 0f, thickness, 6f));
+        }
+
+        for (int i = 0; i < N; i++)
+        {
+            uint currentLeft = (uint)(idxStart + 2 * i);
+            uint currentRight = (uint)(idxStart + 2 * i + 1);
+            uint nextLeft = (uint)(idxStart + 2 * i + 2);
+            uint nextRight = (uint)(idxStart + 2 * i + 3);
+
+            _vectorIndicesList.Add(currentLeft);
+            _vectorIndicesList.Add(currentRight);
+            _vectorIndicesList.Add(nextLeft);
+
+            _vectorIndicesList.Add(currentRight);
+            _vectorIndicesList.Add(nextRight);
+            _vectorIndicesList.Add(nextLeft);
+        }
 
         if (_activeClipRect.HasValue)
         {
@@ -984,7 +1225,7 @@ public unsafe class Compositor : IDisposable
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            ushort idxStart = (ushort)_vectorVerticesList.Count;
+            uint idxStart = (uint)_vectorVerticesList.Count;
 
             _vectorVerticesList.Add(new VectorVertex(v0_pos, solidColor, new Vector2(-rx, -ry), bIdx, shapeSize, 0f, 0f, 1f));
             _vectorVerticesList.Add(new VectorVertex(v1_pos, solidColor, new Vector2(rx, -ry), bIdx, shapeSize, 0f, 0f, 1f));
@@ -992,12 +1233,12 @@ public unsafe class Compositor : IDisposable
             _vectorVerticesList.Add(new VectorVertex(v3_pos, solidColor, new Vector2(-rx, ry), bIdx, shapeSize, 0f, 0f, 1f));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 1));
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 1));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
-            _vectorIndicesList.Add((ushort)(idxStart + 3));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 3));
         }
 
         if (cmd.Pen != null)
@@ -1005,7 +1246,7 @@ public unsafe class Compositor : IDisposable
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            ushort idxStart = (ushort)_vectorVerticesList.Count;
+            uint idxStart = (uint)_vectorVerticesList.Count;
 
             _vectorVerticesList.Add(new VectorVertex(v0_pos, penSolidColor, new Vector2(-rx, -ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
             _vectorVerticesList.Add(new VectorVertex(v1_pos, penSolidColor, new Vector2(rx, -ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
@@ -1013,12 +1254,12 @@ public unsafe class Compositor : IDisposable
             _vectorVerticesList.Add(new VectorVertex(v3_pos, penSolidColor, new Vector2(-rx, ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 1));
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 1));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
-            _vectorIndicesList.Add((ushort)(idxStart + 3));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 3));
         }
 
         if (_activeClipRect.HasValue)
@@ -1064,7 +1305,7 @@ public unsafe class Compositor : IDisposable
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            ushort idxStart = (ushort)_vectorVerticesList.Count;
+            uint idxStart = (uint)_vectorVerticesList.Count;
 
             _vectorVerticesList.Add(new VectorVertex(v0_pos, solidColor, new Vector2(-wHalf, -hHalf), bIdx, shapeSize, radius, 0f, 2f));
             _vectorVerticesList.Add(new VectorVertex(v1_pos, solidColor, new Vector2(wHalf, -hHalf), bIdx, shapeSize, radius, 0f, 2f));
@@ -1072,12 +1313,12 @@ public unsafe class Compositor : IDisposable
             _vectorVerticesList.Add(new VectorVertex(v3_pos, solidColor, new Vector2(-wHalf, hHalf), bIdx, shapeSize, radius, 0f, 2f));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 1));
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 1));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
-            _vectorIndicesList.Add((ushort)(idxStart + 3));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 3));
         }
 
         if (cmd.Pen != null)
@@ -1085,7 +1326,7 @@ public unsafe class Compositor : IDisposable
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
 
-            ushort idxStart = (ushort)_vectorVerticesList.Count;
+            uint idxStart = (uint)_vectorVerticesList.Count;
 
             _vectorVerticesList.Add(new VectorVertex(v0_pos, penSolidColor, new Vector2(-wHalf, -hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
             _vectorVerticesList.Add(new VectorVertex(v1_pos, penSolidColor, new Vector2(wHalf, -hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
@@ -1093,12 +1334,12 @@ public unsafe class Compositor : IDisposable
             _vectorVerticesList.Add(new VectorVertex(v3_pos, penSolidColor, new Vector2(-wHalf, hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 1));
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 1));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
 
             _vectorIndicesList.Add(idxStart);
-            _vectorIndicesList.Add((ushort)(idxStart + 2));
-            _vectorIndicesList.Add((ushort)(idxStart + 3));
+            _vectorIndicesList.Add((uint)(idxStart + 2));
+            _vectorIndicesList.Add((uint)(idxStart + 3));
         }
 
         if (_activeClipRect.HasValue)
@@ -1249,7 +1490,7 @@ public unsafe class Compositor : IDisposable
                 var v2 = Vector2.Transform(new Vector2(sx2, y1), transform);
                 var v3 = Vector2.Transform(new Vector2(sx3, y1), transform);
 
-                ushort idxStart = (ushort)_textVerticesList.Count;
+                uint idxStart = (uint)_textVerticesList.Count;
 
                 // Set dynamic UV texture mappings
                 var uv0 = new Vector2(info.TexCoordMin.X, info.TexCoordMin.Y);
@@ -1304,12 +1545,12 @@ public unsafe class Compositor : IDisposable
 
                 // Quads Triangle Indices
                 _textIndicesList.Add(idxStart);
-                _textIndicesList.Add((ushort)(idxStart + 1));
-                _textIndicesList.Add((ushort)(idxStart + 2));
+                _textIndicesList.Add((uint)(idxStart + 1));
+                _textIndicesList.Add((uint)(idxStart + 2));
 
                 _textIndicesList.Add(idxStart);
-                _textIndicesList.Add((ushort)(idxStart + 2));
-                _textIndicesList.Add((ushort)(idxStart + 3));
+                _textIndicesList.Add((uint)(idxStart + 2));
+                _textIndicesList.Add((uint)(idxStart + 3));
             }
         }
     }
@@ -1325,7 +1566,7 @@ public unsafe class Compositor : IDisposable
         var v2 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
         var v3 = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
 
-        ushort idxStart = (ushort)_textureVerticesList.Count;
+        uint idxStart = (uint)_textureVerticesList.Count;
 
         var uv0 = new Vector2(0f, 0f);
         var uv1 = new Vector2(1f, 0f);
@@ -1366,12 +1607,12 @@ public unsafe class Compositor : IDisposable
         _textureVerticesList.Add(new VectorVertex(v3, color, uv3));
 
         _textureIndicesList.Add(idxStart);
-        _textureIndicesList.Add((ushort)(idxStart + 1));
-        _textureIndicesList.Add((ushort)(idxStart + 2));
+        _textureIndicesList.Add((uint)(idxStart + 1));
+        _textureIndicesList.Add((uint)(idxStart + 2));
 
         _textureIndicesList.Add(idxStart);
-        _textureIndicesList.Add((ushort)(idxStart + 2));
-        _textureIndicesList.Add((ushort)(idxStart + 3));
+        _textureIndicesList.Add((uint)(idxStart + 2));
+        _textureIndicesList.Add((uint)(idxStart + 3));
 
         _drawCalls.Add(new CompositorDrawCall
         {
