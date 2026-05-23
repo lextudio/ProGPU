@@ -13,6 +13,8 @@ public static class InputSystem
     private static FrameworkElement? _hoveredElement;
     private static FrameworkElement? _focusedElement;
     private static Vector2 _lastMousePos;
+    private static FrameworkElement? _capturedElement;
+    private static bool _isShiftPressed;
 
     public static FrameworkElement? Root
     {
@@ -22,6 +24,16 @@ public static class InputSystem
 
     public static FrameworkElement? HoveredElement => _hoveredElement;
     public static FrameworkElement? FocusedElement => _focusedElement;
+
+    public static void CapturePointer(FrameworkElement? element)
+    {
+        _capturedElement = element;
+    }
+
+    public static void ReleasePointerCapture()
+    {
+        _capturedElement = null;
+    }
 
     public static void Initialize(IInputContext input, FrameworkElement? root = null)
     {
@@ -121,6 +133,17 @@ public static class InputSystem
     private static void OnMouseMove(Vector2 screenPos)
     {
         _lastMousePos = screenPos;
+
+        if (_capturedElement != null)
+        {
+            _capturedElement.OnPointerMoved(new PointerRoutedEventArgs
+            {
+                Position = GetLocalPosition(_capturedElement, screenPos),
+                ScreenPosition = screenPos
+            });
+            return;
+        }
+
         var hit = HitTest(screenPos);
 
         if (hit != _hoveredElement)
@@ -199,6 +222,18 @@ public static class InputSystem
     {
         if (button != MouseButton.Left) return;
 
+        if (_capturedElement != null)
+        {
+            _capturedElement.OnPointerReleased(new PointerRoutedEventArgs
+            {
+                Position = GetLocalPosition(_capturedElement, _lastMousePos),
+                ScreenPosition = _lastMousePos,
+                IsLeftButtonPressed = false
+            });
+            ReleasePointerCapture();
+            return;
+        }
+
         var hit = HitTest(_lastMousePos);
         if (hit != null)
         {
@@ -227,6 +262,17 @@ public static class InputSystem
 
     private static void OnKeyDown(Key key)
     {
+        if (key == Key.ShiftLeft || key == Key.ShiftRight)
+        {
+            _isShiftPressed = true;
+        }
+
+        if (key == Key.Tab)
+        {
+            CycleFocus(_isShiftPressed);
+            return;
+        }
+
         if (_focusedElement != null)
         {
             _focusedElement.OnKeyDown(new KeyRoutedEventArgs { Key = key });
@@ -235,6 +281,11 @@ public static class InputSystem
 
     private static void OnKeyUp(Key key)
     {
+        if (key == Key.ShiftLeft || key == Key.ShiftRight)
+        {
+            _isShiftPressed = false;
+        }
+
         if (_focusedElement != null)
         {
             _focusedElement.OnKeyUp(new KeyRoutedEventArgs { Key = key });
@@ -246,6 +297,63 @@ public static class InputSystem
         if (_focusedElement != null)
         {
             _focusedElement.OnCharacterReceived(new CharacterReceivedRoutedEventArgs { Character = c });
+        }
+    }
+
+    public static void CycleFocus(bool reverse)
+    {
+        if (_root == null) return;
+
+        var list = new List<FrameworkElement>();
+        GatherFocusableElements(_root, list);
+
+        if (list.Count == 0) return;
+
+        int index = list.IndexOf(_focusedElement!);
+        int nextIndex;
+
+        if (reverse)
+        {
+            if (index <= 0)
+            {
+                nextIndex = list.Count - 1;
+            }
+            else
+            {
+                nextIndex = index - 1;
+            }
+        }
+        else
+        {
+            if (index < 0 || index >= list.Count - 1)
+            {
+                nextIndex = 0;
+            }
+            else
+            {
+                nextIndex = index + 1;
+            }
+        }
+
+        SetFocus(list[nextIndex]);
+    }
+
+    private static void GatherFocusableElements(Visual visual, List<FrameworkElement> list)
+    {
+        if (visual is not FrameworkElement fe || !fe.IsEnabled)
+            return;
+
+        if (fe is Control)
+        {
+            list.Add(fe);
+        }
+
+        if (visual is ContainerVisual container)
+        {
+            foreach (var child in container.Children)
+            {
+                GatherFocusableElements(child, list);
+            }
         }
     }
 }

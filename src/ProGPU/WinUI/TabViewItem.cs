@@ -86,6 +86,7 @@ public class TabViewItem : Control
             else
             {
                 Selected?.Invoke(this, EventArgs.Empty);
+                e.Handled = true;
             }
         }
     }

@@ -751,6 +751,7 @@ public class RichEditBox : Control
                 SelectionLength = 0;
                 _selectionAnchor = 0;
                 _isDraggingSelection = true;
+                InputSystem.CapturePointer(this);
                 CaretIndex = 0;
                 return;
             }
@@ -772,6 +773,7 @@ public class RichEditBox : Control
             SelectionStart = bestIdx;
             SelectionLength = 0;
             _isDraggingSelection = true;
+            InputSystem.CapturePointer(this);
             CaretIndex = bestIdx;
         }
     }
@@ -781,6 +783,7 @@ public class RichEditBox : Control
         if (IsEnabled)
         {
             base.OnPointerReleased(e);
+            InputSystem.ReleasePointerCapture();
             _isDraggingSelection = false;
         }
     }
@@ -1076,6 +1079,133 @@ public class RichEditBox : Control
                         CaretIndex++;
                         e.Handled = true;
                     }
+                }
+            }
+            else if (e.Key == Key.Up || e.Key == Key.Down)
+            {
+                _blockView.PerformRichLayout(Size.X - Padding.Horizontal);
+                var pcs = _blockView.PositionedChars;
+                if (pcs.Count > 0)
+                {
+                    var lines = new List<List<int>>();
+                    var currentLineIndices = new List<int> { 0 };
+                    lines.Add(currentLineIndices);
+                    for (int i = 1; i < pcs.Count; i++)
+                    {
+                        if (Math.Abs(pcs[i].Position.Y - pcs[currentLineIndices[0]].Position.Y) > 1f)
+                        {
+                            currentLineIndices = new List<int> { i };
+                            lines.Add(currentLineIndices);
+                        }
+                        else
+                        {
+                            currentLineIndices.Add(i);
+                        }
+                    }
+
+                    int currentLineIdx = -1;
+                    for (int l = 0; l < lines.Count; l++)
+                    {
+                        if (CaretIndex < pcs.Count)
+                        {
+                            if (lines[l].Contains(CaretIndex))
+                            {
+                                currentLineIdx = l;
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            currentLineIdx = lines.Count - 1;
+                        }
+                    }
+
+                    if (currentLineIdx == -1)
+                    {
+                        currentLineIdx = 0;
+                    }
+
+                    int targetLineIdx = e.Key == Key.Up ? currentLineIdx - 1 : currentLineIdx + 1;
+
+                    if (targetLineIdx >= 0 && targetLineIdx < lines.Count)
+                    {
+                        Vector2 currentPos = Vector2.Zero;
+                        if (CaretIndex < pcs.Count)
+                        {
+                            currentPos = pcs[CaretIndex].Position;
+                        }
+                        else if (pcs.Count > 0)
+                        {
+                            var pc = pcs[pcs.Count - 1];
+                            currentPos = pc.Position;
+                            if (Font != null)
+                            {
+                                ushort lastG = Font.GetGlyphIndex(pc.Info.Character);
+                                currentPos.X += Font.GetAdvanceWidth(lastG, pc.Info.FontSize);
+                            }
+                        }
+
+                        int bestTargetCaretIdx = -1;
+                        float bestDist = float.PositiveInfinity;
+
+                        var targetLine = lines[targetLineIdx];
+                        for (int k = 0; k < targetLine.Count; k++)
+                        {
+                            int charIdx = targetLine[k];
+                            
+                            Vector2 candPos = pcs[charIdx].Position;
+                            float xDiff = Math.Abs(candPos.X - currentPos.X);
+                            float yDiff = Math.Abs(candPos.Y - currentPos.Y);
+                            float dist = xDiff + yDiff * 2f;
+
+                            if (dist < bestDist)
+                            {
+                                bestDist = dist;
+                                bestTargetCaretIdx = charIdx;
+                            }
+
+                            if (k == targetLine.Count - 1)
+                            {
+                                float advance = 0f;
+                                if (Font != null)
+                                {
+                                    ushort gIdx = Font.GetGlyphIndex(pcs[charIdx].Info.Character);
+                                    advance = Font.GetAdvanceWidth(gIdx, pcs[charIdx].Info.FontSize);
+                                }
+                                Vector2 candPosAfter = new Vector2(pcs[charIdx].Position.X + advance, pcs[charIdx].Position.Y);
+                                float xDiffAfter = Math.Abs(candPosAfter.X - currentPos.X);
+                                float yDiffAfter = Math.Abs(candPosAfter.Y - currentPos.Y);
+                                float distAfter = xDiffAfter + yDiffAfter * 2f;
+
+                                if (distAfter < bestDist)
+                                {
+                                    bestDist = distAfter;
+                                    bestTargetCaretIdx = charIdx + 1;
+                                }
+                            }
+                        }
+
+                        if (bestTargetCaretIdx != -1)
+                        {
+                            if (isShift)
+                            {
+                                if (SelectionLength == 0)
+                                {
+                                    _selectionAnchor = CaretIndex;
+                                }
+                                CaretIndex = bestTargetCaretIdx;
+                                SelectionStart = Math.Min(_selectionAnchor, CaretIndex);
+                                SelectionLength = Math.Abs(_selectionAnchor - CaretIndex);
+                            }
+                            else
+                            {
+                                CaretIndex = bestTargetCaretIdx;
+                                SelectionStart = CaretIndex;
+                                SelectionLength = 0;
+                            }
+                        }
+                    }
+                    e.Handled = true;
                 }
             }
         }

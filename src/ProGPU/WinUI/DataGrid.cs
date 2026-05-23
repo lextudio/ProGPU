@@ -201,6 +201,7 @@ public class DataGrid : Control
                         _resizingColumnIndex = i;
                         _resizeStartMouseX = e.Position.X;
                         _resizeStartWidth = Columns[i].Width;
+                        InputSystem.CapturePointer(this);
                         e.Handled = true;
                         return;
                     }
@@ -291,7 +292,11 @@ public class DataGrid : Control
     public override void OnPointerReleased(PointerRoutedEventArgs e)
     {
         _isDraggingScroll = false;
-        _resizingColumnIndex = -1;
+        if (_resizingColumnIndex != -1)
+        {
+            _resizingColumnIndex = -1;
+            InputSystem.ReleasePointerCapture();
+        }
         base.OnPointerReleased(e);
     }
 

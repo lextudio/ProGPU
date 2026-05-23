@@ -101,6 +101,7 @@ public class ScrollViewer : Control
                     _isDraggingVert = true;
                     _dragStartOffset = VerticalOffset;
                     _dragStartMouseY = e.Position.Y;
+                    InputSystem.CapturePointer(this);
                     e.Handled = true;
                     return;
                 }
@@ -111,7 +112,11 @@ public class ScrollViewer : Control
 
     public override void OnPointerReleased(PointerRoutedEventArgs e)
     {
-        _isDraggingVert = false;
+        if (_isDraggingVert)
+        {
+            _isDraggingVert = false;
+            InputSystem.ReleasePointerCapture();
+        }
         base.OnPointerReleased(e);
     }
 
@@ -192,7 +197,9 @@ public class ScrollViewer : Control
             context.DrawRectangle(Background, null, new Rect(Vector2.Zero, Size));
         }
 
+        context.PushClip(new Rect(Vector2.Zero, Size));
         base.OnRender(context);
+        context.PopClip();
 
         // Draw vertical scrollbar if content overflows viewport height
         float contentHeight = ContentHeight;

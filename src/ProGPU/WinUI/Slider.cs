@@ -53,6 +53,7 @@ public class Slider : Control
         if (IsEnabled)
         {
             _isDragging = true;
+            InputSystem.CapturePointer(this);
             UpdateValueFromPos(e.Position.X);
             base.OnPointerPressed(e);
         }
@@ -60,7 +61,11 @@ public class Slider : Control
 
     public override void OnPointerReleased(PointerRoutedEventArgs e)
     {
-        _isDragging = false;
+        if (_isDragging)
+        {
+            _isDragging = false;
+            InputSystem.ReleasePointerCapture();
+        }
         base.OnPointerReleased(e);
     }
 

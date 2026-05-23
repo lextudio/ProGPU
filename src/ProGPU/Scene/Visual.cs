@@ -249,13 +249,44 @@ public class TextVisual : ProGPU.WinUI.FrameworkElement
         }
     }
 
+    private TtfFont? ResolveFont()
+    {
+        Visual? p = this;
+        while (p != null)
+        {
+            var prop = p.GetType().GetProperty("Font");
+            if (prop != null && prop.GetValue(p) is TtfFont f) return f;
+            p = p.Parent;
+        }
+
+        try
+        {
+            var asm = AppDomain.CurrentDomain.GetAssemblies();
+            foreach (var assembly in asm)
+            {
+                var type = assembly.GetType("ProGPU.Samples.Program");
+                if (type != null)
+                {
+                    var method = type.GetMethod("GetFont");
+                    if (method != null && method.Invoke(null, null) is TtfFont staticFont)
+                    {
+                        return staticFont;
+                    }
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     public TextLayout? GetOrUpdateLayout(GlyphAtlas atlas)
     {
-        if (Font == null) return null;
+        var resolvedFont = ResolveFont();
+        if (resolvedFont == null) return null;
 
         if (_layout == null)
         {
-            _layout = new TextLayout(Text, Font, FontSize, Size.X, Alignment, atlas);
+            _layout = new TextLayout(Text, resolvedFont, FontSize, Size.X, Alignment, atlas);
             Size = _layout.MeasuredSize;
         }
         else if (!_layout.HasTextures)
@@ -267,11 +298,12 @@ public class TextVisual : ProGPU.WinUI.FrameworkElement
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
-        if (string.IsNullOrEmpty(Text) || Font == null)
+        var resolvedFont = ResolveFont();
+        if (string.IsNullOrEmpty(Text) || resolvedFont == null)
             return Vector2.Zero;
 
         float maxWidth = WidthConstraint ?? availableSize.X;
-        var tempLayout = new TextLayout(Text, Font, FontSize, maxWidth, Alignment, null);
+        var tempLayout = new TextLayout(Text, resolvedFont, FontSize, maxWidth, Alignment, null);
         return tempLayout.MeasuredSize;
     }
 
@@ -283,16 +315,19 @@ public class TextVisual : ProGPU.WinUI.FrameworkElement
 
     public override void OnRender(DrawingContext context)
     {
-        if (string.IsNullOrEmpty(Text) || Font == null || Brush == null) return;
+        var resolvedFont = ResolveFont();
+        if (string.IsNullOrEmpty(Text) || resolvedFont == null) return;
         
+        var resolvedBrush = Brush ?? new SolidColorBrush(0xFFFFFFFF);
+
         // Add single drawing run command; compositor will dynamically compile coordinates
         context.Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.DrawText,
             Text = Text,
-            Font = Font,
+            Font = resolvedFont,
             FontSize = FontSize,
-            Brush = Brush,
+            Brush = resolvedBrush,
             Position = Vector2.Zero,
             Rect = new Rect(Vector2.Zero, Size)
         });
