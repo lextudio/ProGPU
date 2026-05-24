@@ -3926,6 +3926,22 @@ public static class SamplePagePresenter
         alignCombo.SelectedItem = alignLeft;
         settingsStack.AddChild(alignCombo);
 
+        // Slider for Contrast (Font Smoothing)
+        var contrastLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        contrastLabel.Inlines.Add(new Bold(new Run($"Font Contrast/Dilation: {Compositor.DefaultTextContrast:F2}")));
+        settingsStack.AddChild(contrastLabel);
+
+        var contrastSlider = new ProGPU.WinUI.Slider { Minimum = 0.5f, Maximum = 2.5f, Value = Compositor.DefaultTextContrast, Margin = new Thickness(0, 0, 0, 16) };
+        settingsStack.AddChild(contrastSlider);
+
+        // Slider for Gamma Correction
+        var gammaLabel = new RichTextBlock { Font = Program.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        gammaLabel.Inlines.Add(new Bold(new Run($"Font Gamma: {Compositor.DefaultTextGamma:F2}")));
+        settingsStack.AddChild(gammaLabel);
+
+        var gammaSlider = new ProGPU.WinUI.Slider { Minimum = 1.0f, Maximum = 3.0f, Value = Compositor.DefaultTextGamma, Margin = new Thickness(0, 0, 0, 16) };
+        settingsStack.AddChild(gammaSlider);
+
         grid.AddChild(settingsCard);
         ProGPU.WinUI.Grid.SetColumn(settingsCard, 0);
 
@@ -4072,6 +4088,16 @@ public static class SamplePagePresenter
                 _ => TextAlignment.Left
             };
 
+            Compositor.DefaultTextContrast = contrastSlider.Value;
+            contrastLabel.Inlines.Clear();
+            contrastLabel.Inlines.Add(new Bold(new Run($"Font Contrast/Dilation: {Compositor.DefaultTextContrast:F2}")));
+            contrastLabel.Invalidate();
+
+            Compositor.DefaultTextGamma = gammaSlider.Value;
+            gammaLabel.Inlines.Clear();
+            gammaLabel.Inlines.Add(new Bold(new Run($"Font Gamma: {Compositor.DefaultTextGamma:F2}")));
+            gammaLabel.Invalidate();
+
             foreach (var tb in textBlocks)
             {
                 tb.Font = f;
@@ -4084,6 +4110,8 @@ public static class SamplePagePresenter
         fontCombo.SelectionChanged += (s, e) => updateVisuals();
         sizeSlider.ValueChanged += (s, e) => updateVisuals();
         alignCombo.SelectionChanged += (s, e) => updateVisuals();
+        contrastSlider.ValueChanged += (s, e) => updateVisuals();
+        gammaSlider.ValueChanged += (s, e) => updateVisuals();
 
         // Run initial sizing update
         updateVisuals();

@@ -134,6 +134,9 @@ public unsafe class Compositor : IDisposable
     private readonly Stack<Rect> _clipStack = new();
     private Rect? _activeClipRect;
 
+    public static float DefaultTextGamma = 1.43f;
+    public static float DefaultTextContrast = 1.15f;
+
     public int VectorVertexCount => _vectorVerticesList.Count;
     public int VectorIndexCount => _vectorIndicesList.Count;
     public int TextVertexCount => _textVerticesList.Count;
@@ -1678,10 +1681,10 @@ public unsafe class Compositor : IDisposable
                     v3 = new Vector2(cx1, cy2);
                 }
 
-                _textVerticesList.Add(new VectorVertex(v0, color, uv0, bIdx));
-                _textVerticesList.Add(new VectorVertex(v1, color, uv1, bIdx));
-                _textVerticesList.Add(new VectorVertex(v2, color, uv2, bIdx));
-                _textVerticesList.Add(new VectorVertex(v3, color, uv3, bIdx));
+                _textVerticesList.Add(new VectorVertex(v0, color, uv0, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast));
+                _textVerticesList.Add(new VectorVertex(v1, color, uv1, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast));
+                _textVerticesList.Add(new VectorVertex(v2, color, uv2, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast));
+                _textVerticesList.Add(new VectorVertex(v3, color, uv3, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast));
 
                 // Quads Triangle Indices
                 _textIndicesList.Add(idxStart);

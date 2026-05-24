@@ -264,12 +264,19 @@ struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) texCoord: vec2<f32>,
+    @location(3) brushIndex: f32,
+    @location(4) shapeSize: vec2<f32>,
+    @location(5) cornerRadius: f32,
+    @location(6) strokeThickness: f32,
+    @location(7) shapeType: f32,
 };
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) texCoord: vec2<f32>,
+    @location(2) cornerRadius: f32,
+    @location(3) strokeThickness: f32,
 };
 
 struct Uniforms {
@@ -284,6 +291,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.position = uniforms.projection * vec4<f32>(input.position, 0.0, 1.0);
     output.color = input.color;
     output.texCoord = input.texCoord;
+    output.cornerRadius = input.cornerRadius;
+    output.strokeThickness = input.strokeThickness;
     return output;
 }
 
@@ -293,7 +302,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureSample(atlasTexture, atlasSampler, input.texCoord).r;
-    return vec4<f32>(input.color.rgb, input.color.a * alpha);
+    let dilated = clamp(alpha * input.strokeThickness, 0.0, 1.0);
+    let finalAlpha = pow(dilated, input.cornerRadius);
+    return vec4<f32>(input.color.rgb, input.color.a * finalAlpha);
 }
 ";
 
@@ -475,32 +486,14 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     var coverage: f32 = 0.0;
     
-    // Sample 0: +0.25, +0.25
-    let sp0 = vec2<f32>(px + 0.25, py + 0.25);
-    let fp0 = vec2<f32>(sp0.x / uniforms.scale, -sp0.y / uniforms.scale);
-    if (is_point_inside(fp0, record)) {
-        coverage = coverage + 0.25;
-    }
-    
-    // Sample 1: +0.75, +0.25
-    let sp1 = vec2<f32>(px + 0.75, py + 0.25);
-    let fp1 = vec2<f32>(sp1.x / uniforms.scale, -sp1.y / uniforms.scale);
-    if (is_point_inside(fp1, record)) {
-        coverage = coverage + 0.25;
-    }
-    
-    // Sample 2: +0.25, +0.75
-    let sp2 = vec2<f32>(px + 0.25, py + 0.75);
-    let fp2 = vec2<f32>(sp2.x / uniforms.scale, -sp2.y / uniforms.scale);
-    if (is_point_inside(fp2, record)) {
-        coverage = coverage + 0.25;
-    }
-    
-    // Sample 3: +0.75, +0.75
-    let sp3 = vec2<f32>(px + 0.75, py + 0.75);
-    let fp3 = vec2<f32>(sp3.x / uniforms.scale, -sp3.y / uniforms.scale);
-    if (is_point_inside(fp3, record)) {
-        coverage = coverage + 0.25;
+    for (var dy: f32 = 0.125; dy < 1.0; dy = dy + 0.25) {
+        for (var dx: f32 = 0.125; dx < 1.0; dx = dx + 0.25) {
+            let sp = vec2<f32>(px + dx, py + dy);
+            let fp = vec2<f32>(sp.x / uniforms.scale, -sp.y / uniforms.scale);
+            if (is_point_inside(fp, record)) {
+                coverage = coverage + 0.0625;
+            }
+        }
     }
     
     let writeCoord = vec2<u32>(uniforms.atlasX + x, uniforms.atlasY + y);
