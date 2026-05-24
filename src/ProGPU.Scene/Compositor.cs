@@ -1149,31 +1149,36 @@ public unsafe class Compositor : IDisposable
         var p1_pos = Vector2.Transform(cmd.Position2, transform);
         float thickness = cmd.Pen.Thickness;
 
-        uint idxStart = (uint)_vectorVerticesList.Count;
+        uint idxStart = (uint)startIndex;
 
-        // Start point P0 (Left + Right offsets)
-        _vectorVerticesList.Add(new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f));
-        _vectorVerticesList.Add(new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f));
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-        // End point P1 (Left + Right offsets)
-        _vectorVerticesList.Add(new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f));
-        _vectorVerticesList.Add(new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f));
+        vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
+        vertexSpan[1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
+        vertexSpan[2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
+        vertexSpan[3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
 
-        _vectorIndicesList.Add(idxStart);
-        _vectorIndicesList.Add((uint)(idxStart + 1));
-        _vectorIndicesList.Add((uint)(idxStart + 2));
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
 
-        _vectorIndicesList.Add((uint)(idxStart + 1));
-        _vectorIndicesList.Add((uint)(idxStart + 3));
-        _vectorIndicesList.Add((uint)(idxStart + 2));
+        indexSpan[0] = idxStart;
+        indexSpan[1] = idxStart + 1;
+        indexSpan[2] = idxStart + 2;
+        indexSpan[3] = idxStart + 1;
+        indexSpan[4] = idxStart + 3;
+        indexSpan[5] = idxStart + 2;
 
         if (_activeClipRect.HasValue)
         {
-            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
             {
-                var v = _vectorVerticesList[i];
+                var v = vertices[i];
                 v.Position = ClampToClip(v.Position);
-                _vectorVerticesList[i] = v;
+                vertices[i] = v;
             }
         }
     }
@@ -1191,13 +1196,20 @@ public unsafe class Compositor : IDisposable
         var p2_trans = Vector2.Transform(cmd.Position3, transform);
 
         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
-        uint idxStart = (uint)_vectorVerticesList.Count;
+        uint idxStart = (uint)startIndex;
 
         var baseVertex = new VectorVertex(p0_trans, Vector4.Zero, p1_trans, penBrushIdx, p2_trans, idxStart, thickness, 5f);
-        for (int i = 0; i < 2 * (N + 1); i++)
-        {
-            _vectorVerticesList.Add(baseVertex);
-        }
+        
+        int originalVertexCount = _vectorVerticesList.Count;
+        int vertexToAdd = 2 * (N + 1);
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + vertexToAdd);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, vertexToAdd);
+        vertexSpan.Fill(baseVertex);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        int indicesToAdd = 6 * N;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + indicesToAdd);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, indicesToAdd);
 
         for (int i = 0; i < N; i++)
         {
@@ -1206,22 +1218,23 @@ public unsafe class Compositor : IDisposable
             uint nextLeft = (uint)(idxStart + 2 * i + 2);
             uint nextRight = (uint)(idxStart + 2 * i + 3);
 
-            _vectorIndicesList.Add(currentLeft);
-            _vectorIndicesList.Add(currentRight);
-            _vectorIndicesList.Add(nextLeft);
-
-            _vectorIndicesList.Add(currentRight);
-            _vectorIndicesList.Add(nextRight);
-            _vectorIndicesList.Add(nextLeft);
+            int baseIdx = 6 * i;
+            indexSpan[baseIdx] = currentLeft;
+            indexSpan[baseIdx + 1] = currentRight;
+            indexSpan[baseIdx + 2] = nextLeft;
+            indexSpan[baseIdx + 3] = currentRight;
+            indexSpan[baseIdx + 4] = nextRight;
+            indexSpan[baseIdx + 5] = nextLeft;
         }
 
         if (_activeClipRect.HasValue)
         {
-            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
             {
-                var v = _vectorVerticesList[i];
+                var v = vertices[i];
                 v.Position = ClampToClip(v.Position);
-                _vectorVerticesList[i] = v;
+                vertices[i] = v;
             }
         }
     }
@@ -1240,13 +1253,20 @@ public unsafe class Compositor : IDisposable
         var p3_trans = Vector2.Transform(cmd.Position4, transform);
 
         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
-        uint idxStart = (uint)_vectorVerticesList.Count;
+        uint idxStart = (uint)startIndex;
 
         var baseVertex = new VectorVertex(p0_trans, new Vector4(p3_trans.X, p3_trans.Y, 0f, 0f), p1_trans, penBrushIdx, p2_trans, idxStart, thickness, 6f);
-        for (int i = 0; i < 2 * (N + 1); i++)
-        {
-            _vectorVerticesList.Add(baseVertex);
-        }
+        
+        int originalVertexCount = _vectorVerticesList.Count;
+        int vertexToAdd = 2 * (N + 1);
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + vertexToAdd);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, vertexToAdd);
+        vertexSpan.Fill(baseVertex);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        int indicesToAdd = 6 * N;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + indicesToAdd);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, indicesToAdd);
 
         for (int i = 0; i < N; i++)
         {
@@ -1255,22 +1275,23 @@ public unsafe class Compositor : IDisposable
             uint nextLeft = (uint)(idxStart + 2 * i + 2);
             uint nextRight = (uint)(idxStart + 2 * i + 3);
 
-            _vectorIndicesList.Add(currentLeft);
-            _vectorIndicesList.Add(currentRight);
-            _vectorIndicesList.Add(nextLeft);
-
-            _vectorIndicesList.Add(currentRight);
-            _vectorIndicesList.Add(nextRight);
-            _vectorIndicesList.Add(nextLeft);
+            int baseIdx = 6 * i;
+            indexSpan[baseIdx] = currentLeft;
+            indexSpan[baseIdx + 1] = currentRight;
+            indexSpan[baseIdx + 2] = nextLeft;
+            indexSpan[baseIdx + 3] = currentRight;
+            indexSpan[baseIdx + 4] = nextRight;
+            indexSpan[baseIdx + 5] = nextLeft;
         }
 
         if (_activeClipRect.HasValue)
         {
-            for (int i = startIndex; i < _vectorVerticesList.Count; i++)
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
             {
-                var v = _vectorVerticesList[i];
+                var v = vertices[i];
                 v.Position = ClampToClip(v.Position);
-                _vectorVerticesList[i] = v;
+                vertices[i] = v;
             }
         }
     }
