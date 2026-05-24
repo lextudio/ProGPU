@@ -314,6 +314,10 @@ public class ContainerVisual : Visual
         child.Parent = this;
         _children.Add(child);
         Invalidate();
+        if (this is ILayoutNode layoutNode)
+        {
+            layoutNode.InvalidateMeasure();
+        }
     }
 
     public void RemoveChild(Visual child)
@@ -322,6 +326,10 @@ public class ContainerVisual : Visual
         {
             child.Parent = null;
             Invalidate();
+            if (this is ILayoutNode layoutNode)
+            {
+                layoutNode.InvalidateMeasure();
+            }
         }
     }
 
@@ -333,6 +341,10 @@ public class ContainerVisual : Visual
         }
         _children.Clear();
         Invalidate();
+        if (this is ILayoutNode layoutNode)
+        {
+            layoutNode.InvalidateMeasure();
+        }
     }
 }
 
@@ -376,5 +388,10 @@ public class DropShadowEffect : EffectBase
         Offset = offset;
         Color = color == default ? new Vector4(0f, 0f, 0f, 0.5f) : color;
     }
+}
+
+public interface ILayoutNode
+{
+    void InvalidateMeasure();
 }
 

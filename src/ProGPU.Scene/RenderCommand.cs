@@ -54,6 +54,31 @@ public struct Rect
     {
         return p.X >= X && p.X <= X + Width && p.Y >= Y && p.Y <= Y + Height;
     }
+
+    public bool Equals(Rect other)
+    {
+        return X == other.X && Y == other.Y && Width == other.Width && Height == other.Height;
+    }
+
+    public override bool Equals(object? obj)
+    {
+        return obj is Rect other && Equals(other);
+    }
+
+    public override int GetHashCode()
+    {
+        return HashCode.Combine(X, Y, Width, Height);
+    }
+
+    public static bool operator ==(Rect left, Rect right)
+    {
+        return left.Equals(right);
+    }
+
+    public static bool operator !=(Rect left, Rect right)
+    {
+        return !left.Equals(right);
+    }
 }
 
 public struct RenderCommand
