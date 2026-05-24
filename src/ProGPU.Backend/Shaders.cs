@@ -57,6 +57,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     let sType = u32(round(input.shapeType));
     var worldPos = input.position;
     var texCoord = input.texCoord;
+    var gridIndex = 0.0;
 
     if (sType == 3u) {
         // GPU Stroke Expansion
@@ -88,8 +89,11 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
             miterN = normalize(n1 + n2);
             miterScale = clamp(1.0 / max(dot(miterN, n1), 0.0001), 0.5, 4.0);
         }
-        let offset = miterN * (input.strokeThickness * 0.5) * miterScale * input.cornerRadius;
+        let halfThickness = input.strokeThickness * 0.5;
+        let expandedDistance = halfThickness * miterScale + 1.5;
+        let offset = miterN * expandedDistance * input.cornerRadius;
         worldPos = worldPos + offset;
+        gridIndex = input.cornerRadius * expandedDistance;
     } else if (sType == 5u) {
         // GPU Quadratic Bezier Curve Evaluation
         let p0 = input.position;
@@ -110,9 +114,12 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         if (len > 0.0001) {
             normal = vec2<f32>(-tangent.y, tangent.x) / len;
         }
-        let offset = normal * (input.strokeThickness * 0.5) * signVal;
+        let halfThickness = input.strokeThickness * 0.5;
+        let expandedDistance = halfThickness + 1.5;
+        let offset = normal * expandedDistance * signVal;
         worldPos = pos + offset;
         texCoord = pos;
+        gridIndex = signVal * expandedDistance;
     } else if (sType == 6u) {
         // GPU Cubic Bezier Curve Evaluation
         let p0 = input.position;
@@ -142,9 +149,12 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         if (len > 0.0001) {
             normal = vec2<f32>(-tangent.y, tangent.x) / len;
         }
-        let offset = normal * (input.strokeThickness * 0.5) * signVal;
+        let halfThickness = input.strokeThickness * 0.5;
+        let expandedDistance = halfThickness + 1.5;
+        let offset = normal * expandedDistance * signVal;
         worldPos = pos + offset;
         texCoord = pos;
+        gridIndex = signVal * expandedDistance;
     }
 
     output.position = uniforms.projection * vec4<f32>(worldPos, 0.0, 1.0);
@@ -155,7 +165,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     output.cornerRadius = input.cornerRadius;
     output.strokeThickness = input.strokeThickness;
     output.shapeType = input.shapeType;
-    output.gridIndex = 0.0;
+    output.gridIndex = gridIndex;
     return output;
 }
 
@@ -194,6 +204,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
         let fw = max(fwidth(d_shape), 0.0001);
         shapeAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
+    } else if (sType == 3u || sType == 5u || sType == 6u) {
+        // Line, Quadratic & Cubic Bezier curves anti-aliasing via signed pixel distance
+        let d_pixels = abs(input.gridIndex);
+        let d_shape = d_pixels - input.strokeThickness * 0.5;
+        shapeAlpha = 1.0 - smoothstep(-0.5, 0.5, d_shape);
     } else if (sType == 4u) {
         // Path rendering: sample coverage directly from PathAtlas
         shapeAlpha = textureSample(pathAtlasTexture, pathAtlasSampler, input.texCoord).r;
