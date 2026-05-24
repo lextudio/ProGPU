@@ -843,13 +843,14 @@ public unsafe class Compositor : IDisposable
         float hHalf = r.Height / 2f;
         var shapeSize = new Vector2(r.Width, r.Height);
 
-        var v0_pos = Vector2.Transform(new Vector2(r.X, r.Y), transform);
-        var v1_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
-        var v2_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
-        var v3_pos = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
-
         if (cmd.Brush != null)
         {
+            float pad = 1.5f;
+            var f0_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y - pad), transform);
+            var f1_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y - pad), transform);
+            var f2_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y + r.Height + pad), transform);
+            var f3_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y + r.Height + pad), transform);
+
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
@@ -859,10 +860,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0_pos, solidColor, new Vector2(-wHalf, -hHalf), bIdx, shapeSize, 0f, 0f, 0f);
-            vertexSpan[1] = new VectorVertex(v1_pos, solidColor, new Vector2(wHalf, -hHalf), bIdx, shapeSize, 0f, 0f, 0f);
-            vertexSpan[2] = new VectorVertex(v2_pos, solidColor, new Vector2(wHalf, hHalf), bIdx, shapeSize, 0f, 0f, 0f);
-            vertexSpan[3] = new VectorVertex(v3_pos, solidColor, new Vector2(-wHalf, hHalf), bIdx, shapeSize, 0f, 0f, 0f);
+            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-wHalf - pad, -hHalf - pad), bIdx, shapeSize, 0f, 0f, 0f);
+            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(wHalf + pad, -hHalf - pad), bIdx, shapeSize, 0f, 0f, 0f);
+            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(wHalf + pad, hHalf + pad), bIdx, shapeSize, 0f, 0f, 0f);
+            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-wHalf - pad, hHalf + pad), bIdx, shapeSize, 0f, 0f, 0f);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -878,6 +879,12 @@ public unsafe class Compositor : IDisposable
 
         if (cmd.Pen != null)
         {
+            float pad = cmd.Pen.Thickness / 2f + 1.5f;
+            var p0_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y - pad), transform);
+            var p1_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y - pad), transform);
+            var p2_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y + r.Height + pad), transform);
+            var p3_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y + r.Height + pad), transform);
+
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
@@ -887,10 +894,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0_pos, penSolidColor, new Vector2(-wHalf, -hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
-            vertexSpan[1] = new VectorVertex(v1_pos, penSolidColor, new Vector2(wHalf, -hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
-            vertexSpan[2] = new VectorVertex(v2_pos, penSolidColor, new Vector2(wHalf, hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
-            vertexSpan[3] = new VectorVertex(v3_pos, penSolidColor, new Vector2(-wHalf, hHalf), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
+            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-wHalf - pad, -hHalf - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
+            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(wHalf + pad, -hHalf - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
+            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(wHalf + pad, hHalf + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
+            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-wHalf - pad, hHalf + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1378,13 +1385,14 @@ public unsafe class Compositor : IDisposable
         var ry = cmd.RadiusY;
         var shapeSize = new Vector2(2f * rx, 2f * ry);
 
-        var v0_pos = Vector2.Transform(new Vector2(center.X - rx, center.Y - ry), transform);
-        var v1_pos = Vector2.Transform(new Vector2(center.X + rx, center.Y - ry), transform);
-        var v2_pos = Vector2.Transform(new Vector2(center.X + rx, center.Y + ry), transform);
-        var v3_pos = Vector2.Transform(new Vector2(center.X - rx, center.Y + ry), transform);
-
         if (cmd.Brush != null)
         {
+            float pad = 1.5f;
+            var f0_pos = Vector2.Transform(new Vector2(center.X - rx - pad, center.Y - ry - pad), transform);
+            var f1_pos = Vector2.Transform(new Vector2(center.X + rx + pad, center.Y - ry - pad), transform);
+            var f2_pos = Vector2.Transform(new Vector2(center.X + rx + pad, center.Y + ry + pad), transform);
+            var f3_pos = Vector2.Transform(new Vector2(center.X - rx - pad, center.Y + ry + pad), transform);
+
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(center.X, center.Y, 0f, 0f);
 
@@ -1394,10 +1402,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0_pos, solidColor, new Vector2(-rx, -ry), bIdx, shapeSize, 0f, 0f, 1f);
-            vertexSpan[1] = new VectorVertex(v1_pos, solidColor, new Vector2(rx, -ry), bIdx, shapeSize, 0f, 0f, 1f);
-            vertexSpan[2] = new VectorVertex(v2_pos, solidColor, new Vector2(rx, ry), bIdx, shapeSize, 0f, 0f, 1f);
-            vertexSpan[3] = new VectorVertex(v3_pos, solidColor, new Vector2(-rx, ry), bIdx, shapeSize, 0f, 0f, 1f);
+            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-rx - pad, -ry - pad), bIdx, shapeSize, 0f, 0f, 1f);
+            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(rx + pad, -ry - pad), bIdx, shapeSize, 0f, 0f, 1f);
+            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(rx + pad, ry + pad), bIdx, shapeSize, 0f, 0f, 1f);
+            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-rx - pad, ry + pad), bIdx, shapeSize, 0f, 0f, 1f);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1413,6 +1421,12 @@ public unsafe class Compositor : IDisposable
 
         if (cmd.Pen != null)
         {
+            float pad = cmd.Pen.Thickness / 2f + 1.5f;
+            var p0_pos = Vector2.Transform(new Vector2(center.X - rx - pad, center.Y - ry - pad), transform);
+            var p1_pos = Vector2.Transform(new Vector2(center.X + rx + pad, center.Y - ry - pad), transform);
+            var p2_pos = Vector2.Transform(new Vector2(center.X + rx + pad, center.Y + ry + pad), transform);
+            var p3_pos = Vector2.Transform(new Vector2(center.X - rx - pad, center.Y + ry + pad), transform);
+
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(center.X, center.Y, 0f, 0f);
 
@@ -1422,10 +1436,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0_pos, penSolidColor, new Vector2(-rx, -ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
-            vertexSpan[1] = new VectorVertex(v1_pos, penSolidColor, new Vector2(rx, -ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
-            vertexSpan[2] = new VectorVertex(v2_pos, penSolidColor, new Vector2(rx, ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
-            vertexSpan[3] = new VectorVertex(v3_pos, penSolidColor, new Vector2(-rx, ry), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
+            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-rx - pad, -ry - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
+            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(rx + pad, -ry - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
+            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(rx + pad, ry + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
+            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-rx - pad, ry + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1473,13 +1487,14 @@ public unsafe class Compositor : IDisposable
         float hHalf = r.Height / 2f;
         var shapeSize = new Vector2(r.Width, r.Height);
 
-        var v0_pos = Vector2.Transform(new Vector2(r.X, r.Y), transform);
-        var v1_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
-        var v2_pos = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
-        var v3_pos = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
-
         if (cmd.Brush != null)
         {
+            float pad = 1.5f;
+            var f0_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y - pad), transform);
+            var f1_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y - pad), transform);
+            var f2_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y + r.Height + pad), transform);
+            var f3_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y + r.Height + pad), transform);
+
             float bIdx = RegisterBrush(cmd.Brush);
             var solidColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
@@ -1489,10 +1504,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0_pos, solidColor, new Vector2(-wHalf, -hHalf), bIdx, shapeSize, radius, 0f, 2f);
-            vertexSpan[1] = new VectorVertex(v1_pos, solidColor, new Vector2(wHalf, -hHalf), bIdx, shapeSize, radius, 0f, 2f);
-            vertexSpan[2] = new VectorVertex(v2_pos, solidColor, new Vector2(wHalf, hHalf), bIdx, shapeSize, radius, 0f, 2f);
-            vertexSpan[3] = new VectorVertex(v3_pos, solidColor, new Vector2(-wHalf, hHalf), bIdx, shapeSize, radius, 0f, 2f);
+            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-wHalf - pad, -hHalf - pad), bIdx, shapeSize, radius, 0f, 2f);
+            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(wHalf + pad, -hHalf - pad), bIdx, shapeSize, radius, 0f, 2f);
+            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(wHalf + pad, hHalf + pad), bIdx, shapeSize, radius, 0f, 2f);
+            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-wHalf - pad, hHalf + pad), bIdx, shapeSize, radius, 0f, 2f);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1508,6 +1523,12 @@ public unsafe class Compositor : IDisposable
 
         if (cmd.Pen != null)
         {
+            float pad = cmd.Pen.Thickness / 2f + 1.5f;
+            var p0_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y - pad), transform);
+            var p1_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y - pad), transform);
+            var p2_pos = Vector2.Transform(new Vector2(r.X + r.Width + pad, r.Y + r.Height + pad), transform);
+            var p3_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y + r.Height + pad), transform);
+
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solidPen) ? solidPen.Color : new Vector4(r.X + wHalf, r.Y + hHalf, 0f, 0f);
 
@@ -1517,10 +1538,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0_pos, penSolidColor, new Vector2(-wHalf, -hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
-            vertexSpan[1] = new VectorVertex(v1_pos, penSolidColor, new Vector2(wHalf, -hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
-            vertexSpan[2] = new VectorVertex(v2_pos, penSolidColor, new Vector2(wHalf, hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
-            vertexSpan[3] = new VectorVertex(v3_pos, penSolidColor, new Vector2(-wHalf, hHalf), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
+            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-wHalf - pad, -hHalf - pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
+            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(wHalf + pad, -hHalf - pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
+            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(wHalf + pad, hHalf + pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
+            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-wHalf - pad, hHalf + pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
