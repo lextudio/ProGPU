@@ -948,6 +948,11 @@ public unsafe class Compositor : IDisposable
                 var uv2 = new Vector2(info.TexCoordMax.X, info.TexCoordMax.Y);
                 var uv3 = new Vector2(info.TexCoordMin.X, info.TexCoordMax.Y);
 
+                var cp0 = new Vector2(info.MinX, info.MinY);
+                var cp1 = new Vector2(info.MinX + info.Width, info.MinY);
+                var cp2 = new Vector2(info.MinX + info.Width, info.MinY + info.Height);
+                var cp3 = new Vector2(info.MinX, info.MinY + info.Height);
+
                 if (_activeClipRect.HasValue)
                 {
                     float rx1 = v0.X;
@@ -982,6 +987,16 @@ public unsafe class Compositor : IDisposable
                             info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
                         );
 
+                        float cp0_x = dx > 0.0001f ? info.MinX + (cx1 - rx1) / dx * info.Width : info.MinX;
+                        float cp0_y = dy > 0.0001f ? info.MinY + (cy1 - ry1) / dy * info.Height : info.MinY;
+                        float cp2_x = dx > 0.0001f ? info.MinX + (cx2 - rx1) / dx * info.Width : info.MinX + info.Width;
+                        float cp2_y = dy > 0.0001f ? info.MinY + (cy2 - ry1) / dy * info.Height : info.MinY + info.Height;
+
+                        var cp0_clip = new Vector2(cp0_x, cp0_y);
+                        var cp1_clip = new Vector2(cp2_x, cp0_y);
+                        var cp2_clip = new Vector2(cp2_x, cp2_y);
+                        var cp3_clip = new Vector2(cp0_x, cp2_y);
+
                         v0 = new Vector2(cx1, cy1);
                         v1 = new Vector2(cx2, cy1);
                         v2 = new Vector2(cx2, cy2);
@@ -993,10 +1008,10 @@ public unsafe class Compositor : IDisposable
                         CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
                         var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-                        vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeType: 4f);
-                        vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeType: 4f);
-                        vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeType: 4f);
-                        vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeType: 4f);
+                        vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeSize: cp0_clip, shapeType: 4f);
+                        vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeSize: cp1_clip, shapeType: 4f);
+                        vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeSize: cp2_clip, shapeType: 4f);
+                        vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeSize: cp3_clip, shapeType: 4f);
 
                         int originalIndexCount = _vectorIndicesList.Count;
                         CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1018,10 +1033,10 @@ public unsafe class Compositor : IDisposable
                     CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
                     var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-                    vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeType: 4f);
-                    vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeType: 4f);
-                    vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeType: 4f);
-                    vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeType: 4f);
+                    vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeSize: cp0, shapeType: 4f);
+                    vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeSize: cp1, shapeType: 4f);
+                    vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeSize: cp2, shapeType: 4f);
+                    vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeSize: cp3, shapeType: 4f);
 
                     int originalIndexCount = _vectorIndicesList.Count;
                     CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);

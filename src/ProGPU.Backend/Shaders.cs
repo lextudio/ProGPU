@@ -234,6 +234,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         var evalCoord = input.texCoord;
         if (sType < 3u) {
             evalCoord = input.color.xy + input.texCoord;
+        } else if (sType == 4u) {
+            evalCoord = input.shapeSize;
         }
 
         var t: f32 = 0.0;
