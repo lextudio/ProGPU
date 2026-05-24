@@ -132,6 +132,19 @@ public static unsafe class Program
         _wgpuContext.Initialize(_window);
 
         _screenCompositor = new Compositor(_wgpuContext, _wgpuContext.SwapChainFormat);
+        
+        // Decoupled Screen Compositor Hooks Configuration
+        _screenCompositor.PreRender += (w, h) => ProGPU.WinUI.PopupService.MeasureAndArrangePopups(new Vector2(w, h));
+        _screenCompositor.GetExternalLayers = () => ProGPU.WinUI.PopupService.ActivePopups;
+        _screenCompositor.GetTooltip = () => ProGPU.WinUI.InputSystem.ActiveToolTip;
+        _screenCompositor.GetMousePosition = () => ProGPU.WinUI.InputSystem.LastMousePosition;
+        _screenCompositor.RenderDiagnostics = (diagContext, w, h) =>
+        {
+            if (ProGPU.WinUI.DevToolsService.IsDevToolsActive)
+            {
+                ProGPU.WinUI.AdornerLayer.Render(diagContext, w, h);
+            }
+        };
         _offscreenCompositor = new Compositor(_wgpuContext, TextureFormat.Rgba8Unorm);
         _compute = new ComputeAccelerator(_wgpuContext);
 

@@ -103,6 +103,19 @@ public class Window
         _wgpuContext = new WgpuContext();
         _wgpuContext.Initialize(_silkWindow);
         _compositor = new Compositor(_wgpuContext, _wgpuContext.SwapChainFormat);
+        
+        // Decoupled Compositor Rendering Hooks Setup
+        _compositor.PreRender += (w, h) => PopupService.MeasureAndArrangePopups(new Vector2(w, h));
+        _compositor.GetExternalLayers = () => PopupService.ActivePopups;
+        _compositor.GetTooltip = () => InputSystem.ActiveToolTip;
+        _compositor.GetMousePosition = () => InputSystem.LastMousePosition;
+        _compositor.RenderDiagnostics = (diagContext, w, h) =>
+        {
+            if (DevToolsService.IsDevToolsActive)
+            {
+                AdornerLayer.Render(diagContext, w, h);
+            }
+        };
 
         var inputContext = _silkWindow.CreateInput();
         _inputState = InputSystem.Initialize(inputContext, _content);

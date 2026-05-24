@@ -7,7 +7,6 @@ using Silk.NET.WebGPU;
 using ProGPU.Backend;
 using ProGPU.Text;
 using ProGPU.Vector;
-using ProGPU.WinUI;
 using ProGPU.Compute;
 
 namespace ProGPU.Scene;
@@ -55,6 +54,14 @@ public struct GpuUniforms
 
 public unsafe class Compositor : IDisposable
 {
+    // Decoupled hooks to remove hard dependency on UI layer
+    public event Action<uint, uint>? PreRender;
+    public Func<System.Collections.Generic.IReadOnlyList<Visual>>? GetExternalLayers { get; set; }
+    public Func<Visual?>? GetTooltip { get; set; }
+    public Func<Vector2>? GetMousePosition { get; set; }
+    public Action<DrawingContext, uint, uint>? RenderDiagnostics { get; set; }
+    public Vector4 ClearColor { get; set; } = new Vector4(0.08f, 0.08f, 0.12f, 1.0f);
+
     private readonly WgpuContext _context;
     private readonly RenderPipelineCache _pipelineCache;
     private readonly GlyphAtlas _atlas;
@@ -126,8 +133,8 @@ public unsafe class Compositor : IDisposable
     private readonly Dictionary<(string Text, TtfFont Font, float Size, TextAlignment Align), TextLayout> _layoutCache = new();
 
     private readonly ComputeAccelerator _compute;
-    private readonly Dictionary<FrameworkElement, (GpuTexture Source, GpuTexture Temp, GpuTexture Destination)> _effectTextures = new();
-    private readonly HashSet<FrameworkElement> _elementsRenderingEffects = new();
+    private readonly Dictionary<Visual, (GpuTexture Source, GpuTexture Temp, GpuTexture Destination)> _effectTextures = new();
+    private readonly HashSet<Visual> _elementsRenderingEffects = new();
 
     private bool _isDisposed;
 
@@ -403,8 +410,8 @@ public unsafe class Compositor : IDisposable
         if (_isDisposed) return;
         _pathAtlas.CleanupFrame();
 
-        // Automatically measure and arrange active popups with window dimensions before rendering
-        ProGPU.WinUI.PopupService.MeasureAndArrangePopups(new Vector2(width, height));
+        // Invoke pre-render actions (e.g. measure/arrange popups in UI framework)
+        PreRender?.Invoke(width, height);
 
         // 1. Calculate orthographic projection matrix for modern 2D rendering
         // Maps X in [0, width] to [-1, 1], and Y in [0, height] to [1, -1]
@@ -449,52 +456,35 @@ public unsafe class Compositor : IDisposable
             _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStart, IndexCount = textCount });
         }
 
-        // 4. Compile Layer 1: Active Popups (in proper Z-order)
-        for (int i = 0; i < ProGPU.WinUI.PopupService.ActivePopups.Count; i++)
+        // 4. Compile Layer 1: Active Popups / External Layers (in proper Z-order)
+        var externalLayers = GetExternalLayers?.Invoke();
+        if (externalLayers != null)
         {
-            var popup = ProGPU.WinUI.PopupService.ActivePopups[i];
-            uint vecStartPopup = (uint)_vectorIndicesList.Count;
-            uint textStartPopup = (uint)_textIndicesList.Count;
-            
-            CompileVisualTree(popup, Matrix4x4.Identity);
-            
-            uint vecCountPopup = (uint)_vectorIndicesList.Count - vecStartPopup;
-            if (vecCountPopup > 0)
+            for (int i = 0; i < externalLayers.Count; i++)
             {
-                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartPopup, IndexCount = vecCountPopup });
-            }
-            uint textCountPopup = (uint)_textIndicesList.Count - textStartPopup;
-            if (textCountPopup > 0)
-            {
-                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartPopup, IndexCount = textCountPopup });
+                var layer = externalLayers[i];
+                uint vecStartPopup = (uint)_vectorIndicesList.Count;
+                uint textStartPopup = (uint)_textIndicesList.Count;
+                
+                CompileVisualTree(layer, Matrix4x4.Identity);
+                
+                uint vecCountPopup = (uint)_vectorIndicesList.Count - vecStartPopup;
+                if (vecCountPopup > 0)
+                {
+                    _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartPopup, IndexCount = vecCountPopup });
+                }
+                uint textCountPopup = (uint)_textIndicesList.Count - textStartPopup;
+                if (textCountPopup > 0)
+                {
+                    _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartPopup, IndexCount = textCountPopup });
+                }
             }
         }
 
         // 5. Compile Layer 2: Tooltips
-        var activeToolTip = ProGPU.WinUI.InputSystem.ActiveToolTip;
+        var activeToolTip = GetTooltip?.Invoke();
         if (activeToolTip != null)
         {
-            activeToolTip.Measure(new Vector2(width, height));
-            
-            var mousePos = ProGPU.WinUI.InputSystem.LastMousePosition;
-            float tooltipX = mousePos.X + 12f;
-            float tooltipY = mousePos.Y + 20f;
-            
-            if (tooltipX + activeToolTip.DesiredSize.X > width)
-            {
-                tooltipX = width - activeToolTip.DesiredSize.X - 8f;
-            }
-            if (tooltipX < 0f) tooltipX = 8f;
-            
-            if (tooltipY + activeToolTip.DesiredSize.Y > height)
-            {
-                tooltipY = mousePos.Y - activeToolTip.DesiredSize.Y - 8f;
-            }
-            if (tooltipY < 0f) tooltipY = 8f;
-            
-            activeToolTip.Offset = new Vector2(tooltipX, tooltipY);
-            activeToolTip.Arrange(new Rect(activeToolTip.Offset, activeToolTip.DesiredSize));
-            
             uint vecStartTip = (uint)_vectorIndicesList.Count;
             uint textStartTip = (uint)_textIndicesList.Count;
             
@@ -513,13 +503,13 @@ public unsafe class Compositor : IDisposable
         }
 
         // 6. Compile Layer 3: Adorner / DevTools bounds highlights
-        if (ProGPU.WinUI.DevToolsService.IsDevToolsActive)
+        if (RenderDiagnostics != null)
         {
             uint vecStartAdorner = (uint)_vectorIndicesList.Count;
             uint textStartAdorner = (uint)_textIndicesList.Count;
 
             var diagContext = new DrawingContext();
-            ProGPU.WinUI.AdornerLayer.Render(diagContext, width, height);
+            RenderDiagnostics(diagContext, width, height);
             foreach (var cmd in diagContext.Commands)
             {
                 switch (cmd.Type)
@@ -604,7 +594,7 @@ public unsafe class Compositor : IDisposable
         var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
 
-        var bgColor = ThemeManager.GetColor("PageBackground");
+        var bgColor = ClearColor;
         var colorAttachment = new RenderPassColorAttachment
         {
             View = _msaaTextureView,
@@ -766,9 +756,9 @@ public unsafe class Compositor : IDisposable
 
     private void CompileVisualTree(Visual node, Matrix4x4 parentTransform)
     {
-        if (node is FrameworkElement fe && fe.Effect != null && !_elementsRenderingEffects.Contains(fe))
+        if (node.Effect != null && !_elementsRenderingEffects.Contains(node))
         {
-            ApplyAndDrawEffect(fe, parentTransform);
+            ApplyAndDrawEffect(node, parentTransform);
             return;
         }
 
@@ -798,7 +788,7 @@ public unsafe class Compositor : IDisposable
                     CompilePathCommand(cmd, globalTransform);
                     break;
                 case RenderCommandType.DrawText:
-                    CompileTextCommand(cmd, node as TextVisual, globalTransform);
+                    CompileTextCommand(cmd, node as ITextLayoutProvider, globalTransform);
                     break;
                 case RenderCommandType.DrawTexture:
                     CompileTextureCommand(cmd, globalTransform);
@@ -1517,7 +1507,7 @@ public unsafe class Compositor : IDisposable
                a.Offsets == b.Offsets;
     }
 
-    private void CompileTextCommand(RenderCommand cmd, TextVisual? textNode, Matrix4x4 transform)
+    private void CompileTextCommand(RenderCommand cmd, ITextLayoutProvider? textNode, Matrix4x4 transform)
     {
         var font = cmd.Font ?? textNode?.Font;
         if (font == null || cmd.Text == null) return;
@@ -1908,7 +1898,7 @@ public unsafe class Compositor : IDisposable
     }
 
     // Helper methods for real-time drop shadows and Gaussian/backdrop blurs
-    private void ApplyAndDrawEffect(FrameworkElement fe, Matrix4x4 parentTransform)
+    private void ApplyAndDrawEffect(Visual fe, Matrix4x4 parentTransform)
     {
         if (fe.Size.X <= 0f || fe.Size.Y <= 0f) return;
         uint w = (uint)fe.Size.X;
