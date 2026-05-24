@@ -20,6 +20,7 @@ public static unsafe class DevToolsWindowController
         options.Size = new Vector2D<int>(850, 600);
         options.Title = "ProGPU Developer Tools";
         options.API = GraphicsAPI.None;
+        options.VSync = false;
 
         AppState._devToolsWindow = Silk.NET.Windowing.Window.Create(options);
 

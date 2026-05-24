@@ -78,6 +78,7 @@ public class Window
         options.Size = new Vector2D<int>(_width, _height);
         options.Title = _title;
         options.API = GraphicsAPI.None;
+        options.VSync = false;
 
         _silkWindow = Silk.NET.Windowing.Window.Create(options);
         _silkWindow.Load += OnLoad;

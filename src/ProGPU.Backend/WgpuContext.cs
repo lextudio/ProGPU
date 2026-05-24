@@ -161,6 +161,19 @@ public unsafe class WgpuContext : IDisposable
 
         Wgpu.SurfaceCapabilitiesFreeMembers(capabilities);
 
+        PresentMode presentMode = PresentMode.Fifo;
+        if (capabilities.PresentModeCount > 0 && capabilities.PresentModes != null)
+        {
+            for (uint i = 0; i < capabilities.PresentModeCount; i++)
+            {
+                if (capabilities.PresentModes[i] == PresentMode.Immediate)
+                {
+                    presentMode = PresentMode.Immediate;
+                    break;
+                }
+            }
+        }
+
         // 7b. Surface Configuration
         var config = new SurfaceConfiguration
         {
@@ -168,7 +181,7 @@ public unsafe class WgpuContext : IDisposable
             Format = SwapChainFormat,
             Usage = TextureUsage.RenderAttachment,
             AlphaMode = alphaMode,
-            PresentMode = PresentMode.Fifo, // VSync on
+            PresentMode = presentMode,
             Width = width > 0 ? width : 1,
             Height = height > 0 ? height : 1
         };

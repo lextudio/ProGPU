@@ -27,6 +27,7 @@ public static unsafe class MainWindowController
         options.Size = new Vector2D<int>(1280, 800);
         options.Title = "ProGPU Substrate - High-Performance WinUI Gallery Dashboard";
         options.API = GraphicsAPI.None;
+        options.VSync = false;
 
         AppState._window = Silk.NET.Windowing.Window.Create(options);
 
