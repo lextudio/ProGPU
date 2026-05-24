@@ -44,6 +44,7 @@ public class ScrollViewer : Control
                 _verticalOffset = clamped;
                 PopupService.DismissNonDialogPopups();
                 Invalidate();
+                InvalidateArrange();
             }
         }
     }
@@ -60,6 +61,7 @@ public class ScrollViewer : Control
                 _horizontalOffset = clamped;
                 PopupService.DismissNonDialogPopups();
                 Invalidate();
+                InvalidateArrange();
             }
         }
     }

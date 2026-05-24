@@ -19,6 +19,7 @@ public class PivotItem : FrameworkElement
             {
                 _header = value;
                 Invalidate();
+                InvalidateMeasure();
             }
         }
     }

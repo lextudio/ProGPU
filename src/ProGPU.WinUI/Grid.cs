@@ -27,6 +27,7 @@ public class Grid : Panel
         if (child.Parent is Grid grid)
         {
             grid.Invalidate();
+            grid.InvalidateMeasure();
         }
     }
 
@@ -37,6 +38,7 @@ public class Grid : Panel
         if (child.Parent is Grid grid)
         {
             grid.Invalidate();
+            grid.InvalidateMeasure();
         }
     }
 

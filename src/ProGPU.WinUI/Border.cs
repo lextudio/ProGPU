@@ -29,7 +29,7 @@ public class Border : FrameworkElement
     public Thickness BorderThickness
     {
         get => _borderThickness;
-        set { if (!_borderThickness.Equals(value)) { _borderThickness = value; Invalidate(); } }
+        set { if (!_borderThickness.Equals(value)) { _borderThickness = value; Invalidate(); InvalidateMeasure(); } }
     }
 
     public float CornerRadius

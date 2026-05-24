@@ -187,12 +187,14 @@ public class RichTextBlock : FrameworkElement
     public void InvalidateLayout()
     {
         _isLayoutDirty = true;
+        InvalidateMeasure();
     }
 
     public new void Invalidate()
     {
         _isLayoutDirty = true;
         base.Invalidate();
+        InvalidateMeasure();
     }
 
     public TtfFont? Font
@@ -636,6 +638,8 @@ public class RichTextBlock : FrameworkElement
                 RemoveChild(fe);
             }
         }
+
+        InvalidateMeasure();
     }
 
     public void AccumulateInlines(Inline inline, List<RichChar> list, Brush defaultFg, float defaultSize, bool isBold, bool isItalic, bool isUnderline, Inline? parentInline = null, float leftIndent = 0f)

@@ -36,6 +36,7 @@ public class Pivot : FrameworkElement
                 StartTransition();
                 
                 SelectionChanged?.Invoke(this, EventArgs.Empty);
+                InvalidateArrange();
             }
         }
     }
@@ -43,7 +44,7 @@ public class Pivot : FrameworkElement
     public TtfFont? Font
     {
         get => _font;
-        set { if (_font != value) { _font = value; Invalidate(); } }
+        set { if (_font != value) { _font = value; Invalidate(); InvalidateMeasure(); } }
     }
 
     public event EventHandler? SelectionChanged;
@@ -77,6 +78,7 @@ public class Pivot : FrameworkElement
                 SelectedIndex = Items.Count - 1;
             }
             Invalidate();
+            InvalidateMeasure();
         };
 
         Padding = new Thickness(16, 8, 16, 8);
@@ -120,6 +122,7 @@ public class Pivot : FrameworkElement
     {
         _transitionProgress = 0f;
         Invalidate();
+        InvalidateArrange();
         
         int steps = 15;
         for (int i = 1; i <= steps; i++)
@@ -127,10 +130,12 @@ public class Pivot : FrameworkElement
             await Task.Delay(16); // 60fps frame rate
             _transitionProgress = (float)i / steps;
             Invalidate();
+            InvalidateArrange();
         }
         
         _transitionProgress = 1.0f;
         Invalidate();
+        InvalidateArrange();
     }
 
     private void UpdateHeaderLayout(Rect arrangeRect)
