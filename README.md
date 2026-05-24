@@ -10,33 +10,33 @@ The ProGPU framework is built in a modular, layered stack that bridges native gr
 
 ```mermaid
 graph TD
-    subgraph Layer 6: Application Layer
+    subgraph L6 ["Layer 6: Application Layer"]
         App[Gallery Dashboard / LOL/s & MotionMark Benchmarks]
     end
 
-    subgraph Layer 5: WinUI Framework Layer
+    subgraph L5 ["Layer 5: WinUI Framework Layer"]
         Controls[Grid, StackPanel, ScrollViewer, Border, Pivot, RichTextBlock]
         FE[FrameworkElement]
         LN[LayoutNode - Measure & Arrange Sizing Negotiation]
     end
 
-    subgraph Layer 4: Scene Graph & Effects Layer
+    subgraph L4 ["Layer 4: Scene Graph & Effects Layer"]
         CV[ContainerVisual / DrawingVisual / Visual]
         ILN[ILayoutNode Interface - Decoupled Invalidation]
         FX[GPGPU Multi-Pass Effects Pipeline - Blur & DropShadow]
     end
 
-    subgraph Layer 3: Compositor, Text & GPGPU Rasterizer
+    subgraph L3 ["Layer 3: Compositor, Text & GPGPU Rasterizer"]
         Comp[Compositor - Span-Based Vertex/Index Mesh Compiler]
         Text[TTF Line Layout & Paragraph Wrapping Engine]
         Rast[Compute-Bound 4x SSAA Analytical Path Rasterizer]
     end
 
-    subgraph Layer 2: Graphics Infrastructure
+    subgraph L2 ["Layer 2: Graphics Infrastructure"]
         Wgpu[WgpuContext - WebGPU Adapter/Device & Swapchain Management]
     end
 
-    subgraph Layer 1: System & Windowing
+    subgraph L1 ["Layer 1: System & Windowing"]
         Silk[Silk.NET Windowing & GLFW OS Event Loop]
     end
 
@@ -77,14 +77,14 @@ ProGPU introduces a cached sizing negotiation model that short-circuits measurem
 
 ```mermaid
 flowchart TD
-    Start[Measure Pass availableSize] --> Cached{_isMeasureValid && availableSize == _previousAvailableSize?}
+    Start[Measure Pass availableSize] --> Cached{"_isMeasureValid && availableSize == _previousAvailableSize?"}
     Cached -- Yes --> O1Exit[O1 Early Exit - Return Cached DesiredSize]
     Cached -- No --> Calc[Calculate Margin Insets & Bounds Constraints]
     Calc --> Override[Execute MeasureOverride child passes recursively]
     Override --> CacheResult[Store DesiredSize, _previousAvailableSize & set _isMeasureValid = true]
     
     CacheResult --> ArrangeStart[Arrange Pass finalRect]
-    ArrangeStart --> CachedArr{_isArrangeValid && _isMeasureValid && finalRect == _previousFinalRect?}
+    ArrangeStart --> CachedArr{"_isArrangeValid && _isMeasureValid && finalRect == _previousFinalRect?"}
     CachedArr -- Yes --> O1ExitArr[O1 Early Exit - Return Immediately]
     CachedArr -- No --> Align[Calculate Offset Coordinates & Horizontal/Vertical Alignments]
     Align --> OverrideArr[Execute ArrangeOverride child placements recursively]
@@ -168,7 +168,7 @@ The LOL/s benchmark stresses the visual framework by constantly removing and add
 - **The Backpressure Solution**: We introduced a thread-safe `PendingCount` property to the main `UIThread` queue. The background benchmark thread loops continuously without fixed sleep periods, but monitors queue occupancy:
   ```mermaid
   flowchart TD
-      Start[Background Task Loop] --> CheckBackpressure{UIThread.PendingCount > 100?}
+      Start[Background Task Loop] --> CheckBackpressure{"UIThread.PendingCount > 100?"}
       CheckBackpressure -- Yes --> Sleep[Thread.Sleep 1ms / Release Monitor Locks]
       Sleep --> Start
       CheckBackpressure -- No --> Post[Post Action immediately / No Sleep]
