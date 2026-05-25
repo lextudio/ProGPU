@@ -235,8 +235,63 @@ public class DevTools : Border
 
         // Tab C: Performance Content
         _perfTabContent = new Grid { Margin = new Thickness(8) };
+        _perfTabContent.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));
+        _perfTabContent.RowDefinitions.Add(new GridLength(45, GridUnitType.Absolute));
+
         _perfTextBlock = new RichTextBlock { FontSize = 12f, VerticalAlignment = VerticalAlignment.Stretch };
         _perfTabContent.AddChild(_perfTextBlock);
+        Grid.SetRow(_perfTextBlock, 0);
+
+        var vsyncStack = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        
+        var currentVsync = ProGPU.Backend.WgpuContext.Current?.VSync ?? false;
+        var vsyncText = new TextVisual
+        {
+            Text = currentVsync ? "VSync: ON" : "VSync: OFF",
+            FontSize = 11f,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0)
+        };
+        
+        var vsyncBtn = new Button
+        {
+            Content = new TextVisual
+            {
+                Text = "Toggle VSync",
+                FontSize = 10f,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            },
+            Background = ThemeManager.GetBrush("ControlBackground"),
+            WidthConstraint = 100f,
+            HeightConstraint = 28f
+        };
+        
+        vsyncBtn.Click += (s, e) =>
+        {
+            var context = ProGPU.Backend.WgpuContext.Current;
+            if (context != null)
+            {
+                bool nextVal = !context.VSync;
+                context.VSync = nextVal;
+                vsyncText.Text = nextVal ? "VSync: ON" : "VSync: OFF";
+
+                // Update VSync for all active Silk.NET windows
+                foreach (var activeWin in WindowManager.ActiveWindows)
+                {
+                    if (activeWin.SilkWindow != null)
+                    {
+                        activeWin.SilkWindow.VSync = nextVal;
+                    }
+                }
+            }
+        };
+
+        vsyncStack.AddChild(vsyncText);
+        vsyncStack.AddChild(vsyncBtn);
+        
+        _perfTabContent.AddChild(vsyncStack);
+        Grid.SetRow(vsyncStack, 1);
 
         // We will dynamically add/remove tab content inside SwitchTab to prevent overlapping.
 
