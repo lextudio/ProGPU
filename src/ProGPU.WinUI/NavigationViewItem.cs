@@ -412,6 +412,46 @@ public class NavigationViewItem : Control
 
                     drewCustomIcon = true;
                 }
+                else if (Icon == "✨" || Text == "Framework Effects")
+                {
+                    var sparkle1 = PathGeometry.Parse(Invariant($"M {startX + 8} {startY + 1} Q {startX + 8} {startY + 5} {startX + 12} {startY + 5} Q {startX + 8} {startY + 5} {startX + 8} {startY + 9} Q {startX + 8} {startY + 5} {startX + 4} {startY + 5} Q {startX + 8} {startY + 5} {startX + 8} {startY + 1} Z"));
+                    var sparkle2 = PathGeometry.Parse(Invariant($"M {startX + 12} {startY + 9} Q {startX + 12} {startY + 11} {startX + 14} {startY + 11} Q {startX + 12} {startY + 11} {startX + 12} {startY + 13} Q {startX + 12} {startY + 11} {startX + 10} {startY + 11} Q {startX + 12} {startY + 11} {startX + 12} {startY + 9} Z"));
+                    
+                    context.DrawPath(accentBrush, null, sparkle1);
+                    context.DrawPath(textPrimary, null, sparkle2);
+                    drewCustomIcon = true;
+                }
+                else if (Icon == "⌨️" || Icon == "⌨" || Text == "Keyboard & Focus" || Text == "Interactive Input")
+                {
+                    var keyboardFrame = PathGeometry.Parse(Invariant($"M {startX + 1} {startY + 4} H {startX + 15} V {startY + 12} H {startX + 1} Z"));
+                    context.DrawPath(translucentBrush, primaryPen, keyboardFrame);
+                    
+                    var spacebar = PathGeometry.Parse(Invariant($"M {startX + 5} {startY + 10} H {startX + 11}"));
+                    context.DrawPath(null, primaryPen, spacebar);
+                    
+                    var keys1 = PathGeometry.Parse(Invariant($"M {startX + 3} {startY + 6} H {startX + 4} M {startX + 6} {startY + 6} H {startX + 7} M {startX + 9} {startY + 6} H {startX + 10} M {startX + 12} {startY + 6} H {startX + 13}"));
+                    var keys2 = PathGeometry.Parse(Invariant($"M {startX + 3} {startY + 8} H {startX + 4} M {startX + 6} {startY + 8} H {startX + 7} M {startX + 9} {startY + 8} H {startX + 10} M {startX + 12} {startY + 8} H {startX + 13}"));
+                    context.DrawPath(null, translucentPen, keys1);
+                    context.DrawPath(null, translucentPen, keys2);
+                    
+                    drewCustomIcon = true;
+                }
+                else if (Icon == "🔤" || Text == "Typography & Scripts")
+                {
+                    var charA = PathGeometry.Parse(Invariant($"M {startX + 3} {startY + 14} L {startX + 8} {startY + 2} L {startX + 13} {startY + 14} M {startX + 5} {startY + 10} H {startX + 11}"));
+                    context.DrawPath(translucentBrush, primaryPen, charA);
+                    
+                    drewCustomIcon = true;
+                }
+                else if (Icon == "💥" || Text == "LOL/s Benchmark")
+                {
+                    var burst = PathGeometry.Parse(Invariant($"M {startX + 8} {startY + 1} L {startX + 10} {startY + 4} L {startX + 14} {startY + 3} L {startX + 12} {startY + 7} L {startX + 15} {startY + 9} L {startX + 11} {startY + 10} L {startX + 12} {startY + 14} L {startX + 8} {startY + 11} L {startX + 5} {startY + 14} L {startX + 6} {startY + 10} L {startX + 2} {startY + 9} L {startX + 5} {startY + 7} L {startX + 3} {startY + 3} L {startX + 7} {startY + 4} Z"));
+                    var redPen = new Pen(new SolidColorBrush(0xFF5533FF), 1f);
+                    var orangeBrush = new SolidColorBrush(0xFF9900FF);
+                    context.DrawPath(orangeBrush, redPen, burst);
+                    
+                    drewCustomIcon = true;
+                }
 
 
                 if (!drewCustomIcon)
