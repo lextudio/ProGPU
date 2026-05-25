@@ -159,8 +159,6 @@ public unsafe class WgpuContext : IDisposable
             alphaMode = capabilities.AlphaModes[0];
         }
 
-        Wgpu.SurfaceCapabilitiesFreeMembers(capabilities);
-
         PresentMode presentMode = PresentMode.Fifo;
         if (capabilities.PresentModeCount > 0 && capabilities.PresentModes != null)
         {
@@ -173,6 +171,8 @@ public unsafe class WgpuContext : IDisposable
                 }
             }
         }
+
+        Wgpu.SurfaceCapabilitiesFreeMembers(capabilities);
 
         // 7b. Surface Configuration
         var config = new SurfaceConfiguration

@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using Silk.NET.Core.Native;
 using Silk.NET.WebGPU;
 
@@ -6,8 +7,13 @@ namespace ProGPU.Backend;
 
 public unsafe class GpuTexture : IDisposable
 {
+    private static long s_idCounter = 0;
+
     private readonly WgpuContext _context;
     private string _label;
+
+    public ulong Id { get; }
+    public uint Generation { get; private set; }
 
     public Texture* TexturePtr { get; private set; }
     public TextureView* ViewPtr { get; private set; }
@@ -20,6 +26,7 @@ public unsafe class GpuTexture : IDisposable
 
     public GpuTexture(WgpuContext context, uint width, uint height, TextureFormat format, TextureUsage usage, string label = "GpuTexture")
     {
+        Id = (ulong)Interlocked.Increment(ref s_idCounter);
         _context = context;
         Width = width > 0 ? width : 1;
         Height = height > 0 ? height : 1;
@@ -32,6 +39,7 @@ public unsafe class GpuTexture : IDisposable
 
     private void Allocate()
     {
+        Generation++;
         var labelPtr = SilkMarshal.StringToPtr(_label);
         
         var desc = new TextureDescriptor
