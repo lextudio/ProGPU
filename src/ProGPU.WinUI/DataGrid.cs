@@ -20,14 +20,16 @@ namespace Microsoft.UI.Xaml.Controls;
 public class DataGridColumn
 {
     public string Header { get; set; } = string.Empty;
-    public float Width { get; set; } = 120f;
+    public DataGridLength Width { get; set; }
+    public float ActualWidth { get; internal set; }
     public string PropertyName { get; set; } = string.Empty;
     public bool IsAscending { get; set; } = true;
 
-    public DataGridColumn(string header, float width, string propName)
+    public DataGridColumn(string header, DataGridLength width, string propName)
     {
         Header = header;
         Width = width;
+        ActualWidth = width.IsPixel ? width.Value : 120f;
         PropertyName = propName;
     }
 }
@@ -207,12 +209,12 @@ public class DataGrid : Control
                 float runningX = Padding.Left;
                 for (int i = 0; i < Columns.Count; i++)
                 {
-                    float separatorX = runningX + Columns[i].Width;
+                    float separatorX = runningX + Columns[i].ActualWidth;
                     if (Math.Abs(e.Position.X - separatorX) <= 4f)
                     {
                         _resizingColumnIndex = i;
                         _resizeStartMouseX = e.Position.X;
-                        _resizeStartWidth = Columns[i].Width;
+                        _resizeStartWidth = Columns[i].ActualWidth;
                         InputSystem.CapturePointer(this);
                         e.Handled = true;
                         return;
@@ -224,7 +226,7 @@ public class DataGrid : Control
                 runningX = Padding.Left;
                 foreach (var col in Columns)
                 {
-                    if (e.Position.X >= runningX && e.Position.X <= runningX + col.Width)
+                    if (e.Position.X >= runningX && e.Position.X <= runningX + col.ActualWidth)
                     {
                         if (SortingColumn == col)
                         {
@@ -238,7 +240,7 @@ public class DataGrid : Control
                         e.Handled = true;
                         return;
                     }
-                    runningX += col.Width;
+                    runningX += col.ActualWidth;
                 }
             }
             // Click in Scrollbar area
@@ -270,12 +272,12 @@ public class DataGrid : Control
                     int colIndex = -1;
                     foreach (var col in Columns)
                     {
-                        if (e.Position.X >= runningX && e.Position.X <= runningX + col.Width)
+                        if (e.Position.X >= runningX && e.Position.X <= runningX + col.ActualWidth)
                         {
                             colIndex = Columns.IndexOf(col);
                             break;
                         }
-                        runningX += col.Width;
+                        runningX += col.ActualWidth;
                     }
 
                     if (colIndex != -1)
@@ -349,7 +351,7 @@ public class DataGrid : Control
                 float runningX = Padding.Left;
                 for (int i = 0; i < Columns.Count; i++)
                 {
-                    float separatorX = runningX + Columns[i].Width;
+                    float separatorX = runningX + Columns[i].ActualWidth;
                     if (Math.Abs(e.Position.X - separatorX) <= 4f)
                     {
                         hoveredSep = i;
@@ -413,6 +415,89 @@ public class DataGrid : Control
         base.OnPointerMoved(e);
     }
 
+    private float MeasureTextWidth(string text, TtfFont font, float fontSize)
+    {
+        if (string.IsNullOrEmpty(text)) return 0f;
+        float width = 0f;
+        foreach (char c in text)
+        {
+            ushort gIdx = font.GetGlyphIndex(c);
+            width += font.GetAdvanceWidth(gIdx, fontSize);
+        }
+        return width;
+    }
+
+    private void ResolveColumnWidths(float availableWidth)
+    {
+        if (Columns.Count == 0) return;
+
+        var activeFont = GetActiveFont();
+        if (activeFont == null) return;
+
+        float totalStars = 0f;
+        float allocatedWidth = 0f;
+        var starColumns = new List<DataGridColumn>();
+
+        // 1. First pass: Resolve Pixel and Auto columns
+        for (int i = 0; i < Columns.Count; i++)
+        {
+            var col = Columns[i];
+            if (col.Width.IsPixel)
+            {
+                col.ActualWidth = Math.Max(20f, col.Width.Value);
+                allocatedWidth += col.ActualWidth;
+            }
+            else if (col.Width.IsAuto)
+            {
+                // Measure header text
+                float minWidth = MeasureTextWidth(col.Header, activeFont, FontSize) + 24f; // padding + indicator space
+
+                // High-performance Auto sizing: measure up to 100 sample items
+                float maxCellW = 0f;
+                int sampleCount = Math.Min(100, _itemsSource.Count);
+                for (int j = 0; j < sampleCount; j++)
+                {
+                    var item = _itemsSource[j];
+                    string val = GetCellValue(item, col.PropertyName);
+                    if (!string.IsNullOrEmpty(val))
+                    {
+                        float cellW = MeasureTextWidth(val, activeFont, FontSize) + 20f; // 10px padding on each side
+                        maxCellW = Math.Max(maxCellW, cellW);
+                    }
+                }
+
+                col.ActualWidth = Math.Max(minWidth, maxCellW);
+                allocatedWidth += col.ActualWidth;
+            }
+            else if (col.Width.IsStar)
+            {
+                totalStars += col.Width.Value;
+                starColumns.Add(col);
+            }
+        }
+
+        // 2. Second pass: Distribute remaining space to Star columns
+        if (starColumns.Count > 0)
+        {
+            float remainingWidth = Math.Max(0f, availableWidth - allocatedWidth);
+            if (remainingWidth > 0f && totalStars > 0f)
+            {
+                float extraPerStar = remainingWidth / totalStars;
+                foreach (var col in starColumns)
+                {
+                    col.ActualWidth = Math.Max(30f, col.Width.Value * extraPerStar);
+                }
+            }
+            else
+            {
+                foreach (var col in starColumns)
+                {
+                    col.ActualWidth = 50f;
+                }
+            }
+        }
+    }
+
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
         if (_cellEditor != null)
@@ -423,6 +508,9 @@ public class DataGrid : Control
         float h = HeightConstraint ?? availableSize.Y;
         if (float.IsInfinity(w)) w = 500f;
         if (float.IsInfinity(h)) h = 300f;
+
+        ResolveColumnWidths(w);
+
         return new Vector2(w, h);
     }
 
@@ -455,7 +543,7 @@ public class DataGrid : Control
         for (int i = 0; i < Columns.Count; i++)
         {
             var col = Columns[i];
-            Rect colRect = new Rect(runningX, 0, col.Width, _headerHeight);
+            Rect colRect = new Rect(runningX, 0, col.ActualWidth, _headerHeight);
             context.DrawRectangle(null, colBorder, colRect);
 
             // Draw Header Text
@@ -473,11 +561,11 @@ public class DataGrid : Control
             // Draw highlight if this separator is hovered or being resized
             if (i == _hoveredSeparatorIndex || i == _resizingColumnIndex)
             {
-                float separatorX = runningX + col.Width;
+                float separatorX = runningX + col.ActualWidth;
                 context.DrawRectangle(ThemeManager.GetBrush("SystemAccentColor"), null, new Rect(separatorX - 1f, 0f, 2f, _headerHeight));
             }
 
-            runningX += col.Width;
+            runningX += col.ActualWidth;
         }
 
         // 3. Draw Body Row Cells (Virtualized recycling viewport loop)
@@ -529,7 +617,7 @@ public class DataGrid : Control
                 for (int c = 0; c < Columns.Count; c++)
                 {
                     var col = Columns[c];
-                    float colWidth = col.Width;
+                    float colWidth = col.ActualWidth;
 
                     if (r == _editingRow && c == _editingCol)
                     {
@@ -726,9 +814,9 @@ public class DataGrid : Control
             float colX = Padding.Left;
             for (int i = 0; i < _editingCol; i++)
             {
-                colX += Columns[i].Width;
+                colX += Columns[i].ActualWidth;
             }
-            float colWidth = Columns[_editingCol].Width;
+            float colWidth = Columns[_editingCol].ActualWidth;
 
             if (rowY + _rowHeight <= _headerHeight || rowY >= Size.Y)
             {
