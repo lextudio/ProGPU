@@ -67,8 +67,8 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         let p0 = input.texCoord;
         let p1 = input.shapeSize;
         
-        let isStart = length(input.position - input.texCoord) < 0.001;
-        worldPos = select(p1, p0, isStart);
+        let isStart = abs(input.cornerRadius) < 1.5;
+        worldPos = input.position;
 
         let len1 = length(worldPos - p0);
         let len2 = length(p1 - worldPos);
@@ -91,9 +91,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         }
         let halfThickness = input.strokeThickness * 0.5;
         let expandedDistance = halfThickness * miterScale + 1.5;
-        let offset = miterN * expandedDistance * input.cornerRadius;
+        let signVal = select(-1.0, 1.0, input.cornerRadius > 0.0);
+        let offset = miterN * expandedDistance * signVal;
         worldPos = worldPos + offset;
-        gridIndex = input.cornerRadius * expandedDistance;
+        gridIndex = signVal * expandedDistance;
     } else if (sType == 5u) {
         // GPU Quadratic Bezier Curve Evaluation
         let p0 = input.position;
