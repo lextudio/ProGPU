@@ -291,6 +291,12 @@ public static class ThemeManager
             return style;
         }
 
+        if (typeof(RadioButton).IsAssignableFrom(controlType))
+        {
+            AddControlChrome(style, "CheckBoxBackgroundUnchecked", "CheckBoxForegroundUnchecked", "CheckBoxBorderBrushUnchecked", new Thickness(1f), 9f, new Thickness(8f, 4f, 8f, 4f));
+            return style;
+        }
+
         if (typeof(Slider).IsAssignableFrom(controlType))
         {
             AddControlChrome(style, "SliderTrackFill", "SliderTrackValueFill", "SliderThumbBorderBrush", new Thickness(1f), 8f, new Thickness(0f));
@@ -323,6 +329,18 @@ public static class ThemeManager
         if (typeof(ComboBox).IsAssignableFrom(controlType) || typeof(DatePicker).IsAssignableFrom(controlType) || typeof(TextBox).IsAssignableFrom(controlType))
         {
             AddControlChrome(style, "TextControlBackground", "TextControlForeground", "TextControlBorderBrush", new Thickness(1f), 4f, new Thickness(10f, 6f));
+            return style;
+        }
+
+        if (typeof(PasswordBox).IsAssignableFrom(controlType))
+        {
+            AddControlChrome(style, "TextControlBackground", "TextControlForeground", "TextControlBorderBrush", new Thickness(1f), 4f, new Thickness(10f, 6f, 36f, 6f));
+            return style;
+        }
+
+        if (typeof(RatingControl).IsAssignableFrom(controlType))
+        {
+            AddControlChrome(style, "Transparent", "TextPrimary", "Transparent", new Thickness(0f), 0f, new Thickness(4f));
             return style;
         }
 
