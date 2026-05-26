@@ -111,13 +111,13 @@ public static unsafe class DevToolsWindowController
 
     private static void OnDevToolsWindowResize(Vector2D<int> newSize)
     {
-        if (AppState._devToolsWgpuContext == null) return;
+        if (AppState._devToolsWgpuContext == null || AppState._devToolsWindow == null) return;
 
         var oldContext = WgpuContext.Current;
         WgpuContext.Current = AppState._devToolsWgpuContext;
         try
         {
-            AppState._devToolsWgpuContext.ConfigureSwapChain((uint)newSize.X, (uint)newSize.Y);
+            AppState._devToolsWgpuContext.ConfigureSwapChain((uint)AppState._devToolsWindow.FramebufferSize.X, (uint)AppState._devToolsWindow.FramebufferSize.Y);
             AppState._devToolsPanel?.Invalidate();
         }
         finally

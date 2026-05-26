@@ -554,8 +554,8 @@ public static unsafe class MainWindowController
 
     private static void OnWindowResize(Vector2D<int> newSize)
     {
-        if (AppState._wgpuContext == null) return;
-        AppState._wgpuContext.ConfigureSwapChain((uint)newSize.X, (uint)newSize.Y);
+        if (AppState._wgpuContext == null || AppState._window == null) return;
+        AppState._wgpuContext.ConfigureSwapChain((uint)AppState._window.FramebufferSize.X, (uint)AppState._window.FramebufferSize.Y);
         AppState._topLevelGrid?.Invalidate();
     }
 

@@ -381,12 +381,14 @@ To support robust diagnostic capabilities:
 
 ---
 
-### 11. High-Fidelity GPU Text Rendering with Subpixel Positioning & Exact Curve Math
+### 11. High-Fidelity GPU Text & Retina Rendering (macOS High-DPI Quality)
 
-Traditional GPU text engines rasterize glyphs to an atlas at integer boundaries and draw them using simple bilinear filtering, causing noticeable blurriness when text falls on fractional pixel offsets. ProGPU achieves native macOS-level text rendering quality while maintaining high performance through three main pillars:
+Traditional GPU engines suffer from low-resolution stretch blurriness on macOS high-DPI (Retina) screens because they configure the SwapChain to match logical coordinates, letting the operating system scale the output. ProGPU achieves true macOS Retina rendering quality while maintaining high performance through four main pillars:
 
-* **4x Horizontal Subpixel Positioning**: Horizontal text is extremely sensitive to subpixel offsets because we read horizontally. ProGPU divides the fractional screen X offset of each glyph baseline cursor into 4 subpixel bins (`0.0, 0.25, 0.5, 0.75` pixels) and caches each subpixel-shifted glyph variant separately in the dynamic `GlyphAtlas` with the key `(font, codePoint, size, subpixelX)`.
-* **Pixel-Perfect Snapped Quad Generation**: When generating the drawing vertices in `Compositor.cs`, the baseline screen cursor position is snapped to exact physical integer pixels (X coordinate to `floor(screenX)` and Y coordinate to `round(screenY)`). This ensures a **perfect 1:1 pixel-to-texel alignment**, completely eliminating linear sampler interpolation blur. The pre-rasterized 1/4th pixel shift inside the cached glyph atlas is drawn perfectly sharp at its subpixel position!
+* **Physical-Pixel Backing Store SwapChain**: The WebGPU swapchain and render pipelines are driven directly by the window's physical `FramebufferSize` instead of logical size (e.g. `2560x1600` instead of `1280x800`). This aligns all vector and rasterization outputs exactly 1:1 with hardware pixels, eliminating OS-level linear stretching blur.
+* **DPI-Aware Physical Glyph Caching**: Computes the high-DPI scaling factor dynamically (`dpiScale = FramebufferSize.X / Size.X`) and pre-rasterizes glyphs in the `GlyphAtlas` at their **actual physical pixel font size** (`cmd.FontSize * dpiScale`), ensuring that the atlas contains the high-resolution 2x textures.
+* **4x Physical Subpixel Snapping**: Snippets the screen-transformed baseline cursor position to physical device pixels (`transPos * dpiScale`) and snaps the horizontal coordinate to the nearest 1/4th *physical* pixel, completely eliminating subpixel blur on the screen.
+* **Retina Snap-Back logical mapping**: Snapped physical coordinates of the drawing quad are divided by `dpiScale` before writing them to the vertex buffer, mapping them back to logical space for the compositor's orthographic projection matrix. The GPU hardware then renders the logical quad exactly 1-to-1 with screen physical pixels!
 * **Exact Winding Curve Crossing Corrections**: Replaced the inclusive boundary crossing checks (`t >= 0.0 && t <= 1.0`) in the compute shader's quadratic Bezier solver with an exact half-open check (`t >= 0.0 && t < 1.0`). This guarantees that boundary extrema and join vertices are counted exactly once, completely preventing horizontal seam and drop-out artifacts at curve joins.
 
 ---

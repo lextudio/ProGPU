@@ -1909,11 +1909,20 @@ public unsafe class Compositor : IDisposable
             // Compute subpixel positioning and snap vertices to integer pixels to avoid bilinear blur.
             Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), transform);
 
+            // Compute high-DPI scaling factor dynamically from the window context
+            float dpiScale = 1.0f;
+            if (_context.Window != null)
+            {
+                dpiScale = (float)_context.Window.FramebufferSize.X / _context.Window.Size.X;
+            }
+
+            Vector2 transPosPhysical = transPos * dpiScale;
+
             float scaleX = new Vector2(transform.M11, transform.M12).Length();
             float scaleY = new Vector2(transform.M21, transform.M22).Length();
 
-            float screenX = transPos.X;
-            float screenY = transPos.Y;
+            float screenX = transPosPhysical.X;
+            float screenY = transPosPhysical.Y;
 
             float ipartX = MathF.Floor(screenX);
             float fpartX = screenX - ipartX;
@@ -1926,7 +1935,9 @@ public unsafe class Compositor : IDisposable
             byte subpixelX = (byte)subIdx;
             float snappedY = MathF.Round(screenY);
 
-            var info = _atlas.GetOrCreateGlyph(font, runGlyph.CodePoint, cmd.FontSize, subpixelX);
+            // Cache and rasterize the glyph in the atlas at its actual physical pixel font size
+            float physicalFontSize = cmd.FontSize * dpiScale;
+            var info = _atlas.GetOrCreateGlyph(font, runGlyph.CodePoint, physicalFontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
 
             int passCount = cmd.IsBold ? 2 : 1;
@@ -1936,7 +1947,8 @@ public unsafe class Compositor : IDisposable
             {
                 float xOffset = pass * boldOffset;
 
-                float rx0 = ipartX + info.BearX * scaleX + xOffset * scaleX;
+                // Position the quad in physical screen pixels
+                float rx0 = ipartX + info.BearX * scaleX + xOffset * scaleX * dpiScale;
                 float ry0 = snappedY + info.BearY * scaleY;
                 float rx1 = rx0 + info.Width * scaleX;
                 float ry1 = ry0 + info.Height * scaleY;
@@ -1949,10 +1961,11 @@ public unsafe class Compositor : IDisposable
                 float sx2 = rx1 - (ry1 - yBase) * skewFactor;
                 float sx3 = rx0 - (ry1 - yBase) * skewFactor;
 
-                var v0 = new Vector2(sx0, ry0);
-                var v1 = new Vector2(sx1, ry0);
-                var v2 = new Vector2(sx2, ry1);
-                var v3 = new Vector2(sx3, ry1);
+                // Divide by dpiScale to map the physical coordinates back to logical compositor projection space
+                var v0 = new Vector2(sx0, ry0) / dpiScale;
+                var v1 = new Vector2(sx1, ry0) / dpiScale;
+                var v2 = new Vector2(sx2, ry1) / dpiScale;
+                var v3 = new Vector2(sx3, ry1) / dpiScale;
 
                 uint idxStart = (uint)currentVertexCount;
 

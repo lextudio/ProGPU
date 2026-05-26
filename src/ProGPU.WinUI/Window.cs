@@ -184,8 +184,8 @@ public class Window
 
     private void OnResize(Vector2D<int> newSize)
     {
-        if (_wgpuContext == null) return;
-        _wgpuContext.ConfigureSwapChain((uint)newSize.X, (uint)newSize.Y);
+        if (_wgpuContext == null || _silkWindow == null) return;
+        _wgpuContext.ConfigureSwapChain((uint)_silkWindow.FramebufferSize.X, (uint)_silkWindow.FramebufferSize.Y);
         _content?.Invalidate();
     }
 

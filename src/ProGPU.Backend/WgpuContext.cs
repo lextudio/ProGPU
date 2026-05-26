@@ -175,7 +175,7 @@ public unsafe class WgpuContext : IDisposable
         // 7. Configure Surface if window exists
         if (window != null && Surface != null)
         {
-            ConfigureSwapChain((uint)window.Size.X, (uint)window.Size.Y);
+            ConfigureSwapChain((uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
         }
     }
 
