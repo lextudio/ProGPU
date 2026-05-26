@@ -145,6 +145,7 @@ public class NavigationView : FrameworkElement
                 }
                 
                 SelectionChanged?.Invoke(this, EventArgs.Empty);
+                UpdateTabStops();
                 Invalidate();
             }
         }
@@ -264,7 +265,48 @@ public class NavigationView : FrameworkElement
             _panePanel.AddChild(SettingsItem);
         }
 
+        UpdateTabStops();
         Invalidate();
+    }
+
+    internal void UpdateTabStops()
+    {
+        var items = FlatVisibleItems;
+        var focusedItem = InputSystem.FocusedElement as NavigationViewItem;
+        
+        // Find which item should be the single tab stop
+        NavigationViewItem? targetTab = null;
+        
+        // 1. If one of our items is currently focused, that is the tab stop
+        if (focusedItem != null && (items.Contains(focusedItem) || focusedItem == SettingsItem))
+        {
+            targetTab = focusedItem;
+        }
+        // 2. Otherwise, the selected item is the tab stop
+        else if (SelectedItem != null)
+        {
+            targetTab = SelectedItem;
+        }
+        // 3. Otherwise, the first visible item is the tab stop
+        else if (items.Count > 0)
+        {
+            targetTab = items[0];
+        }
+        // 4. Otherwise, SettingsItem if available
+        else if (SettingsItem != null)
+        {
+            targetTab = SettingsItem;
+        }
+
+        // Apply IsTabStop to all items
+        foreach (var item in items)
+        {
+            item.IsTabStop = (item == targetTab);
+        }
+        if (SettingsItem != null)
+        {
+            SettingsItem.IsTabStop = (SettingsItem == targetTab);
+        }
     }
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
