@@ -160,6 +160,8 @@ public unsafe class Compositor : IDisposable
     private readonly GpuBuffer _brushesStorageBuffer;
     private ulong _frameNumber = 0;
     private readonly Dictionary<(string Text, TtfFont Font, float Size, TextAlignment Align), TextLayout> _layoutCache = new();
+    private uint _pendingVectorStart = 0;
+    private uint _pendingTextStart = 0;
 
     private readonly ComputeAccelerator _compute;
     private readonly Dictionary<Visual, (GpuTexture Source, GpuTexture Temp, GpuTexture Destination)> _effectTextures = new();
@@ -548,20 +550,10 @@ public unsafe class Compositor : IDisposable
         _activeOpacity = 1.0f;
 
         // 3. Compile Layer 0: Root Visual Scene
-        uint vecStart = (uint)_vectorIndicesList.Count;
-        uint textStart = (uint)_textIndicesList.Count;
+        _pendingVectorStart = (uint)_vectorIndicesList.Count;
+        _pendingTextStart = (uint)_textIndicesList.Count;
         CompileVisualTree(root, Matrix4x4.Identity);
-        
-        uint vecCount = (uint)_vectorIndicesList.Count - vecStart;
-        if (vecCount > 0)
-        {
-            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStart, IndexCount = vecCount });
-        }
-        uint textCount = (uint)_textIndicesList.Count - textStart;
-        if (textCount > 0)
-        {
-            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStart, IndexCount = textCount });
-        }
+        CommitPendingDrawCalls();
 
         // 4. Compile Layer 1: Active Popups / External Layers (in proper Z-order)
         var externalLayers = GetExternalLayers?.Invoke();
@@ -570,21 +562,11 @@ public unsafe class Compositor : IDisposable
             for (int i = 0; i < externalLayers.Count; i++)
             {
                 var layer = externalLayers[i];
-                uint vecStartPopup = (uint)_vectorIndicesList.Count;
-                uint textStartPopup = (uint)_textIndicesList.Count;
+                _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                _pendingTextStart = (uint)_textIndicesList.Count;
                 
                 CompileVisualTree(layer, Matrix4x4.Identity);
-                
-                uint vecCountPopup = (uint)_vectorIndicesList.Count - vecStartPopup;
-                if (vecCountPopup > 0)
-                {
-                    _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartPopup, IndexCount = vecCountPopup });
-                }
-                uint textCountPopup = (uint)_textIndicesList.Count - textStartPopup;
-                if (textCountPopup > 0)
-                {
-                    _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartPopup, IndexCount = textCountPopup });
-                }
+                CommitPendingDrawCalls();
             }
         }
 
@@ -592,28 +574,18 @@ public unsafe class Compositor : IDisposable
         var activeToolTip = GetTooltip?.Invoke();
         if (activeToolTip != null)
         {
-            uint vecStartTip = (uint)_vectorIndicesList.Count;
-            uint textStartTip = (uint)_textIndicesList.Count;
+            _pendingVectorStart = (uint)_vectorIndicesList.Count;
+            _pendingTextStart = (uint)_textIndicesList.Count;
             
             CompileVisualTree(activeToolTip, Matrix4x4.Identity);
-            
-            uint vecCountTip = (uint)_vectorIndicesList.Count - vecStartTip;
-            if (vecCountTip > 0)
-            {
-                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartTip, IndexCount = vecCountTip });
-            }
-            uint textCountTip = (uint)_textIndicesList.Count - textStartTip;
-            if (textCountTip > 0)
-            {
-                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartTip, IndexCount = textCountTip });
-            }
+            CommitPendingDrawCalls();
         }
 
         // 6. Compile Layer 3: Adorner / DevTools bounds highlights
         if (RenderDiagnostics != null)
         {
-            uint vecStartAdorner = (uint)_vectorIndicesList.Count;
-            uint textStartAdorner = (uint)_textIndicesList.Count;
+            _pendingVectorStart = (uint)_vectorIndicesList.Count;
+            _pendingTextStart = (uint)_textIndicesList.Count;
 
             var diagContext = new DrawingContext();
             RenderDiagnostics(diagContext, width, height);
@@ -632,17 +604,7 @@ public unsafe class Compositor : IDisposable
                         break;
                 }
             }
-
-            uint vecCountAdorner = (uint)_vectorIndicesList.Count - vecStartAdorner;
-            if (vecCountAdorner > 0)
-            {
-                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStartAdorner, IndexCount = vecCountAdorner });
-            }
-            uint textCountAdorner = (uint)_textIndicesList.Count - textStartAdorner;
-            if (textCountAdorner > 0)
-            {
-                _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStartAdorner, IndexCount = textCountAdorner });
-            }
+            CommitPendingDrawCalls();
         }
 
         // Dynamic buffer writing will happen after uploads to keep logic clear
@@ -2219,6 +2181,9 @@ public unsafe class Compositor : IDisposable
     private void CompileTextureCommand(RenderCommand cmd, Matrix4x4 transform)
     {
         if (cmd.Texture == null) return;
+
+        CommitPendingDrawCalls();
+
         var r = cmd.Rect;
         var color = new Vector4(1f, 1f, 1f, _activeOpacity);
 
@@ -2313,6 +2278,23 @@ public unsafe class Compositor : IDisposable
             IndexCount = 6,
             Texture = cmd.Texture
         });
+    }
+
+    private void CommitPendingDrawCalls()
+    {
+        uint vecCount = (uint)_vectorIndicesList.Count - _pendingVectorStart;
+        if (vecCount > 0)
+        {
+            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = _pendingVectorStart, IndexCount = vecCount });
+            _pendingVectorStart = (uint)_vectorIndicesList.Count;
+        }
+
+        uint textCount = (uint)_textIndicesList.Count - _pendingTextStart;
+        if (textCount > 0)
+        {
+            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = _pendingTextStart, IndexCount = textCount });
+            _pendingTextStart = (uint)_textIndicesList.Count;
+        }
     }
 
     private void EnsureBufferSize(ref GpuBuffer buffer, uint requiredSize, BufferUsage usage)
@@ -2664,23 +2646,14 @@ public unsafe class Compositor : IDisposable
         var oldOffset = node.Offset;
         node.Offset = new Vector2(padding, padding);
 
+        _pendingVectorStart = 0;
+        _pendingTextStart = 0;
+
         CompileVisualTree(node, Matrix4x4.Identity);
 
         node.Offset = oldOffset;
 
-        // Compile draw calls for offscreen node
-        uint vecStart = 0;
-        uint vecCount = (uint)_vectorIndicesList.Count;
-        if (vecCount > 0)
-        {
-            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = vecStart, IndexCount = vecCount });
-        }
-        uint textStart = 0;
-        uint textCount = (uint)_textIndicesList.Count;
-        if (textCount > 0)
-        {
-            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = textStart, IndexCount = textCount });
-        }
+        CommitPendingDrawCalls();
 
         // Upload CPU batches to dynamic GPU buffers
         if (_vectorVerticesList.Count > 0)

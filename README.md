@@ -426,6 +426,18 @@ flowchart TD
 
 ---
 
+### 13. Dynamic Z-Ordered Draw Call Batching
+
+In retained scene graphs with interleaved primitive types (such as vector geometries, offscreen computer-generated textures, and rich text visual elements), simple bulk-draw grouping causes Z-order overlap bugs. If all textures or all texts are batched and drawn at the very end of layer compilation, solid backgrounds or overlay vectors can draw on top of pre-rendered textures, resulting in black or empty areas.
+
+ProGPU implements a **Dynamic Z-Ordered Draw Call Batching** mechanism within `Compositor.cs` to achieve optimal batching performance while strictly preserving visual Z-order:
+- **Pending Batch Tracking**: Instead of immediate submission, consecutive vector shape and text draw commands are accumulated into contiguous ranges tracked via `_pendingVectorStart` and `_pendingTextStart` pointers.
+- **Ordered Flush Commits (`CommitPendingDrawCalls`)**: Whenever a boundary-crossing operation is encountered (such as an offscreen compiled texture draw call or layer bounds transition), the compositor flushes accumulated vector and text batches using `CommitPendingDrawCalls()`. This groups consecutive visual primitives into single drawing calls while guaranteeing they are submitted to the GPU command encoder in the exact Z-order depth traversed by the visual tree.
+- **Zero-Allocation Dynamic Offsets**: The batched ranges directly index into GPU-mapped vertex and index backing buffers, avoiding CPU copy operations and preserving near-native rendering speeds.
+
+---
+
+
 ## Module & Project Architecture Breakdown
 
 The ProGPU solution is partitioned into modular, highly specialized C# projects. Each project governs a specific layer of the UI, vector, or graphics compilation loops:
