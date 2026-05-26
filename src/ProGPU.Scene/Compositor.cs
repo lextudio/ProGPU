@@ -210,8 +210,8 @@ public unsafe class Compositor : IDisposable
         _pipelineCache = new RenderPipelineCache(_context);
         _compute = new ComputeAccelerator(_context);
         
-        // 1. Initialize Glyph Atlas (1024x1024)
-        _atlas = new GlyphAtlas(_context, 1024);
+        // 1. Initialize Glyph Atlas (2048x2048)
+        _atlas = new GlyphAtlas(_context, 2048);
         _pathAtlas = new PathAtlas(_context, 2048);
 
         // 2. Uniform Buffer allocation (Projection Matrix - 64 bytes)
@@ -515,6 +515,11 @@ public unsafe class Compositor : IDisposable
     {
         if (_isDisposed) return;
         _pathAtlas.CleanupFrame();
+
+        if (_atlas.IsAlmostFull)
+        {
+            _atlas.Clear();
+        }
 
         // Invoke pre-render actions (e.g. measure/arrange popups in UI framework)
         PreRender?.Invoke(width, height);

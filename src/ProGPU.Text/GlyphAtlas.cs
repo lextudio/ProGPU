@@ -45,7 +45,23 @@ public unsafe class GlyphAtlas : IDisposable
 
     public GpuTexture AtlasTexture => _atlasTexture;
 
-    public GlyphAtlas(WgpuContext context, uint atlasSize = 1024)
+    public bool IsAlmostFull => (_currentY + _currentRowHeight) > (_atlasSize * 0.85f);
+
+    public void Clear()
+    {
+        if (_isDisposed) return;
+        
+        Console.WriteLine("[GlyphAtlas] Proactive Clear: Resetting packer and clearing cache.");
+        _glyphs.Clear();
+        _currentX = 2;
+        _currentY = 2;
+        _currentRowHeight = 0;
+
+        byte[] clearData = new byte[_atlasSize * _atlasSize * 4];
+        _atlasTexture.WritePixels(new ReadOnlySpan<byte>(clearData));
+    }
+
+    public GlyphAtlas(WgpuContext context, uint atlasSize = 2048)
     {
         _context = context;
         _atlasSize = atlasSize;
