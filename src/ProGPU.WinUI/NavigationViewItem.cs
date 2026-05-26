@@ -583,6 +583,63 @@ public class NavigationViewItem : Control
                     
                     drewCustomIcon = true;
                 }
+                else if (Icon == "🔘" || Text == "Radio Button")
+                {
+                    // concentric/nested double circle vector: outer circle outline, inner active dot
+                    float cx = startX + 8f;
+                    float cy = startY + 8f;
+                    
+                    context.DrawCircle(translucentBrush, primaryPen, new Vector2(cx, cy), 7f);
+                    context.FillCircle(accentBrush, new Vector2(cx, cy), 3f);
+                    
+                    drewCustomIcon = true;
+                }
+                else if (Icon == "⭐" || Text == "Rating Control")
+                {
+                    // 5-point star vector icon matching the rating system
+                    float cx = startX + 8f;
+                    float cy = startY + 8f;
+                    float r = 7.5f;
+                    
+                    var starGeo = new PathGeometry();
+                    var fig = new PathFigure(Vector2.Zero) { IsClosed = true };
+                    int points = 5;
+                    double innerRadius = r * 0.4;
+                    
+                    for (int i = 0; i < 2 * points; i++)
+                    {
+                        double angle = i * Math.PI / points - Math.PI / 2;
+                        double radius = (i % 2 == 0) ? r : innerRadius;
+                        float x = (float)(cx + radius * Math.Cos(angle));
+                        float y = (float)(cy + radius * Math.Sin(angle));
+                        
+                        if (i == 0)
+                        {
+                            fig.StartPoint = new Vector2(x, y);
+                        }
+                        else
+                        {
+                            fig.Segments.Add(new LineSegment(new Vector2(x, y)));
+                        }
+                    }
+                    starGeo.Figures.Add(fig);
+
+                    context.DrawPath(translucentBrush, primaryPen, starGeo);
+                    drewCustomIcon = true;
+                }
+                else if (Icon == "🔒" || Text == "Password Box")
+                {
+                    // Padlock vector icon with lock body, curved shackle, and keyhole
+                    var lockBody = PathGeometry.Parse(Invariant($"M {startX + 3} {startY + 7} H {startX + 13} Q {startX + 14} {startY + 7} {startX + 14} {startY + 8} V {startY + 13} Q {startX + 14} {startY + 14} {startX + 13} {startY + 14} H {startX + 3} Q {startX + 2} {startY + 14} {startX + 2} {startY + 13} V {startY + 8} Q {startX + 2} {startY + 7} {startX + 3} {startY + 7} Z"));
+                    var shackle = PathGeometry.Parse(Invariant($"M {startX + 5} {startY + 7} V {startY + 4} Q {startX + 5} {startY + 1} {startX + 8} {startY + 1} Q {startX + 11} {startY + 1} {startX + 11} {startY + 4} V {startY + 7}"));
+                    var keyhole = PathGeometry.Parse(Invariant($"M {startX + 7.2f} {startY + 9.5f} Q {startX + 7.2f} {startY + 8.7f} {startX + 8} {startY + 8.7f} Q {startX + 8.8f} {startY + 8.7f} {startX + 8.8f} {startY + 9.5f} Q {startX + 8.8f} {startY + 10.3f} {startX + 8} {startY + 10.3f} Q {startX + 7.2f} {startY + 10.3f} {startX + 7.2f} {startY + 9.5f} Z M {startX + 8} {startY + 10.3f} V {startY + 12f}"));
+
+                    context.DrawPath(translucentBrush, primaryPen, lockBody);
+                    context.DrawPath(null, primaryPen, shackle);
+                    context.DrawPath(textPrimary, primaryPen, keyhole);
+                    drewCustomIcon = true;
+                }
+
 
 
                 if (!drewCustomIcon)
