@@ -1902,7 +1902,31 @@ public unsafe class Compositor : IDisposable
                 continue;
             }
 
-            var info = _atlas.GetOrCreateGlyph(font, runGlyph.CodePoint, cmd.FontSize);
+            // Retrieve baseline coordinate from layout position by subtracting dummy Bear offset
+            float baseCursorX = runGlyph.Position.X - runGlyph.Glyph.BearX;
+            float baseCursorY = runGlyph.Position.Y - runGlyph.Glyph.BearY;
+
+            // Compute subpixel positioning and snap vertices to integer pixels to avoid bilinear blur.
+            Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), transform);
+
+            float scaleX = new Vector2(transform.M11, transform.M12).Length();
+            float scaleY = new Vector2(transform.M21, transform.M22).Length();
+
+            float screenX = transPos.X;
+            float screenY = transPos.Y;
+
+            float ipartX = MathF.Floor(screenX);
+            float fpartX = screenX - ipartX;
+            int subIdx = (int)MathF.Round(fpartX * 4f);
+            if (subIdx == 4)
+            {
+                subIdx = 0;
+                ipartX += 1.0f;
+            }
+            byte subpixelX = (byte)subIdx;
+            float snappedY = MathF.Round(screenY);
+
+            var info = _atlas.GetOrCreateGlyph(font, runGlyph.CodePoint, cmd.FontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
 
             int passCount = cmd.IsBold ? 2 : 1;
@@ -1911,29 +1935,24 @@ public unsafe class Compositor : IDisposable
             for (int pass = 0; pass < passCount; pass++)
             {
                 float xOffset = pass * boldOffset;
-                
-                // Retrieve baseline coordinate from layout position by subtracting dummy Bear offset
-                float baseCursorX = runGlyph.Position.X - runGlyph.Glyph.BearX;
-                float baseCursorY = runGlyph.Position.Y - runGlyph.Glyph.BearY;
 
-                float x0 = baseCursorX + info.BearX + cmd.Position.X + xOffset;
-                float y0 = baseCursorY + info.BearY + cmd.Position.Y;
-                float x1 = x0 + info.Width;
-                float y1 = y0 + info.Height;
+                float rx0 = ipartX + info.BearX * scaleX + xOffset * scaleX;
+                float ry0 = snappedY + info.BearY * scaleY;
+                float rx1 = rx0 + info.Width * scaleX;
+                float ry1 = ry0 + info.Height * scaleY;
 
                 float skewFactor = cmd.IsItalic ? 0.22f : 0f;
-                float yBase = cmd.Position.Y + cmd.FontSize * 0.8f; // Baseline anchor
+                float yBase = snappedY; // Baseline is snappedY
 
-                float sx0 = x0 - (y0 - yBase) * skewFactor;
-                float sx1 = x1 - (y0 - yBase) * skewFactor;
-                float sx2 = x1 - (y1 - yBase) * skewFactor;
-                float sx3 = x0 - (y1 - yBase) * skewFactor;
+                float sx0 = rx0 - (ry0 - yBase) * skewFactor;
+                float sx1 = rx1 - (ry0 - yBase) * skewFactor;
+                float sx2 = rx1 - (ry1 - yBase) * skewFactor;
+                float sx3 = rx0 - (ry1 - yBase) * skewFactor;
 
-                // Transform vertices on CPU
-                var v0 = Vector2.Transform(new Vector2(sx0, y0), transform);
-                var v1 = Vector2.Transform(new Vector2(sx1, y0), transform);
-                var v2 = Vector2.Transform(new Vector2(sx2, y1), transform);
-                var v3 = Vector2.Transform(new Vector2(sx3, y1), transform);
+                var v0 = new Vector2(sx0, ry0);
+                var v1 = new Vector2(sx1, ry0);
+                var v2 = new Vector2(sx2, ry1);
+                var v3 = new Vector2(sx3, ry1);
 
                 uint idxStart = (uint)currentVertexCount;
 
@@ -1945,36 +1964,36 @@ public unsafe class Compositor : IDisposable
 
                 if (_activeClipRect.HasValue)
                 {
-                    float rx1 = v0.X;
-                    float ry1 = v0.Y;
-                    float rx2 = v2.X;
-                    float ry2 = v2.Y;
+                    float rcxStart = v0.X;
+                    float rcyStart = v0.Y;
+                    float rcxEnd = v2.X;
+                    float rcyEnd = v2.Y;
 
-                    float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
-                    float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
-                    float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
-                    float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
+                    float cx1 = Math.Max(rcxStart, _activeClipRect.Value.X);
+                    float cy1 = Math.Max(rcyStart, _activeClipRect.Value.Y);
+                    float cx2 = Math.Min(rcxEnd, _activeClipRect.Value.X + _activeClipRect.Value.Width);
+                    float cy2 = Math.Min(rcyEnd, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
 
                     if (cx2 <= cx1 || cy2 <= cy1) continue; // Completely clipped!
 
-                    float dx = rx2 - rx1;
-                    float dy = ry2 - ry1;
+                    float dx = rcxEnd - rcxStart;
+                    float dy = rcyEnd - rcyStart;
 
                     uv0 = new Vector2(
-                        info.TexCoordMin.X + (cx1 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy1 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                        info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
                     );
                     uv1 = new Vector2(
-                        info.TexCoordMin.X + (cx2 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy1 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                        info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
                     );
                     uv2 = new Vector2(
-                        info.TexCoordMin.X + (cx2 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                        info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
                     );
                     uv3 = new Vector2(
-                        info.TexCoordMin.X + (cx1 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                        info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
                     );
 
                     v0 = new Vector2(cx1, cy1);

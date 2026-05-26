@@ -66,7 +66,7 @@ graph TD
 
 ## Technical Specifications: Performance Optimizations
 
-Our work introduces four core performance optimization pillars that collectively transform frame times, CPU allocation metrics, and event dispatcher throughput.
+Our work introduces eleven core rendering and performance optimization pillars that collectively transform frame times, CPU allocation metrics, visual fidelity, and event dispatcher throughput.
 
 ### 1. WinUI-Compatible High-Performance Layout Caching & Invalidation
 
@@ -378,6 +378,16 @@ To support robust diagnostic capabilities:
 * **Multi-Window Visual Inspector**: Refactored the `DevTools` visual tree population (`RefreshVisualTree`) to dynamically traverse all active windows registered in `WindowManager.ActiveWindows` (filtering out the inspector itself), and automatically falling back to the thread-static `InputSystem.Root` for raw Silk.NET window bindings.
 * **Popup & Dialog Hierarchies**: Merges active floating popups and dialogs from `PopupService.ActivePopups` as a dedicated branch in the visual tree, making overlay dialogs fully inspectable.
 * **Global Invalidation Hub**: Replaced thread-local repaints with a public `InvalidateAllMainWindows()` hub in `DevToolsService`, ensuring hover overlays, inspection borders, and property changes instantly refresh across all active window compositors.
+
+---
+
+### 11. High-Fidelity GPU Text Rendering with Subpixel Positioning & Exact Curve Math
+
+Traditional GPU text engines rasterize glyphs to an atlas at integer boundaries and draw them using simple bilinear filtering, causing noticeable blurriness when text falls on fractional pixel offsets. ProGPU achieves native macOS-level text rendering quality while maintaining high performance through three main pillars:
+
+* **4x Horizontal Subpixel Positioning**: Horizontal text is extremely sensitive to subpixel offsets because we read horizontally. ProGPU divides the fractional screen X offset of each glyph baseline cursor into 4 subpixel bins (`0.0, 0.25, 0.5, 0.75` pixels) and caches each subpixel-shifted glyph variant separately in the dynamic `GlyphAtlas` with the key `(font, codePoint, size, subpixelX)`.
+* **Pixel-Perfect Snapped Quad Generation**: When generating the drawing vertices in `Compositor.cs`, the baseline screen cursor position is snapped to exact physical integer pixels (X coordinate to `floor(screenX)` and Y coordinate to `round(screenY)`). This ensures a **perfect 1:1 pixel-to-texel alignment**, completely eliminating linear sampler interpolation blur. The pre-rasterized 1/4th pixel shift inside the cached glyph atlas is drawn perfectly sharp at its subpixel position!
+* **Exact Winding Curve Crossing Corrections**: Replaced the inclusive boundary crossing checks (`t >= 0.0 && t <= 1.0`) in the compute shader's quadratic Bezier solver with an exact half-open check (`t >= 0.0 && t < 1.0`). This guarantees that boundary extrema and join vertices are counted exactly once, completely preventing horizontal seam and drop-out artifacts at curve joins.
 
 ---
 

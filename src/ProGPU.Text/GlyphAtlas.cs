@@ -35,7 +35,7 @@ public unsafe class GlyphAtlas : IDisposable
     private uint _currentY = 2;
     private uint _currentRowHeight = 0;
 
-    private readonly Dictionary<(TtfFont font, uint codePoint, float size), GlyphInfo> _glyphs = new();
+    private readonly Dictionary<(TtfFont font, uint codePoint, float size, byte subpixelX), GlyphInfo> _glyphs = new();
     private readonly Dictionary<TtfFont, (GpuBuffer RecordsBuffer, GpuBuffer SegmentsBuffer)> _fontGpuData = new();
     
     private readonly RenderPipelineCache _pipelineCache;
@@ -73,11 +73,11 @@ public unsafe class GlyphAtlas : IDisposable
 
     private static uint DivRoundUp(uint value, uint divisor) => (value + divisor - 1) / divisor;
 
-    public GlyphInfo GetOrCreateGlyph(TtfFont font, uint codePoint, float size)
+    public GlyphInfo GetOrCreateGlyph(TtfFont font, uint codePoint, float size, byte subpixelX = 0)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GlyphAtlas));
         
-        var key = (font, codePoint, size);
+        var key = (font, codePoint, size, subpixelX);
         if (!_glyphs.TryGetValue(key, out var info))
         {
             ushort glyphIdx = font.GetGlyphIndex(codePoint);
@@ -247,17 +247,18 @@ public unsafe class GlyphAtlas : IDisposable
                             }
 
                             // Write uniforms for the glyph
-                            var uniforms = new GlyphUniforms
-                            {
-                                XStart = xStart,
-                                YStart = yStart,
-                                Scale = scale,
-                                GlyphIndex = glyphIdx,
-                                AtlasX = posX,
-                                AtlasY = posY,
-                                Width = gW,
-                                Height = gH
-                            };
+                             var uniforms = new GlyphUniforms
+                             {
+                                 XStart = xStart,
+                                 YStart = yStart,
+                                 Scale = scale,
+                                 GlyphIndex = glyphIdx,
+                                 AtlasX = posX,
+                                 AtlasY = posY,
+                                 Width = gW,
+                                 Height = gH,
+                                 SubpixelX = subpixelX * 0.25f
+                             };
 
                             using var uniformsBuffer = new GpuBuffer(
                                 _context,

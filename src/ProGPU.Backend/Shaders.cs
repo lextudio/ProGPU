@@ -373,6 +373,10 @@ struct GlyphUniforms {
     atlasY: u32,
     width: u32,
     height: u32,
+    subpixelX: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct GlyphRecord {
@@ -468,7 +472,7 @@ fn is_point_inside(p: vec2<f32>, record: GlyphRecord) -> bool {
             
             for (var r: u32 = 0u; r < root_count; r = r + 1u) {
                 let t = roots[r];
-                if (t >= 0.0 && t <= 1.0) {
+                if (t >= 0.0 && t < 1.0) {
                     let one_minus_t = 1.0 - t;
                     let x_t = one_minus_t * one_minus_t * A.x + 2.0 * one_minus_t * t * B.x + t * t * C.x;
                     if (p.x < x_t) {
@@ -505,7 +509,7 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     for (var dy: f32 = 0.125; dy < 1.0; dy = dy + 0.25) {
         for (var dx: f32 = 0.125; dx < 1.0; dx = dx + 0.25) {
-            let sp = vec2<f32>(px + dx, py + dy);
+            let sp = vec2<f32>(px + dx - uniforms.subpixelX, py + dy);
             let fp = vec2<f32>(sp.x / uniforms.scale, -sp.y / uniforms.scale);
             if (is_point_inside(fp, record)) {
                 coverage = coverage + 0.0625;

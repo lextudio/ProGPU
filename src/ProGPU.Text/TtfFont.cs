@@ -37,10 +37,16 @@ public struct GlyphUniforms
     public float YStart;
     public float Scale;
     public uint GlyphIndex;
+    
     public uint AtlasX;
     public uint AtlasY;
     public uint Width;
     public uint Height;
+    
+    public float SubpixelX;
+    public float Pad0;
+    public float Pad1;
+    public float Pad2;
 }
 
 public class TtfFont
