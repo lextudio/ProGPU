@@ -1,42 +1,29 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
-public class CheckBox : Control
+public class CheckBox : ContentControl
 {
-    private bool _isChecked;
-    private FrameworkElement? _content;
+    public static readonly DependencyProperty IsCheckedProperty =
+        DependencyProperty.Register(
+            "IsChecked",
+            typeof(bool),
+            typeof(CheckBox),
+            new PropertyMetadata(false, (d, e) => ((CheckBox)d).OnCheckedChanged()));
 
     public bool IsChecked
     {
-        get => _isChecked;
-        set
-        {
-            if (_isChecked != value)
-            {
-                _isChecked = value;
-                OnCheckedChanged();
-            }
-        }
-    }
-
-    public FrameworkElement? Content
-    {
-        get => _content;
-        set
-        {
-            if (_content != value)
-            {
-                if (_content != null) RemoveChild(_content);
-                _content = value;
-                if (_content != null) AddChild(_content);
-                Invalidate();
-            }
-        }
+        get => (bool)(GetValue(IsCheckedProperty) ?? false);
+        set => SetValue(IsCheckedProperty, value);
     }
 
     public event EventHandler? Checked;
@@ -53,7 +40,7 @@ public class CheckBox : Control
     {
         Invalidate();
         CheckedChanged?.Invoke(this, EventArgs.Empty);
-        if (_isChecked)
+        if (IsChecked)
         {
             Checked?.Invoke(this, EventArgs.Empty);
         }
@@ -89,36 +76,38 @@ public class CheckBox : Control
         );
 
         Vector2 contentDesired = Vector2.Zero;
-        if (Content != null)
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
-            Content.Measure(contentAvail);
-            contentDesired = Content.DesiredSize;
+            contentVisual.Measure(contentAvail);
+            contentDesired = contentVisual.DesiredSize;
         }
 
         return new Vector2(
-            contentDesired.X + inset.X,
-            Math.Max(boxSize, contentDesired.Y) + borderV + paddingV
+            contentDesired.X + borderH + boxSize + spacing,
+            Math.Max(boxSize, contentDesired.Y) + borderV
         );
     }
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        float leftInset = BorderThickness.Left + Padding.Left;
-        float topInset = BorderThickness.Top + Padding.Top;
+        float leftInset = BorderThickness.Left;
+        float topInset = BorderThickness.Top;
         float boxSize = 18f;
         float spacing = 8f;
 
         // Vertically center the box in the arrange area
-        float boxY = arrangeRect.Y + topInset + (arrangeRect.Height - (topInset + BorderThickness.Bottom + Padding.Bottom) - boxSize) / 2f;
+        float boxY = arrangeRect.Y + topInset + (arrangeRect.Height - (topInset + BorderThickness.Bottom) - boxSize) / 2f;
 
-        if (Content != null)
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
             float contentX = arrangeRect.X + leftInset + boxSize + spacing;
-            float contentW = arrangeRect.Width - (leftInset + BorderThickness.Right + Padding.Right + boxSize + spacing);
-            float contentH = Content.DesiredSize.Y;
-            float contentY = arrangeRect.Y + topInset + (arrangeRect.Height - (topInset + BorderThickness.Bottom + Padding.Bottom) - contentH) / 2f;
+            float contentW = arrangeRect.Width - (leftInset + BorderThickness.Right + boxSize + spacing);
+            float contentH = contentVisual.DesiredSize.Y;
+            float contentY = arrangeRect.Y + topInset + (arrangeRect.Height - (topInset + BorderThickness.Bottom) - contentH) / 2f;
 
-            Content.Arrange(new Rect(contentX, contentY, contentW, contentH));
+            contentVisual.Arrange(new Rect(contentX, contentY, contentW, contentH));
         }
     }
 

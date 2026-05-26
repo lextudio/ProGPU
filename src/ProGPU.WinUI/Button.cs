@@ -1,29 +1,19 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
-public class Button : Control
+[ContentProperty(Name = "Content")]
+public class Button : ContentControl
 {
-    private FrameworkElement? _content;
-
-    public FrameworkElement? Content
-    {
-        get => _content;
-        set
-        {
-            if (_content != value)
-            {
-                if (_content != null) RemoveChild(_content);
-                _content = value;
-                if (_content != null) AddChild(_content);
-                Invalidate();
-            }
-        }
-    }
 
     public event EventHandler? Click;
 
@@ -31,6 +21,12 @@ public class Button : Control
     {
         CornerRadius = 6f;
         Padding = new Thickness(12, 6, 12, 6);
+        
+        var defaultStyle = ThemeManager.GetDefaultStyle(GetType());
+        if (defaultStyle != null)
+        {
+            Style = defaultStyle;
+        }
     }
 
     public override void OnPointerReleased(PointerRoutedEventArgs e)
@@ -44,6 +40,11 @@ public class Button : Control
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
+        if (HasTemplate)
+        {
+            return base.MeasureOverride(availableSize);
+        }
+
         float borderH = BorderThickness.Horizontal;
         float borderV = BorderThickness.Vertical;
         float paddingH = Padding.Horizontal;
@@ -56,41 +57,55 @@ public class Button : Control
         );
 
         Vector2 contentDesired = Vector2.Zero;
-        if (Content != null)
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
-            Content.Measure(contentAvail);
-            contentDesired = Content.DesiredSize;
+            contentVisual.Measure(contentAvail);
+            contentDesired = contentVisual.DesiredSize;
         }
 
         float minW = 64f;
         float minH = 28f;
         return new Vector2(
-            Math.Max(minW, contentDesired.X + inset.X),
-            Math.Max(minH, contentDesired.Y + inset.Y)
+            Math.Max(minW - paddingH, contentDesired.X + borderH),
+            Math.Max(minH - paddingV, contentDesired.Y + borderV)
         );
     }
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        if (Content != null)
+        if (HasTemplate)
         {
-            float leftInset = BorderThickness.Left + Padding.Left;
-            float topInset = BorderThickness.Top + Padding.Top;
-            float rightInset = BorderThickness.Right + Padding.Right;
-            float bottomInset = BorderThickness.Bottom + Padding.Bottom;
+            base.ArrangeOverride(arrangeRect);
+            return;
+        }
 
-            float childW = Math.Min(arrangeRect.Width - (leftInset + rightInset), Content.DesiredSize.X);
-            float childH = Math.Min(arrangeRect.Height - (topInset + bottomInset), Content.DesiredSize.Y);
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
+        {
+            float leftInset = BorderThickness.Left;
+            float topInset = BorderThickness.Top;
+            float rightInset = BorderThickness.Right;
+            float bottomInset = BorderThickness.Bottom;
+
+            float childW = Math.Min(arrangeRect.Width - (leftInset + rightInset), contentVisual.DesiredSize.X);
+            float childH = Math.Min(arrangeRect.Height - (topInset + bottomInset), contentVisual.DesiredSize.Y);
 
             float childX = arrangeRect.X + leftInset + (arrangeRect.Width - (leftInset + rightInset) - childW) / 2f;
             float childY = arrangeRect.Y + topInset + (arrangeRect.Height - (topInset + bottomInset) - childH) / 2f;
 
-            Content.Arrange(new Rect(childX, childY, childW, childH));
+            contentVisual.Arrange(new Rect(childX, childY, childW, childH));
         }
     }
 
     public override void OnRender(DrawingContext context)
     {
+        if (HasTemplate)
+        {
+            base.OnRender(context);
+            return;
+        }
+
         Brush? bg;
         Pen? pen;
 

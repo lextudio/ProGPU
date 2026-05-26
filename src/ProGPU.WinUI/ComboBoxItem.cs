@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
@@ -5,18 +10,23 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
-public class ComboBoxItem : Control
+public class ComboBoxItem : ContentControl
 {
-    private bool _isSelected;
-    private FrameworkElement? _content;
+    public static readonly DependencyProperty IsSelectedProperty =
+        DependencyProperty.Register(
+            "IsSelected",
+            typeof(bool),
+            typeof(ComboBoxItem),
+            new PropertyMetadata(false, (d, e) => ((ComboBoxItem)d).Invalidate()));
+
     private string _text = string.Empty;
 
     public bool IsSelected
     {
-        get => _isSelected;
-        set { if (_isSelected != value) { _isSelected = value; Invalidate(); } }
+        get => (bool)(GetValue(IsSelectedProperty) ?? false);
+        set => SetValue(IsSelectedProperty, value);
     }
 
     public string Text
@@ -42,20 +52,7 @@ public class ComboBoxItem : Control
         }
     }
 
-    public FrameworkElement? Content
-    {
-        get => _content;
-        set
-        {
-            if (_content != value)
-            {
-                if (_content != null) RemoveChild(_content);
-                _content = value;
-                if (_content != null) AddChild(_content);
-                Invalidate();
-            }
-        }
-    }
+
 
     public event EventHandler? Selected;
 
@@ -94,38 +91,40 @@ public class ComboBoxItem : Control
         );
 
         Vector2 contentDesired = Vector2.Zero;
-        if (Content != null)
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
-            if (Content is TextVisual tv && tv.Font == null)
+            if (contentVisual is TextVisual tv && tv.Font == null)
             {
                 tv.Font = GetActiveFont();
             }
-            Content.Measure(contentAvail);
-            contentDesired = Content.DesiredSize;
+            contentVisual.Measure(contentAvail);
+            contentDesired = contentVisual.DesiredSize;
         }
 
         return new Vector2(
-            Math.Max(64f, contentDesired.X + inset.X),
-            HeightConstraint ?? Math.Max(32f, contentDesired.Y + inset.Y)
+            Math.Max(64f - paddingH, contentDesired.X + borderH),
+            HeightConstraint ?? Math.Max(32f - paddingV, contentDesired.Y + borderV)
         );
     }
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        if (Content != null)
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
-            float leftInset = BorderThickness.Left + Padding.Left;
-            float topInset = BorderThickness.Top + Padding.Top;
-            float rightInset = BorderThickness.Right + Padding.Right;
-            float bottomInset = BorderThickness.Bottom + Padding.Bottom;
+            float leftInset = BorderThickness.Left;
+            float topInset = BorderThickness.Top;
+            float rightInset = BorderThickness.Right;
+            float bottomInset = BorderThickness.Bottom;
 
-            float childW = Math.Min(arrangeRect.Width - (leftInset + rightInset), Content.DesiredSize.X);
-            float childH = Math.Min(arrangeRect.Height - (topInset + bottomInset), Content.DesiredSize.Y);
+            float childW = Math.Min(arrangeRect.Width - (leftInset + rightInset), contentVisual.DesiredSize.X);
+            float childH = Math.Min(arrangeRect.Height - (topInset + bottomInset), contentVisual.DesiredSize.Y);
 
             float childX = arrangeRect.X + leftInset;
             float childY = arrangeRect.Y + topInset + (arrangeRect.Height - (topInset + bottomInset) - childH) / 2f;
 
-            Content.Arrange(new Rect(childX, childY, childW, childH));
+            contentVisual.Arrange(new Rect(childX, childY, childW, childH));
         }
     }
 

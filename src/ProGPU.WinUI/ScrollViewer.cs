@@ -1,14 +1,19 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
-public class ScrollViewer : Control
+[ContentProperty(Name = "Content")]
+public class ScrollViewer : ContentControl
 {
-    private FrameworkElement? _content;
     private float _verticalOffset;
     private float _horizontalOffset;
     
@@ -17,19 +22,10 @@ public class ScrollViewer : Control
     private float _dragStartMouseY;
     private bool _isPointerOverScrollbar;
 
-    public FrameworkElement? Content
+    public new FrameworkElement? Content
     {
-        get => _content;
-        set
-        {
-            if (_content != value)
-            {
-                if (_content != null) RemoveChild(_content);
-                _content = value;
-                if (_content != null) AddChild(_content);
-                Invalidate();
-            }
-        }
+        get => base.Content as FrameworkElement;
+        set => base.Content = value;
     }
 
     public float VerticalOffset
@@ -45,6 +41,7 @@ public class ScrollViewer : Control
                 PopupService.DismissNonDialogPopups();
                 Invalidate();
                 InvalidateArrange();
+                OnPropertyChanged();
             }
         }
     }
@@ -62,6 +59,7 @@ public class ScrollViewer : Control
                 PopupService.DismissNonDialogPopups();
                 Invalidate();
                 InvalidateArrange();
+                OnPropertyChanged();
             }
         }
     }
@@ -72,6 +70,12 @@ public class ScrollViewer : Control
     public ScrollViewer()
     {
         Padding = new Thickness(0);
+        
+        var defaultStyle = ThemeManager.GetDefaultStyle(GetType());
+        if (defaultStyle != null)
+        {
+            Style = defaultStyle;
+        }
     }
 
     public override void OnPointerWheelChanged(PointerRoutedEventArgs e)
@@ -158,6 +162,10 @@ public class ScrollViewer : Control
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
+        if (HasTemplate)
+        {
+            return base.MeasureOverride(availableSize);
+        }
         if (Content != null)
         {
             // Measure child with infinite bounds to let it compute its full desired sizing
@@ -171,7 +179,11 @@ public class ScrollViewer : Control
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        Size = new Vector2(arrangeRect.Width, arrangeRect.Height);
+        if (HasTemplate)
+        {
+            base.ArrangeOverride(arrangeRect);
+            return;
+        }
         
         if (Content != null)
         {
@@ -195,6 +207,11 @@ public class ScrollViewer : Control
 
     public override void OnRender(DrawingContext context)
     {
+        if (HasTemplate)
+        {
+            base.OnRender(context);
+            return;
+        }
         // Draw main background
         var bg = Background ?? ThemeManager.GetBrush("PageBackground");
         context.DrawRectangle(bg, null, new Rect(Vector2.Zero, Size));

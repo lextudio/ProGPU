@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
@@ -5,31 +10,48 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
-public class TabViewItem : Control
+public class TabViewItem : ContentControl
 {
-    private string _headerText = "New Tab";
-    private bool _isSelected;
-    private FrameworkElement? _content;
     private bool _isCloseHovered;
+
+    public static readonly DependencyProperty HeaderProperty =
+        DependencyProperty.Register(
+            "Header",
+            typeof(object),
+            typeof(TabViewItem),
+            new PropertyMetadata(null, (d, e) => ((TabViewItem)d).Invalidate()));
+
+    public object? Header
+    {
+        get => GetValue(HeaderProperty);
+        set => SetValue(HeaderProperty, value);
+    }
 
     public string HeaderText
     {
-        get => _headerText;
-        set { if (_headerText != value) { _headerText = value; Invalidate(); } }
+        get => Header?.ToString() ?? string.Empty;
+        set => Header = value;
     }
+
+    public static readonly DependencyProperty IsSelectedProperty =
+        DependencyProperty.Register(
+            "IsSelected",
+            typeof(bool),
+            typeof(TabViewItem),
+            new PropertyMetadata(false, (d, e) => ((TabViewItem)d).Invalidate()));
 
     public bool IsSelected
     {
-        get => _isSelected;
-        set { if (_isSelected != value) { _isSelected = value; Invalidate(); } }
+        get => (bool)(GetValue(IsSelectedProperty) ?? false);
+        set => SetValue(IsSelectedProperty, value);
     }
 
-    public FrameworkElement? Content
+    public new FrameworkElement? Content
     {
-        get => _content;
-        set { if (_content != value) { _content = value; Invalidate(); } }
+        get => base.Content as FrameworkElement;
+        set => base.Content = value;
     }
 
     public event EventHandler? Selected;
@@ -37,6 +59,7 @@ public class TabViewItem : Control
 
     public TabViewItem()
     {
+        Header = "New Tab";
         CornerRadius = 4f;
         Padding = new Thickness(12, 6, 28, 6); // Extra right padding for 'x' close button
         HeightConstraint = 36f;

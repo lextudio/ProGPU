@@ -10,33 +10,17 @@ using ProGPU.Scene;
 
 namespace Microsoft.UI.Xaml.Controls;
 
-public class PivotItem : ContentControl
+[ContentProperty(Name = "Content")]
+public class UserControl : ContentControl
 {
-    public static readonly DependencyProperty HeaderProperty =
-        DependencyProperty.Register(
-            "Header",
-            typeof(object),
-            typeof(PivotItem),
-            new PropertyMetadata(null, (d, e) => {
-                var pi = (PivotItem)d;
-                pi.Invalidate();
-                pi.InvalidateMeasure();
-            }));
-
-    public object? Header
+    public new FrameworkElement? Content
     {
-        get => GetValue(HeaderProperty);
-        set => SetValue(HeaderProperty, value);
+        get => base.Content as FrameworkElement;
+        set => base.Content = value;
     }
 
-    public PivotItem()
+    public UserControl()
     {
-    }
-
-    public PivotItem(object header, object? content = null)
-    {
-        Header = header;
-        Content = content;
     }
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
