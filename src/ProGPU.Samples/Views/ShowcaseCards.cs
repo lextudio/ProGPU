@@ -29,8 +29,8 @@ public class KeyframeShowcaseCard : Border, IAnimatedElement
     public KeyframeShowcaseCard(TtfFont font)
     {
         _font = font;
-        Background = new SolidColorBrush(0xFFFFFF08);
-        BorderBrush = new SolidColorBrush(0xFFFFFF15);
+        Background = new ThemeResourceBrush("CardBackground");
+        BorderBrush = new ThemeResourceBrush("ControlBorder");
         BorderThickness = new Thickness(1f);
         CornerRadius = 8f;
         Padding = new Thickness(12);
@@ -50,7 +50,7 @@ public class KeyframeShowcaseCard : Border, IAnimatedElement
         var slidingContainer = new Border
         {
             Height = 80f,
-            Background = new SolidColorBrush(0x0C0C12FF),
+            Background = new ThemeResourceBrush("ControlBackground"),
             CornerRadius = 6f,
             Margin = new Thickness(0, 0, 0, 15),
             Padding = new Thickness(8)
@@ -74,7 +74,7 @@ public class KeyframeShowcaseCard : Border, IAnimatedElement
         var fadingContainer = new Border
         {
             Height = 50f,
-            Background = new SolidColorBrush(0x0C0C12FF),
+            Background = new ThemeResourceBrush("ControlBackground"),
             CornerRadius = 6f,
             Margin = new Thickness(0, 0, 0, 15),
             Padding = new Thickness(8),
@@ -95,7 +95,7 @@ public class KeyframeShowcaseCard : Border, IAnimatedElement
         var gearContainer = new Border
         {
             Height = 120f,
-            Background = new SolidColorBrush(0x0C0C12FF),
+            Background = new ThemeResourceBrush("ControlBackground"),
             CornerRadius = 6f,
             Padding = new Thickness(8),
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -176,8 +176,8 @@ public class SpringWobbleShowcaseCard : Border, IAnimatedElement
             Mass = 1.0f
         };
 
-        Background = new SolidColorBrush(0xFFFFFF08);
-        BorderBrush = new SolidColorBrush(0xFFFFFF15);
+        Background = new ThemeResourceBrush("CardBackground");
+        BorderBrush = new ThemeResourceBrush("ControlBorder");
         BorderThickness = new Thickness(1f);
         CornerRadius = 8f;
         Padding = new Thickness(12);
@@ -196,7 +196,7 @@ public class SpringWobbleShowcaseCard : Border, IAnimatedElement
         var wobbleContainer = new Border
         {
             Height = 150f,
-            Background = new SolidColorBrush(0x0C0C12FF),
+            Background = new ThemeResourceBrush("ControlBackground"),
             CornerRadius = 6f,
             Margin = new Thickness(0, 0, 0, 15),
             Padding = new Thickness(20),
@@ -270,8 +270,8 @@ public class ExpressionTrackingShowcaseCard : Border, IAnimatedElement
 
     public ExpressionTrackingShowcaseCard(TtfFont font)
     {
-        Background = new SolidColorBrush(0xFFFFFF08);
-        BorderBrush = new SolidColorBrush(0xFFFFFF15);
+        Background = new ThemeResourceBrush("CardBackground");
+        BorderBrush = new ThemeResourceBrush("ControlBorder");
         BorderThickness = new Thickness(1f);
         CornerRadius = 8f;
         Padding = new Thickness(12);
@@ -290,7 +290,7 @@ public class ExpressionTrackingShowcaseCard : Border, IAnimatedElement
         var trackingContainer = new Border
         {
             Height = 150f,
-            Background = new SolidColorBrush(0x0C0C12FF),
+            Background = new ThemeResourceBrush("ControlBackground"),
             CornerRadius = 6f,
             Margin = new Thickness(0, 0, 0, 15),
             Padding = new Thickness(20),
