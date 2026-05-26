@@ -1856,17 +1856,18 @@ public unsafe class Compositor : IDisposable
 
         foreach (var runGlyph in layout.Glyphs)
         {
-            ushort glyphIdx = font.GetGlyphIndex(runGlyph.CodePoint);
-            var colorLayers = font.GetColorLayers(glyphIdx);
+            var glyphFont = runGlyph.Font ?? font;
+            ushort glyphIdx = glyphFont.GetGlyphIndex(runGlyph.CodePoint);
+            var colorLayers = glyphFont.GetColorLayers(glyphIdx);
 
             if (colorLayers != null && colorLayers.Count > 0)
             {
                 foreach (var layer in colorLayers)
                 {
-                    var layerOutline = font.GetGlyphOutline(layer.GlyphId);
+                    var layerOutline = glyphFont.GetGlyphOutline(layer.GlyphId);
                     if (layerOutline == null) continue;
 
-                    float emScale = cmd.FontSize / font.UnitsPerEm;
+                    float emScale = cmd.FontSize / glyphFont.UnitsPerEm;
                     var transformedOutline = new PathGeometry();
                     float x0 = runGlyph.Position.X + cmd.Position.X;
                     float y0 = runGlyph.Position.Y + cmd.Position.Y;
@@ -1955,7 +1956,7 @@ public unsafe class Compositor : IDisposable
             }
 
             // Cache and rasterize the glyph in the atlas at its actual physical pixel font size
-            var info = _atlas.GetOrCreateGlyph(font, runGlyph.CodePoint, physicalFontSize, subpixelX);
+            var info = _atlas.GetOrCreateGlyph(glyphFont, runGlyph.CodePoint, physicalFontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
 
             int passCount = cmd.IsBold ? 2 : 1;

@@ -18,10 +18,44 @@ public struct TextRunGlyph
     public uint CodePoint;
     public Vector2 Position; // Top-Left screen coordinates of the glyph box
     public GlyphInfo Glyph;
+    public TtfFont Font; // The font that owns/defines this glyph
 }
 
 public class TextLayout
 {
+    private static readonly string[] FallbackFontPaths = new[]
+    {
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        "/System/Library/Fonts/Apple Color Emoji.ttc"
+    };
+
+    private static readonly List<TtfFont> _fallbackFonts = new();
+    private static bool _fallbacksInitialized = false;
+
+    private static void InitializeFallbacks()
+    {
+        if (_fallbacksInitialized) return;
+        _fallbacksInitialized = true;
+
+        foreach (var path in FallbackFontPaths)
+        {
+            if (System.IO.File.Exists(path))
+            {
+                try
+                {
+                    _fallbackFonts.Add(new TtfFont(path));
+                    Console.WriteLine($"[TextLayout] Loaded system fallback font: {path}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TextLayout] Warning: Failed to load fallback font '{path}': {ex.Message}");
+                }
+            }
+        }
+    }
+
     public string Text { get; }
     public TtfFont Font { get; }
     public float FontSize { get; }
@@ -94,7 +128,25 @@ public class TextLayout
             }
 
             ushort glyphIdx = Font.GetGlyphIndex(codePoint);
-            float advance = Font.GetAdvanceWidth(glyphIdx, FontSize);
+            TtfFont resolvedFont = Font;
+
+            // If the character is not supported in the primary font, try system fallback fonts (e.g. CJK or Emojis)
+            if (glyphIdx == 0 && codePoint != ' ' && codePoint != '\t' && codePoint != '\n')
+            {
+                InitializeFallbacks();
+                foreach (var fbFont in _fallbackFonts)
+                {
+                    ushort fbIdx = fbFont.GetGlyphIndex(codePoint);
+                    if (fbIdx != 0)
+                    {
+                        glyphIdx = fbIdx;
+                        resolvedFont = fbFont;
+                        break;
+                    }
+                }
+            }
+
+            float advance = resolvedFont.GetAdvanceWidth(glyphIdx, FontSize);
             GlyphInfo glyph = new GlyphInfo
             {
                 X = 0,
@@ -159,7 +211,7 @@ public class TextLayout
                         cursorX += Font.GetKerning(prevCodePoint, codePoint, FontSize);
                     }
                     var glyphPos = new Vector2(cursorX + glyph.BearX, cursorY + fontAscent + glyph.BearY);
-                    currentLine.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, Position = glyphPos, Glyph = glyph });
+                    currentLine.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, Position = glyphPos, Glyph = glyph, Font = resolvedFont });
                     cursorX += glyph.Advance;
                     prevCodePoint = codePoint;
                     lastWordStartIdxInLine = 0;
@@ -179,7 +231,7 @@ public class TextLayout
 
             // Position calculation (Y is offset by the ascender height so baseline aligns perfectly)
             var pos = new Vector2(cursorX + glyph.BearX, cursorY + fontAscent + glyph.BearY);
-            currentLine.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, Position = pos, Glyph = glyph });
+            currentLine.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, Position = pos, Glyph = glyph, Font = resolvedFont });
             cursorX += glyph.Advance;
             prevCodePoint = codePoint;
         }

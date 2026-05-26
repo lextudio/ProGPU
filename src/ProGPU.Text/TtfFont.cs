@@ -53,6 +53,7 @@ public class TtfFont
 {
     private readonly byte[] _data;
     private readonly Dictionary<string, (uint offset, uint length)> _tables = new();
+    private uint _baseOffset = 0;
 
     // Font parameters
     public ushort UnitsPerEm { get; private set; }
@@ -141,8 +142,13 @@ public class TtfFont
 
     private void ParseTableDirectory()
     {
-        uint numTables = ReadUShort(4);
-        uint offset = 12;
+        if (_data.Length >= 16 && _data[0] == 0x74 && _data[1] == 0x74 && _data[2] == 0x63 && _data[3] == 0x66) // "ttcf"
+        {
+            _baseOffset = ReadUInt(12); // First font in the TTC collection
+        }
+
+        uint numTables = ReadUShort(_baseOffset + 4);
+        uint offset = _baseOffset + 12;
 
         for (int i = 0; i < numTables; i++)
         {
