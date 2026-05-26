@@ -16,6 +16,10 @@ namespace Microsoft.UI.Xaml.Controls;
 
 public class TextBox : Control
 {
+    private static readonly SolidColorBrush AmbientShadowBrush = new SolidColorBrush(0x0000000A);
+    private static readonly SolidColorBrush PenumbraShadowBrush = new SolidColorBrush(0x00000014);
+    private static readonly SolidColorBrush SelectionHighlightBrush = new SolidColorBrush(0x0078D440);
+
     private string _text = string.Empty;
     private string _placeholderText = "Enter text...";
     private int _caretIndex;
@@ -594,22 +598,30 @@ public class TextBox : Control
         if (!IsEnabled)
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 1f) 
+                : ThemeManager.GetPen("TextControlBorderBrush", 1f, activeTheme);
         }
         else if (IsFocused)
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme), 2f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 2f) 
+                : ThemeManager.GetPen("TextControlBorderBrushFocused", 2f, activeTheme);
         }
         else if (IsPointerOver)
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme), 1f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 1f) 
+                : ThemeManager.GetPen("TextControlBorderBrushPointerOver", 1f, activeTheme);
         }
         else
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 1f) 
+                : ThemeManager.GetPen("TextControlBorderBrush", 1f, activeTheme);
         }
 
         // Draw soft 3D elevation shadows (ambient & penumbra layers)
@@ -619,13 +631,11 @@ public class TextBox : Control
             
             // Ambient shadow (offset Y=2, very soft, low opacity)
             var ambientRect = new Rect(0, 2, Size.X, Size.Y);
-            var ambientBrush = new SolidColorBrush(0x0000000A);
-            context.DrawRoundedRectangle(ambientBrush, null, ambientRect, shadowR);
+            context.DrawRoundedRectangle(AmbientShadowBrush, null, ambientRect, shadowR);
 
             // Penumbra shadow (offset Y=1, tighter, slightly higher opacity)
             var penumbraRect = new Rect(0, 1, Size.X, Size.Y);
-            var penumbraBrush = new SolidColorBrush(0x00000014);
-            context.DrawRoundedRectangle(penumbraBrush, null, penumbraRect, shadowR);
+            context.DrawRoundedRectangle(PenumbraShadowBrush, null, penumbraRect, shadowR);
         }
 
         context.DrawRoundedRectangle(bg, borderPen, new Rect(Vector2.Zero, Size), CornerRadius);
@@ -642,7 +652,7 @@ public class TextBox : Control
                 float x1 = GetXForIndex(selStart);
                 float x2 = GetXForIndex(selEnd);
                 Rect selRect = new Rect(x1, textY - 1f, x2 - x1, FontSize + 2f);
-                context.DrawRectangle(new SolidColorBrush(0x0078D440), null, selRect);
+                context.DrawRectangle(SelectionHighlightBrush, null, selRect);
             }
 
             if (string.IsNullOrEmpty(Text))
