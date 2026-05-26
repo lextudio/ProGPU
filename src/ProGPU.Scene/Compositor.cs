@@ -2025,42 +2025,65 @@ public unsafe class Compositor : IDisposable
 
                 if (_activeClipRect.HasValue)
                 {
-                    float rcxStart = v0.X;
-                    float rcyStart = v0.Y;
-                    float rcxEnd = v2.X;
-                    float rcyEnd = v2.Y;
+                    if (isRotated)
+                    {
+                        // For rotated text, a simple axis-aligned vertex crop would distort the geometry and scramble the UVs.
+                        // Instead, we perform a bounding-box intersection check. If it is completely outside, we discard it.
+                        // If it is inside or partially inside, we render it uncropped to preserve its exact rotation and texture alignment.
+                        float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+                        float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+                        float minY = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
+                        float maxY = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
 
-                    float cx1 = Math.Max(rcxStart, _activeClipRect.Value.X);
-                    float cy1 = Math.Max(rcyStart, _activeClipRect.Value.Y);
-                    float cx2 = Math.Min(rcxEnd, _activeClipRect.Value.X + _activeClipRect.Value.Width);
-                    float cy2 = Math.Min(rcyEnd, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
+                        float clipLeft = _activeClipRect.Value.X;
+                        float clipTop = _activeClipRect.Value.Y;
+                        float clipRight = clipLeft + _activeClipRect.Value.Width;
+                        float clipBottom = clipTop + _activeClipRect.Value.Height;
 
-                    if (cx2 <= cx1 || cy2 <= cy1) continue; // Completely clipped!
+                        if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
+                        {
+                            continue; // Completely clipped!
+                        }
+                    }
+                    else
+                    {
+                        float rcxStart = v0.X;
+                        float rcyStart = v0.Y;
+                        float rcxEnd = v2.X;
+                        float rcyEnd = v2.Y;
 
-                    float dx = rcxEnd - rcxStart;
-                    float dy = rcyEnd - rcyStart;
+                        float cx1 = Math.Max(rcxStart, _activeClipRect.Value.X);
+                        float cy1 = Math.Max(rcyStart, _activeClipRect.Value.Y);
+                        float cx2 = Math.Min(rcxEnd, _activeClipRect.Value.X + _activeClipRect.Value.Width);
+                        float cy2 = Math.Min(rcyEnd, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
 
-                    uv0 = new Vector2(
-                        info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                    );
-                    uv1 = new Vector2(
-                        info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                    );
-                    uv2 = new Vector2(
-                        info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                    );
-                    uv3 = new Vector2(
-                        info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                        info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                    );
+                        if (cx2 <= cx1 || cy2 <= cy1) continue; // Completely clipped!
 
-                    v0 = new Vector2(cx1, cy1);
-                    v1 = new Vector2(cx2, cy1);
-                    v2 = new Vector2(cx2, cy2);
-                    v3 = new Vector2(cx1, cy2);
+                        float dx = rcxEnd - rcxStart;
+                        float dy = rcyEnd - rcyStart;
+
+                        uv0 = new Vector2(
+                            info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                            info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        );
+                        uv1 = new Vector2(
+                            info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                            info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        );
+                        uv2 = new Vector2(
+                            info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                            info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        );
+                        uv3 = new Vector2(
+                            info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
+                            info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
+                        );
+
+                        v0 = new Vector2(cx1, cy1);
+                        v1 = new Vector2(cx2, cy1);
+                        v2 = new Vector2(cx2, cy2);
+                        v3 = new Vector2(cx1, cy2);
+                    }
                 }
 
                 textVerticesSpan[currentVertexCount++] = new VectorVertex(v0, color, uv0, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
@@ -2101,32 +2124,56 @@ public unsafe class Compositor : IDisposable
         var uv2 = new Vector2(1f, 1f);
         var uv3 = new Vector2(0f, 1f);
 
+        bool isRotated = MathF.Abs(transform.M12) > 0.0001f || MathF.Abs(transform.M21) > 0.0001f;
         if (_activeClipRect.HasValue)
         {
-            float rx1 = v0.X;
-            float ry1 = v0.Y;
-            float rx2 = v2.X;
-            float ry2 = v2.Y;
+            if (isRotated)
+            {
+                // For rotated textures, a simple axis-aligned vertex crop would distort the geometry and scramble the UVs.
+                // Instead, we perform a bounding-box intersection check. If it is completely outside, we discard it.
+                // If it is inside or partially inside, we render it uncropped to preserve its exact rotation and texture alignment.
+                float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+                float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+                float minY = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
+                float maxY = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
 
-            float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
-            float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
-            float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
-            float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
+                float clipLeft = _activeClipRect.Value.X;
+                float clipTop = _activeClipRect.Value.Y;
+                float clipRight = clipLeft + _activeClipRect.Value.Width;
+                float clipBottom = clipTop + _activeClipRect.Value.Height;
 
-            if (cx2 <= cx1 || cy2 <= cy1) return; // Completely clipped!
+                if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
+                {
+                    return; // Completely clipped!
+                }
+            }
+            else
+            {
+                float rx1 = v0.X;
+                float ry1 = v0.Y;
+                float rx2 = v2.X;
+                float ry2 = v2.Y;
 
-            float dx = rx2 - rx1;
-            float dy = ry2 - ry1;
+                float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
+                float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
+                float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
+                float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
 
-            uv0 = new Vector2((cx1 - rx1) / dx, (cy1 - ry1) / dy);
-            uv1 = new Vector2((cx2 - rx1) / dx, (cy1 - ry1) / dy);
-            uv2 = new Vector2((cx2 - rx1) / dx, (cy2 - ry1) / dy);
-            uv3 = new Vector2((cx1 - rx1) / dx, (cy2 - ry1) / dy);
+                if (cx2 <= cx1 || cy2 <= cy1) return; // Completely clipped!
 
-            v0 = new Vector2(cx1, cy1);
-            v1 = new Vector2(cx2, cy1);
-            v2 = new Vector2(cx2, cy2);
-            v3 = new Vector2(cx1, cy2);
+                float dx = rx2 - rx1;
+                float dy = ry2 - ry1;
+
+                uv0 = new Vector2((cx1 - rx1) / dx, (cy1 - ry1) / dy);
+                uv1 = new Vector2((cx2 - rx1) / dx, (cy1 - ry1) / dy);
+                uv2 = new Vector2((cx2 - rx1) / dx, (cy2 - ry1) / dy);
+                uv3 = new Vector2((cx1 - rx1) / dx, (cy2 - ry1) / dy);
+
+                v0 = new Vector2(cx1, cy1);
+                v1 = new Vector2(cx2, cy1);
+                v2 = new Vector2(cx2, cy2);
+                v3 = new Vector2(cx1, cy2);
+            }
         }
 
         int originalVertexCount = _textureVerticesList.Count;

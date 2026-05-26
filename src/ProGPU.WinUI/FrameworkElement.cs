@@ -268,6 +268,12 @@ public partial class FrameworkElement
         return Convert.ChangeType(value, targetType);
     }
 
+    protected override void OnThemeChanged()
+    {
+        base.OnThemeChanged();
+        ApplyStyle();
+    }
+
     private void ApplyStyle()
     {
         ClearStyleValues();
