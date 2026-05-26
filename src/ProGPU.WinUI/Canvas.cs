@@ -27,6 +27,7 @@ public class Canvas : Panel
         info.Left = left;
         if (child.Parent is Canvas canvas)
         {
+            canvas.InvalidateArrange();
             canvas.Invalidate();
         }
     }
@@ -37,6 +38,7 @@ public class Canvas : Panel
         info.Top = top;
         if (child.Parent is Canvas canvas)
         {
+            canvas.InvalidateArrange();
             canvas.Invalidate();
         }
     }

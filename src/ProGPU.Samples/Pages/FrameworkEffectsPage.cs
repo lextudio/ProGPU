@@ -104,8 +104,8 @@ public static class FrameworkEffectsPage
             var col1Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(10) };
             var shadowCard = new Border
             {
-                Background = ThemeManager.GetBrush("CardBackground"),
-                BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1.5f),
                 CornerRadius = 12f,
                 Padding = new Thickness(20),
@@ -143,7 +143,7 @@ public static class FrameworkEffectsPage
             var col2Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(10) };
             var neonCard = new Border
             {
-                Background = ThemeManager.GetBrush("CardBackground"),
+                Background = new ThemeResourceBrush("CardBackground"),
                 BorderBrush = new SolidColorBrush(0x5c1493ff),
                 BorderThickness = new Thickness(1.5f),
                 CornerRadius = 12f,

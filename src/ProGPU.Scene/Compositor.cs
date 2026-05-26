@@ -170,6 +170,9 @@ public unsafe class Compositor : IDisposable
     private readonly Stack<Rect> _clipStack = new();
     private Rect? _activeClipRect;
 
+    private readonly Stack<float> _opacityStack = new();
+    private float _activeOpacity = 1.0f;
+
     public static float DefaultTextGamma = 1.43f;
     public static float DefaultTextContrast = 1.15f;
 
@@ -538,6 +541,9 @@ public unsafe class Compositor : IDisposable
         _clipStack.Clear();
         _activeClipRect = null;
 
+        _opacityStack.Clear();
+        _activeOpacity = 1.0f;
+
         // 3. Compile Layer 0: Root Visual Scene
         uint vecStart = (uint)_vectorIndicesList.Count;
         uint textStart = (uint)_textIndicesList.Count;
@@ -886,6 +892,25 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private void PushOpacityValue(float opacity)
+    {
+        _activeOpacity *= opacity;
+        _opacityStack.Push(opacity);
+    }
+
+    private void PopOpacityValue()
+    {
+        if (_opacityStack.Count > 0)
+        {
+            float op = _opacityStack.Pop();
+            if (op > 0f) _activeOpacity /= op;
+        }
+        else
+        {
+            _activeOpacity = 1.0f;
+        }
+    }
+
     private void CompileVisualTree(Visual node, Matrix4x4 parentTransform)
     {
         if (node.Effect != null && !_elementsRenderingEffects.Contains(node))
@@ -903,6 +928,13 @@ public unsafe class Compositor : IDisposable
         {
             PushClipRect(node.ClipBounds.Value, globalTransform);
             pushedClip = true;
+        }
+
+        bool pushedOpacity = false;
+        if (node.Opacity < 1.0f)
+        {
+            PushOpacityValue(node.Opacity);
+            pushedOpacity = true;
         }
 
         // 2. Playback recorded commands
@@ -930,6 +962,12 @@ public unsafe class Compositor : IDisposable
                     break;
                 case RenderCommandType.PopClip:
                     PopClipRect();
+                    break;
+                case RenderCommandType.PushOpacity:
+                    PushOpacityValue(cmd.FontSize);
+                    break;
+                case RenderCommandType.PopOpacity:
+                    PopOpacityValue();
                     break;
                 case RenderCommandType.DrawLine:
                     CompileLineCommand(cmd, globalTransform);
@@ -959,6 +997,11 @@ public unsafe class Compositor : IDisposable
             {
                 CompileVisualTree(child, globalTransform);
             }
+        }
+
+        if (pushedOpacity)
+        {
+            PopOpacityValue();
         }
 
         if (pushedClip)
@@ -1752,7 +1795,7 @@ public unsafe class Compositor : IDisposable
         if (brush == null) return 0f;
         
         GpuBrush gpuBrush = new GpuBrush();
-        gpuBrush.Opacity = brush.Opacity;
+        gpuBrush.Opacity = brush.Opacity * _activeOpacity;
 
         if (brush is SolidColorBrush solid)
         {
@@ -1858,6 +1901,7 @@ public unsafe class Compositor : IDisposable
         float bIdx = RegisterBrush(cmd.Brush);
         var brush = cmd.Brush as SolidColorBrush;
         var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
+        color.W *= _activeOpacity;
 
         int maxGlyphs = layout.Glyphs.Count;
         int maxPassCount = cmd.IsBold ? 2 : 1;
@@ -2133,7 +2177,7 @@ public unsafe class Compositor : IDisposable
     {
         if (cmd.Texture == null) return;
         var r = cmd.Rect;
-        var color = new Vector4(1f, 1f, 1f, 1f);
+        var color = new Vector4(1f, 1f, 1f, _activeOpacity);
 
         var v0 = Vector2.Transform(new Vector2(r.X, r.Y), transform);
         var v1 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
@@ -2385,8 +2429,15 @@ public unsafe class Compositor : IDisposable
     private void ApplyAndDrawEffect(Visual fe, Matrix4x4 parentTransform)
     {
         if (fe.Size.X <= 0f || fe.Size.Y <= 0f) return;
-        uint w = (uint)fe.Size.X;
-        uint h = (uint)fe.Size.Y;
+
+        float blurRadius = 0f;
+        if (fe.Effect is BlurEffect blur) blurRadius = blur.BlurRadius;
+        else if (fe.Effect is DropShadowEffect shadow) blurRadius = shadow.BlurRadius;
+
+        // Inflate offscreen texture size to prevent clipping of blurred/shadow edges
+        float padding = MathF.Ceiling(blurRadius * 2f);
+        uint w = (uint)(fe.Size.X + padding * 2f);
+        uint h = (uint)(fe.Size.Y + padding * 2f);
 
         if (!_effectTextures.TryGetValue(fe, out var textures))
         {
@@ -2407,8 +2458,8 @@ public unsafe class Compositor : IDisposable
         _elementsRenderingEffects.Add(fe);
         try
         {
-            // 1. Render the subtree of fe offscreen into textures.Source
-            RenderOffscreen(fe, w, h, textures.Source);
+            // 1. Render the subtree of fe offscreen centered into textures.Source (offset by padding)
+            RenderOffscreen(fe, w, h, textures.Source, padding);
         }
         finally
         {
@@ -2416,24 +2467,34 @@ public unsafe class Compositor : IDisposable
         }
 
         // 2. Apply compute shader accelerator filter
-        if (fe.Effect is BlurEffect blur)
+        if (fe.Effect is BlurEffect blurEffect)
         {
-            _compute.ApplyGaussianBlur(textures.Source, textures.Temp, textures.Destination, blur.BlurRadius);
-            
-            // Draw the blurred result back onto the main screen
-            var controlRect = new Rect(fe.Offset, fe.Size);
-            DrawTextureOnMain(textures.Destination, controlRect, parentTransform);
+            if (blurEffect.BlurRadius <= 0.01f)
+            {
+                // Draw original source directly (no blur!)
+                var controlRect = new Rect(fe.Offset - new Vector2(padding, padding), new Vector2(w, h));
+                DrawTextureOnMain(textures.Source, controlRect, parentTransform);
+            }
+            else
+            {
+                _compute.ApplyGaussianBlur(textures.Source, textures.Temp, textures.Destination, blurEffect.BlurRadius);
+                
+                // Draw the blurred result back onto the main screen (shifted back by padding)
+                var controlRect = new Rect(fe.Offset - new Vector2(padding, padding), new Vector2(w, h));
+                DrawTextureOnMain(textures.Destination, controlRect, parentTransform);
+            }
         }
-        else if (fe.Effect is DropShadowEffect shadow)
+        else if (fe.Effect is DropShadowEffect shadowEffect)
         {
-            _compute.ApplyDropShadow(textures.Source, textures.Destination, shadow.Offset, shadow.Color, shadow.BlurRadius);
+            // We pass zero offset to the compute shader because we handle offset dynamically in DrawTextureOnMain on the CPU
+            _compute.ApplyDropShadow(textures.Source, textures.Temp, textures.Destination, Vector2.Zero, shadowEffect.Color, shadowEffect.BlurRadius);
             
-            // Draw blurred shadow first (at offset)
-            var shadowRect = new Rect(fe.Offset + shadow.Offset, fe.Size);
+            // Draw blurred shadow first (at offset, shifted back by padding)
+            var shadowRect = new Rect(fe.Offset + shadowEffect.Offset - new Vector2(padding, padding), new Vector2(w, h));
             DrawTextureOnMain(textures.Destination, shadowRect, parentTransform);
             
-            // Draw original source on top
-            var controlRect = new Rect(fe.Offset, fe.Size);
+            // Draw original source on top (shifted back by padding)
+            var controlRect = new Rect(fe.Offset - new Vector2(padding, padding), new Vector2(w, h));
             DrawTextureOnMain(textures.Source, controlRect, parentTransform);
         }
     }
@@ -2449,7 +2510,7 @@ public unsafe class Compositor : IDisposable
         CompileTextureCommand(cmd, parentTransform);
     }
 
-    public void RenderOffscreen(Visual node, uint width, uint height, GpuTexture targetTexture)
+    public void RenderOffscreen(Visual node, uint width, uint height, GpuTexture targetTexture, float padding)
     {
         // 1. Calculate orthographic projection matrix for offscreen
         var projection = new Matrix4x4(
@@ -2482,9 +2543,9 @@ public unsafe class Compositor : IDisposable
         _clipStack.Clear();
         _activeClipRect = null;
 
-        // Save offset and temporarily set to Zero to render at origin of offscreen texture
+        // Save offset and temporarily set to padding to render centered in the inflated offscreen texture
         var oldOffset = node.Offset;
-        node.Offset = Vector2.Zero;
+        node.Offset = new Vector2(padding, padding);
 
         CompileVisualTree(node, Matrix4x4.Identity);
 

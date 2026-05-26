@@ -489,7 +489,7 @@ public static unsafe class MainWindowController
                 if (AppState._shadowRadius > 0)
                 {
                     var shadowColor = new Vector4(0f, 0f, 0f, 0.65f);
-                    AppState._compute.ApplyDropShadow(AppState._canvasSourceTexture, AppState._canvasShadowTexture, AppState._shadowOffset, shadowColor, AppState._shadowRadius);
+                    AppState._compute.ApplyDropShadow(AppState._canvasSourceTexture, AppState._canvasTempTexture, AppState._canvasShadowTexture, AppState._shadowOffset, shadowColor, AppState._shadowRadius);
                 }
 
                 if (AppState._blurRadius > 0)
