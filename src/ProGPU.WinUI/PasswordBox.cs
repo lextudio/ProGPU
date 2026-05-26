@@ -179,6 +179,12 @@ public class PasswordBox : Control
         CornerRadius = 4f;
         HeightConstraint = 32f;
         WidthConstraint = 180f;
+
+        var defaultStyle = ThemeManager.GetDefaultStyle(GetType());
+        if (defaultStyle != null)
+        {
+            Style = defaultStyle;
+        }
     }
 
     private string GetVisibleText()
@@ -633,25 +639,28 @@ public class PasswordBox : Control
         Pen borderPen;
 
         var activeTheme = this.ActualTheme;
+        bool hasLocalBg = IsPropertySetLocally(BackgroundProperty) || IsPropertySetInStyle(BackgroundProperty);
+        bool hasLocalBorder = IsPropertySetLocally(BorderBrushProperty) || IsPropertySetInStyle(BorderBrushProperty);
+
         if (!IsEnabled)
         {
-            bg = Background ?? ThemeManager.GetBrush("ControlBackground", activeTheme);
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorder", activeTheme), 1f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
         }
         else if (IsFocused)
         {
-            bg = Background ?? ThemeManager.GetBrush("CardBackground", activeTheme);
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("SystemAccentColor", activeTheme), 2f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme), 2f);
         }
         else if (IsPointerOver)
         {
-            bg = Background ?? ThemeManager.GetBrush("ControlBackgroundHover", activeTheme);
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorderHover", activeTheme), 1f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme), 1f);
         }
         else
         {
-            bg = Background ?? ThemeManager.GetBrush("ControlBackground", activeTheme);
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorder", activeTheme), 1f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
         }
 
         // Draw ambient & penumbra soft card elevation shadows
@@ -690,12 +699,12 @@ public class PasswordBox : Control
             {
                 if (!string.IsNullOrEmpty(PlaceholderText))
                 {
-                    context.DrawText(PlaceholderText, Font, FontSize, ThemeManager.GetBrush("TextSecondary", activeTheme), new Vector2(Padding.Left, textY));
+                    context.DrawText(PlaceholderText, Font, FontSize, ThemeManager.GetBrush("TextControlPlaceholderForeground", activeTheme), new Vector2(Padding.Left, textY));
                 }
             }
             else
             {
-                var fgBrush = Foreground ?? ThemeManager.GetBrush("TextPrimary", activeTheme);
+                var fgBrush = Foreground ?? ThemeManager.GetBrush("TextControlForeground", activeTheme);
                 context.DrawText(visText, Font, FontSize, fgBrush, new Vector2(Padding.Left, textY));
             }
 
@@ -704,15 +713,15 @@ public class PasswordBox : Control
             {
                 float caretX = GetCaretX();
                 Rect caretRect = new Rect(caretX, textY - 1f, 1.5f, FontSize + 2f);
-                context.DrawRectangle(ThemeManager.GetBrush("SystemAccentColor", activeTheme), null, caretRect);
+                context.DrawRectangle(ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme), null, caretRect);
             }
         }
 
         // 4. Draw reveal Eye toggle button at the right end of the box
         if (IsPasswordRevealButtonEnabled)
         {
-            float revealSize = 28f;
-            float rx = Size.X - 30f;
+            float revealSize = 26f;
+            float rx = Size.X - 29f;
             float ry = (Size.Y - revealSize) / 2f;
             Rect revealRect = new Rect(rx, ry, revealSize, revealSize);
 
@@ -721,33 +730,33 @@ public class PasswordBox : Control
             {
                 if (_isRevealPressed)
                 {
-                    context.DrawRoundedRectangle(new SolidColorBrush(activeTheme == ElementTheme.Light ? new Vector4(0f, 0f, 0f, 0.1f) : new Vector4(1f, 1f, 1f, 0.1f)), null, revealRect, 4f);
+                    context.DrawRoundedRectangle(new SolidColorBrush(activeTheme == ElementTheme.Light ? new Vector4(0f, 0f, 0f, 0.08f) : new Vector4(1f, 1f, 1f, 0.08f)), null, revealRect, 4f);
                 }
                 else if (_isRevealHovered)
                 {
-                    context.DrawRoundedRectangle(new SolidColorBrush(activeTheme == ElementTheme.Light ? new Vector4(0f, 0f, 0f, 0.05f) : new Vector4(1f, 1f, 1f, 0.05f)), null, revealRect, 4f);
+                    context.DrawRoundedRectangle(new SolidColorBrush(activeTheme == ElementTheme.Light ? new Vector4(0f, 0f, 0f, 0.04f) : new Vector4(1f, 1f, 1f, 0.04f)), null, revealRect, 4f);
                 }
             }
 
             // Draw vector eye icon
             float cx = rx + revealSize / 2f;
             float cy = ry + revealSize / 2f;
-            var eyeBrush = ThemeManager.GetBrush("TextPrimary", activeTheme);
-            var eyePen = new Pen(eyeBrush, 1.5f);
+            var eyeBrush = ThemeManager.GetBrush("TextControlForeground", activeTheme);
+            var eyePen = new Pen(eyeBrush, 1.25f);
 
             // Outer eyelid arcs Q paths:
-            var eyelid = PathGeometry.Parse(Invariant($"M {cx - 8} {cy} Q {cx} {cy - 5} {cx + 8} {cy} Q {cx} {cy + 5} {cx - 8} {cy} Z"));
+            var eyelid = PathGeometry.Parse(Invariant($"M {cx - 7} {cy} Q {cx} {cy - 4} {cx + 7} {cy} Q {cx} {cy + 4} {cx - 7} {cy} Z"));
             context.DrawPath(null, eyePen, eyelid);
 
             // Inner pupil circle Q path:
-            var pupil = PathGeometry.Parse(Invariant($"M {cx - 2.5f} {cy} Q {cx - 2.5f} {cy - 2.5f} {cx} {cy - 2.5f} Q {cx + 2.5f} {cy - 2.5f} {cx + 2.5f} {cy} Q {cx + 2.5f} {cy + 2.5f} {cx} {cy + 2.5f} Q {cx - 2.5f} {cy + 2.5f} {cx - 2.5f} {cy} Z"));
+            var pupil = PathGeometry.Parse(Invariant($"M {cx - 2f} {cy} Q {cx - 2f} {cy - 2f} {cx} {cy - 2f} Q {cx + 2f} {cy - 2f} {cx + 2f} {cy} Q {cx + 2f} {cy + 2f} {cx} {cy + 2f} Q {cx - 2f} {cy + 2f} {cx - 2f} {cy} Z"));
             context.DrawPath(eyeBrush, null, pupil);
 
             // Draw diagonal strike line if password is masked (visual state matches WinUI hidden toggle)
             if (!_isPasswordRevealed)
             {
-                var strikePen = new Pen(ThemeManager.GetBrush("TextSecondary", activeTheme), 1.5f);
-                var strike = PathGeometry.Parse(Invariant($"M {cx - 6} {cy - 4} L {cx + 6} {cy + 4}"));
+                var strikePen = new Pen(ThemeManager.GetBrush("TextControlPlaceholderForeground", activeTheme), 1.25f);
+                var strike = PathGeometry.Parse(Invariant($"M {cx - 5.5f} {cy - 3.5f} L {cx + 5.5f} {cy + 3.5f}"));
                 context.DrawPath(null, strikePen, strike);
             }
         }

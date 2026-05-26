@@ -150,6 +150,12 @@ public class TextBox : Control
         CornerRadius = 4f;
         HeightConstraint = 32f;
         WidthConstraint = 180f;
+
+        var defaultStyle = ThemeManager.GetDefaultStyle(GetType());
+        if (defaultStyle != null)
+        {
+            Style = defaultStyle;
+        }
     }
 
     private void SaveUndoState()
@@ -581,25 +587,29 @@ public class TextBox : Control
         Brush bg;
         Pen borderPen;
 
+        var activeTheme = this.ActualTheme;
+        bool hasLocalBg = IsPropertySetLocally(BackgroundProperty) || IsPropertySetInStyle(BackgroundProperty);
+        bool hasLocalBorder = IsPropertySetLocally(BorderBrushProperty) || IsPropertySetInStyle(BorderBrushProperty);
+
         if (!IsEnabled)
         {
-            bg = Background ?? ThemeManager.GetBrush("ControlBackground");
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorder"), 1f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
         }
         else if (IsFocused)
         {
-            bg = Background ?? ThemeManager.GetBrush("CardBackground"); // Mica/deep dark card
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("SystemAccentColor"), 2f); // Sharp Segoe Blue active focus ring
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme), 2f);
         }
         else if (IsPointerOver)
         {
-            bg = Background ?? ThemeManager.GetBrush("ControlBackgroundHover");
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorderHover"), 1f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme), 1f);
         }
         else
         {
-            bg = Background ?? ThemeManager.GetBrush("ControlBackground");
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorder"), 1f);
+            bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
+            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
         }
 
         // Draw soft 3D elevation shadows (ambient & penumbra layers)
@@ -640,13 +650,13 @@ public class TextBox : Control
                 // Draw placeholder
                 if (!string.IsNullOrEmpty(PlaceholderText))
                 {
-                    context.DrawText(PlaceholderText, Font, FontSize, ThemeManager.GetBrush("TextSecondary"), new Vector2(Padding.Left, textY));
+                    context.DrawText(PlaceholderText, Font, FontSize, ThemeManager.GetBrush("TextControlPlaceholderForeground", activeTheme), new Vector2(Padding.Left, textY));
                 }
             }
             else
             {
                 // Draw normal text
-                var fgBrush = Foreground ?? ThemeManager.GetBrush("TextPrimary");
+                var fgBrush = Foreground ?? ThemeManager.GetBrush("TextControlForeground", activeTheme);
                 context.DrawText(Text, Font, FontSize, fgBrush, new Vector2(Padding.Left, textY));
             }
 
@@ -655,7 +665,7 @@ public class TextBox : Control
             {
                 float caretX = GetCaretX();
                 Rect caretRect = new Rect(caretX, textY - 1f, 1.5f, FontSize + 2f);
-                context.DrawRectangle(ThemeManager.GetBrush("SystemAccentColor"), null, caretRect);
+                context.DrawRectangle(ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme), null, caretRect);
             }
         }
 

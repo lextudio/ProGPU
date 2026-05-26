@@ -447,6 +447,18 @@ public class DependencyObject : ProGPU.Layout.LayoutNode
         }
     }
 
+    public bool IsPropertySetLocally(DependencyProperty dp)
+    {
+        int idx = dp.Index;
+        return idx < _localValues.Length && (_localValues[idx] != null || _localThemeResources[idx] != null);
+    }
+
+    public bool IsPropertySetInStyle(DependencyProperty dp)
+    {
+        int idx = dp.Index;
+        return idx < _styleValues.Length && (_styleValues[idx] != null || _styleThemeResources[idx] != null);
+    }
+
     private long _nextToken = 1;
     private Dictionary<DependencyProperty, List<(long Token, Action<DependencyObject, DependencyPropertyChangedEventArgs> Callback)>>? _propertyChangedCallbacks;
 
