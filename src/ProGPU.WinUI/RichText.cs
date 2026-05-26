@@ -182,6 +182,10 @@ public class PositionedRichChar
 
 public class RichTextBlock : FrameworkElement
 {
+    private static readonly SolidColorBrush HyperlinkBrush = new SolidColorBrush(0x0078D4FF);
+    private static readonly SolidColorBrush SelectionHighlightBrush = new SolidColorBrush(0x0078D435);
+    private static readonly SolidColorBrush HoveredHyperlinkBrush = new SolidColorBrush(0x005A9EFF);
+
     private float _fontSize = 14f;
     private TextAlignment _textAlignment = TextAlignment.Left;
     private readonly List<PositionedRichChar> _positionedChars = new();
@@ -785,7 +789,7 @@ public class RichTextBlock : FrameworkElement
 
             if (span is Hyperlink && inline.Foreground == null)
             {
-                fg = new SolidColorBrush(0x0078D4FF);
+                fg = HyperlinkBrush;
             }
 
             foreach (var sub in span.Inlines)
@@ -818,7 +822,7 @@ public class RichTextBlock : FrameworkElement
         // Draw translucent Segoe Blue highlighted selection boxes behind selected characters
         if (SelectionStart >= 0 && SelectionLength > 0)
         {
-            var highlightBrush = new SolidColorBrush(0x0078D435); // Translucent Segoe Blue
+            var highlightBrush = SelectionHighlightBrush;
             for (int i = 0; i < _positionedChars.Count; i++)
             {
                 if (i >= SelectionStart && i < SelectionStart + SelectionLength)
@@ -852,7 +856,7 @@ public class RichTextBlock : FrameworkElement
             var pcStyle = pc.Info;
             if (pc.Info.SourceInline is Hyperlink hl && hl == _hoveredHyperlink)
             {
-                pcStyle.Foreground = new SolidColorBrush(0x005A9EFF);
+                pcStyle.Foreground = HoveredHyperlinkBrush;
             }
 
             if (runBuffer.Length == 0)
@@ -1165,6 +1169,9 @@ public class RichTextBlock : FrameworkElement
 
 public class RichEditBox : Control
 {
+    private static readonly SolidColorBrush AmbientShadowBrush = new SolidColorBrush(0x0000000A);
+    private static readonly SolidColorBrush PenumbraShadowBrush = new SolidColorBrush(0x00000014);
+
     private float _fontSize = 14f;
 
     protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
@@ -2396,22 +2403,30 @@ public class RichEditBox : Control
         if (!IsEnabled)
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 1f) 
+                : ThemeManager.GetPen("TextControlBorderBrush", 1f, activeTheme);
         }
         else if (IsFocused)
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundFocused", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushFocused", activeTheme), 2f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 2f) 
+                : ThemeManager.GetPen("TextControlBorderBrushFocused", 2f, activeTheme);
         }
         else if (IsPointerOver)
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBackgroundPointerOver", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrushPointerOver", activeTheme), 1f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 1f) 
+                : ThemeManager.GetPen("TextControlBorderBrushPointerOver", 1f, activeTheme);
         }
         else
         {
             bg = hasLocalBg ? (Background ?? ThemeManager.GetBrush("TextControlBackground", activeTheme)) : ThemeManager.GetBrush("TextControlBackground", activeTheme);
-            borderPen = new Pen(hasLocalBorder ? (BorderBrush ?? ThemeManager.GetBrush("TextControlBorderBrush", activeTheme)) : ThemeManager.GetBrush("TextControlBorderBrush", activeTheme), 1f);
+            borderPen = hasLocalBorder && BorderBrush != null 
+                ? new Pen(BorderBrush, 1f) 
+                : ThemeManager.GetPen("TextControlBorderBrush", 1f, activeTheme);
         }
 
         // Draw soft 3D elevation shadows (ambient & penumbra layers)
@@ -2421,13 +2436,11 @@ public class RichEditBox : Control
             
             // Ambient shadow (offset Y=2, very soft, low opacity)
             var ambientRect = new Rect(0, 2, Size.X, Size.Y);
-            var ambientBrush = new SolidColorBrush(0x0000000A);
-            context.DrawRoundedRectangle(ambientBrush, null, ambientRect, shadowR);
+            context.DrawRoundedRectangle(AmbientShadowBrush, null, ambientRect, shadowR);
 
             // Penumbra shadow (offset Y=1, tighter, slightly higher opacity)
             var penumbraRect = new Rect(0, 1, Size.X, Size.Y);
-            var penumbraBrush = new SolidColorBrush(0x00000014);
-            context.DrawRoundedRectangle(penumbraBrush, null, penumbraRect, shadowR);
+            context.DrawRoundedRectangle(PenumbraShadowBrush, null, penumbraRect, shadowR);
         }
 
         context.DrawRoundedRectangle(bg, borderPen, new Rect(Vector2.Zero, Size), CornerRadius);
