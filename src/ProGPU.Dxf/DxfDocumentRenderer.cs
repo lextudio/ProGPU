@@ -296,9 +296,12 @@ public static class DxfDocumentRenderer
             var scale = insert.Scale;
             var pos = insert.Position;
             float radAngle = (float)(insert.Rotation * Math.PI / 180.0);
+            var origin = insert.Block.Origin;
 
-            var localMat = Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
+            var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
+                           Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                            Matrix4x4.CreateRotationZ(radAngle) *
+                           GetOcsMatrix(insert.Normal) *
                            Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
 
             var combinedMat = localMat * transform;
@@ -365,5 +368,33 @@ public static class DxfDocumentRenderer
         max.Y = Math.Max(max.Y, v3Transformed.Y);
         
         hasData = true;
+    }
+
+    public static Matrix4x4 GetOcsMatrix(netDxf.Vector3 normal)
+    {
+        var N = Vector3.Normalize(new Vector3((float)normal.X, (float)normal.Y, (float)normal.Z));
+        
+        Vector3 Wx;
+        Vector3 Wy;
+        
+        const float limit = 1.0f / 64.0f;
+        if (Math.Abs(N.X) < limit && Math.Abs(N.Y) < limit)
+        {
+            Wx = Vector3.Cross(new Vector3(0f, 1f, 0f), N);
+        }
+        else
+        {
+            Wx = Vector3.Cross(new Vector3(0f, 0f, 1f), N);
+        }
+        
+        Wx = Vector3.Normalize(Wx);
+        Wy = Vector3.Normalize(Vector3.Cross(N, Wx));
+        
+        return new Matrix4x4(
+            Wx.X, Wx.Y, Wx.Z, 0f,
+            Wy.X, Wy.Y, Wy.Z, 0f,
+            N.X,  N.Y,  N.Z,  0f,
+            0f,   0f,   0f,   1f
+        );
     }
 }

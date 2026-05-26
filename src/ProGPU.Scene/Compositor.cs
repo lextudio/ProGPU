@@ -210,9 +210,9 @@ public unsafe class Compositor : IDisposable
         _pipelineCache = new RenderPipelineCache(_context);
         _compute = new ComputeAccelerator(_context);
         
-        // 1. Initialize Glyph Atlas (2048x2048)
-        _atlas = new GlyphAtlas(_context, 2048);
-        _pathAtlas = new PathAtlas(_context, 2048);
+        // 1. Initialize Glyph Atlas (4096x4096)
+        _atlas = new GlyphAtlas(_context, 4096);
+        _pathAtlas = new PathAtlas(_context, 4096);
 
         // 2. Uniform Buffer allocation (Projection Matrix - 64 bytes)
         _uniformBuffer = new GpuBuffer(

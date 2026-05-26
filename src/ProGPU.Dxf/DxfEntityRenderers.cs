@@ -635,41 +635,25 @@ public class DxfTextRenderer : IDxfEntityRenderer
     {
         if (string.IsNullOrEmpty(mtext)) return string.Empty;
 
-        var cleaned = mtext.Replace("\\P", "\n").Replace("\\p", "\n");
-        
-        var builder = new System.Text.StringBuilder();
-        bool inFormatting = false;
-        
-        for (int i = 0; i < cleaned.Length; i++)
-        {
-            char c = cleaned[i];
-            if (c == '{') continue;
-            if (c == '}') continue;
-            
-            if (c == '\\' && i + 1 < cleaned.Length && cleaned[i + 1] != 'P' && cleaned[i + 1] != 'p')
-            {
-                inFormatting = true;
-                continue;
-            }
+        // 1. Unescape standard paragraphs
+        var result = mtext.Replace("\\P", "\n").Replace("\\p", "\n");
 
-            if (inFormatting)
-            {
-                if (c == ';')
-                {
-                    inFormatting = false;
-                }
-                continue;
-            }
+        // 2. Remove braces { } which are used for nesting styles
+        result = result.Replace("{", "").Replace("}", "");
 
-            builder.Append(c);
-        }
+        // 3. Remove single character style tags like \\L, \\l, \\O, \\o, \\K, \\k
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\\[L|l|O|o|K|k]", "");
 
-        var result = builder.ToString();
+        // 4. Remove parametric tags that end with a semicolon
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\\[A-Za-z0-9_|\.\s\-\^/#]+;", "");
 
-        // Translate AutoCAD special characters
+        // 5. Translate AutoCAD special characters
         result = result.Replace("%%d", "°", StringComparison.OrdinalIgnoreCase)
                        .Replace("%%c", "Ø", StringComparison.OrdinalIgnoreCase)
-                       .Replace("%%p", "±", StringComparison.OrdinalIgnoreCase);
+                       .Replace("%%p", "±", StringComparison.OrdinalIgnoreCase)
+                       .Replace("%%D", "°")
+                       .Replace("%%C", "Ø")
+                       .Replace("%%P", "±");
 
         return result;
     }
@@ -684,9 +668,12 @@ public class DxfInsertRenderer : IDxfEntityRenderer
         var scale = insert.Scale;
         var pos = insert.Position;
         float radAngle = (float)(insert.Rotation * Math.PI / 180.0);
+        var origin = insert.Block.Origin;
 
-        var localMat = Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
+        var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
+                       Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                        Matrix4x4.CreateRotationZ(radAngle) *
+                       DxfDocumentRenderer.GetOcsMatrix(insert.Normal) *
                        Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
 
         context.PushTransform(localMat);
