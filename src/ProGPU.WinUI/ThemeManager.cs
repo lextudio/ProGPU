@@ -23,6 +23,9 @@ public static class ThemeManager
     private static ElementTheme _currentTheme = ElementTheme.Dark;
     public static event Action? ThemeChanged;
     private static readonly Dictionary<Type, Style> NativeDefaultStyles = new();
+    private static readonly Dictionary<string, SolidColorBrush> DarkBrushCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, SolidColorBrush> LightBrushCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<(string Key, float Thickness, ElementTheme Theme), Pen> PenCache = new();
 
     public static ElementTheme CurrentTheme
     {
@@ -197,7 +200,14 @@ public static class ThemeManager
         var dict = (actualTheme == ElementTheme.Light) ? LightPalette : DarkPalette;
         if (dict.TryGetValue(key, out var colorVal))
         {
-            return new SolidColorBrush(colorVal);
+            var cache = (actualTheme == ElementTheme.Light) ? LightBrushCache : DarkBrushCache;
+            if (cache.TryGetValue(key, out var cachedBrush))
+            {
+                return cachedBrush;
+            }
+            var newBrush = new SolidColorBrush(colorVal);
+            cache[key] = newBrush;
+            return newBrush;
         }
 
         return null;
@@ -207,8 +217,45 @@ public static class ThemeManager
 
     public static Brush GetBrush(string key, ElementTheme theme)
     {
-        var colorFallback = GetColor(key, theme);
-        return new SolidColorBrush(colorFallback);
+        var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
+        var cache = (actualTheme == ElementTheme.Light) ? LightBrushCache : DarkBrushCache;
+
+        if (ResourceAliases.TryGetValue(key, out var alias))
+        {
+            key = alias;
+        }
+
+        if (cache.TryGetValue(key, out var cachedBrush))
+        {
+            return cachedBrush;
+        }
+
+        var colorFallback = GetColor(key, actualTheme);
+        var newBrush = new SolidColorBrush(colorFallback);
+        cache[key] = newBrush;
+        return newBrush;
+    }
+
+    public static Pen GetPen(string key, float thickness = 1.0f) => GetPen(key, thickness, CurrentTheme);
+
+    public static Pen GetPen(string key, float thickness, ElementTheme theme)
+    {
+        var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
+        if (ResourceAliases.TryGetValue(key, out var alias))
+        {
+            key = alias;
+        }
+
+        var cacheKey = (key, thickness, actualTheme);
+        if (PenCache.TryGetValue(cacheKey, out var cachedPen))
+        {
+            return cachedPen;
+        }
+
+        var brush = GetBrush(key, actualTheme);
+        var newPen = new Pen(brush, thickness);
+        PenCache[cacheKey] = newPen;
+        return newPen;
     }
 
     public static Vector4 GetColor(string key) => GetColor(key, CurrentTheme);
