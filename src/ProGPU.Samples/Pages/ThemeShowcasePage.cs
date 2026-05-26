@@ -21,12 +21,15 @@ public static class ThemeShowcasePage
         var mainStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(24) };
         scrollViewer.Content = mainStack;
 
-        // Header
-        var header = new RichTextBlock { Margin = new Thickness(0, 0, 0, 24) };
-        header.Inlines.Add(new Bold(new Run("Compiled C# Theme Showcase") { FontSize = 28f, Foreground = new ThemeResourceBrush("TextPrimary") }));
-        header.Inlines.Add(new LineBreak());
-        header.Inlines.Add(new Run("Demonstrating modern WinUI 3 control styles written in pure C#.") { FontSize = 14f, Foreground = new ThemeResourceBrush("TextSecondary") });
-        mainStack.AddChild(header);
+        // Header Title
+        var headerTitle = new RichTextBlock { Margin = new Thickness(0, 0, 0, 4) };
+        headerTitle.Inlines.Add(new Bold(new Run("Compiled C# Theme Showcase") { FontSize = 28f, Foreground = new ThemeResourceBrush("TextPrimary") }));
+        mainStack.AddChild(headerTitle);
+
+        // Header Subtitle
+        var headerSubtitle = new RichTextBlock { Margin = new Thickness(0, 0, 0, 24) };
+        headerSubtitle.Inlines.Add(new Run("Demonstrating modern WinUI 3 control styles written in pure C#.") { FontSize = 14f, Foreground = new ThemeResourceBrush("TextSecondary") });
+        mainStack.AddChild(headerSubtitle);
 
         // Buttons Section
         var buttonsSection = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 0, 0, 32) };
@@ -117,11 +120,14 @@ public static class ThemeShowcasePage
 
         // Interactive Playground Section
         var interactiveSection = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 0, 0, 32) };
-        var interactiveTitle = new RichTextBlock { Margin = new Thickness(0, 0, 0, 12) };
+        
+        var interactiveTitle = new RichTextBlock { Margin = new Thickness(0, 0, 0, 4) };
         interactiveTitle.Inlines.Add(new Bold(new Run("Interactive Playground") { FontSize = 18f, Foreground = new ThemeResourceBrush("TextPrimary") }));
-        interactiveTitle.Inlines.Add(new LineBreak());
-        interactiveTitle.Inlines.Add(new Run("Dynamically adjust parameters to see properties and themes in action.") { FontSize = 12f, Foreground = new ThemeResourceBrush("TextSecondary") });
         interactiveSection.AddChild(interactiveTitle);
+
+        var interactiveSubtitle = new RichTextBlock { Margin = new Thickness(0, 0, 0, 12) };
+        interactiveSubtitle.Inlines.Add(new Run("Dynamically adjust parameters to see properties and themes in action.") { FontSize = 12f, Foreground = new ThemeResourceBrush("TextSecondary") });
+        interactiveSection.AddChild(interactiveSubtitle);
 
         var interactiveRow = new StackPanel { Orientation = Orientation.Horizontal };
         
