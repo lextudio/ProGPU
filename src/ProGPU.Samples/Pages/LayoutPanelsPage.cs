@@ -91,8 +91,8 @@ public static class LayoutPanelsPage
             var leftGroup = new Border
             {
                 Margin = new Thickness(5),
-                Background = new SolidColorBrush(0xFFFFFF08),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(8),
@@ -113,11 +113,11 @@ public static class LayoutPanelsPage
             {
                 var item = new Border
                 {
-                    Height = 32f,
-                    Margin = new Thickness(4),
-                    Background = new SolidColorBrush(0xFFFFFF15),
-                    CornerRadius = 4f,
-                    HorizontalAlignment = HorizontalAlignment.Stretch
+                     Height = 32f,
+                     Margin = new Thickness(4),
+                     Background = new ThemeResourceBrush("ControlBackground"),
+                     CornerRadius = 4f,
+                     HorizontalAlignment = HorizontalAlignment.Stretch
                 };
                 var itemText = new RichTextBlock { Font = AppState._font, FontSize = 11f, Margin = new Thickness(10, 8, 0, 0) };
                 itemText.Inlines.Add(new Run($"Stack Item #{i}"));
@@ -150,8 +150,8 @@ public static class LayoutPanelsPage
             var rightGroup = new Border
             {
                 Margin = new Thickness(5),
-                Background = new SolidColorBrush(0xFFFFFF08),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(8),
@@ -196,8 +196,8 @@ public static class LayoutPanelsPage
             var canvasGroup = new Border
             {
                 Margin = new Thickness(5),
-                Background = new SolidColorBrush(0xFFFFFF08),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -221,7 +221,7 @@ public static class LayoutPanelsPage
             {
                 Content = new Border
                 {
-                    Background = new SolidColorBrush(0x13131AFF),
+                    Background = new ThemeResourceBrush("CardBackground"),
                     CornerRadius = 8f,
                     Padding = new Thickness(20),
                     Child = new RichTextBlock
@@ -237,7 +237,7 @@ public static class LayoutPanelsPage
             {
                 Content = new Border
                 {
-                    Background = new SolidColorBrush(0x0C0C12FF),
+                    Background = new ThemeResourceBrush("CardBackground"),
                     CornerRadius = 8f,
                     Padding = new Thickness(20),
                     Child = new RichTextBlock
@@ -259,7 +259,7 @@ public static class LayoutPanelsPage
                 {
                     Content = new Border
                     {
-                        Background = new SolidColorBrush(0x13131AFF),
+                        Background = new ThemeResourceBrush("CardBackground"),
                         CornerRadius = 8f,
                         Padding = new Thickness(20),
                         Child = new RichTextBlock

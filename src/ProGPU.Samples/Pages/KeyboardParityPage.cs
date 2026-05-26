@@ -213,8 +213,8 @@ public static class KeyboardParityPage
         var focusCardStack = new StackPanel { Orientation = Orientation.Vertical };
         var focusCard = new Border
         {
-            Background = new SolidColorBrush(0x1F1F24FA),
-            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            Background = new ThemeResourceBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
             BorderThickness = new Thickness(1f),
             CornerRadius = 8f,
             Padding = new Thickness(16f),
@@ -226,13 +226,13 @@ public static class KeyboardParityPage
         focusHeader.Inlines.Add(new Bold(new Run("2D Spatial Focus Grid (Arrow Keys)")));
         focusCardStack.AddChild(focusHeader);
 
-        var focusSub = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new SolidColorBrush(0x80FFFFFF), Margin = new Thickness(0, 0, 0, 10) };
+        var focusSub = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new ThemeResourceBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 10) };
         focusSub.Inlines.Add(new Run("Use Tab to focus the grid, then move in 2D using Up/Down/Left/Right arrow keys."));
         focusCardStack.AddChild(focusSub);
 
         _focusLabel = new RichTextBlock { Font = AppState._font, FontSize = 12f, Margin = new Thickness(0, 0, 0, 12) };
         _focusLabel.Inlines.Add(new Run("Last Focused Control: "));
-        _focusLabel.Inlines.Add(new Bold(new Run("None")) { Foreground = ThemeManager.GetBrush("SystemAccentColor") });
+        _focusLabel.Inlines.Add(new Bold(new Run("None")) { Foreground = new ThemeResourceBrush("SystemAccentColor") });
         focusCardStack.AddChild(_focusLabel);
 
         Action<FrameworkElement> updateFocused = (fe) =>
@@ -243,7 +243,7 @@ public static class KeyboardParityPage
                 _focusLabel.Inlines.Add(new Run("Last Focused Control: "));
                 string name = fe.GetType().Name;
                 if (fe is SpatialButton sb) name = $"SpatialButton ({sb.Row + 1}, {sb.Col + 1})";
-                _focusLabel.Inlines.Add(new Bold(new Run(name)) { Foreground = ThemeManager.GetBrush("SystemAccentColor") });
+                _focusLabel.Inlines.Add(new Bold(new Run(name)) { Foreground = new ThemeResourceBrush("SystemAccentColor") });
                 _focusLabel.Invalidate();
             }
         };
@@ -286,8 +286,8 @@ public static class KeyboardParityPage
         var textCardStack = new StackPanel { Orientation = Orientation.Vertical };
         var textCard = new Border
         {
-            Background = new SolidColorBrush(0x1F1F24FA),
-            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            Background = new ThemeResourceBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
             BorderThickness = new Thickness(1f),
             CornerRadius = 8f,
             Padding = new Thickness(16f),
@@ -298,7 +298,7 @@ public static class KeyboardParityPage
         textHeader.Inlines.Add(new Bold(new Run("TextBox Selection & Clipboard Area")));
         textCardStack.AddChild(textHeader);
 
-        var textSub = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new SolidColorBrush(0x80FFFFFF), Margin = new Thickness(0, 0, 0, 12) };
+        var textSub = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new ThemeResourceBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 12) };
         textSub.Inlines.Add(new Run("Type inside, drag mouse to select. Supports keyboard accelerators: Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+Z, Ctrl+Y."));
         textCardStack.AddChild(textSub);
 
@@ -321,23 +321,23 @@ public static class KeyboardParityPage
         // Toolbar Buttons
         var toolbarRow1 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
         var undoBtn = new Button { Width = 60f, Height = 26f, Margin = new Thickness(0, 0, 4, 0) };
-        undoBtn.Content = new TextVisual { Text = "Undo", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        undoBtn.Content = new TextVisual { Text = "Undo", FontSize = 11f, Brush = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         undoBtn.Click += (s, e) => { richEntry.Undo(); logAccelerator("Button Click", "Triggered Undo"); };
 
         var redoBtn = new Button { Width = 60f, Height = 26f, Margin = new Thickness(0, 0, 4, 0) };
-        redoBtn.Content = new TextVisual { Text = "Redo", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        redoBtn.Content = new TextVisual { Text = "Redo", FontSize = 11f, Brush = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         redoBtn.Click += (s, e) => { richEntry.Redo(); logAccelerator("Button Click", "Triggered Redo"); };
 
         var copyBtn = new Button { Width = 60f, Height = 26f, Margin = new Thickness(0, 0, 4, 0) };
-        copyBtn.Content = new TextVisual { Text = "Copy", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        copyBtn.Content = new TextVisual { Text = "Copy", FontSize = 11f, Brush = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         copyBtn.Click += (s, e) => { richEntry.Copy(); logAccelerator("Button Click", "Copied selected text"); };
 
         var cutBtn = new Button { Width = 60f, Height = 26f, Margin = new Thickness(0, 0, 4, 0) };
-        cutBtn.Content = new TextVisual { Text = "Cut", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        cutBtn.Content = new TextVisual { Text = "Cut", FontSize = 11f, Brush = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         cutBtn.Click += (s, e) => { richEntry.Cut(); logAccelerator("Button Click", "Cut selected text"); };
 
         var pasteBtn = new Button { Width = 60f, Height = 26f };
-        pasteBtn.Content = new TextVisual { Text = "Paste", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        pasteBtn.Content = new TextVisual { Text = "Paste", FontSize = 11f, Brush = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         pasteBtn.Click += (s, e) => { richEntry.Paste(); logAccelerator("Button Click", "Pasted clipboard text"); };
 
         toolbarRow1.AddChild(undoBtn);
@@ -358,8 +358,8 @@ public static class KeyboardParityPage
         var tabCardStack = new StackPanel { Orientation = Orientation.Vertical };
         var tabCard = new Border
         {
-            Background = new SolidColorBrush(0x1F1F24FA),
-            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            Background = new ThemeResourceBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
             BorderThickness = new Thickness(1f),
             CornerRadius = 8f,
             Padding = new Thickness(16f),
@@ -371,7 +371,7 @@ public static class KeyboardParityPage
         tabHeader.Inlines.Add(new Bold(new Run("Keyboard-Driven TabView")));
         tabCardStack.AddChild(tabHeader);
 
-        var tabSub = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new SolidColorBrush(0x80FFFFFF), Margin = new Thickness(0, 0, 0, 12) };
+        var tabSub = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new ThemeResourceBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 12) };
         tabSub.Inlines.Add(new Run("Supports browser accelerators when focused: Ctrl+Tab (next), Ctrl+Shift+Tab (prev), Ctrl+T (add), Ctrl+W (close)."));
         tabCardStack.AddChild(tabSub);
 
@@ -424,8 +424,8 @@ public static class KeyboardParityPage
         var logCardStack = new StackPanel { Orientation = Orientation.Vertical };
         var logCard = new Border
         {
-            Background = new SolidColorBrush(0x15151AFA), // Deeper console dark
-            BorderBrush = new SolidColorBrush(0xFFFFFF15),
+            Background = new ThemeResourceBrush("ControlBackground"), // Console backdrop
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
             BorderThickness = new Thickness(1f),
             CornerRadius = 8f,
             Padding = new Thickness(16f),
@@ -443,7 +443,7 @@ public static class KeyboardParityPage
             Height = 110f,
             Margin = new Thickness(4)
         };
-        _loggerBlock.Inlines.Add(new Run("Console initialized. Waiting for accelerators...") { Foreground = new SolidColorBrush(0x80FFFFFF) });
+        _loggerBlock.Inlines.Add(new Run("Console initialized. Waiting for accelerators...") { Foreground = new ThemeResourceBrush("TextSecondary") });
         logCardStack.AddChild(_loggerBlock);
 
         rightStack.AddChild(logCard);
@@ -478,11 +478,11 @@ public static class KeyboardParityPage
                 var run = new Run(_logs[i] + "\n");
                 if (i == 0)
                 {
-                    run.Foreground = ThemeManager.GetBrush("SystemAccentColor"); // Highlight the newest log in Segoe Blue
+                    run.Foreground = new ThemeResourceBrush("SystemAccentColor"); // Highlight the newest log in Segoe Blue
                 }
                 else
                 {
-                    run.Foreground = new SolidColorBrush(0x80FFFFFF); // Dim previous logs
+                    run.Foreground = new ThemeResourceBrush("TextSecondary"); // Dim previous logs
                 }
                 _loggerBlock.Inlines.Add(run);
             }

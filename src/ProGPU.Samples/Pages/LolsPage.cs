@@ -58,8 +58,8 @@ public static class LolsPage
         {
             CornerRadius = 8f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("ControlBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("ControlBackground"),
             Padding = new Thickness(14f),
             Margin = new Thickness(0, 0, 16, 0),
             VerticalAlignment = VerticalAlignment.Stretch
@@ -76,8 +76,8 @@ public static class LolsPage
         // Scoreboard Box
         var scoreBorder = new Border
         {
-            Background = new SolidColorBrush(0x0078D420), // Translucent Accent Blue
-            BorderBrush = ThemeManager.GetBrush("SystemAccentColor"),
+            Background = new ThemeResourceBrush("SelectionHighlight"),
+            BorderBrush = new ThemeResourceBrush("SystemAccentColor"),
             BorderThickness = new Thickness(1f),
             CornerRadius = 6f,
             Padding = new Thickness(12f),
@@ -85,7 +85,7 @@ public static class LolsPage
         };
 
         _scoreLabel = new RichTextBlock { Font = AppState._font, FontSize = 22f, TextAlignment = TextAlignment.Center };
-        _scoreLabel.Inlines.Add(new Bold(new Run("LOL/s: 0.00")) { Foreground = ThemeManager.GetBrush("SystemAccentColor") });
+        _scoreLabel.Inlines.Add(new Bold(new Run("LOL/s: 0.00")) { Foreground = new ThemeResourceBrush("SystemAccentColor") });
         scoreBorder.Child = _scoreLabel;
         settingsStack.AddChild(scoreBorder);
 
@@ -123,7 +123,7 @@ public static class LolsPage
             Height = 36f,
             CornerRadius = 6f,
             Margin = new Thickness(0, 0, 0, 8),
-            Background = ThemeManager.GetBrush("SystemAccentColor")
+            Background = new ThemeResourceBrush("SystemAccentColor")
         };
         _startStopRun = new Run("Start Benchmark") { Foreground = new SolidColorBrush(0xFFFFFFFF) };
         var startStopText = new RichTextBlock { Font = AppState._font, FontSize = 13f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -168,8 +168,8 @@ public static class LolsPage
         {
             CornerRadius = 8f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("ControlBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("ControlBackground"),
             Padding = new Thickness(8f),
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalAlignment = HorizontalAlignment.Stretch
@@ -237,7 +237,7 @@ public static class LolsPage
             if (_scoreLabel != null)
             {
                 _scoreLabel.Inlines.Clear();
-                _scoreLabel.Inlines.Add(new Bold(new Run("LOL/s: 0.00") { Foreground = ThemeManager.GetBrush("SystemAccentColor") }));
+                _scoreLabel.Inlines.Add(new Bold(new Run("LOL/s: 0.00") { Foreground = new ThemeResourceBrush("SystemAccentColor") }));
                 _scoreLabel.Invalidate();
             }
             if (_progressLabel != null)
@@ -261,7 +261,7 @@ public static class LolsPage
             if (_scoreLabel != null)
             {
                 _scoreLabel.Inlines.Clear();
-                _scoreLabel.Inlines.Add(new Bold(new Run($"LOL/s: {avg:0.00}") { Foreground = ThemeManager.GetBrush("SystemAccentColor") }));
+                _scoreLabel.Inlines.Add(new Bold(new Run($"LOL/s: {avg:0.00}") { Foreground = new ThemeResourceBrush("SystemAccentColor") }));
                 _scoreLabel.Invalidate();
             }
 

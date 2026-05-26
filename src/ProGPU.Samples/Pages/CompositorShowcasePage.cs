@@ -44,8 +44,8 @@ public static class CompositorShowcasePage
             
             var artCard = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(16f),
@@ -64,8 +64,8 @@ public static class CompositorShowcasePage
             // Spring transform controller card
             var springCard = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(16f)
@@ -88,8 +88,8 @@ public static class CompositorShowcasePage
             
             var docCard = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(16f),
@@ -107,7 +107,7 @@ public static class CompositorShowcasePage
                 ColumnCount = 2,
                 ColumnGap = 16f,
                 Height = 440f,
-                Foreground = new SolidColorBrush(0xDDDDDDFF)
+                Foreground = new ThemeResourceBrush("TextPrimary")
             };
     
             // Embedded Controls definitions
@@ -144,8 +144,8 @@ public static class CompositorShowcasePage
     
             var docBorder = new Border
             {
-                Background = new SolidColorBrush(0x0C0C12FF),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("ControlBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 6f,
                 Child = flowDoc

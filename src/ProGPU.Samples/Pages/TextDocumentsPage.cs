@@ -79,23 +79,23 @@ public static class TextDocumentsPage
             var actionBtns1 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 4) };
             
             var undoBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 4, 0) };
-            undoBtn.Content = new TextVisual { Text = "Undo", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            undoBtn.Content = new TextVisual { Text = "Undo", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             undoBtn.Click += (s, e) => richEntry.Undo();
     
             var redoBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 4, 0) };
-            redoBtn.Content = new TextVisual { Text = "Redo", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            redoBtn.Content = new TextVisual { Text = "Redo", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             redoBtn.Click += (s, e) => richEntry.Redo();
     
             var boldBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 4, 0) };
-            boldBtn.Content = new TextVisual { Text = "Bold", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            boldBtn.Content = new TextVisual { Text = "Bold", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             boldBtn.Click += (s, e) => richEntry.ToggleStyle("bold");
     
             var italicBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 4, 0) };
-            italicBtn.Content = new TextVisual { Text = "Italic", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            italicBtn.Content = new TextVisual { Text = "Italic", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             italicBtn.Click += (s, e) => richEntry.ToggleStyle("italic");
     
             var underlineBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f };
-            underlineBtn.Content = new TextVisual { Text = "Underline", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            underlineBtn.Content = new TextVisual { Text = "Underline", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             underlineBtn.Click += (s, e) => richEntry.ToggleStyle("underline");
     
             actionBtns1.AddChild(undoBtn);
@@ -108,15 +108,15 @@ public static class TextDocumentsPage
             var actionBtns2 = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
             
             var copyBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 4, 0) };
-            copyBtn.Content = new TextVisual { Text = "Copy", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            copyBtn.Content = new TextVisual { Text = "Copy", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             copyBtn.Click += (s, e) => richEntry.Copy();
     
             var cutBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 4, 0) };
-            cutBtn.Content = new TextVisual { Text = "Cut", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            cutBtn.Content = new TextVisual { Text = "Cut", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             cutBtn.Click += (s, e) => richEntry.Cut();
     
             var pasteBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f };
-            pasteBtn.Content = new TextVisual { Text = "Paste", FontSize = 11f, Brush = new SolidColorBrush(0xFFFFFFFF), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            pasteBtn.Content = new TextVisual { Text = "Paste", FontSize = 11f, Brush = new ThemeResourceBrush("ButtonForeground"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             pasteBtn.Click += (s, e) => richEntry.Paste();
     
             actionBtns2.AddChild(copyBtn);
@@ -191,14 +191,14 @@ public static class TextDocumentsPage
             {
                 CellPadding = 5f,
                 BorderThickness = 1f,
-                BorderBrush = new SolidColorBrush(0xFFFFFF25),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 ColumnWidths = new List<float> { 70f, 100f }
             };
     
             // Table Header
             var headerRow = new TableRow(
-                new TableCell(new Bold(new Run("Metric"))) { Background = new SolidColorBrush(0xFFFFFF15) },
-                new TableCell(new Bold(new Run("Compositor Value"))) { Background = new SolidColorBrush(0xFFFFFF15) }
+                new TableCell(new Bold(new Run("Metric"))) { Background = new ThemeResourceBrush("ControlBackgroundHover") },
+                new TableCell(new Bold(new Run("Compositor Value"))) { Background = new ThemeResourceBrush("ControlBackgroundHover") }
             );
             table.Rows.Add(headerRow);
     
@@ -216,8 +216,8 @@ public static class TextDocumentsPage
     
             var docBorder = new Border
             {
-                Background = new SolidColorBrush(0xFFFFFF0D),
-                BorderBrush = new SolidColorBrush(0xFFFFFF20),
+                Background = new ThemeResourceBrush("ControlBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Margin = new Thickness(4)

@@ -126,7 +126,7 @@ public static class ComputeFxPage
             {
                 CornerRadius = 8f,
                 Background = new SolidColorBrush(0x0C0C12FF),
-                BorderBrush = new SolidColorBrush(0x222230FF),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 Margin = new Thickness(5),
                 Child = displayCanvas

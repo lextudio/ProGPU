@@ -43,8 +43,8 @@ public static class AdvancedControlsPage
             var col1Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8f) };
             var card1 = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA), // Mica dark card
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(20f),
@@ -55,10 +55,10 @@ public static class AdvancedControlsPage
             header1.Inlines.Add(new Bold(new Run("ContentDialog & ToolTips")));
             col1Stack.AddChild(header1);
     
-            var dialogResultText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new SolidColorBrush(0xFFFFFF80), Margin = new Thickness(0f, 0f, 0f, 12f) };
+            var dialogResultText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new ThemeResourceBrush("TextSecondary"), Margin = new Thickness(0f, 0f, 0f, 12f) };
             dialogResultText.Inlines.Add(new Run("Last Dialog Response: None"));
     
-            var triggerDialogBtnText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new SolidColorBrush(0xFFFFFFFF) };
+            var triggerDialogBtnText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
             triggerDialogBtnText.Inlines.Add(new Run("Trigger Modal Dialog"));
     
             var triggerDialogBtn = new Button
@@ -66,7 +66,7 @@ public static class AdvancedControlsPage
                 Content = triggerDialogBtnText,
                 Width = 160f,
                 Height = 32f,
-                Background = new SolidColorBrush(0x0078D4FF),
+                Background = new ThemeResourceBrush("SystemAccentColor"),
                 Margin = new Thickness(0f, 0f, 0f, 16f)
             };
             triggerDialogBtn.Click += (s, e) =>
@@ -83,27 +83,27 @@ public static class AdvancedControlsPage
             tooltipDesc.Inlines.Add(new Run("Hover these buttons for 500ms to test ToolTips:"));
             col1Stack.AddChild(tooltipDesc);
     
-            var tipBtn1Text = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new SolidColorBrush(0xFFFFFFFF) };
+            var tipBtn1Text = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
             tipBtn1Text.Inlines.Add(new Run("Hover Primary Action"));
             var tipBtn1 = new Button
             {
                 Content = tipBtn1Text,
                 Width = 160f,
                 Height = 32f,
-                Background = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("ButtonBackground"),
                 ToolTip = "Trigger a primary diagnostic frame capture trace.",
                 Margin = new Thickness(0f, 0f, 0f, 8f)
             };
             col1Stack.AddChild(tipBtn1);
     
-            var tipBtn2Text = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new SolidColorBrush(0xFFFFFFFF) };
+            var tipBtn2Text = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
             tipBtn2Text.Inlines.Add(new Run("Hover Warning Info"));
             var tipBtn2 = new Button
             {
                 Content = tipBtn2Text,
                 Width = 160f,
                 Height = 32f,
-                Background = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("ButtonBackground"),
                 ToolTip = "Be careful: resetting caches will flush intermediate WebGPU resources.",
                 Margin = new Thickness(0f, 0f, 0f, 8f)
             };
@@ -116,8 +116,8 @@ public static class AdvancedControlsPage
             var col2Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8f) };
             var card2 = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(20f),
@@ -151,8 +151,8 @@ public static class AdvancedControlsPage
             var col3Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8f) };
             var card3 = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(20f),

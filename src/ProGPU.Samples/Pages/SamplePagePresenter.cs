@@ -79,7 +79,7 @@ public static class SamplePagePresenter
         statusHeader.Inlines.Add(new Bold(new Run("Subsystem Status:")));
         stack.AddChild(statusHeader);
 
-        var statusText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Margin = new Thickness(0, 0, 0, 15), Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var statusText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Margin = new Thickness(0, 0, 0, 15), Foreground = new ThemeResourceBrush("TextSecondary") };
         statusText.Inlines.Add(new Run("Idle. Waiting for picker interaction."));
         stack.AddChild(statusText);
 
@@ -89,8 +89,8 @@ public static class SamplePagePresenter
 
         var editorBorder = new Border
         {
-            Background = ThemeManager.GetBrush("ControlBackground"),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("ControlBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
             BorderThickness = new Thickness(1f),
             CornerRadius = 6f,
             Padding = new Thickness(12f),
@@ -295,8 +295,8 @@ public static class SamplePagePresenter
         var settingsCard = new Border {
             CornerRadius = 8f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("ControlBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("ControlBackground"),
             Padding = new Thickness(12f),
             Margin = new Thickness(0, 0, 16, 0)
         };
@@ -458,7 +458,7 @@ public static class SamplePagePresenter
         title.Inlines.Add(new Bold(new Run("🔤 Advanced Typography, Unicode & Language Scripts")));
         stack.AddChild(title);
 
-        var description = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20), Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var description = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20), Foreground = new ThemeResourceBrush("TextSecondary") };
         description.Inlines.Add(new Run("This page showcases the high-performance rendering of different language scripts, custom system fonts, and Unicode symbol outlines on the GPU. Settings altered in the configuration card apply dynamically to all script panels."));
         stack.AddChild(description);
 
@@ -471,8 +471,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 8f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("ControlBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("ControlBackground"),
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 16, 0),
             VerticalAlignment = VerticalAlignment.Top
@@ -555,8 +555,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 6f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("CardBackground"),
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 0, 16f)
         };
@@ -565,7 +565,7 @@ public static class SamplePagePresenter
         var latinHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
         latinHeader.Inlines.Add(new Bold(new Run("Latin & English Formatted Runs")));
         latinStack.AddChild(latinHeader);
-        var latinBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var latinBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = new ThemeResourceBrush("TextSecondary") };
         latinBody.Inlines.Add(new Run("Standard Roman characters can be formatted into custom runs: "));
         latinBody.Inlines.Add(new Bold(new Run("Bold weight run, ")));
         latinBody.Inlines.Add(new Italic(new Run("Italicized slant run, ")));
@@ -580,8 +580,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 6f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("CardBackground"),
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 0, 16f)
         };
@@ -590,7 +590,7 @@ public static class SamplePagePresenter
         var cyrillicHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
         cyrillicHeader.Inlines.Add(new Bold(new Run("Cyrillic Script (Russian Poetry & Pangram)")));
         cyrillicStack.AddChild(cyrillicHeader);
-        var cyrillicBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var cyrillicBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = new ThemeResourceBrush("TextSecondary") };
         cyrillicBody.Inlines.Add(new Run("Съешь же ещё этих мягких французских булок, да выпей чаю. Широкая электрификация южных губерний даст мощный толчок подъёму сельского хозяйства."));
         cyrillicStack.AddChild(cyrillicBody);
         textBlocks.Add(cyrillicBody);
@@ -601,8 +601,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 6f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("CardBackground"),
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 0, 16f)
         };
@@ -611,7 +611,7 @@ public static class SamplePagePresenter
         var greekHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
         greekHeader.Inlines.Add(new Bold(new Run("Hellenic / Greek Script & Mathematical Formulas")));
         greekStack.AddChild(greekHeader);
-        var greekBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var greekBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = new ThemeResourceBrush("TextSecondary") };
         greekBody.Inlines.Add(new Run("Φύλλα δάφνης στην κεφαλή των ποιητών. E = mc² | ∫(x²)dx = x³/3 | e^(iπ) + 1 = 0 | Σ(n) for n=1 to ∞."));
         greekStack.AddChild(greekBody);
         textBlocks.Add(greekBody);
@@ -622,8 +622,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 6f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("CardBackground"),
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 0, 16f)
         };
@@ -632,7 +632,7 @@ public static class SamplePagePresenter
         var cjkHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
         cjkHeader.Inlines.Add(new Bold(new Run("Japanese CJK Outlines (Hiragana, Katakana & Kanji)")));
         cjkStack.AddChild(cjkHeader);
-        var cjkBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var cjkBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = new ThemeResourceBrush("TextSecondary") };
         cjkBody.Inlines.Add(new Run("色は匂へと散りぬるを我が世誰ぞ常ならむ有為の奥山今日越えて浅き夢見じ酔ひもせず。プロジーピーユーへようこそ！"));
         cjkStack.AddChild(cjkBody);
         textBlocks.Add(cjkBody);
@@ -643,8 +643,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 6f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("CardBackground"),
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 0, 8f)
         };
@@ -653,7 +653,7 @@ public static class SamplePagePresenter
         var emojiHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 8f) };
         emojiHeader.Inlines.Add(new Bold(new Run("Real Font-Driven Color Emoji / Unicode Outlines")));
         emojiStack.AddChild(emojiHeader);
-        var emojiBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var emojiBody = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Foreground = new ThemeResourceBrush("TextSecondary") };
         emojiBody.Inlines.Add(new Run("Unicode premium symbols: ★, ♠, ♦, ♣, ♥, ✔, ▲, ▼ parsed directly from the system TTF binary and rendered onto the GPU canvas with zero CPU triangulation overhead!"));
         emojiStack.AddChild(emojiBody);
         textBlocks.Add(emojiBody);
@@ -737,7 +737,7 @@ public static class SamplePagePresenter
         title.Inlines.Add(new Bold(new Run("⌨️ Multi-Script Interactive Text Input")));
         rightStack.AddChild(title);
 
-        var description = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20), Foreground = ThemeManager.GetBrush("TextSecondary") };
+        var description = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20), Foreground = new ThemeResourceBrush("TextSecondary") };
         description.Inlines.Add(new Run("Type, edit, and navigate through different scripts interactively. The caret details HUD decodes Unicode surrogate-pairs behind the cursor in real-time."));
         rightStack.AddChild(description);
 
@@ -746,8 +746,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 8f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("ControlBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("ControlBackground"),
             Padding = new Thickness(16f),
             VerticalAlignment = VerticalAlignment.Top
         };
@@ -834,8 +834,8 @@ public static class SamplePagePresenter
         {
             CornerRadius = 6f,
             BorderThickness = new Thickness(1f),
-            BorderBrush = ThemeManager.GetBrush("ControlBorder"),
-            Background = ThemeManager.GetBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new ThemeResourceBrush("CardBackground"),
             Padding = new Thickness(14f),
             WidthConstraint = 480f
         };
@@ -846,15 +846,15 @@ public static class SamplePagePresenter
         hudTitle.Inlines.Add(new Bold(new Run("Caret HUD Status Subsystem")));
         hudStack.AddChild(hudTitle);
 
-        var hudCharCount = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Foreground = ThemeManager.GetBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 4f) };
+        var hudCharCount = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Foreground = new ThemeResourceBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 4f) };
         hudCharCount.Inlines.Add(new Run("Text Length: 0 characters"));
         hudStack.AddChild(hudCharCount);
 
-        var hudCaretPos = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Foreground = ThemeManager.GetBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 4f) };
+        var hudCaretPos = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Foreground = new ThemeResourceBrush("TextSecondary"), Margin = new Thickness(0, 0, 0, 4f) };
         hudCaretPos.Inlines.Add(new Run("Caret Position: 0"));
         hudStack.AddChild(hudCaretPos);
 
-        var hudCodePoint = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Foreground = ThemeManager.GetBrush("SystemAccentColor") };
+        var hudCodePoint = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, Foreground = new ThemeResourceBrush("SystemAccentColor") };
         hudCodePoint.Inlines.Add(new Run("Active CodePoint behind cursor: U+0000 ('N/A')"));
         hudStack.AddChild(hudCodePoint);
 

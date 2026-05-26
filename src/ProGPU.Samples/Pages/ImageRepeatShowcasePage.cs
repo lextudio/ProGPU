@@ -43,8 +43,8 @@ public static class ImageRepeatShowcasePage
             var leftStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6) };
             var imgCard = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(16f),
@@ -110,8 +110,8 @@ public static class ImageRepeatShowcasePage
             var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6) };
             var btnCard = new Border
             {
-                Background = new SolidColorBrush(0x1F1F24FA),
-                BorderBrush = new SolidColorBrush(0xFFFFFF15),
+                Background = new ThemeResourceBrush("CardBackground"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
                 Padding = new Thickness(16f),
@@ -162,11 +162,11 @@ public static class ImageRepeatShowcasePage
             btnStack.AddChild(linkLabel);
     
             var hyperBtn = new HyperlinkButton { Height = 28f, Margin = new Thickness(0, 0, 0, 10), HorizontalAlignment = HorizontalAlignment.Left };
-            var hyperText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = ThemeManager.GetBrush("SystemAccentColor") };
+            var hyperText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Foreground = new ThemeResourceBrush("SystemAccentColor") };
             hyperText.Inlines.Add(new Run("Visit ProGPU cross-platform github hub"));
             hyperBtn.Content = hyperText;
     
-            var clickFeedback = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new SolidColorBrush(0x00E5FF25) };
+            var clickFeedback = new RichTextBlock { Font = AppState._font, FontSize = 11f, Foreground = new ThemeResourceBrush("SystemAccentColor") };
             clickFeedback.Inlines.Add(new Run(""));
             
             hyperBtn.Click += (s, e) =>
