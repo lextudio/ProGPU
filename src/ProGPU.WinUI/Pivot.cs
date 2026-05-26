@@ -152,8 +152,8 @@ public class Pivot : FrameworkElement
     {
         _headerRects.Clear();
         var font = GetActiveFont();
-        float cursorX = arrangeRect.X + Padding.Left;
-        float cursorY = arrangeRect.Y + Padding.Top;
+        float cursorX = Padding.Left;
+        float cursorY = Padding.Top;
         float headerH = 40f;
 
         for (int i = 0; i < Items.Count; i++)
@@ -212,6 +212,9 @@ public class Pivot : FrameworkElement
     {
         float headerHeight = 44f;
         
+        // Prevent sliding items from rendering outside control boundaries
+        ClipBounds = new Rect(0f, 0f, Size.X, Size.Y);
+        
         UpdateHeaderLayout(arrangeRect);
 
         float contentY = arrangeRect.Y + headerHeight;
@@ -269,9 +272,10 @@ public class Pivot : FrameworkElement
         {
             base.OnPointerPressed(e);
             
+            var localPos = InputSystem.GetLocalPosition(this, e.ScreenPosition);
             for (int i = 0; i < _headerRects.Count; i++)
             {
-                if (RectContains(_headerRects[i], e.Position))
+                if (RectContains(_headerRects[i], localPos))
                 {
                     SelectedIndex = i;
                     e.Handled = true;
@@ -284,10 +288,11 @@ public class Pivot : FrameworkElement
     public override void OnPointerMoved(PointerRoutedEventArgs e)
     {
         base.OnPointerMoved(e);
+        var localPos = InputSystem.GetLocalPosition(this, e.ScreenPosition);
         int hover = -1;
         for (int i = 0; i < _headerRects.Count; i++)
         {
-            if (RectContains(_headerRects[i], e.Position))
+            if (RectContains(_headerRects[i], localPos))
             {
                 hover = i;
                 break;
