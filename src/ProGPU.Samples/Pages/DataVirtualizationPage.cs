@@ -57,8 +57,8 @@ public static class DataVirtualizationPage
     
             // Define columns
             dataGrid.Columns.Add(new DataGridColumn("ID", 70f, "Id"));
-            dataGrid.Columns.Add(new DataGridColumn("Activity Name", 230f, "Name"));
-            dataGrid.Columns.Add(new DataGridColumn("Status", 110f, "Status"));
+            dataGrid.Columns.Add(new DataGridColumn("Activity Name", "*", "Name"));
+            dataGrid.Columns.Add(new DataGridColumn("Status", "Auto", "Status"));
             dataGrid.Columns.Add(new DataGridColumn("Latency (ms)", 120f, "Latency"));
     
             // Setup direct, reflection-free binding for maximum speed
