@@ -69,15 +69,15 @@ public class ContentDialog : Control
     public ContentDialog()
     {
         // Full screen hit-blocking background
-        Background = new SolidColorBrush(0x00000080); // Semi-transparent black blocker
+        Background = new SolidColorBrush(new Vector4(0f, 0f, 0f, 0.4f)); // Semi-transparent black blocker
         
         // Build the visual card inner tree
         _cardStack = new StackPanel { Orientation = Orientation.Vertical };
         
         _cardBorder = new Border
         {
-            Background = new SolidColorBrush(0x1F1F24FA), // Fluent dark Mica card
-            BorderBrush = new SolidColorBrush(0xFFFFFF20), // Glowing glass border
+            Background = new ThemeResourceBrush("CardBackground"),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
             BorderThickness = new Thickness(1.2f),
             CornerRadius = 8f,
             Padding = new Thickness(24f),
@@ -99,7 +99,7 @@ public class ContentDialog : Control
         {
             Font = PopupService.DefaultFont,
             FontSize = 20f,
-            Foreground = new SolidColorBrush(0xFFFFFFFF),
+            Foreground = new ThemeResourceBrush("TextPrimary"),
             Margin = new Thickness(0f, 0f, 0f, 16f)
         };
         titleBlock.Inlines.Add(new Run { Text = Title });
@@ -119,7 +119,7 @@ public class ContentDialog : Control
                 {
                     Font = PopupService.DefaultFont,
                     FontSize = 14f,
-                    Foreground = new SolidColorBrush(0xFFFFFFC0), // Soft grey text
+                    Foreground = new ThemeResourceBrush("TextSecondary"),
                     Margin = new Thickness(0f, 0f, 0f, 24f)
                 };
                 contentBlock.Inlines.Add(new Run { Text = Content.ToString() ?? string.Empty });
@@ -136,7 +136,7 @@ public class ContentDialog : Control
 
         if (!string.IsNullOrEmpty(PrimaryButtonText))
         {
-            var btnText = new RichTextBlock { Font = PopupService.DefaultFont, FontSize = 14f, Foreground = new SolidColorBrush(0xFFFFFFFF) };
+            var btnText = new RichTextBlock { Font = PopupService.DefaultFont, FontSize = 14f, Foreground = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)) };
             btnText.Inlines.Add(new Run { Text = PrimaryButtonText });
 
             _btnPrimary = new Button
@@ -144,8 +144,8 @@ public class ContentDialog : Control
                 Content = btnText,
                 Width = 100f,
                 Height = 32f,
-                Background = new SolidColorBrush(0x0078D4FF), // Segoe Accent Blue
-                Foreground = new SolidColorBrush(0xFFFFFFFF),
+                Background = new ThemeResourceBrush("SystemAccentColor"),
+                Foreground = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)),
                 Margin = new Thickness(0f, 0f, 8f, 0f)
             };
             _btnPrimary.Click += (s, e) => CloseWithResult(ContentDialogResult.Primary);
@@ -154,7 +154,7 @@ public class ContentDialog : Control
 
         if (!string.IsNullOrEmpty(SecondaryButtonText))
         {
-            var btnText = new RichTextBlock { Font = PopupService.DefaultFont, FontSize = 14f, Foreground = new SolidColorBrush(0xFFFFFFFF) };
+            var btnText = new RichTextBlock { Font = PopupService.DefaultFont, FontSize = 14f, Foreground = new ThemeResourceBrush("TextPrimary") };
             btnText.Inlines.Add(new Run { Text = SecondaryButtonText });
 
             _btnSecondary = new Button
@@ -162,8 +162,9 @@ public class ContentDialog : Control
                 Content = btnText,
                 Width = 100f,
                 Height = 32f,
-                Background = new SolidColorBrush(0xFFFFFF15),
-                Foreground = new SolidColorBrush(0xFFFFFFFF),
+                Background = new ThemeResourceBrush("ControlBackground"),
+                Foreground = new ThemeResourceBrush("TextPrimary"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 Margin = new Thickness(0f, 0f, 8f, 0f)
             };
             _btnSecondary.Click += (s, e) => CloseWithResult(ContentDialogResult.Secondary);
@@ -172,7 +173,7 @@ public class ContentDialog : Control
 
         if (!string.IsNullOrEmpty(CloseButtonText))
         {
-            var btnText = new RichTextBlock { Font = PopupService.DefaultFont, FontSize = 14f, Foreground = new SolidColorBrush(0xFFFFFFFF) };
+            var btnText = new RichTextBlock { Font = PopupService.DefaultFont, FontSize = 14f, Foreground = new ThemeResourceBrush("TextPrimary") };
             btnText.Inlines.Add(new Run { Text = CloseButtonText });
 
             _btnClose = new Button
@@ -180,8 +181,9 @@ public class ContentDialog : Control
                 Content = btnText,
                 Width = 100f,
                 Height = 32f,
-                Background = new SolidColorBrush(0xFFFFFF15),
-                Foreground = new SolidColorBrush(0xFFFFFFFF)
+                Background = new ThemeResourceBrush("ControlBackground"),
+                Foreground = new ThemeResourceBrush("TextPrimary"),
+                BorderBrush = new ThemeResourceBrush("ControlBorder")
             };
             _btnClose.Click += (s, e) => CloseWithResult(ContentDialogResult.Close);
             btnStack.AddChild(_btnClose);
