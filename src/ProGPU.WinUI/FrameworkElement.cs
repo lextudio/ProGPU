@@ -331,16 +331,148 @@ public partial class FrameworkElement
         }
     }
 
+    public static readonly Microsoft.UI.Xaml.DependencyProperty MarginProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Margin",
+            typeof(Microsoft.UI.Xaml.Thickness),
+            typeof(FrameworkElement),
+            new Microsoft.UI.Xaml.PropertyMetadata(default(Microsoft.UI.Xaml.Thickness), (d, e) => {
+                var fe = (FrameworkElement)d;
+                var t = (Microsoft.UI.Xaml.Thickness)(e.NewValue ?? default(Microsoft.UI.Xaml.Thickness));
+                fe.SetMarginLayout(new ProGPU.Layout.Thickness(t.Left, t.Top, t.Right, t.Bottom));
+            }));
+
+    private void SetMarginLayout(ProGPU.Layout.Thickness t)
+    {
+        base.Margin = t;
+    }
+
+    public override ProGPU.Layout.Thickness Margin
+    {
+        get
+        {
+            var t = (Microsoft.UI.Xaml.Thickness)(GetValue(MarginProperty) ?? default(Microsoft.UI.Xaml.Thickness));
+            return new ProGPU.Layout.Thickness(t.Left, t.Top, t.Right, t.Bottom);
+        }
+        set
+        {
+            SetValue(MarginProperty, new Microsoft.UI.Xaml.Thickness(value.Left, value.Top, value.Right, value.Bottom));
+        }
+    }
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty PaddingProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Padding",
+            typeof(Microsoft.UI.Xaml.Thickness),
+            typeof(FrameworkElement),
+            new Microsoft.UI.Xaml.PropertyMetadata(default(Microsoft.UI.Xaml.Thickness), (d, e) => {
+                var fe = (FrameworkElement)d;
+                var t = (Microsoft.UI.Xaml.Thickness)(e.NewValue ?? default(Microsoft.UI.Xaml.Thickness));
+                fe.SetPaddingLayout(new ProGPU.Layout.Thickness(t.Left, t.Top, t.Right, t.Bottom));
+            }));
+
+    private void SetPaddingLayout(ProGPU.Layout.Thickness t)
+    {
+        base.Padding = t;
+    }
+
+    public override ProGPU.Layout.Thickness Padding
+    {
+        get
+        {
+            var t = (Microsoft.UI.Xaml.Thickness)(GetValue(PaddingProperty) ?? default(Microsoft.UI.Xaml.Thickness));
+            return new ProGPU.Layout.Thickness(t.Left, t.Top, t.Right, t.Bottom);
+        }
+        set
+        {
+            SetValue(PaddingProperty, new Microsoft.UI.Xaml.Thickness(value.Left, value.Top, value.Right, value.Bottom));
+        }
+    }
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty HorizontalAlignmentProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "HorizontalAlignment",
+            typeof(ProGPU.Layout.HorizontalAlignment),
+            typeof(FrameworkElement),
+            new Microsoft.UI.Xaml.PropertyMetadata(ProGPU.Layout.HorizontalAlignment.Stretch, (d, e) => {
+                var fe = (FrameworkElement)d;
+                fe.SetHorizontalAlignmentLayout((ProGPU.Layout.HorizontalAlignment)(e.NewValue ?? ProGPU.Layout.HorizontalAlignment.Stretch));
+            }));
+
+    private void SetHorizontalAlignmentLayout(ProGPU.Layout.HorizontalAlignment val)
+    {
+        base.HorizontalAlignment = val;
+    }
+
+    public override ProGPU.Layout.HorizontalAlignment HorizontalAlignment
+    {
+        get => (ProGPU.Layout.HorizontalAlignment)(GetValue(HorizontalAlignmentProperty) ?? ProGPU.Layout.HorizontalAlignment.Stretch);
+        set => SetValue(HorizontalAlignmentProperty, value);
+    }
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty VerticalAlignmentProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "VerticalAlignment",
+            typeof(ProGPU.Layout.VerticalAlignment),
+            typeof(FrameworkElement),
+            new Microsoft.UI.Xaml.PropertyMetadata(ProGPU.Layout.VerticalAlignment.Stretch, (d, e) => {
+                var fe = (FrameworkElement)d;
+                fe.SetVerticalAlignmentLayout((ProGPU.Layout.VerticalAlignment)(e.NewValue ?? ProGPU.Layout.VerticalAlignment.Stretch));
+            }));
+
+    private void SetVerticalAlignmentLayout(ProGPU.Layout.VerticalAlignment val)
+    {
+        base.VerticalAlignment = val;
+    }
+
+    public override ProGPU.Layout.VerticalAlignment VerticalAlignment
+    {
+        get => (ProGPU.Layout.VerticalAlignment)(GetValue(VerticalAlignmentProperty) ?? ProGPU.Layout.VerticalAlignment.Stretch);
+        set => SetValue(VerticalAlignmentProperty, value);
+    }
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty WidthProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Width",
+            typeof(float),
+            typeof(FrameworkElement),
+            new Microsoft.UI.Xaml.PropertyMetadata(float.NaN, (d, e) => {
+                var fe = (FrameworkElement)d;
+                var val = (float)(e.NewValue ?? float.NaN);
+                fe.SetWidthConstraintLayout(float.IsNaN(val) ? null : val);
+            }));
+
+    private void SetWidthConstraintLayout(float? val)
+    {
+        base.WidthConstraint = val;
+    }
+
     public float Width
     {
-        get => WidthConstraint ?? float.NaN;
-        set { if (Width != value) { WidthConstraint = float.IsNaN(value) ? null : value; OnPropertyChanged(); } }
+        get => (float)(GetValue(WidthProperty) ?? float.NaN);
+        set => SetValue(WidthProperty, value);
+    }
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty HeightProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Height",
+            typeof(float),
+            typeof(FrameworkElement),
+            new Microsoft.UI.Xaml.PropertyMetadata(float.NaN, (d, e) => {
+                var fe = (FrameworkElement)d;
+                var val = (float)(e.NewValue ?? float.NaN);
+                fe.SetHeightConstraintLayout(float.IsNaN(val) ? null : val);
+            }));
+
+    private void SetHeightConstraintLayout(float? val)
+    {
+        base.HeightConstraint = val;
     }
 
     public float Height
     {
-        get => HeightConstraint ?? float.NaN;
-        set { if (Height != value) { HeightConstraint = float.IsNaN(value) ? null : value; OnPropertyChanged(); } }
+        get => (float)(GetValue(HeightProperty) ?? float.NaN);
+        set => SetValue(HeightProperty, value);
     }
 
     // Routed Events

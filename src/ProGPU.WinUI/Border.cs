@@ -70,28 +70,6 @@ public class Border : FrameworkElement
         set => SetValue(CornerRadiusProperty, value);
     }
 
-    public static readonly DependencyProperty PaddingProperty =
-        DependencyProperty.Register(
-            "Padding",
-            typeof(Thickness),
-            typeof(Border),
-            new PropertyMetadata(default(Thickness), (d, e) => {
-                var b = (Border)d;
-                b.Padding = (Thickness)(e.NewValue ?? default(Thickness));
-                b.Invalidate();
-                b.InvalidateMeasure();
-            }));
-
-    public new Thickness Padding
-    {
-        get => (Thickness)(GetValue(PaddingProperty) ?? default(Thickness));
-        set
-        {
-            SetValue(PaddingProperty, value);
-            base.Padding = value;
-        }
-    }
-
     public static readonly DependencyProperty ChildProperty =
         DependencyProperty.Register(
             "Child",

@@ -69,28 +69,6 @@ public class ContentPresenter : FrameworkElement
         set => SetValue(CornerRadiusProperty, value);
     }
 
-    public static readonly DependencyProperty PaddingProperty =
-        DependencyProperty.Register(
-            "Padding",
-            typeof(Thickness),
-            typeof(ContentPresenter),
-            new PropertyMetadata(default(Thickness), (d, e) => {
-                var cp = (ContentPresenter)d;
-                cp.Padding = (Thickness)(e.NewValue ?? default(Thickness));
-                cp.Invalidate();
-                cp.InvalidateMeasure();
-            }));
-
-    public new Thickness Padding
-    {
-        get => (Thickness)(GetValue(PaddingProperty) ?? default(Thickness));
-        set
-        {
-            SetValue(PaddingProperty, value);
-            base.Padding = value;
-        }
-    }
-
     public static readonly DependencyProperty ContentProperty =
         DependencyProperty.Register(
             "Content",

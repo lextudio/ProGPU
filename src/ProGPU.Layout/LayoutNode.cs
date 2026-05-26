@@ -115,7 +115,7 @@ public class LayoutNode : ContainerVisual, ILayoutNode
     private Vector2 _previousAvailableSize = new Vector2(-1f, -1f);
     private Rect _previousFinalRect = new Rect(-1f, -1f, -1f, -1f);
 
-    public Thickness Margin
+    public virtual Thickness Margin
     {
         get => _margin;
         set
@@ -128,7 +128,7 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         }
     }
 
-    public Thickness Padding
+    public virtual Thickness Padding
     {
         get => _padding;
         set
@@ -141,7 +141,7 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         }
     }
 
-    public HorizontalAlignment HorizontalAlignment
+    public virtual HorizontalAlignment HorizontalAlignment
     {
         get => _horizontalAlignment;
         set
@@ -154,7 +154,7 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         }
     }
 
-    public VerticalAlignment VerticalAlignment
+    public virtual VerticalAlignment VerticalAlignment
     {
         get => _verticalAlignment;
         set
@@ -167,7 +167,7 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         }
     }
 
-    public float? WidthConstraint
+    public virtual float? WidthConstraint
     {
         get => _widthConstraint;
         set
@@ -180,7 +180,7 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         }
     }
 
-    public float? HeightConstraint
+    public virtual float? HeightConstraint
     {
         get => _heightConstraint;
         set
