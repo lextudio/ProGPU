@@ -227,6 +227,8 @@ public class LayoutNode : ContainerVisual, ILayoutNode
             return;
         }
 
+        _isArrangeValid = false;
+
         // 1. Account for Margin
         float marginH = Margin.Horizontal;
         float marginV = Margin.Vertical;
