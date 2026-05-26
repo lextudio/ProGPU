@@ -11,33 +11,33 @@ The ProGPU framework is built in a modular, layered stack that bridges native gr
 ```mermaid
 graph TD
     subgraph L6 ["Layer 6: Application Layer"]
-        App[Gallery Dashboard / LOL/s & MotionMark Benchmarks]
+        App["Gallery Dashboard / LOL/s & MotionMark Benchmarks"]
     end
 
     subgraph L5 ["Layer 5: WinUI Framework Layer"]
-        Controls[Grid, StackPanel, ScrollViewer, Border, Pivot, RichTextBlock]
-        FE[FrameworkElement]
-        LN[LayoutNode - Measure & Arrange Sizing Negotiation]
+        Controls["Grid, StackPanel, ScrollViewer, Border, Pivot, RichTextBlock"]
+        FE["FrameworkElement"]
+        LN["LayoutNode - Measure & Arrange Sizing Negotiation"]
     end
 
     subgraph L4 ["Layer 4: Scene Graph & Effects Layer"]
-        CV[ContainerVisual / DrawingVisual / Visual]
-        ILN[ILayoutNode Interface - Decoupled Invalidation]
-        FX[GPGPU Multi-Pass Effects Pipeline - Blur & DropShadow]
+        CV["ContainerVisual / DrawingVisual / Visual"]
+        ILN["ILayoutNode Interface - Decoupled Invalidation"]
+        FX["GPGPU Multi-Pass Effects Pipeline - Blur & DropShadow"]
     end
 
     subgraph L3 ["Layer 3: Compositor, Text & GPGPU Rasterizer"]
-        Comp[Compositor - Span-Based Vertex/Index Mesh Compiler]
-        Text[TTF Line Layout & Paragraph Wrapping Engine]
-        Rast[Compute-Bound 4x SSAA Analytical Path Rasterizer]
+        Comp["Compositor - Span-Based Vertex/Index Mesh Compiler"]
+        Text["TTF Line Layout & Paragraph Wrapping Engine"]
+        Rast["Compute-Bound 4x SSAA Analytical Path Rasterizer"]
     end
 
     subgraph L2 ["Layer 2: Graphics Infrastructure"]
-        Wgpu[WgpuContext - WebGPU Adapter/Device & Swapchain Management]
+        Wgpu["WgpuContext - WebGPU Adapter/Device & Swapchain Management"]
     end
 
     subgraph L1 ["Layer 1: System & Windowing"]
-        Silk[Silk.NET Windowing & GLFW OS Event Loop]
+        Silk["Silk.NET Windowing & GLFW OS Event Loop"]
     end
 
     App --> Controls
@@ -77,18 +77,18 @@ ProGPU introduces a cached sizing negotiation model that short-circuits measurem
 
 ```mermaid
 flowchart TD
-    Start[Measure Pass availableSize] --> Cached{"_isMeasureValid && availableSize == _previousAvailableSize?"}
-    Cached -- Yes --> O1Exit[O1 Early Exit - Return Cached DesiredSize]
-    Cached -- No --> Calc[Calculate Margin Insets & Bounds Constraints]
-    Calc --> Override[Execute MeasureOverride child passes recursively]
-    Override --> CacheResult[Store DesiredSize, _previousAvailableSize & set _isMeasureValid = true]
+    Start["Measure Pass availableSize"] --> Cached{"_isMeasureValid and availableSize == _previousAvailableSize?"}
+    Cached -- Yes --> O1Exit["O1 Early Exit - Return Cached DesiredSize"]
+    Cached -- No --> Calc["Calculate Margin Insets & Bounds Constraints"]
+    Calc --> Override["Execute MeasureOverride child passes recursively"]
+    Override --> CacheResult["Store DesiredSize, _previousAvailableSize & set _isMeasureValid = true"]
     
-    CacheResult --> ArrangeStart[Arrange Pass finalRect]
-    ArrangeStart --> CachedArr{"_isArrangeValid && _isMeasureValid && finalRect == _previousFinalRect?"}
-    CachedArr -- Yes --> O1ExitArr[O1 Early Exit - Return Immediately]
-    CachedArr -- No --> Align[Calculate Offset Coordinates & Horizontal/Vertical Alignments]
-    Align --> OverrideArr[Execute ArrangeOverride child placements recursively]
-    OverrideArr --> CacheResultArr[Store Offset/Size, _previousFinalRect & set _isArrangeValid = true]
+    CacheResult --> ArrangeStart["Arrange Pass finalRect"]
+    ArrangeStart --> CachedArr{"_isArrangeValid and _isMeasureValid and finalRect == _previousFinalRect?"}
+    CachedArr -- Yes --> O1ExitArr["O1 Early Exit - Return Immediately"]
+    CachedArr -- No --> Align["Calculate Offset Coordinates & Horizontal/Vertical Alignments"]
+    Align --> OverrideArr["Execute ArrangeOverride child placements recursively"]
+    OverrideArr --> CacheResultArr["Store Offset/Size, _previousFinalRect & set _isArrangeValid = true"]
 ```
 
 - **Measure Cache**: Inside `LayoutNode.Measure()`, if `_isMeasureValid` is true and the incoming `availableSize` matches `_previousAvailableSize`, the pass returns immediately. `MeasureOverride` and recursive child traversals are fully bypassed in $O(1)$ time.
@@ -168,12 +168,12 @@ The LOL/s benchmark stresses the visual framework by constantly removing and add
 - **The Backpressure Solution**: We introduced a thread-safe `PendingCount` property to the main `UIThread` queue. The background benchmark thread loops continuously without fixed sleep periods, but monitors queue occupancy:
   ```mermaid
   flowchart TD
-      Start[Background Task Loop] --> CheckBackpressure{"UIThread.PendingCount > 100?"}
-      CheckBackpressure -- Yes --> Sleep[Thread.Sleep 1ms / Release Monitor Locks]
+      Start["Background Task Loop"] --> CheckBackpressure{"UIThread.PendingCount > 100?"}
+      CheckBackpressure -- Yes --> Sleep["Thread.Sleep 1ms / Release Monitor Locks"]
       Sleep --> Start
-      CheckBackpressure -- No --> Post[Post Action immediately / No Sleep]
-      Post --> UIThread[UIThread.RunPending - Main Thread drains queue]
-      UIThread --> AddChild[AddChild/RemoveChild visual tree mutation]
+      CheckBackpressure -- No --> Post["Post Action immediately / No Sleep"]
+      Post --> UIThread["UIThread.RunPending - Main Thread drains queue"]
+      UIThread --> AddChild["AddChild/RemoveChild visual tree mutation"]
   ```
   - **Backpressure Active (>100)**: The background thread sleeps for exactly `1ms`. This releases the queue monitor lock completely and relinquishes the CPU slice, allowing the main UI thread to drain the event queue with zero lock contention. The application remains 100% responsive and immune to livelocks.
   - **Backpressure Inactive (<=100)**: The background thread runs with zero sleep, dispatching new visual mutations to the UI thread continuously to maximize throughput.
@@ -237,11 +237,11 @@ Standard graphics engines struggle to apply dynamic blurred effects (such as Gau
 
 ```mermaid
 graph TD
-    Subtree[Subtree Render Pass] -->|Draw Elements 1x MSAA| Src[Source Offscreen Texture]
-    Src -->|Horiz. Dispatch| HCompute[Gaussian Blur Compute Shader Pass 1]
-    HCompute -->|Vert. Dispatch| VCompute[Gaussian Blur Compute Shader Pass 2]
-    VCompute -->|Output Framebuffer| Dest[Destination Blurs/Shadows Texture]
-    Dest -->|Matrix Align & Z-Order Bind| Framebuffer[Primary Swapchain Framebuffer]
+    Subtree["Subtree Render Pass"] -->|Draw Elements 1x MSAA| Src["Source Offscreen Texture"]
+    Src -->|Horiz. Dispatch| HCompute["Gaussian Blur Compute Shader Pass 1"]
+    HCompute -->|Vert. Dispatch| VCompute["Gaussian Blur Compute Shader Pass 2"]
+    VCompute -->|Output Framebuffer| Dest["Destination Blurs/Shadows Texture"]
+    Dest -->|Matrix Align and Z-Order Bind| Framebuffer["Primary Swapchain Framebuffer"]
 ```
 
 - **Dynamic Texture Caching**: Textures (`Source`, `Temp`, and `Destination` buffers) are cached per-element in a specialized dictionary (`_effectTextures`). They are dynamically resized only when the element's actual visual bounds mutate, eliminating frame-by-frame allocation/deallocation thrashing.
@@ -339,18 +339,18 @@ ProGPU implements a lightweight, high-performance, and memory-safe theming, styl
 
 ```mermaid
 flowchart TD
-    Reg[DependencyProperty.Register] -->|Sequential Indexing| DP[Index-Based Property Mapped Arrays]
-    DP -->|Precedence Resolution| GetVal[O1 GetValue Precedence Sweep]
-    Theme[ThemeManager.ThemeChanged] -->|Lazy Invalidation| Dirty[Set IsThemeDirty = true]
+    Reg["DependencyProperty.Register"] -->|Sequential Indexing| DP["Index-Based Property Mapped Arrays"]
+    DP -->|Precedence Resolution| GetVal["O1 GetValue Precedence Sweep"]
+    Theme["ThemeManager.ThemeChanged"] -->|Lazy Invalidation| Dirty["Set IsThemeDirty = true"]
     Dirty -->|On-Demand Query| GetVal
     
-    subgraph Storage ["O(1) Parallel Contiguous Value & Theme Arrays"]
-        Local[_localValues]
-        Style[_styleValues]
-        DStyle[_defaultStyleValues]
-        LocalTheme[_localThemeResources]
-        StyleTheme[_styleThemeResources]
-        DStyleTheme[_defaultStyleThemeResources]
+    subgraph Storage ["O(1) Parallel Contiguous Value and Theme Arrays"]
+        Local["_localValues"]
+        Style["_styleValues"]
+        DStyle["_defaultStyleValues"]
+        LocalTheme["_localThemeResources"]
+        StyleTheme["_styleThemeResources"]
+        DStyleTheme["_defaultStyleThemeResources"]
     end
 ```
 
@@ -404,13 +404,13 @@ ProGPU introduces **Layered High-DPI Visual Caching** (`CacheAsLayer`) to comple
 
 ```mermaid
 flowchart TD
-    Compile[CompileVisualTree node] --> CacheChecked{"node.CacheAsLayer && Compositor.IsCacheAsLayerEnabled?"}
-    CacheChecked -- No --> NormalPass[Standard Pass: Recurse Visual Subtree & Compile Primitives]
-    CacheChecked -- Yes --> DirtyCheck{"node.IsDirty || node.LayerTexture == null?"}
+    Compile["CompileVisualTree node"] --> CacheChecked{"node.CacheAsLayer and Compositor.IsCacheAsLayerEnabled?"}
+    CacheChecked -- No --> NormalPass["Standard Pass: Recurse Visual Subtree and Compile Primitives"]
+    CacheChecked -- Yes --> DirtyCheck{"node.IsDirty or node.LayerTexture == null?"}
     
-    DirtyCheck -- Yes --> RenderOff[Execute RenderOffscreen centered in node.LayerTexture]
-    RenderOff --> MarkClean[Set node.IsDirty = false]
-    MarkClean --> DrawTexture[Compile single DrawTexture command onto Swapchain]
+    DirtyCheck -- Yes --> RenderOff["Execute RenderOffscreen centered in node.LayerTexture"]
+    RenderOff --> MarkClean["Set node.IsDirty = false"]
+    MarkClean --> DrawTexture["Compile single DrawTexture command onto Swapchain"]
     
     DirtyCheck -- No --> DrawTexture
 ```
