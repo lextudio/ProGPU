@@ -8,6 +8,7 @@ using ProGPU.Backend;
 using ProGPU.Text;
 using ProGPU.Vector;
 using ProGPU.Compute;
+using Color = Silk.NET.WebGPU.Color;
 
 namespace ProGPU.Scene;
 

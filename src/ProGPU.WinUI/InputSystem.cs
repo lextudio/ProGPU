@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -5,7 +10,7 @@ using Silk.NET.Input;
 using ProGPU.Scene;
 using ProGPU.Vector;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Input;
 
 public class WindowInputState
 {
@@ -18,6 +23,7 @@ public class WindowInputState
     public bool IsControlPressed;
     public bool IsAltPressed;
     public bool IsKeyboardFocusActive;
+    public IInputContext? InputContext;
     public System.Threading.CancellationTokenSource? HoverCancellation;
     public ToolTip? ActiveToolTip;
     public FrameworkElement? HoveredElementForTimer;
@@ -45,6 +51,54 @@ public static class InputSystem
     private static System.Threading.CancellationTokenSource? _hoverCancellation { get => Current.HoverCancellation; set => Current.HoverCancellation = value; }
     private static ToolTip? _activeToolTip { get => Current.ActiveToolTip; set => Current.ActiveToolTip = value; }
     private static FrameworkElement? _hoveredElementForTimer { get => Current.HoveredElementForTimer; set => Current.HoveredElementForTimer = value; }
+
+    private static bool IsControlPressedDynamic()
+    {
+        if (_isControlPressed) return true;
+        if (Current.InputContext != null)
+        {
+            foreach (var keyboard in Current.InputContext.Keyboards)
+            {
+                if (keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static bool IsShiftPressedDynamic()
+    {
+        if (_isShiftPressed) return true;
+        if (Current.InputContext != null)
+        {
+            foreach (var keyboard in Current.InputContext.Keyboards)
+            {
+                if (keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static bool IsAltPressedDynamic()
+    {
+        if (_isAltPressed) return true;
+        if (Current.InputContext != null)
+        {
+            foreach (var keyboard in Current.InputContext.Keyboards)
+            {
+                if (keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 
     public static FrameworkElement? Root
     {
@@ -104,7 +158,7 @@ public static class InputSystem
 
     public static WindowInputState Initialize(IInputContext input, FrameworkElement? root = null)
     {
-        var state = new WindowInputState { Root = root };
+        var state = new WindowInputState { Root = root, InputContext = input };
 
         foreach (var mouse in input.Mice)
         {
@@ -244,7 +298,7 @@ public static class InputSystem
     {
         _lastMousePos = screenPos;
 
-        if (DevToolsService.IsInspectModeActive)
+        if (DevToolsService.IsInspectModeActive || (IsControlPressedDynamic() && IsShiftPressedDynamic()))
         {
             var inspectHit = HitTest(screenPos);
             bool isInsideDevTools = false;
@@ -340,7 +394,7 @@ public static class InputSystem
 
         var hit = HitTest(_lastMousePos);
 
-        if (DevToolsService.IsInspectModeActive)
+        if (DevToolsService.IsInspectModeActive || (IsControlPressedDynamic() && IsShiftPressedDynamic()))
         {
             bool isInsideDevTools = false;
             var current = hit;
@@ -358,6 +412,10 @@ public static class InputSystem
             {
                 if (hit != null)
                 {
+                    if (!DevToolsService.IsDevToolsActive)
+                    {
+                        DevToolsService.IsDevToolsActive = true;
+                    }
                     DevToolsService.InspectedElement = hit;
                     DevToolsService.IsInspectModeActive = false;
                 }
@@ -498,7 +556,7 @@ public static class InputSystem
         _hoverCancellation = null;
         DismissToolTip();
 
-        if (key == Key.F12)
+        if (key == Key.F12 || (key == Key.D && IsControlPressedDynamic() && IsShiftPressedDynamic()))
         {
             DevToolsService.ToggleDevTools();
             return;
@@ -519,9 +577,9 @@ public static class InputSystem
 
         // Assemble active VirtualKeyModifiers
         VirtualKeyModifiers modifiers = VirtualKeyModifiers.None;
-        if (_isShiftPressed) modifiers |= VirtualKeyModifiers.Shift;
-        if (_isControlPressed) modifiers |= VirtualKeyModifiers.Control;
-        if (_isAltPressed) modifiers |= VirtualKeyModifiers.Menu;
+        if (IsShiftPressedDynamic()) modifiers |= VirtualKeyModifiers.Shift;
+        if (IsControlPressedDynamic()) modifiers |= VirtualKeyModifiers.Control;
+        if (IsAltPressedDynamic()) modifiers |= VirtualKeyModifiers.Menu;
 
         // Try keyboard accelerators
         if (TryInvokeKeyboardAccelerator(key, modifiers))
@@ -577,6 +635,14 @@ public static class InputSystem
         if (key == Key.AltLeft || key == Key.AltRight)
         {
             _isAltPressed = false;
+        }
+
+        if (key == Key.ShiftLeft || key == Key.ShiftRight || key == Key.ControlLeft || key == Key.ControlRight)
+        {
+            if (!DevToolsService.IsInspectModeActive)
+            {
+                DevToolsService.HoveredElement = null;
+            }
         }
 
         if (_focusedElement != null)

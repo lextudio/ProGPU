@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class ImageRepeatShowcasePage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+            var grid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
             grid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
             grid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Main content Grid
     
@@ -28,9 +33,9 @@ public static class ImageRepeatShowcasePage
             descText.Inlines.Add(new Bold(new Run("Image Stretching & Button Extensions Showcase\n")));
             descText.Inlines.Add(new Run("Exhibits the uncompressed BMP local loader supporting None, Fill, Uniform, UniformToFill stretch structures, together with high-fidelity RepeatButtons and HyperlinkButtons."));
             grid.AddChild(descText);
-            ProGPU.WinUI.Grid.SetRow(descText, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(descText, 0);
     
-            var contentGrid = new ProGPU.WinUI.Grid();
+            var contentGrid = new Microsoft.UI.Xaml.Controls.Grid();
             contentGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star)); // Left column: Image Stretch
             contentGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star)); // Right column: Buttons
     
@@ -99,7 +104,7 @@ public static class ImageRepeatShowcasePage
             imgCard.Child = imgStack;
             leftStack.AddChild(imgCard);
             contentGrid.AddChild(leftStack);
-            ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
     
             // COLUMN 1: EXTENSION BUTTONS CARD
             var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6) };
@@ -177,10 +182,10 @@ public static class ImageRepeatShowcasePage
             btnCard.Child = btnStack;
             rightStack.AddChild(btnCard);
             contentGrid.AddChild(rightStack);
-            ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightStack, 1);
     
                 grid.AddChild(contentGrid);
-            ProGPU.WinUI.Grid.SetRow(contentGrid, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(contentGrid, 1);
     
             return grid;
         }

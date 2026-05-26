@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -7,7 +12,7 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Documents {
 
 public abstract class Block
 {
@@ -30,6 +35,10 @@ public class Run : Inline
 
     public Run() { }
     public Run(string text) { Text = text; }
+}
+
+public class LineBreak : Inline
+{
 }
 
 public class Span : Inline
@@ -135,7 +144,13 @@ public class TableCell : Span
     public TableCell(string text) : base(new Run(text)) { }
 }
 
-public class TableVisualDecoration
+} // namespace Microsoft.UI.Xaml.Documents
+
+namespace Microsoft.UI.Xaml.Controls
+{
+    using Microsoft.UI.Xaml.Documents;
+
+    public class TableVisualDecoration
 {
     public Rect Rect;
     public Brush? Background;
@@ -167,7 +182,6 @@ public class PositionedRichChar
 
 public class RichTextBlock : FrameworkElement
 {
-    private TtfFont? _font;
     private float _fontSize = 14f;
     private TextAlignment _textAlignment = TextAlignment.Left;
     private readonly List<PositionedRichChar> _positionedChars = new();
@@ -184,6 +198,16 @@ public class RichTextBlock : FrameworkElement
     private TextAlignment _lastLayoutAlignment = TextAlignment.Left;
     private bool _isLayoutDirty = true;
 
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
+    {
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            _isLayoutDirty = true;
+            Invalidate();
+        }
+    }
+
     public void InvalidateLayout()
     {
         _isLayoutDirty = true;
@@ -197,19 +221,12 @@ public class RichTextBlock : FrameworkElement
         InvalidateMeasure();
     }
 
-    public TtfFont? Font
+    public TtfFont? GetActiveFont()
     {
-        get => _font;
-        set
-        {
-            if (_font != value)
-            {
-                _font = value;
-                _isLayoutDirty = true;
-                Invalidate();
-            }
-        }
+        return Font ?? PopupService.DefaultFont;
     }
+
+    private TtfFont? ActiveFont => GetActiveFont();
 
     public float FontSize
     {
@@ -265,13 +282,14 @@ public class RichTextBlock : FrameworkElement
 
         var localPos = InputSystem.GetLocalPosition(this, e.Position);
         Hyperlink? foundLink = null;
+        var activeFont = ActiveFont;
 
         foreach (var pc in _positionedChars)
         {
-            if (pc.Info.SourceInline is Hyperlink hl && Font != null)
+            if (pc.Info.SourceInline is Hyperlink hl && activeFont != null)
             {
-                ushort gIdx = Font.GetGlyphIndex(pc.Info.Character);
-                float advance = Font.GetAdvanceWidth(gIdx, pc.Info.FontSize);
+                ushort gIdx = activeFont.GetGlyphIndex(pc.Info.Character);
+                float advance = activeFont.GetAdvanceWidth(gIdx, pc.Info.FontSize);
                 Rect charRect = new Rect(pc.Position.X, pc.Position.Y, advance, pc.Info.FontSize);
                 if (charRect.Contains(localPos))
                 {
@@ -300,7 +318,8 @@ public class RichTextBlock : FrameworkElement
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
-        if (Font == null || Inlines.Count == 0) return Vector2.Zero;
+        var activeFont = ActiveFont;
+        if (activeFont == null || Inlines.Count == 0) return Vector2.Zero;
 
         float maxW = WidthConstraint ?? availableSize.X;
         if (float.IsInfinity(maxW)) maxW = 800f; // reasonable fallback bound
@@ -318,8 +337,8 @@ public class RichTextBlock : FrameworkElement
             }
             else
             {
-                ushort idx = Font.GetGlyphIndex(pc.Info.Character);
-                adv = Font.GetAdvanceWidth(idx, pc.Info.FontSize);
+                ushort idx = activeFont.GetGlyphIndex(pc.Info.Character);
+                adv = activeFont.GetAdvanceWidth(idx, pc.Info.FontSize);
             }
             measuredW = Math.Max(measuredW, pc.Position.X + adv);
             measuredH = Math.Max(measuredH, pc.Position.Y + pc.Info.FontSize);
@@ -330,7 +349,6 @@ public class RichTextBlock : FrameworkElement
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        Size = new Vector2(arrangeRect.Width, arrangeRect.Height);
         PerformRichLayout(arrangeRect.Width);
 
         // Arrange nested child controls
@@ -351,9 +369,11 @@ public class RichTextBlock : FrameworkElement
             _isLayoutDirty = true;
         }
 
+        var activeFont = ActiveFont;
+
         if (!_isLayoutDirty &&
             Math.Abs(maxWidth - _lastLayoutWidth) < 0.01f &&
-            Font == _lastLayoutFont &&
+            activeFont == _lastLayoutFont &&
             Math.Abs(FontSize - _lastLayoutFontSize) < 0.01f &&
             TextAlignment == _lastLayoutAlignment)
         {
@@ -361,14 +381,14 @@ public class RichTextBlock : FrameworkElement
         }
 
         _lastLayoutWidth = maxWidth;
-        _lastLayoutFont = Font;
+        _lastLayoutFont = activeFont;
         _lastLayoutFontSize = FontSize;
         _lastLayoutAlignment = TextAlignment;
         _isLayoutDirty = false;
 
         _positionedChars.Clear();
         _tableDecorations.Clear();
-        if (Font == null) return;
+        if (activeFont == null) return;
 
         var charList = new List<RichChar>();
         var defaultFg = Foreground ?? new SolidColorBrush(0xFFFFFFFF);
@@ -384,8 +404,8 @@ public class RichTextBlock : FrameworkElement
         if (charList.Count == 0) return;
 
         // Structured paragraph word wrapping
-        float scale = FontSize / Font.UnitsPerEm;
-        float lineSpacing = (Font.Ascender - Font.Descender + Font.LineGap) * scale;
+        float scale = FontSize / activeFont.UnitsPerEm;
+        float lineSpacing = (activeFont.Ascender - activeFont.Descender + activeFont.LineGap) * scale;
 
         float cursorX = Padding.Left;
         float cursorY = Padding.Top;
@@ -433,7 +453,7 @@ public class RichTextBlock : FrameworkElement
             }
             else
             {
-                lastAdv = Font.GetAdvanceWidth(Font.GetGlyphIndex(lastPc.Info.Character), lastPc.Info.FontSize);
+                lastAdv = activeFont.GetAdvanceWidth(activeFont.GetGlyphIndex(lastPc.Info.Character), lastPc.Info.FontSize);
             }
             lineW = lastPc.Position.X + lastAdv - Padding.Left;
 
@@ -529,8 +549,8 @@ public class RichTextBlock : FrameworkElement
             }
             else
             {
-                ushort gIdx = Font.GetGlyphIndex(c);
-                advance = Font.GetAdvanceWidth(gIdx, rc.FontSize);
+                ushort gIdx = activeFont.GetGlyphIndex(c);
+                advance = activeFont.GetAdvanceWidth(gIdx, rc.FontSize);
             }
 
             // Word bounds tracking
@@ -575,8 +595,8 @@ public class RichTextBlock : FrameworkElement
                         }
                         else
                         {
-                            ushort wIdx = Font.GetGlyphIndex(remapped.Info.Character);
-                            wAdv = Font.GetAdvanceWidth(wIdx, remapped.Info.FontSize);
+                            ushort wIdx = activeFont.GetGlyphIndex(remapped.Info.Character);
+                            wAdv = activeFont.GetAdvanceWidth(wIdx, remapped.Info.FontSize);
                         }
                         cursorX = wrapStart + shift + wAdv;
                     }
@@ -664,6 +684,20 @@ public class RichTextBlock : FrameworkElement
                     LeftIndent = leftIndent
                 });
             }
+        }
+        else if (inline is LineBreak)
+        {
+            list.Add(new RichChar
+            {
+                Character = '\n',
+                Foreground = fg,
+                FontSize = size,
+                IsBold = isBold,
+                IsItalic = isItalic,
+                IsUnderline = isUnderline,
+                SourceInline = source,
+                LeftIndent = leftIndent
+            });
         }
         else if (inline is InlineUIContainer uic)
         {
@@ -753,7 +787,8 @@ public class RichTextBlock : FrameworkElement
 
     public override void OnRender(DrawingContext context)
     {
-        if (Font == null) return;
+        var activeFont = ActiveFont;
+        if (activeFont == null) return;
 
         // Draw table decorations (backgrounds and borders)
         foreach (var dec in _tableDecorations)
@@ -780,8 +815,8 @@ public class RichTextBlock : FrameworkElement
                 {
                     var pc = _positionedChars[i];
                     if (pc.Info.EmbeddedElement != null) continue;
-                    ushort gIdx = Font.GetGlyphIndex(pc.Info.Character);
-                    float advance = Font.GetAdvanceWidth(gIdx, pc.Info.FontSize);
+                    ushort gIdx = activeFont.GetGlyphIndex(pc.Info.Character);
+                    float advance = activeFont.GetAdvanceWidth(gIdx, pc.Info.FontSize);
                     context.DrawRectangle(highlightBrush, null, new Rect(pc.Position.X, pc.Position.Y, advance, pc.Info.FontSize));
                 }
             }
@@ -844,15 +879,16 @@ public class RichTextBlock : FrameworkElement
 
     private void RenderRun(DrawingContext context, string text, Vector2 pos, RichChar style)
     {
-        if (Font == null) return;
-        context.DrawText(text, Font, style.FontSize, style.Foreground!, pos, style.IsBold, style.IsItalic);
+        var activeFont = ActiveFont;
+        if (activeFont == null) return;
+        context.DrawText(text, activeFont, style.FontSize, style.Foreground!, pos, style.IsBold, style.IsItalic);
         if (style.IsUnderline)
         {
             float runW = 0f;
             foreach (char c in text)
             {
-                ushort idx = Font.GetGlyphIndex(c);
-                runW += Font.GetAdvanceWidth(idx, style.FontSize);
+                ushort idx = activeFont.GetGlyphIndex(c);
+                runW += activeFont.GetAdvanceWidth(idx, style.FontSize);
             }
             context.DrawRectangle(style.Foreground, null, new Rect(pos.X, pos.Y + style.FontSize - 1f, runW, 1f));
         }
@@ -862,7 +898,8 @@ public class RichTextBlock : FrameworkElement
     {
         var positionedChars = new List<PositionedRichChar>();
         cellHeight = cellPadding * 2f;
-        if (Font == null) return positionedChars;
+        var activeFont = ActiveFont;
+        if (activeFont == null) return positionedChars;
 
         var charList = new List<RichChar>();
         var defaultFg = Foreground ?? new SolidColorBrush(0xFFFFFFFF);
@@ -873,8 +910,8 @@ public class RichTextBlock : FrameworkElement
 
         if (charList.Count == 0) return positionedChars;
 
-        float scale = FontSize / Font.UnitsPerEm;
-        float lineSpacing = (Font.Ascender - Font.Descender + Font.LineGap) * scale;
+        float scale = FontSize / activeFont.UnitsPerEm;
+        float lineSpacing = (activeFont.Ascender - activeFont.Descender + activeFont.LineGap) * scale;
 
         float cursorX = cellPadding;
         float cursorY = cellPadding;
@@ -938,8 +975,8 @@ public class RichTextBlock : FrameworkElement
             }
             else
             {
-                ushort gIdx = Font.GetGlyphIndex(c);
-                advance = Font.GetAdvanceWidth(gIdx, rc.FontSize);
+                ushort gIdx = activeFont.GetGlyphIndex(c);
+                advance = activeFont.GetAdvanceWidth(gIdx, rc.FontSize);
             }
 
             if (c == ' ' || c == '\t')
@@ -979,8 +1016,8 @@ public class RichTextBlock : FrameworkElement
                         }
                         else
                         {
-                            ushort wIdx = Font.GetGlyphIndex(remapped.Info.Character);
-                            wAdv = Font.GetAdvanceWidth(wIdx, remapped.Info.FontSize);
+                            ushort wIdx = activeFont.GetGlyphIndex(remapped.Info.Character);
+                            wAdv = activeFont.GetAdvanceWidth(wIdx, remapped.Info.FontSize);
                         }
                         cursorX = cellPadding + shift + wAdv;
                     }
@@ -1107,8 +1144,17 @@ public class RichTextBlock : FrameworkElement
 
 public class RichEditBox : Control
 {
-    private TtfFont? _font;
     private float _fontSize = 14f;
+
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
+    {
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            _blockView.Font = newValue as TtfFont;
+            Invalidate();
+        }
+    }
     private int _caretIndex;
     private readonly RichTextBlock _blockView;
     private RichChar? _activeTypingStyle;
@@ -1403,11 +1449,7 @@ public class RichEditBox : Control
 
     public List<Inline> Inlines => _blockView.Inlines;
 
-    public TtfFont? Font
-    {
-        get => _font;
-        set { _font = value; _blockView.Font = value; Invalidate(); }
-    }
+
 
     public float FontSize
     {
@@ -2366,3 +2408,5 @@ public class RichEditBox : Control
         }
     }
 }
+
+} // namespace Microsoft.UI.Xaml.Controls

@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -7,8 +8,12 @@ using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
-using ProGPU.WinUI;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -22,7 +27,7 @@ public static class LolsPage
 
     private static RichTextBlock? _scoreLabel;
     private static RichTextBlock? _progressLabel;
-    private static ProGPU.WinUI.Canvas? _canvas;
+    private static Microsoft.UI.Xaml.Controls.Canvas? _canvas;
     private static Button? _startStopBtn;
     private static Run? _startStopRun;
 
@@ -32,7 +37,7 @@ public static class LolsPage
         _timer.Elapsed -= OnTimer;
         _timer.Elapsed += OnTimer;
 
-        var mainGrid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+        var mainGrid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
         mainGrid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
         mainGrid.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Main Workspace
         mainGrid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));
@@ -41,10 +46,10 @@ public static class LolsPage
         var headerText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Margin = new Thickness(0, 0, 0, 10) };
         headerText.Inlines.Add(new Run("This page implements a native text layout and rendering performance benchmark based on the LOL/s suite. Renders hundreds of rotating, color-changing text controls on a canvas with a thread-pool dispatcher using standard poolable Border-wrapped RichTextBlocks."));
         mainGrid.AddChild(headerText);
-        ProGPU.WinUI.Grid.SetRow(headerText, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(headerText, 0);
 
         // 2. Main Content Grid
-        var contentGrid = new ProGPU.WinUI.Grid();
+        var contentGrid = new Microsoft.UI.Xaml.Controls.Grid();
         contentGrid.ColumnDefinitions.Add(new GridLength(300, GridUnitType.Absolute)); // Settings Panel
         contentGrid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));      // Visual Canvas Panel
 
@@ -156,7 +161,7 @@ public static class LolsPage
         settingsStack.AddChild(resetBtn);
 
         contentGrid.AddChild(settingsCard);
-        ProGPU.WinUI.Grid.SetColumn(settingsCard, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(settingsCard, 0);
 
         // --- Column 1: Visual Canvas Card ---
         var canvasCard = new Border
@@ -170,7 +175,7 @@ public static class LolsPage
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
-        _canvas = new ProGPU.WinUI.Canvas
+        _canvas = new Microsoft.UI.Xaml.Controls.Canvas
         {
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalAlignment = HorizontalAlignment.Stretch
@@ -178,10 +183,10 @@ public static class LolsPage
         canvasCard.Child = _canvas;
 
         contentGrid.AddChild(canvasCard);
-        ProGPU.WinUI.Grid.SetColumn(canvasCard, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(canvasCard, 1);
 
         mainGrid.AddChild(contentGrid);
-        ProGPU.WinUI.Grid.SetRow(contentGrid, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(contentGrid, 1);
 
         return mainGrid;
     }
@@ -308,8 +313,8 @@ public static class LolsPage
 
                 float left = (float)(random.NextDouble() * (width - 80f));
                 float top = (float)(random.NextDouble() * (height - 40f));
-                ProGPU.WinUI.Canvas.SetLeft(textControl, left);
-                ProGPU.WinUI.Canvas.SetTop(textControl, top);
+                Microsoft.UI.Xaml.Controls.Canvas.SetLeft(textControl, left);
+                Microsoft.UI.Xaml.Controls.Canvas.SetTop(textControl, top);
 
                 if (_canvas.Children.Count >= _max)
                 {

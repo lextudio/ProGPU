@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -8,7 +13,7 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class TabAcceleratorEventArgs : EventArgs
 {
@@ -38,7 +43,6 @@ public class TabView : FrameworkElement
 
     private readonly AddTabButton _addButton;
     private TabViewItem? _selectedItem;
-    private TtfFont? _font;
     private bool _isCtrlPressed;
     private bool _isShiftPressed;
 
@@ -61,10 +65,13 @@ public class TabView : FrameworkElement
         }
     }
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set { if (_font != value) { _font = value; Invalidate(); } }
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            Invalidate();
+        }
     }
 
     public event EventHandler? SelectionChanged;
@@ -214,33 +221,7 @@ public class TabView : FrameworkElement
 
     public TtfFont? GetActiveFont()
     {
-        if (Font != null) return Font;
-        var p = Parent;
-        while (p != null)
-        {
-            var prop = p.GetType().GetProperty("Font");
-            if (prop != null && prop.GetValue(p) is TtfFont f) return f;
-            p = p.Parent;
-        }
-
-        try
-        {
-            var asm = AppDomain.CurrentDomain.GetAssemblies();
-            foreach (var assembly in asm)
-            {
-                var type = assembly.GetType("ProGPU.Samples.Program");
-                if (type != null)
-                {
-                    var method = type.GetMethod("GetFont");
-                    if (method != null && method.Invoke(null, null) is TtfFont staticFont)
-                    {
-                        return staticFont;
-                    }
-                }
-            }
-        }
-        catch { }
-        return null;
+        return Font ?? PopupService.DefaultFont;
     }
 
     public override void OnRender(DrawingContext context)

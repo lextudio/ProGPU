@@ -1,18 +1,64 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
-public class Control : FrameworkElement
+public class Control : FrameworkElement, ITemplatedControl
 {
-    private Brush? _background;
-    private Brush? _foreground;
-    private Brush? _borderBrush;
-    private Thickness _borderThickness;
-    private float _cornerRadius;
+    public static readonly Microsoft.UI.Xaml.DependencyProperty BackgroundProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Background",
+            typeof(Brush),
+            typeof(Control),
+            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty ForegroundProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Foreground",
+            typeof(Brush),
+            typeof(Control),
+            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty BorderBrushProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "BorderBrush",
+            typeof(Brush),
+            typeof(Control),
+            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty BorderThicknessProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "BorderThickness",
+            typeof(Thickness),
+            typeof(Control),
+            new Microsoft.UI.Xaml.PropertyMetadata(default(Thickness), (d, e) => {
+                var c = (Control)d;
+                c.Invalidate();
+                c.InvalidateMeasure();
+            }));
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty CornerRadiusProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "CornerRadius",
+            typeof(float),
+            typeof(Control),
+            new Microsoft.UI.Xaml.PropertyMetadata(0f, (d, e) => ((Control)d).Invalidate()));
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty TemplateProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            "Template",
+            typeof(ControlTemplate),
+            typeof(Control),
+            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).ApplyTemplate()));
+
     private HorizontalAlignment _horizontalContentAlignment = HorizontalAlignment.Center;
     private VerticalAlignment _verticalContentAlignment = VerticalAlignment.Center;
 
@@ -20,75 +66,271 @@ public class Control : FrameworkElement
     private bool _isPointerPressed;
     private bool _isFocused;
 
+    private FrameworkElement? _templateRoot;
+
+    public ControlTemplate? Template
+    {
+        get => GetValue(TemplateProperty) as ControlTemplate;
+        set => SetValue(TemplateProperty, value);
+    }
+
+    public bool HasTemplate => _templateRoot != null;
+
     public Brush? Background
     {
-        get => _background;
-        set { if (_background != value) { _background = value; Invalidate(); } }
+        get => GetValue(BackgroundProperty) as Brush;
+        set => SetValue(BackgroundProperty, value);
     }
 
     public Brush? Foreground
     {
-        get => _foreground;
-        set { if (_foreground != value) { _foreground = value; Invalidate(); } }
+        get => GetValue(ForegroundProperty) as Brush;
+        set => SetValue(ForegroundProperty, value);
     }
 
     public Brush? BorderBrush
     {
-        get => _borderBrush;
-        set { if (_borderBrush != value) { _borderBrush = value; Invalidate(); } }
+        get => GetValue(BorderBrushProperty) as Brush;
+        set => SetValue(BorderBrushProperty, value);
     }
 
     public Thickness BorderThickness
     {
-        get => _borderThickness;
-        set { if (!_borderThickness.Equals(value)) { _borderThickness = value; Invalidate(); } }
+        get => (Thickness)(GetValue(BorderThicknessProperty) ?? default(Thickness));
+        set => SetValue(BorderThicknessProperty, value);
     }
 
     public float CornerRadius
     {
-        get => _cornerRadius;
-        set { if (_cornerRadius != value) { _cornerRadius = value; Invalidate(); } }
+        get => (float)(GetValue(CornerRadiusProperty) ?? 0f);
+        set => SetValue(CornerRadiusProperty, value);
     }
 
     public HorizontalAlignment HorizontalContentAlignment
     {
         get => _horizontalContentAlignment;
-        set { if (_horizontalContentAlignment != value) { _horizontalContentAlignment = value; Invalidate(); } }
+        set { if (_horizontalContentAlignment != value) { _horizontalContentAlignment = value; Invalidate(); OnPropertyChanged(); } }
     }
 
     public VerticalAlignment VerticalContentAlignment
     {
         get => _verticalContentAlignment;
-        set { if (_verticalContentAlignment != value) { _verticalContentAlignment = value; Invalidate(); } }
+        set { if (_verticalContentAlignment != value) { _verticalContentAlignment = value; Invalidate(); OnPropertyChanged(); } }
     }
 
     public bool IsPointerOver
     {
         get => _isPointerOver;
-        protected set { if (_isPointerOver != value) { _isPointerOver = value; OnVisualStateChanged(); } }
+        protected set { if (_isPointerOver != value) { _isPointerOver = value; OnVisualStateChanged(); OnPropertyChanged(); } }
     }
 
     public bool IsPointerPressed
     {
         get => _isPointerPressed;
-        protected set { if (_isPointerPressed != value) { _isPointerPressed = value; OnVisualStateChanged(); } }
+        protected set { if (_isPointerPressed != value) { _isPointerPressed = value; OnVisualStateChanged(); OnPropertyChanged(); } }
     }
 
     public bool IsFocused
     {
         get => _isFocused;
-        internal set { if (_isFocused != value) { _isFocused = value; OnVisualStateChanged(); } }
+        internal set { if (_isFocused != value) { _isFocused = value; OnVisualStateChanged(); OnPropertyChanged(); } }
     }
 
     private bool _isTabStop = true;
     public bool IsTabStop
     {
         get => _isTabStop;
-        set { _isTabStop = value; }
+        set { if (_isTabStop != value) { _isTabStop = value; OnPropertyChanged(); } }
+    }
+
+    public bool ApplyTemplate()
+    {
+        if (_templateRoot != null)
+        {
+            RemoveChild(_templateRoot);
+            _templateRoot = null;
+        }
+
+        if (Template != null)
+        {
+            _templateRoot = Template.Factory(this);
+            if (_templateRoot != null)
+            {
+                AddChild(_templateRoot);
+                
+                // Resolve ContentPresenters inside the visual tree automatically
+                ResolveContentPresenters(_templateRoot);
+
+                OnApplyTemplate();
+                InvalidateMeasure();
+                return true;
+            }
+        }
+
+        InvalidateMeasure();
+        return false;
+    }
+
+    protected virtual void OnApplyTemplate()
+    {
+    }
+
+    public FrameworkElement? GetTemplateChild(string name)
+    {
+        if (_templateRoot == null) return null;
+        return FindNameInTree(_templateRoot, name);
+    }
+
+    private FrameworkElement? FindNameInTree(FrameworkElement element, string name)
+    {
+        if (element.Name == name) return element;
+
+        if (element is ContainerVisual container)
+        {
+            var children = container.Children;
+            for (int i = 0; i < children.Count; i++)
+            {
+                if (children[i] is FrameworkElement childFe)
+                {
+                    var found = FindNameInTree(childFe, name);
+                    if (found != null) return found;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private void ResolveContentPresenters(FrameworkElement element)
+    {
+        if (element is ContentPresenter presenter)
+        {
+            var contentProp = this.GetType().GetProperty("Content");
+            if (contentProp != null)
+            {
+                TemplateBinding.Bind(presenter, nameof(ContentPresenter.Content), this, "Content");
+            }
+        }
+
+        if (element is ContainerVisual container)
+        {
+            var children = container.Children;
+            for (int i = 0; i < children.Count; i++)
+            {
+                if (children[i] is FrameworkElement childFe)
+                {
+                    ResolveContentPresenters(childFe);
+                }
+            }
+        }
+    }
+
+    public Vector2 MeasureTemplate(Vector2 availableSize)
+    {
+        if (_templateRoot != null)
+        {
+            float borderH = BorderThickness.Horizontal;
+            float borderV = BorderThickness.Vertical;
+
+            Vector2 inset = new Vector2(borderH, borderV);
+            Vector2 childAvailable = new Vector2(
+                Math.Max(0f, availableSize.X - inset.X),
+                Math.Max(0f, availableSize.Y - inset.Y)
+            );
+
+            _templateRoot.Measure(childAvailable);
+            return _templateRoot.DesiredSize + inset;
+        }
+        return Vector2.Zero;
+    }
+
+    public void ArrangeTemplate(Rect arrangeRect)
+    {
+        if (_templateRoot != null)
+        {
+            float leftInset = BorderThickness.Left;
+            float topInset = BorderThickness.Top;
+            float rightInset = BorderThickness.Right;
+            float bottomInset = BorderThickness.Bottom;
+
+            Rect childRect = new Rect(
+                arrangeRect.X + leftInset,
+                arrangeRect.Y + topInset,
+                Math.Max(0f, arrangeRect.Width - (leftInset + rightInset)),
+                Math.Max(0f, arrangeRect.Height - (topInset + bottomInset))
+            );
+            _templateRoot.Arrange(childRect);
+        }
+    }
+
+    protected override Vector2 MeasureOverride(Vector2 availableSize)
+    {
+        if (HasTemplate)
+        {
+            return MeasureTemplate(availableSize);
+        }
+        return base.MeasureOverride(availableSize);
+    }
+
+    protected override void ArrangeOverride(Rect arrangeRect)
+    {
+        if (HasTemplate)
+        {
+            ArrangeTemplate(arrangeRect);
+            return;
+        }
+        base.ArrangeOverride(arrangeRect);
+    }
+
+
+    private string GetThemePrefix()
+    {
+        string className = GetType().Name;
+        if (this is Button && Style != null)
+        {
+            foreach (var setter in Style.Setters)
+            {
+                if (setter.Value?.ToString()?.Contains("AccentButton") == true)
+                {
+                    return "AccentButton";
+                }
+            }
+        }
+        return className;
+    }
+
+    public Brush? GetCurrentBackground()
+    {
+        string prefix = GetThemePrefix();
+        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BackgroundDisabled") ?? Background;
+        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BackgroundPressed") ?? Background;
+        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}BackgroundPointerOver") ?? Background;
+        return Background;
+    }
+
+    public Brush? GetCurrentForeground()
+    {
+        string prefix = GetThemePrefix();
+        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}ForegroundDisabled") ?? Foreground;
+        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}ForegroundPressed") ?? Foreground;
+        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}ForegroundPointerOver") ?? Foreground;
+        return Foreground;
+    }
+
+    public Brush? GetCurrentBorderBrush()
+    {
+        string prefix = GetThemePrefix();
+        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BorderBrushDisabled") ?? BorderBrush;
+        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BorderBrushPressed") ?? BorderBrush;
+        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}BorderBrushPointerOver") ?? BorderBrush;
+        return BorderBrush;
     }
 
     public virtual void OnVisualStateChanged()
     {
+        OnPropertyChanged(nameof(Background));
+        OnPropertyChanged(nameof(Foreground));
+        OnPropertyChanged(nameof(BorderBrush));
         Invalidate();
     }
 

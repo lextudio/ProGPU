@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using System.Threading.Tasks;
@@ -5,7 +10,7 @@ using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Vector;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public enum ContentDialogResult
 {

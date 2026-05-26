@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
@@ -5,7 +10,7 @@ using ProGPU.Scene;
 using ProGPU.Vector;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public static class AdornerLayer
 {
@@ -24,7 +29,7 @@ public static class AdornerLayer
         }
     }
 
-    private static void RenderElementHighlight(DrawingContext context, FrameworkElement fe, Vector4 fillColor, Vector4 borderColor)
+    private static void RenderElementHighlight(DrawingContext context, Visual fe, Vector4 fillColor, Vector4 borderColor)
     {
         Vector2 absPos = fe.Offset;
         Visual? p = fe.Parent;

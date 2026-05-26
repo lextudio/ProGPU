@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class LayoutPanelsPage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(10) };
+            var grid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(10) };
             grid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
             grid.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Pivot tab showcase
     
@@ -29,7 +34,7 @@ public static class LayoutPanelsPage
             descText.Inlines.Add(new Bold(new Run("Pivot")));
             descText.Inlines.Add(new Run(" control. Hover tabs or click to switch with smooth slide animations."));
             grid.AddChild(descText);
-            ProGPU.WinUI.Grid.SetRow(descText, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(descText, 0);
     
             // 1. Pivot Control
             var pivot = new Pivot
@@ -40,12 +45,12 @@ public static class LayoutPanelsPage
             };
     
             // Tab 1: Grid & Stack Panels
-            var showroomGrid = new ProGPU.WinUI.Grid();
+            var showroomGrid = new Microsoft.UI.Xaml.Controls.Grid();
             showroomGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             showroomGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
     
             // Column 0: 2x2 Grid cell attachments
-            var innerGrid = new ProGPU.WinUI.Grid();
+            var innerGrid = new Microsoft.UI.Xaml.Controls.Grid();
             innerGrid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             innerGrid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             innerGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
@@ -56,32 +61,32 @@ public static class LayoutPanelsPage
             cardText1.Inlines.Add(new Run("Cell (0, 0)"));
             card1.Child = cardText1;
             innerGrid.AddChild(card1);
-            ProGPU.WinUI.Grid.SetRow(card1, 0);
-            ProGPU.WinUI.Grid.SetColumn(card1, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(card1, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card1, 0);
     
             var card2 = new Border { Margin = new Thickness(4), Background = new SolidColorBrush(0x00FF8820), CornerRadius = 6f };
             var cardText2 = new RichTextBlock { Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             cardText2.Inlines.Add(new Run("Cell (0, 1)"));
             card2.Child = cardText2;
             innerGrid.AddChild(card2);
-            ProGPU.WinUI.Grid.SetRow(card2, 0);
-            ProGPU.WinUI.Grid.SetColumn(card2, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(card2, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card2, 1);
     
             var card3 = new Border { Margin = new Thickness(4), Background = new SolidColorBrush(0x00E5FF20), CornerRadius = 6f };
             var cardText3 = new RichTextBlock { Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             cardText3.Inlines.Add(new Run("Cell (1, 0)"));
             card3.Child = cardText3;
             innerGrid.AddChild(card3);
-            ProGPU.WinUI.Grid.SetRow(card3, 1);
-            ProGPU.WinUI.Grid.SetColumn(card3, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(card3, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card3, 0);
     
             var card4 = new Border { Margin = new Thickness(4), Background = new SolidColorBrush(0xA100FF20), CornerRadius = 6f };
             var cardText4 = new RichTextBlock { Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             cardText4.Inlines.Add(new Run("Cell (1, 1)"));
             card4.Child = cardText4;
             innerGrid.AddChild(card4);
-            ProGPU.WinUI.Grid.SetRow(card4, 1);
-            ProGPU.WinUI.Grid.SetColumn(card4, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(card4, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card4, 1);
     
             var leftGroup = new Border
             {
@@ -96,7 +101,7 @@ public static class LayoutPanelsPage
             };
             leftGroup.Child = innerGrid;
             showroomGrid.AddChild(leftGroup);
-            ProGPU.WinUI.Grid.SetColumn(leftGroup, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftGroup, 0);
     
             // Column 1: StackPanel layout
             var rightStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -155,7 +160,7 @@ public static class LayoutPanelsPage
             };
             rightGroup.Child = rightStack;
             showroomGrid.AddChild(rightGroup);
-            ProGPU.WinUI.Grid.SetColumn(rightGroup, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightGroup, 1);
     
             var pivotItem1 = new PivotItem("Recursive Grids & Stacks", showroomGrid);
             pivot.Items.Add(pivotItem1);
@@ -274,7 +279,7 @@ public static class LayoutPanelsPage
             pivot.Items.Add(pivotItem3);
     
             grid.AddChild(pivot);
-            ProGPU.WinUI.Grid.SetRow(pivot, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(pivot, 1);
     
             return grid;
         }

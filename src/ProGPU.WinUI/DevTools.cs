@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -8,12 +13,12 @@ using ProGPU.Scene;
 using ProGPU.Vector;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class PropertyItem
 {
     private readonly PropertyInfo _propInfo;
-    private readonly FrameworkElement _element;
+    private readonly Visual _element;
 
     public string Name => _propInfo.Name;
     public string Type => _propInfo.PropertyType.Name;
@@ -79,7 +84,7 @@ public class PropertyItem
         }
     }
 
-    public PropertyItem(PropertyInfo propInfo, FrameworkElement element)
+    public PropertyItem(PropertyInfo propInfo, Visual element)
     {
         _propInfo = propInfo;
         _element = element;
@@ -98,9 +103,7 @@ public class DevTools : Border
     private readonly Grid _perfTabContent;
 
     private readonly Button _inspectBtn;
-    private readonly Button _treeTabBtn;
-    private readonly Button _propTabBtn;
-    private readonly Button _perfTabBtn;
+    private readonly Pivot _pivot;
 
     private static DevTools? _instance;
     public static DevTools? Instance => _instance;
@@ -118,12 +121,12 @@ public class DevTools : Border
         Child = _mainGrid;
 
         _mainGrid.RowDefinitions.Add(new GridLength(40, GridUnitType.Absolute));  // Row 0: Toolbar
-        _mainGrid.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));      // Row 1: Workspace
+        _mainGrid.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));      // Row 1: Pivot Workspace
 
         // 1. TOOLBAR
         var toolbarGrid = new Grid { VerticalAlignment = VerticalAlignment.Stretch, Margin = new Thickness(4) };
         toolbarGrid.ColumnDefinitions.Add(new GridLength(64, GridUnitType.Absolute));  // Inspect button
-        toolbarGrid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Tabs spacer
+        toolbarGrid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Spacer
         toolbarGrid.ColumnDefinitions.Add(new GridLength(32, GridUnitType.Absolute));  // Close button
 
         var inspectStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
@@ -148,58 +151,6 @@ public class DevTools : Border
         toolbarGrid.AddChild(_inspectBtn);
         Grid.SetColumn(_inspectBtn, 0);
 
-        // Tab selection stack
-        var tabsStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
-        
-        _treeTabBtn = new Button
-        {
-            Content = new TextVisual
-            {
-                Text = "Visual Tree",
-                FontSize = 10f,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            },
-            Margin = new Thickness(2),
-            Background = ThemeManager.GetBrush("SystemAccentColor")
-        };
-
-        _propTabBtn = new Button
-        {
-            Content = new TextVisual
-            {
-                Text = "Properties",
-                FontSize = 10f,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            },
-            Margin = new Thickness(2),
-            Background = ThemeManager.GetBrush("ControlBackground")
-        };
-
-        _perfTabBtn = new Button
-        {
-            Content = new TextVisual
-            {
-                Text = "Performance",
-                FontSize = 10f,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            },
-            Margin = new Thickness(2),
-            Background = ThemeManager.GetBrush("ControlBackground")
-        };
-
-        _treeTabBtn.Click += (s, e) => SwitchTab("tree");
-        _propTabBtn.Click += (s, e) => SwitchTab("prop");
-        _perfTabBtn.Click += (s, e) => SwitchTab("perf");
-
-        tabsStack.AddChild(_treeTabBtn);
-        tabsStack.AddChild(_propTabBtn);
-        tabsStack.AddChild(_perfTabBtn);
-        toolbarGrid.AddChild(tabsStack);
-        Grid.SetColumn(tabsStack, 1);
-
         var closeBtn = new Button
         {
             Content = new CloseIconVisual(),
@@ -221,6 +172,20 @@ public class DevTools : Border
 
         // Tab B: Properties Content
         _propertyTabContent = new Grid { Margin = new Thickness(4) };
+        _propertyTabContent.RowDefinitions.Add(new GridLength(20, GridUnitType.Absolute));
+        _propertyTabContent.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));
+
+        var propInstructions = new RichTextBlock 
+        { 
+            FontSize = 9f, 
+            Margin = new Thickness(4, 0, 0, 4) 
+        };
+        propInstructions.Inlines.Add(new Run("Double-click any cell in the ") { Foreground = new SolidColorBrush(0xFFFFFF90) });
+        propInstructions.Inlines.Add(new Bold(new Run("Value")) { Foreground = ThemeManager.GetBrush("SystemAccentColor") });
+        propInstructions.Inlines.Add(new Run(" column to edit property values in real-time.") { Foreground = new SolidColorBrush(0xFFFFFF90) });
+        _propertyTabContent.AddChild(propInstructions);
+        Grid.SetRow(propInstructions, 0);
+
         _propertyGrid = new DataGrid
         {
             RowHeight = 24f,
@@ -232,8 +197,9 @@ public class DevTools : Border
         _propertyGrid.Columns.Add(new DataGridColumn("Type", 90f, "Type"));
         _propertyGrid.Columns.Add(new DataGridColumn("Value", 180f, "Value"));
         _propertyTabContent.AddChild(_propertyGrid);
+        Grid.SetRow(_propertyGrid, 1);
 
-        // Tab C: Performance Content
+        // Tab C: Performance/Diagnostics Content
         _perfTabContent = new Grid { Margin = new Thickness(8) };
         _perfTabContent.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));
         _perfTabContent.RowDefinitions.Add(new GridLength(45, GridUnitType.Absolute));
@@ -273,17 +239,18 @@ public class DevTools : Border
             if (context != null)
             {
                 bool nextVal = !context.VSync;
-                context.VSync = nextVal;
-                vsyncText.Text = nextVal ? "VSync: ON" : "VSync: OFF";
-
-                // Update VSync for all active Silk.NET windows
-                foreach (var activeWin in WindowManager.ActiveWindows)
+                
+                // Update VSync for all active WebGPU contexts and their GLFW windows globally
+                foreach (var ctx in ProGPU.Backend.WgpuContext.ActiveContexts)
                 {
-                    if (activeWin.SilkWindow != null)
+                    ctx.VSync = nextVal;
+                    if (ctx.Window != null)
                     {
-                        activeWin.SilkWindow.VSync = nextVal;
+                        ctx.Window.VSync = nextVal;
                     }
                 }
+                
+                vsyncText.Text = nextVal ? "VSync: ON" : "VSync: OFF";
             }
         };
 
@@ -293,10 +260,34 @@ public class DevTools : Border
         _perfTabContent.AddChild(vsyncStack);
         Grid.SetRow(vsyncStack, 1);
 
-        // We will dynamically add/remove tab content inside SwitchTab to prevent overlapping.
+        // 3. PIVOT TAB CONTROL
+        _pivot = new Pivot { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+        
+        var visualTreeItem = new PivotItem("Logical & Visual Tree", _visualTreeTabContent);
+        var propertiesItem = new PivotItem("Property Editor", _propertyTabContent);
+        var diagnosticsItem = new PivotItem("Diagnostics", _perfTabContent);
 
-        // Default layout selection: Visual Tree
-        SwitchTab("tree");
+        _pivot.Items.Add(visualTreeItem);
+        _pivot.Items.Add(propertiesItem);
+        _pivot.Items.Add(diagnosticsItem);
+
+        _mainGrid.AddChild(_pivot);
+        Grid.SetRow(_pivot, 1);
+
+        _pivot.SelectionChanged += (s, e) =>
+        {
+            if (_pivot.SelectedIndex == 0)
+            {
+                RefreshVisualTree();
+            }
+            else if (_pivot.SelectedIndex == 1)
+            {
+                if (DevToolsService.InspectedElement != null)
+                {
+                    LoadProperties(DevToolsService.InspectedElement);
+                }
+            }
+        };
 
         // Hooks
         DevToolsService.StateChanged += (s, e) =>
@@ -316,6 +307,36 @@ public class DevTools : Border
                 LoadProperties(DevToolsService.InspectedElement);
             }
         };
+
+        // Explicitly resolve and set Font for Pivot & DataGrid
+        var resolvedFont = PopupService.DefaultFont;
+        if (resolvedFont == null)
+        {
+            try
+            {
+                var asm = AppDomain.CurrentDomain.GetAssemblies();
+                foreach (var assembly in asm)
+                {
+                    var type = assembly.GetType("ProGPU.Samples.AppState") ?? assembly.GetType("ProGPU.Samples.Program");
+                    if (type != null)
+                    {
+                        var method = type.GetMethod("GetFont");
+                        if (method != null && method.Invoke(null, null) is TtfFont staticFont)
+                        {
+                            resolvedFont = staticFont;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        if (resolvedFont != null)
+        {
+            _pivot.Font = resolvedFont;
+            _propertyGrid.Font = resolvedFont;
+        }
     }
 
     private void UpdateInspectButtonState()
@@ -323,36 +344,6 @@ public class DevTools : Border
         _inspectBtn.Background = DevToolsService.IsInspectModeActive 
             ? ThemeManager.GetBrush("SystemAccentColor")  // Fluent Accent
             : ThemeManager.GetBrush("ControlBackground"); // Standard background
-    }
-
-    private void SwitchTab(string tab)
-    {
-        _mainGrid.RemoveChild(_visualTreeTabContent);
-        _mainGrid.RemoveChild(_propertyTabContent);
-        _mainGrid.RemoveChild(_perfTabContent);
-
-        if (tab == "tree")
-        {
-            _mainGrid.AddChild(_visualTreeTabContent);
-            Grid.SetRow(_visualTreeTabContent, 1);
-        }
-        else if (tab == "prop")
-        {
-            _mainGrid.AddChild(_propertyTabContent);
-            Grid.SetRow(_propertyTabContent, 1);
-        }
-        else if (tab == "perf")
-        {
-            _mainGrid.AddChild(_perfTabContent);
-            Grid.SetRow(_perfTabContent, 1);
-        }
-
-        _treeTabBtn.Background = tab == "tree" ? ThemeManager.GetBrush("SystemAccentColor") : ThemeManager.GetBrush("ControlBackground");
-        _propTabBtn.Background = tab == "prop" ? ThemeManager.GetBrush("SystemAccentColor") : ThemeManager.GetBrush("ControlBackground");
-        _perfTabBtn.Background = tab == "perf" ? ThemeManager.GetBrush("SystemAccentColor") : ThemeManager.GetBrush("ControlBackground");
-
-        _mainGrid.Invalidate();
-        Invalidate();
     }
 
     public void RefreshVisualTree()
@@ -378,32 +369,50 @@ public class DevTools : Border
         {
             foreach (var child in container.Children)
             {
-                if (child is FrameworkElement fe && fe != this && fe.Name != "DevToolsPanel")
+                if (child == this || (child is FrameworkElement devToolsFe && devToolsFe.Name == "DevToolsPanel"))
                 {
-                    string name = string.IsNullOrEmpty(fe.Name) ? fe.GetType().Name : $"{fe.GetType().Name} ({fe.Name})";
-                    var childItem = new TreeViewItem(name)
-                    {
-                        TagValue = fe
-                    };
-                    parentItem.Items.Add(childItem);
-                    PopulateVisualTree(child, childItem);
+                    continue;
                 }
+
+                string typeName = child.GetType().Name;
+                string details = "";
+                
+                if (child is FrameworkElement fe)
+                {
+                    if (!string.IsNullOrEmpty(fe.Name))
+                    {
+                        details = $" ({fe.Name})";
+                    }
+                }
+                else
+                {
+                    details = " [Visual]";
+                }
+                
+                string label = $"{typeName}{details}";
+                var childItem = new TreeViewItem(label)
+                {
+                    TagValue = child
+                };
+                
+                parentItem.Items.Add(childItem);
+                PopulateVisualTree(child, childItem);
             }
         }
     }
 
     private void OnTreeSelectionChanged(object? sender, EventArgs e)
     {
-        if (_treeView.SelectedItem != null && _treeView.SelectedItem.TagValue is FrameworkElement fe)
+        if (_treeView.SelectedItem != null && _treeView.SelectedItem.TagValue is Visual visual)
         {
-            DevToolsService.InspectedElement = fe;
-            LoadProperties(fe);
+            DevToolsService.InspectedElement = visual;
+            LoadProperties(visual);
         }
     }
 
-    private void SelectInspectedElementInTree(FrameworkElement fe)
+    private void SelectInspectedElementInTree(Visual element)
     {
-        TreeViewItem? found = FindTreeViewItemByElement(_treeView.Items, fe);
+        TreeViewItem? found = FindTreeViewItemByElement(_treeView.Items, element);
         if (found != null)
         {
             // Expand parents
@@ -418,12 +427,12 @@ public class DevTools : Border
         }
     }
 
-    private TreeViewItem? FindTreeViewItemByElement(IList<TreeViewItem> items, FrameworkElement fe)
+    private TreeViewItem? FindTreeViewItemByElement(IList<TreeViewItem> items, Visual element)
     {
         foreach (var item in items)
         {
-            if (item.TagValue == fe) return item;
-            var found = FindTreeViewItemByElement(item.Items, fe);
+            if (item.TagValue == element) return item;
+            var found = FindTreeViewItemByElement(item.Items, element);
             if (found != null) return found;
         }
         return null;
@@ -431,10 +440,21 @@ public class DevTools : Border
 
     private TreeViewItem? GetTreeViewItemParent(TreeViewItem item)
     {
+        return FindParentInList(_treeView.Items, item);
+    }
+
+    private TreeViewItem? FindParentInList(IList<TreeViewItem> items, TreeViewItem targetItem)
+    {
+        foreach (var item in items)
+        {
+            if (item.Items.Contains(targetItem)) return item;
+            var found = FindParentInList(item.Items, targetItem);
+            if (found != null) return found;
+        }
         return null;
     }
 
-    private void LoadProperties(FrameworkElement fe)
+    private void LoadProperties(Visual fe)
     {
         _propertyGrid.ItemsSource.Clear();
         var props = fe.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
@@ -465,7 +485,7 @@ public class DevTools : Border
         if (DevToolsService.IsDevToolsActive)
         {
             _perfTextBlock.Inlines.Clear();
-            _perfTextBlock.Inlines.Add(new Bold(new Run("Runtime Performance Diagnostics\n\n")) { Foreground = ThemeManager.GetBrush("SystemAccentColor") });
+            _perfTextBlock.Inlines.Add(new Bold(new Run("Runtime Performance & Rendering Diagnostics\n\n")) { Foreground = ThemeManager.GetBrush("SystemAccentColor") });
             
             _perfTextBlock.Inlines.Add(new Run("Real-time Frame Rate: "));
             _perfTextBlock.Inlines.Add(new Bold(new Run($"{fps:F1} FPS\n")) { Foreground = fps >= 55f ? new SolidColorBrush(0x4CAF50FF) : new SolidColorBrush(0xF44336FF) });
@@ -477,15 +497,58 @@ public class DevTools : Border
             _perfTextBlock.Inlines.Add(new Bold(new Run($"{vertices:N0} vertices\n")));
 
             _perfTextBlock.Inlines.Add(new Run("Batched Draw Calls: "));
-            _perfTextBlock.Inlines.Add(new Bold(new Run($"{drawCalls:N0} calls\n\n")));
+            _perfTextBlock.Inlines.Add(new Bold(new Run($"{drawCalls:N0} calls\n")));
 
-            _perfTextBlock.Inlines.Add(new Bold(new Run("Adorner Layer System:\n")) { Foreground = ThemeManager.GetBrush("TextSecondary") });
-            _perfTextBlock.Inlines.Add(new Run("• Inspect Mode: Enables colored layouts bounds visual annotations on hover.\n"));
-            _perfTextBlock.Inlines.Add(new Run("• Blue highlight represents Selected Element boundaries.\n"));
-            _perfTextBlock.Inlines.Add(new Run("• Green highlight represents Hovered Element inspection.\n"));
+            // Count total scene graph nodes dynamically!
+            int totalNodes = 0;
+            if (InputSystem.Root != null)
+            {
+                totalNodes = CountSceneNodes(InputSystem.Root);
+            }
+            _perfTextBlock.Inlines.Add(new Run("Total Scene Graph Nodes: "));
+            _perfTextBlock.Inlines.Add(new Bold(new Run($"{totalNodes:N0} nodes\n")));
+
+            // Active theme and window info
+            string activeTheme = ThemeManager.CurrentTheme.ToString();
+            _perfTextBlock.Inlines.Add(new Run("Active Application Theme: "));
+            _perfTextBlock.Inlines.Add(new Bold(new Run($"{activeTheme}\n")));
+
+            if (InputSystem.Root != null)
+            {
+                _perfTextBlock.Inlines.Add(new Run("Main Window Dimensions: "));
+                _perfTextBlock.Inlines.Add(new Bold(new Run($"{InputSystem.Root.Size.X:N0} × {InputSystem.Root.Size.Y:N0}\n")));
+            }
+
+            // GPU Backend context details
+            var wgpuCtx = ProGPU.Backend.WgpuContext.Current;
+            if (wgpuCtx != null)
+            {
+                _perfTextBlock.Inlines.Add(new Run("WebGPU Context Target: "));
+                _perfTextBlock.Inlines.Add(new Bold(new Run("Metal/Vulkan (macOS GPU Engine)\n")));
+            }
+
+            _perfTextBlock.Inlines.Add(new Bold(new Run("\nDeveloper Adorner Layer:\n")) { Foreground = ThemeManager.GetBrush("TextSecondary") });
+            _perfTextBlock.Inlines.Add(new Run("• Ctrl+Shift + Hover: High-performance select highlights.\n"));
+            _perfTextBlock.Inlines.Add(new Run("• Ctrl+Shift + Click: Inspect element boundaries and auto-open tree.\n"));
+            _perfTextBlock.Inlines.Add(new Run("• Green outline: Hovered element inspection bounds.\n"));
+            _perfTextBlock.Inlines.Add(new Run("• Blue outline: Currently selected element focus.\n"));
+            _perfTextBlock.Inlines.Add(new Run("• Properties Tab: Double-click cells in 'Value' column to edit in real-time.\n"));
             
             _perfTextBlock.Invalidate();
         }
+    }
+
+    private int CountSceneNodes(Visual node)
+    {
+        int count = 1;
+        if (node is ContainerVisual container)
+        {
+            foreach (var child in container.Children)
+            {
+                count += CountSceneNodes(child);
+            }
+        }
+        return count;
     }
 }
 
@@ -504,7 +567,6 @@ public class MagnifyingGlassVisual : FrameworkElement
         var strokeBrush = ThemeManager.GetBrush("TextPrimary");
         var pen = new Pen(strokeBrush, 1.5f);
         
-        // Draw the magnifying glass lens (circle) and handle (line) directly on the GPU
         context.DrawCircle(null, pen, new Vector2(4.5f, 4.5f), 3.5f);
         context.DrawLine(pen, new Vector2(7f, 7f), new Vector2(11f, 11f));
         base.OnRender(context);
@@ -526,7 +588,6 @@ public class CloseIconVisual : FrameworkElement
         var strokeBrush = ThemeManager.GetBrush("TextPrimary");
         var pen = new Pen(strokeBrush, 1.5f);
         
-        // Draw the crossing close lines directly on the GPU
         context.DrawLine(pen, new Vector2(1f, 1f), new Vector2(9f, 9f));
         context.DrawLine(pen, new Vector2(9f, 1f), new Vector2(1f, 9f));
         base.OnRender(context);

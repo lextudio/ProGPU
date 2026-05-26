@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -210,7 +215,7 @@ public static class SamplePagePresenter
         description.Inlines.Add(new Run("Assign uniform looks to visual panels and buttons using C# styles. Below is a comparison between standard controls, and styled controls styled with setter objects."));
         stack.AddChild(description);
 
-        var containerGrid = new ProGPU.WinUI.Grid();
+        var containerGrid = new Microsoft.UI.Xaml.Controls.Grid();
         containerGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
         containerGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
 
@@ -233,7 +238,7 @@ public static class SamplePagePresenter
         leftStack.AddChild(normalBtn2);
 
         containerGrid.AddChild(leftStack);
-        ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
 
         // Column 1: Styled Controls
         var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(10f) };
@@ -262,7 +267,7 @@ public static class SamplePagePresenter
         rightStack.AddChild(styledBtn2);
 
         containerGrid.AddChild(rightStack);
-        ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightStack, 1);
         stack.AddChild(containerGrid);
 
         return stack;
@@ -280,7 +285,7 @@ public static class SamplePagePresenter
         description.Inlines.Add(new Run("This page implements a native high-performance GPU vector graphics benchmark based on the MotionMark suite. Renders thousands of dynamic shapes (lines, circles, and direct GPU Beziers) with zero CPU triangulation or flattening, achieving ultimate frame rates."));
         stack.AddChild(description);
 
-        var grid = new ProGPU.WinUI.Grid { HeightConstraint = 620f };
+        var grid = new Microsoft.UI.Xaml.Controls.Grid { HeightConstraint = 620f };
         grid.ColumnDefinitions.Add(new GridLength(300, GridUnitType.Absolute)); // Column 0: Settings Panel
         grid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));      // Column 1: Visual Canvas Card
 
@@ -303,7 +308,7 @@ public static class SamplePagePresenter
         countLabel.Inlines.Add(new Bold(new Run("Element Count: 1,000")));
         settingsStack.AddChild(countLabel);
         
-        var countSlider = new ProGPU.WinUI.Slider();
+        var countSlider = new Microsoft.UI.Xaml.Controls.Slider();
         countSlider.Maximum = 100000f;
         countSlider.Minimum = 1000f;
         countSlider.Value = 1000f;
@@ -328,7 +333,7 @@ public static class SamplePagePresenter
         strokeLabel.Inlines.Add(new Bold(new Run("Stroke Scale: 1.0x")));
         settingsStack.AddChild(strokeLabel);
         
-        var strokeSlider = new ProGPU.WinUI.Slider { Minimum = 0.1f, Maximum = 5.0f, Value = 1.0f, Margin = new Thickness(0, 0, 0, 8) };
+        var strokeSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0.1f, Maximum = 5.0f, Value = 1.0f, Margin = new Thickness(0, 0, 0, 8) };
         strokeSlider.ValueChanged += (s, e) => {
             visual.StrokeThicknessMultiplier = strokeSlider.Value;
             visual.UpdateCachedPens();
@@ -343,7 +348,7 @@ public static class SamplePagePresenter
         splitLabel.Inlines.Add(new Bold(new Run("Segment Split Chance: 50%")));
         settingsStack.AddChild(splitLabel);
         
-        var splitSlider = new ProGPU.WinUI.Slider { Minimum = 0.0f, Maximum = 1.0f, Value = 0.5f, Margin = new Thickness(0, 0, 0, 8) };
+        var splitSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0.0f, Maximum = 1.0f, Value = 0.5f, Margin = new Thickness(0, 0, 0, 8) };
         splitSlider.ValueChanged += (s, e) => {
             visual.SplitProbability = splitSlider.Value;
             splitLabel.Inlines.Clear();
@@ -433,10 +438,10 @@ public static class SamplePagePresenter
         settingsStack.AddChild(gpuToggle);
 
         grid.AddChild(settingsCard);
-        ProGPU.WinUI.Grid.SetColumn(settingsCard, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(settingsCard, 0);
 
         grid.AddChild(visual);
-        ProGPU.WinUI.Grid.SetColumn(visual, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(visual, 1);
 
         stack.AddChild(grid);
 
@@ -457,7 +462,7 @@ public static class SamplePagePresenter
         description.Inlines.Add(new Run("This page showcases the high-performance rendering of different language scripts, custom system fonts, and Unicode symbol outlines on the GPU. Settings altered in the configuration card apply dynamically to all script panels."));
         stack.AddChild(description);
 
-        var grid = new ProGPU.WinUI.Grid();
+        var grid = new Microsoft.UI.Xaml.Controls.Grid();
         grid.ColumnDefinitions.Add(new GridLength(280f, GridUnitType.Absolute)); // Settings Sidebar
         grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Scripts Dashboard
 
@@ -499,7 +504,7 @@ public static class SamplePagePresenter
         sizeLabel.Inlines.Add(new Bold(new Run("Global Font Size: 16")));
         settingsStack.AddChild(sizeLabel);
 
-        var sizeSlider = new ProGPU.WinUI.Slider { Minimum = 12f, Maximum = 32f, Value = 16f, Margin = new Thickness(0, 0, 0, 16) };
+        var sizeSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 12f, Maximum = 32f, Value = 16f, Margin = new Thickness(0, 0, 0, 16) };
         settingsStack.AddChild(sizeSlider);
 
         // ComboBox for Alignment
@@ -524,7 +529,7 @@ public static class SamplePagePresenter
         contrastLabel.Inlines.Add(new Bold(new Run($"Font Contrast/Dilation: {Compositor.DefaultTextContrast:F2}")));
         settingsStack.AddChild(contrastLabel);
 
-        var contrastSlider = new ProGPU.WinUI.Slider { Minimum = 0.5f, Maximum = 2.5f, Value = Compositor.DefaultTextContrast, Margin = new Thickness(0, 0, 0, 16) };
+        var contrastSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0.5f, Maximum = 2.5f, Value = Compositor.DefaultTextContrast, Margin = new Thickness(0, 0, 0, 16) };
         settingsStack.AddChild(contrastSlider);
 
         // Slider for Gamma Correction
@@ -532,16 +537,16 @@ public static class SamplePagePresenter
         gammaLabel.Inlines.Add(new Bold(new Run($"Font Gamma: {Compositor.DefaultTextGamma:F2}")));
         settingsStack.AddChild(gammaLabel);
 
-        var gammaSlider = new ProGPU.WinUI.Slider { Minimum = 1.0f, Maximum = 3.0f, Value = Compositor.DefaultTextGamma, Margin = new Thickness(0, 0, 0, 16) };
+        var gammaSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 1.0f, Maximum = 3.0f, Value = Compositor.DefaultTextGamma, Margin = new Thickness(0, 0, 0, 16) };
         settingsStack.AddChild(gammaSlider);
 
         grid.AddChild(settingsCard);
-        ProGPU.WinUI.Grid.SetColumn(settingsCard, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(settingsCard, 0);
 
         // Right Panel: Scripts List
         var dashboardStack = new StackPanel { Orientation = Orientation.Vertical };
         grid.AddChild(dashboardStack);
-        ProGPU.WinUI.Grid.SetColumn(dashboardStack, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(dashboardStack, 1);
 
         var textBlocks = new List<RichTextBlock>();
 
@@ -715,17 +720,17 @@ public static class SamplePagePresenter
 
     public static FrameworkElement CreateInteractiveInputView()
     {
-        var grid = new ProGPU.WinUI.Grid();
+        var grid = new Microsoft.UI.Xaml.Controls.Grid();
         grid.ColumnDefinitions.Add(new GridLength(260f, GridUnitType.Absolute)); // Sidebar templates
         grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Interactive text inputs
 
         var leftStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(16, 16, 0, 16) };
         grid.AddChild(leftStack);
-        ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
 
         var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(16) };
         grid.AddChild(rightStack);
-        ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightStack, 1);
 
         // Title and Header
         var title = new RichTextBlock { Font = AppState.GetFont(), FontSize = 18f, Margin = new Thickness(0, 0, 0, 8) };

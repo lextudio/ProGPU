@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class ComputeFxPage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid();
+            var grid = new Microsoft.UI.Xaml.Controls.Grid();
             grid.ColumnDefinitions.Add(new GridLength(280, GridUnitType.Absolute)); // Compute adjust sliders
             grid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));      // WebGPU offscreen effect canvas
     
@@ -38,7 +43,7 @@ public static class ComputeFxPage
             blurLabel.Inlines.Add(new Bold(new Run($"Backdrop Blur: {AppState._blurRadius:F1} px")));
             leftStack.AddChild(blurLabel);
     
-            var blurSlider = new ProGPU.WinUI.Slider { Minimum = 0f, Maximum = 20f, Value = AppState._blurRadius, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
+            var blurSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0f, Maximum = 20f, Value = AppState._blurRadius, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
             blurSlider.ValueChanged += (s, e) =>
             {
                 AppState._blurRadius = blurSlider.Value;
@@ -52,7 +57,7 @@ public static class ComputeFxPage
             shadowLabel.Inlines.Add(new Bold(new Run($"Shadow Radius: {AppState._shadowRadius:F1} px")));
             leftStack.AddChild(shadowLabel);
     
-            var shadowSlider = new ProGPU.WinUI.Slider { Minimum = 0f, Maximum = 20f, Value = AppState._shadowRadius, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
+            var shadowSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0f, Maximum = 20f, Value = AppState._shadowRadius, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
             shadowSlider.ValueChanged += (s, e) =>
             {
                 AppState._shadowRadius = shadowSlider.Value;
@@ -66,7 +71,7 @@ public static class ComputeFxPage
             offsetXLabel.Inlines.Add(new Bold(new Run($"Shadow Offset X: {AppState._shadowOffset.X:F1} px")));
             leftStack.AddChild(offsetXLabel);
     
-            var offsetXSlider = new ProGPU.WinUI.Slider { Minimum = -20f, Maximum = 20f, Value = AppState._shadowOffset.X, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
+            var offsetXSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = -20f, Maximum = 20f, Value = AppState._shadowOffset.X, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
             offsetXSlider.ValueChanged += (s, e) =>
             {
                 AppState._shadowOffset.X = offsetXSlider.Value;
@@ -80,7 +85,7 @@ public static class ComputeFxPage
             offsetYLabel.Inlines.Add(new Bold(new Run($"Shadow Offset Y: {AppState._shadowOffset.Y:F1} px")));
             leftStack.AddChild(offsetYLabel);
     
-            var offsetYSlider = new ProGPU.WinUI.Slider { Minimum = -20f, Maximum = 20f, Value = AppState._shadowOffset.Y, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
+            var offsetYSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = -20f, Maximum = 20f, Value = AppState._shadowOffset.Y, Width = 250f, Margin = new Thickness(0, 0, 0, 15) };
             offsetYSlider.ValueChanged += (s, e) =>
             {
                 AppState._shadowOffset.Y = offsetYSlider.Value;
@@ -106,7 +111,7 @@ public static class ComputeFxPage
             leftStack.AddChild(toggleAnimBtn);
     
             grid.AddChild(leftStack);
-            ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
     
             // Center WebGPU texture offscreen render Canvas (Column 1)
             AppState._gearCanvasVisual = new GearCanvasVisual(AppState._font!)
@@ -128,7 +133,7 @@ public static class ComputeFxPage
             };
     
             grid.AddChild(canvasContainer);
-            ProGPU.WinUI.Grid.SetColumn(canvasContainer, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(canvasContainer, 1);
     
             return grid;
         }

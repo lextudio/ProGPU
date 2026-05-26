@@ -1,16 +1,21 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Vector;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class HyperlinkButton : Button
 {
     public new FrameworkElement? Content
     {
-        get => base.Content;
+        get => base.Content as FrameworkElement;
         set
         {
             base.Content = value;
@@ -39,7 +44,7 @@ public class HyperlinkButton : Button
 
     private void UpdateContentForeground()
     {
-        if (Content is TextVisual tv)
+        if (ContentVisual is TextVisual tv)
         {
             tv.Brush = Foreground;
         }
@@ -61,15 +66,15 @@ public class HyperlinkButton : Button
         }
 
         // Underline on hover
-        if (IsEnabled && IsPointerOver && Content != null)
+        if (IsEnabled && IsPointerOver && ContentVisual != null)
         {
             float leftInset = BorderThickness.Left + Padding.Left;
             float topInset = BorderThickness.Top + Padding.Top;
             float rightInset = BorderThickness.Right + Padding.Right;
             float bottomInset = BorderThickness.Bottom + Padding.Bottom;
 
-            float childW = Math.Min(Size.X - (leftInset + rightInset), Content.DesiredSize.X);
-            float childH = Math.Min(Size.Y - (topInset + bottomInset), Content.DesiredSize.Y);
+            float childW = Math.Min(Size.X - (leftInset + rightInset), ContentVisual.DesiredSize.X);
+            float childH = Math.Min(Size.Y - (topInset + bottomInset), ContentVisual.DesiredSize.Y);
 
             float childX = leftInset + (Size.X - (leftInset + rightInset) - childW) / 2f;
             float childY = topInset + (Size.Y - (topInset + bottomInset) - childH) / 2f;

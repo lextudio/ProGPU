@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,16 +25,16 @@ public static class AdvancedControlsPage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+            var grid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
             grid.RowDefinitions.Add(new GridLength(50f, GridUnitType.Absolute));   // Header description
             grid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Showcase column grids
     
             var descText = new RichTextBlock { Font = AppState._font, FontSize = 12f, Margin = new Thickness(0, 0, 0, 10) };
             descText.Inlines.Add(new Run("This page showcases advanced WinUI controls including dialog modals, absolute dropdown calendars, DatePickers, tooltips service delays, and determinate/indeterminate progress systems."));
             grid.AddChild(descText);
-            ProGPU.WinUI.Grid.SetRow(descText, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(descText, 0);
     
-            var cardsGrid = new ProGPU.WinUI.Grid();
+            var cardsGrid = new Microsoft.UI.Xaml.Controls.Grid();
             cardsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             cardsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             cardsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
@@ -105,7 +110,7 @@ public static class AdvancedControlsPage
             col1Stack.AddChild(tipBtn2);
     
             cardsGrid.AddChild(card1);
-            ProGPU.WinUI.Grid.SetColumn(card1, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card1, 0);
     
             // ================= COLUMN 2: Calendar & DatePicker =================
             var col2Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8f) };
@@ -140,7 +145,7 @@ public static class AdvancedControlsPage
             col2Stack.AddChild(calendar);
     
             cardsGrid.AddChild(card2);
-            ProGPU.WinUI.Grid.SetColumn(card2, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card2, 1);
     
             // ================= COLUMN 3: Progress indicators =================
             var col3Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8f) };
@@ -189,10 +194,10 @@ public static class AdvancedControlsPage
             col3Stack.AddChild(indetRing);
     
             cardsGrid.AddChild(card3);
-            ProGPU.WinUI.Grid.SetColumn(card3, 2);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(card3, 2);
     
             grid.AddChild(cardsGrid);
-            ProGPU.WinUI.Grid.SetRow(cardsGrid, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(cardsGrid, 1);
     
             return grid;
         }

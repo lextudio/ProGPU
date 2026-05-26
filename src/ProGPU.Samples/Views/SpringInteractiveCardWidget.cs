@@ -1,11 +1,16 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
-using ProGPU.WinUI;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -39,7 +44,7 @@ public class SpringInteractiveCardWidget : Border, IAnimatedElement
         CornerRadius = 6f;
         Padding = new Thickness(12);
 
-        var grid = new ProGPU.WinUI.Grid();
+        var grid = new Microsoft.UI.Xaml.Controls.Grid();
         grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
         grid.ColumnDefinitions.Add(new GridLength(100f, GridUnitType.Absolute));
 
@@ -71,7 +76,7 @@ public class SpringInteractiveCardWidget : Border, IAnimatedElement
         controlsStack.AddChild(triggerBtn);
 
         grid.AddChild(controlsStack);
-        ProGPU.WinUI.Grid.SetColumn(controlsStack, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(controlsStack, 0);
 
         _widgetCard = new Border
         {
@@ -89,7 +94,7 @@ public class SpringInteractiveCardWidget : Border, IAnimatedElement
         _widgetCard.Child = widgetText;
 
         grid.AddChild(_widgetCard);
-        ProGPU.WinUI.Grid.SetColumn(_widgetCard, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(_widgetCard, 1);
 
         Child = grid;
     }

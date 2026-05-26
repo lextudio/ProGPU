@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -5,9 +6,13 @@ using Silk.NET.Input;
 using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Vector;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -171,7 +176,7 @@ public static class KeyboardParityPage
     public static FrameworkElement Create()
     {
         // Root layout Grid
-        var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+        var grid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
         grid.RowDefinitions.Add(new GridLength(90f, GridUnitType.Absolute));   // Header description
         grid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Columns
 
@@ -194,10 +199,10 @@ public static class KeyboardParityPage
         descStack.AddChild(descText);
 
         grid.AddChild(descStack);
-        ProGPU.WinUI.Grid.SetRow(descStack, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(descStack, 0);
 
         // 2. Main Columns layout
-        var colsGrid = new ProGPU.WinUI.Grid();
+        var colsGrid = new Microsoft.UI.Xaml.Controls.Grid();
         colsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
         colsGrid.ColumnDefinitions.Add(new GridLength(1.1f, GridUnitType.Star));
 
@@ -244,7 +249,7 @@ public static class KeyboardParityPage
         };
 
         // Create the 3x3 Button Grid
-        var spatialGrid = new ProGPU.WinUI.Grid
+        var spatialGrid = new Microsoft.UI.Xaml.Controls.Grid
         {
             WidthConstraint = 280f,
             HeightConstraint = 130f,
@@ -270,8 +275,8 @@ public static class KeyboardParityPage
                 };
                 gridButtons[r, c] = btn;
                 spatialGrid.AddChild(btn);
-                ProGPU.WinUI.Grid.SetRow(btn, r);
-                ProGPU.WinUI.Grid.SetColumn(btn, c);
+                Microsoft.UI.Xaml.Controls.Grid.SetRow(btn, r);
+                Microsoft.UI.Xaml.Controls.Grid.SetColumn(btn, c);
             }
         }
         focusCardStack.AddChild(spatialGrid);
@@ -344,7 +349,7 @@ public static class KeyboardParityPage
 
         leftStack.AddChild(textCard);
         colsGrid.AddChild(leftStack);
-        ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
 
         // Column 1 Stack: TabView Controller + Logger Panel
         var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8) };
@@ -443,10 +448,10 @@ public static class KeyboardParityPage
 
         rightStack.AddChild(logCard);
         colsGrid.AddChild(rightStack);
-        ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightStack, 1);
 
         grid.AddChild(colsGrid);
-        ProGPU.WinUI.Grid.SetRow(colsGrid, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(colsGrid, 1);
 
         // Reset logs
         _logs.Clear();

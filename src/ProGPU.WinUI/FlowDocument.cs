@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -6,7 +11,7 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class Paragraph : Block
 {
@@ -22,7 +27,6 @@ public class Paragraph : Block
 
 public class FlowDocument : FrameworkElement
 {
-    private TtfFont? _font;
     private float _fontSize = 14f;
     private int _columnCount = 2;
     private float _columnGap = 24f;
@@ -31,10 +35,13 @@ public class FlowDocument : FrameworkElement
     public List<Block> Blocks { get; } = new();
     private readonly List<TableVisualDecoration> _tableDecorations = new();
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set { _font = value; Invalidate(); }
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            Invalidate();
+        }
     }
 
     public float FontSize

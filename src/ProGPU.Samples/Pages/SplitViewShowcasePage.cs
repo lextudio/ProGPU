@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class SplitViewShowcasePage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+            var grid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
             grid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
             grid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Main workspace
     
@@ -28,7 +33,7 @@ public static class SplitViewShowcasePage
             descText.Inlines.Add(new Bold(new Run("SplitView Responsive Layout Demonstration\n")));
             descText.Inlines.Add(new Run("Demonstrates collapsible navigation side panes with customizable display modes, positioning, and width metrics. Adjust states in real time."));
             grid.AddChild(descText);
-            ProGPU.WinUI.Grid.SetRow(descText, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(descText, 0);
     
             // Define SplitView
             var splitView = new SplitView
@@ -75,7 +80,7 @@ public static class SplitViewShowcasePage
             splitView.Pane = paneBorder;
     
             // 2. Main content of SplitView
-            var contentGrid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+            var contentGrid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
             contentGrid.ColumnDefinitions.Add(new GridLength(300, GridUnitType.Absolute)); // Controls
             contentGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Preview card
     
@@ -156,7 +161,7 @@ public static class SplitViewShowcasePage
             ctrlStack.AddChild(placeCombo);
     
             contentGrid.AddChild(ctrlStack);
-            ProGPU.WinUI.Grid.SetColumn(ctrlStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(ctrlStack, 0);
     
             // Preview Card
             var previewCard = new Border
@@ -181,11 +186,11 @@ public static class SplitViewShowcasePage
             previewText.Inlines.Add(new Run("Observe how the main Content area dynamically scales and translates depending on the collapsible pane's metrics and display configurations. In overlay modes, the pane hovers above this content without pushing it."));
             previewCard.Child = previewText;
             contentGrid.AddChild(previewCard);
-            ProGPU.WinUI.Grid.SetColumn(previewCard, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(previewCard, 1);
     
             splitView.Content = contentGrid;
             grid.AddChild(splitView);
-            ProGPU.WinUI.Grid.SetRow(splitView, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(splitView, 1);
     
             return grid;
         }

@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 #pragma warning disable CS0169 // The field is never used
 #pragma warning disable CS0414 // The field is assigned but its value is never used
 
@@ -10,7 +15,7 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class DataGridColumn
 {
@@ -29,7 +34,6 @@ public class DataGridColumn
 
 public class DataGrid : Control
 {
-    private TtfFont? _font;
     private float _fontSize = 13f;
     private float _rowHeight = 28f;
     private float _headerHeight = 32f;
@@ -59,10 +63,18 @@ public class DataGrid : Control
 
     public List<object> ItemsSource => _itemsSource;
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set { _font = value; Invalidate(); }
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            Invalidate();
+        }
+    }
+
+    public TtfFont? GetActiveFont()
+    {
+        return Font ?? PopupService.DefaultFont;
     }
 
     public float FontSize
@@ -422,7 +434,8 @@ public class DataGrid : Control
 
     public override void OnRender(DrawingContext context)
     {
-        if (Font == null) return;
+        var activeFont = GetActiveFont();
+        if (activeFont == null) return;
 
         // 1. Draw DataGrid outer card background & border
         Pen outerPen = IsFocused 
@@ -447,14 +460,14 @@ public class DataGrid : Control
 
             // Draw Header Text
             float textY = (_headerHeight - FontSize) / 2f;
-            context.DrawText(col.Header, Font, FontSize, ThemeManager.GetBrush("TextPrimary"), new Vector2(runningX + 8f, textY));
+            context.DrawText(col.Header, activeFont, FontSize, ThemeManager.GetBrush("TextPrimary"), new Vector2(runningX + 8f, textY));
 
             // Draw Sorting indicator if active sorting
             if (SortingColumn == col)
             {
                 string sortIndicator = col.IsAscending ? " ▲" : " ▼";
                 float headerTextW = col.Header.Length * (FontSize * 0.6f); // approximate width
-                context.DrawText(sortIndicator, Font, FontSize - 2f, ThemeManager.GetBrush("SystemAccentColor"), new Vector2(runningX + 8f + headerTextW, textY));
+                context.DrawText(sortIndicator, activeFont, FontSize - 2f, ThemeManager.GetBrush("SystemAccentColor"), new Vector2(runningX + 8f + headerTextW, textY));
             }
 
             // Draw highlight if this separator is hovered or being resized
@@ -468,72 +481,75 @@ public class DataGrid : Control
         }
 
         // 3. Draw Body Row Cells (Virtualized recycling viewport loop)
-        int startRow = (int)Math.Floor(ScrollOffset / _rowHeight);
-        int endRow = (int)Math.Ceiling((ScrollOffset + ViewportHeight) / _rowHeight);
-
-        startRow = Math.Clamp(startRow, 0, _itemsSource.Count - 1);
-        endRow = Math.Clamp(endRow, 0, _itemsSource.Count - 1);
-
-        context.PushClip(new Rect(0, _headerHeight, Size.X, ViewportHeight));
-
-        for (int r = startRow; r <= endRow; r++)
+        if (_itemsSource.Count > 0)
         {
-            float rowY = _headerHeight + r * _rowHeight - ScrollOffset;
-            var item = _itemsSource[r];
+            int startRow = (int)Math.Floor(ScrollOffset / _rowHeight);
+            int endRow = (int)Math.Ceiling((ScrollOffset + ViewportHeight) / _rowHeight);
 
-            // Alternate, Hover & Selection backgrounds
-            Brush? rowBg = null;
-            if (r == SelectedIndex)
-            {
-                rowBg = ThemeManager.GetBrush("SelectionHighlight"); // Premium selection
-            }
-            else if (r == _hoveredRowIndex)
-            {
-                rowBg = ThemeManager.GetBrush("ControlBackgroundHover"); // Hover state row highlight
-            }
-            else if (r % 2 == 1)
-            {
-                rowBg = ThemeManager.GetBrush("ControlBackground"); // Subtle alternate rows
-            }
+            startRow = Math.Clamp(startRow, 0, _itemsSource.Count - 1);
+            endRow = Math.Clamp(endRow, 0, _itemsSource.Count - 1);
 
-            Rect rowRect = new Rect(0, rowY, Size.X, _rowHeight);
-            if (rowBg != null)
-            {
-                context.DrawRectangle(rowBg, null, rowRect);
-            }
+            context.PushClip(new Rect(0, _headerHeight, Size.X, ViewportHeight));
 
-            // Draw active selection vertical indicator stripe on far-left
-            if (r == SelectedIndex)
+            for (int r = startRow; r <= endRow; r++)
             {
-                Rect selectionStripe = new Rect(0f, rowY + 2f, 3f, _rowHeight - 4f);
-                context.DrawRectangle(ThemeManager.GetBrush("SystemAccentColor"), null, selectionStripe);
-            }
+                float rowY = _headerHeight + r * _rowHeight - ScrollOffset;
+                var item = _itemsSource[r];
 
-            // Draw cell text grid columns
-            float colX = Padding.Left;
-            for (int c = 0; c < Columns.Count; c++)
-            {
-                var col = Columns[c];
-                float colWidth = col.Width;
-
-                if (r == _editingRow && c == _editingCol)
+                // Alternate, Hover & Selection backgrounds
+                Brush? rowBg = null;
+                if (r == SelectedIndex)
                 {
-                    // Do not draw text under editor
+                    rowBg = ThemeManager.GetBrush("SelectionHighlight"); // Premium selection
                 }
-                else
+                else if (r == _hoveredRowIndex)
                 {
-                    string val = GetCellValue(item, col.PropertyName);
-                    float cellTextY = rowY + (_rowHeight - FontSize) / 2f;
-                    context.DrawText(val, Font, FontSize, ThemeManager.GetBrush("TextPrimary"), new Vector2(colX + 8f, cellTextY));
+                    rowBg = ThemeManager.GetBrush("ControlBackgroundHover"); // Hover state row highlight
                 }
-                colX += colWidth;
+                else if (r % 2 == 1)
+                {
+                    rowBg = ThemeManager.GetBrush("ControlBackground"); // Subtle alternate rows
+                }
+
+                Rect rowRect = new Rect(0, rowY, Size.X, _rowHeight);
+                if (rowBg != null)
+                {
+                    context.DrawRectangle(rowBg, null, rowRect);
+                }
+
+                // Draw active selection vertical indicator stripe on far-left
+                if (r == SelectedIndex)
+                {
+                    Rect selectionStripe = new Rect(0f, rowY + 2f, 3f, _rowHeight - 4f);
+                    context.DrawRectangle(ThemeManager.GetBrush("SystemAccentColor"), null, selectionStripe);
+                }
+
+                // Draw cell text grid columns
+                float colX = Padding.Left;
+                for (int c = 0; c < Columns.Count; c++)
+                {
+                    var col = Columns[c];
+                    float colWidth = col.Width;
+
+                    if (r == _editingRow && c == _editingCol)
+                    {
+                        // Do not draw text under editor
+                    }
+                    else
+                    {
+                        string val = GetCellValue(item, col.PropertyName);
+                        float cellTextY = rowY + (_rowHeight - FontSize) / 2f;
+                        context.DrawText(val, activeFont, FontSize, ThemeManager.GetBrush("TextPrimary"), new Vector2(colX + 8f, cellTextY));
+                    }
+                    colX += colWidth;
+                }
+
+                // Draw thin grid lines
+                context.DrawRectangle(null, new Pen(ThemeManager.GetBrush("ControlBorder"), 0.5f), new Rect(0, rowY, Size.X, _rowHeight));
             }
 
-            // Draw thin grid lines
-            context.DrawRectangle(null, new Pen(ThemeManager.GetBrush("ControlBorder"), 0.5f), new Rect(0, rowY, Size.X, _rowHeight));
+            context.PopClip();
         }
-
-        context.PopClip();
 
         // 4. Draw Scrollbar track
         if (TotalBodyHeight > ViewportHeight)
@@ -599,7 +615,7 @@ public class DataGrid : Control
         }
 
         _cellEditor.Text = val;
-        _cellEditor.Font = Font;
+        _cellEditor.Font = GetActiveFont();
         _cellEditor.FontSize = FontSize;
         _cellEditor.Padding = new Thickness(8f, 0f, 8f, 0f);
         _cellEditor.CornerRadius = 0f;

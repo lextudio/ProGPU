@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -8,14 +13,13 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class ComboBox : Control
 {
     private bool _isDropDownOpen;
     private ComboBoxItem? _selectedItem;
     private string _placeholderText = "Select item...";
-    private TtfFont? _font;
     private float _fontSize = 14f;
     private Border? _dropDownPopup;
 
@@ -64,10 +68,13 @@ public class ComboBox : Control
         set { if (_placeholderText != value) { _placeholderText = value; Invalidate(); } }
     }
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set { if (_font != value) { _font = value; Invalidate(); } }
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            Invalidate();
+        }
     }
 
     public float FontSize
@@ -254,11 +261,7 @@ public class ComboBox : Control
         return new Vector2(w, h);
     }
 
-    protected override void ArrangeOverride(Rect arrangeRect)
-    {
-        float mainH = HeightConstraint ?? 32f;
-        Size = new Vector2(arrangeRect.Width, mainH);
-    }
+
 
     public TtfFont? GetActiveFont()
     {

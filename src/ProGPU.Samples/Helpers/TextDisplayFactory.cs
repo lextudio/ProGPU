@@ -1,8 +1,13 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System.Collections.Generic;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Vector;
-using ProGPU.WinUI;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 
 namespace ProGPU.Samples;
 
@@ -67,7 +72,7 @@ internal static class TextDisplayFactory
         border.Invalidate();
     }
 
-    public static void SetPadding(Border border, Thickness padding)
+    public static void SetPadding(Border border, Microsoft.UI.Xaml.Thickness padding)
     {
         border.Padding = padding;
         border.Invalidate();

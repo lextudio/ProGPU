@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class DataVirtualizationPage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid();
+            var grid = new Microsoft.UI.Xaml.Controls.Grid();
             grid.RowDefinitions.Add(new GridLength(70, GridUnitType.Absolute));   // Header
             grid.RowDefinitions.Add(new GridLength(1, GridUnitType.Star));       // Recycled Grid
     
@@ -38,10 +43,10 @@ public static class DataVirtualizationPage
             descStack.AddChild(listDesc);
     
             grid.AddChild(descStack);
-            ProGPU.WinUI.Grid.SetRow(descStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(descStack, 0);
     
             // Virtualized DataGrid setup
-            var dataGrid = new ProGPU.WinUI.DataGrid
+            var dataGrid = new Microsoft.UI.Xaml.Controls.DataGrid
             {
                 Font = AppState._font,
                 RowHeight = 28f,
@@ -80,7 +85,7 @@ public static class DataVirtualizationPage
             }
     
             grid.AddChild(dataGrid);
-            ProGPU.WinUI.Grid.SetRow(dataGrid, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(dataGrid, 1);
     
             return grid;
         }

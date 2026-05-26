@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class TextDocumentsPage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid();
+            var grid = new Microsoft.UI.Xaml.Controls.Grid();
             grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             grid.ColumnDefinitions.Add(new GridLength(1.1f, GridUnitType.Star));
     
@@ -120,7 +125,7 @@ public static class TextDocumentsPage
             leftStack.AddChild(actionBtns2);
     
             grid.AddChild(leftStack);
-            ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
     
             // Column 1: Multi-column FlowDocument
             var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(8) };
@@ -221,7 +226,7 @@ public static class TextDocumentsPage
             rightStack.AddChild(docBorder);
     
             grid.AddChild(rightStack);
-            ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightStack, 1);
     
             return grid;
         }

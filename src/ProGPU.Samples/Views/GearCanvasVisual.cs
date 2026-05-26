@@ -3,7 +3,11 @@ using System.Numerics;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
-using ProGPU.WinUI;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 
 namespace ProGPU.Samples;
 

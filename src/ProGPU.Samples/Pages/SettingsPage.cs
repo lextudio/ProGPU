@@ -1,9 +1,14 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Numerics;
 using ProGPU.Backend;
 using ProGPU.Layout;
-using ProGPU.WinUI;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -36,25 +41,21 @@ public static class SettingsPage
 
         vsyncToggle.Toggled += (s, e) =>
         {
-            var context = WgpuContext.Current;
-            if (context != null)
+            bool nextVal = vsyncToggle.IsOn;
+            
+            // Update VSync for all active WebGPU contexts and their GLFW windows globally
+            foreach (var context in WgpuContext.ActiveContexts)
             {
-                bool nextVal = vsyncToggle.IsOn;
                 context.VSync = nextVal;
-                
-                vsyncStatus.Inlines.Clear();
-                vsyncStatus.Inlines.Add(new Run(nextVal ? "State: Active (Capped FPS)" : "State: Inactive (Uncapped FPS)"));
-                vsyncStatus.Invalidate();
-
-                // Update VSync for all active Silk.NET windows
-                foreach (var activeWin in WindowManager.ActiveWindows)
+                if (context.Window != null)
                 {
-                    if (activeWin.SilkWindow != null)
-                    {
-                        activeWin.SilkWindow.VSync = nextVal;
-                    }
+                    context.Window.VSync = nextVal;
                 }
             }
+            
+            vsyncStatus.Inlines.Clear();
+            vsyncStatus.Inlines.Add(new Run(nextVal ? "State: Active (Capped FPS)" : "State: Inactive (Uncapped FPS)"));
+            vsyncStatus.Invalidate();
         };
 
         vsyncGroup.AddChild(vsyncToggle);

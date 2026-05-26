@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using System.Collections.Generic;
@@ -7,7 +12,7 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class TextBox : Control
 {
@@ -15,7 +20,6 @@ public class TextBox : Control
     private string _placeholderText = "Enter text...";
     private int _caretIndex;
     private float _fontSize = 14f;
-    private TtfFont? _font;
 
     // Premium selection and clipboard fields
     private int _selectionStart = 0;
@@ -129,10 +133,13 @@ public class TextBox : Control
         set { if (_fontSize != value) { _fontSize = value; Invalidate(); } }
     }
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set { if (_font != value) { _font = value; Invalidate(); } }
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            Invalidate();
+        }
     }
 
     public event EventHandler? TextChanged;
@@ -548,10 +555,7 @@ public class TextBox : Control
         return new Vector2(w, h);
     }
 
-    protected override void ArrangeOverride(Rect arrangeRect)
-    {
-        Size = new Vector2(arrangeRect.Width, arrangeRect.Height);
-    }
+
 
     private float GetCaretX()
     {

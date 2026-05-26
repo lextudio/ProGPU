@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class CompositorShowcasePage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+            var grid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
             grid.RowDefinitions.Add(new GridLength(50, GridUnitType.Absolute));   // Header description
             grid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Columns
     
@@ -28,9 +33,9 @@ public static class CompositorShowcasePage
             descText.Inlines.Add(new Bold(new Run("Composition Subsystem & Multi-Column Document Nesting\n")));
             descText.Inlines.Add(new Run("This page showcases CPU-tessellated multi-stop gradients, dynamic clipping masks, real-time spring transformations, and interactive UI controls seamlessly embedded inline using the FlowDocument InlineUIContainer pipeline."));
             grid.AddChild(descText);
-            ProGPU.WinUI.Grid.SetRow(descText, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(descText, 0);
     
-            var columnsGrid = new ProGPU.WinUI.Grid();
+            var columnsGrid = new Microsoft.UI.Xaml.Controls.Grid();
             columnsGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             columnsGrid.ColumnDefinitions.Add(new GridLength(1.2f, GridUnitType.Star));
     
@@ -76,7 +81,7 @@ public static class CompositorShowcasePage
             leftStack.AddChild(springCard);
     
             columnsGrid.AddChild(leftStack);
-            ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
     
             // COLUMN 1: INTERACTIVE FLOW DOCUMENT WITH INLINE WIDGETS
             var rightStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6) };
@@ -150,10 +155,10 @@ public static class CompositorShowcasePage
             rightStack.AddChild(docCard);
     
             columnsGrid.AddChild(rightStack);
-            ProGPU.WinUI.Grid.SetColumn(rightStack, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(rightStack, 1);
     
             grid.AddChild(columnsGrid);
-            ProGPU.WinUI.Grid.SetRow(columnsGrid, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetRow(columnsGrid, 1);
     
             return grid;
         }

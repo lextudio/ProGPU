@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -6,14 +11,12 @@ using ProGPU.Text;
 using ProGPU.Vector;
 using ProGPU.Layout;
 using ProGPU.Scene;
-using ProGPU.WinUI;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class TextVisual : FrameworkElement, ITextLayoutProvider
 {
     private string _text = string.Empty;
-    private TtfFont? _font;
     private float _fontSize = 12f;
     private Brush? _brush;
     private TextAlignment _alignment = TextAlignment.Left;
@@ -33,17 +36,13 @@ public class TextVisual : FrameworkElement, ITextLayoutProvider
         }
     }
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
         {
-            if (_font != value)
-            {
-                _font = value;
-                _layout = null;
-                Invalidate();
-            }
+            _layout = null;
+            Invalidate();
         }
     }
 
@@ -90,32 +89,7 @@ public class TextVisual : FrameworkElement, ITextLayoutProvider
 
     private TtfFont? ResolveFont()
     {
-        Visual? p = this;
-        while (p != null)
-        {
-            var prop = p.GetType().GetProperty("Font");
-            if (prop != null && prop.GetValue(p) is TtfFont f) return f;
-            p = p.Parent;
-        }
-
-        try
-        {
-            var asm = AppDomain.CurrentDomain.GetAssemblies();
-            foreach (var assembly in asm)
-            {
-                var type = assembly.GetType("ProGPU.Samples.Program");
-                if (type != null)
-                {
-                    var method = type.GetMethod("GetFont");
-                    if (method != null && method.Invoke(null, null) is TtfFont staticFont)
-                    {
-                        return staticFont;
-                    }
-                }
-            }
-        }
-        catch { }
-        return null;
+        return Font ?? PopupService.DefaultFont;
     }
 
     public TextLayout? GetOrUpdateLayout(GlyphAtlas atlas)

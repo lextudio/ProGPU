@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -8,7 +13,7 @@ using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class Pivot : FrameworkElement
 {
@@ -17,7 +22,6 @@ public class Pivot : FrameworkElement
     private float _transitionProgress = 1.0f;
     private int _hoveredHeaderIndex = -1;
     private readonly List<Rect> _headerRects = new();
-    private TtfFont? _font;
 
     public ObservableCollection<PivotItem> Items { get; }
 
@@ -41,10 +45,14 @@ public class Pivot : FrameworkElement
         }
     }
 
-    public TtfFont? Font
+    protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
-        get => _font;
-        set { if (_font != value) { _font = value; Invalidate(); InvalidateMeasure(); } }
+        base.OnPropertyChanged(dp, oldValue, newValue);
+        if (dp == FontProperty)
+        {
+            Invalidate();
+            InvalidateMeasure();
+        }
     }
 
     public event EventHandler? SelectionChanged;
@@ -97,13 +105,15 @@ public class Pivot : FrameworkElement
             p = p.Parent;
         }
 
-        // Fallback reflectively on Program.GetFont()
+        if (PopupService.DefaultFont != null) return PopupService.DefaultFont;
+
+        // Fallback reflectively on AppState/Program.GetFont()
         try
         {
             var asm = AppDomain.CurrentDomain.GetAssemblies();
             foreach (var assembly in asm)
             {
-                var type = assembly.GetType("ProGPU.Samples.Program");
+                var type = assembly.GetType("ProGPU.Samples.AppState") ?? assembly.GetType("ProGPU.Samples.Program");
                 if (type != null)
                 {
                     var method = type.GetMethod("GetFont");
@@ -152,7 +162,7 @@ public class Pivot : FrameworkElement
             float itemW = 80f;
             if (font != null)
             {
-                var text = item.Header ?? $"Item {i + 1}";
+                var text = item.Header?.ToString() ?? $"Item {i + 1}";
                 var layout = new TextLayout(text, font, 15f, float.PositiveInfinity, TextAlignment.Left, null);
                 itemW = layout.MeasuredSize.X + 24f; // 12f side padding
             }
@@ -186,7 +196,7 @@ public class Pivot : FrameworkElement
             float itemW = 80f;
             if (font != null)
             {
-                var text = item.Header ?? $"Item {i + 1}";
+                var text = item.Header?.ToString() ?? $"Item {i + 1}";
                 var layout = new TextLayout(text, font, 15f, float.PositiveInfinity, TextAlignment.Left, null);
                 itemW = layout.MeasuredSize.X + 24f;
             }
@@ -336,7 +346,7 @@ public class Pivot : FrameworkElement
             // Draw header text
             if (font != null)
             {
-                var text = Items[i].Header ?? $"Item {i + 1}";
+                var text = Items[i].Header?.ToString() ?? $"Item {i + 1}";
                 var textBrush = (i == SelectedIndex) ? new SolidColorBrush(0xFFFFFFFF) : new SolidColorBrush(0xFFFFFF90);
                 
                 // Center text within header rect

@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -13,9 +14,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -51,15 +56,15 @@ public static unsafe class MainWindowController
         AppState._screenCompositor = new Compositor(AppState._wgpuContext, AppState._wgpuContext.SwapChainFormat);
         
         // Decoupled Screen Compositor Hooks Configuration
-        AppState._screenCompositor.PreRender += (w, h) => ProGPU.WinUI.PopupService.MeasureAndArrangePopups(new Vector2(w, h));
-        AppState._screenCompositor.GetExternalLayers = () => ProGPU.WinUI.PopupService.ActivePopups;
-        AppState._screenCompositor.GetTooltip = () => ProGPU.WinUI.InputSystem.ActiveToolTip;
-        AppState._screenCompositor.GetMousePosition = () => ProGPU.WinUI.InputSystem.LastMousePosition;
+        AppState._screenCompositor.PreRender += (w, h) => Microsoft.UI.Xaml.Controls.PopupService.MeasureAndArrangePopups(new Vector2(w, h));
+        AppState._screenCompositor.GetExternalLayers = () => Microsoft.UI.Xaml.Controls.PopupService.ActivePopups;
+        AppState._screenCompositor.GetTooltip = () => Microsoft.UI.Xaml.Input.InputSystem.ActiveToolTip;
+        AppState._screenCompositor.GetMousePosition = () => Microsoft.UI.Xaml.Input.InputSystem.LastMousePosition;
         AppState._screenCompositor.RenderDiagnostics = (diagContext, w, h) =>
         {
-            if (ProGPU.WinUI.DevToolsService.IsDevToolsActive)
+            if (Microsoft.UI.Xaml.Controls.DevToolsService.IsDevToolsActive)
             {
-                ProGPU.WinUI.AdornerLayer.Render(diagContext, w, h);
+                Microsoft.UI.Xaml.Controls.AdornerLayer.Render(diagContext, w, h);
             }
         };
         AppState._offscreenCompositor = new Compositor(AppState._wgpuContext, TextureFormat.Rgba8Unorm);
@@ -75,7 +80,7 @@ public static unsafe class MainWindowController
         {
             Console.WriteLine($"[ProGPU.Samples] Loading System Font: {fontPath}");
             AppState._font = new TtfFont(fontPath);
-            ProGPU.WinUI.PopupService.DefaultFont = AppState._font;
+            Microsoft.UI.Xaml.Controls.PopupService.DefaultFont = AppState._font;
             ushort testIdx = AppState._font.GetGlyphIndex('A');
             var testOutline = AppState._font.GetGlyphOutline(testIdx);
             Console.WriteLine($"[ProGPU.Samples] Test Glyph 'A' Index: {testIdx}, Outline Figures: {testOutline?.Figures.Count ?? -1}");
@@ -129,7 +134,7 @@ public static unsafe class MainWindowController
         if (AppState._wgpuContext == null || AppState._font == null) return;
 
         // 1. Root Grid containing Header + Main Body + Bottom Diagnostics Bar
-        AppState._rootGrid = new ProGPU.WinUI.Grid
+        AppState._rootGrid = new Microsoft.UI.Xaml.Controls.Grid
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
@@ -149,7 +154,7 @@ public static unsafe class MainWindowController
             VerticalAlignment = VerticalAlignment.Stretch
         };
 
-        var headerGrid = new ProGPU.WinUI.Grid();
+        var headerGrid = new Microsoft.UI.Xaml.Controls.Grid();
         headerGrid.ColumnDefinitions.Add(new GridLength(45f, GridUnitType.Absolute));  // Column 0: Hamburger Button
         headerGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Column 1: Title Logo
         headerGrid.ColumnDefinitions.Add(new GridLength(120f, GridUnitType.Absolute));  // Column 2: Theme Selector
@@ -173,14 +178,14 @@ public static unsafe class MainWindowController
             }
         };
         headerGrid.AddChild(hamburgerBtn);
-        ProGPU.WinUI.Grid.SetColumn(hamburgerBtn, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(hamburgerBtn, 0);
 
         var titleText = new RichTextBlock { Font = AppState._font, FontSize = 20f, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
         var logoRun = new Run("Pro") { Foreground = ThemeManager.GetBrush("SystemAccentColor") };
         titleText.Inlines.Add(new Bold(logoRun));
         titleText.Inlines.Add(new Bold(new Run("GPU WinUI Gallery")));
         headerGrid.AddChild(titleText);
-        ProGPU.WinUI.Grid.SetColumn(titleText, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(titleText, 1);
 
         // Sun/Moon dynamic theme selector toggle button
         var themeBtn = new Button
@@ -223,7 +228,7 @@ public static unsafe class MainWindowController
             }
         };
         headerGrid.AddChild(themeBtn);
-        ProGPU.WinUI.Grid.SetColumn(themeBtn, 2);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(themeBtn, 2);
 
         var subtitleText = new RichTextBlock 
         { 
@@ -234,11 +239,11 @@ public static unsafe class MainWindowController
         };
         subtitleText.Inlines.Add(new Run(".NET 10 cross-platform high-performance engine showcase"));
         headerGrid.AddChild(subtitleText);
-        ProGPU.WinUI.Grid.SetColumn(subtitleText, 3);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(subtitleText, 3);
 
         headerBar.Child = headerGrid;
         AppState._rootGrid.AddChild(headerBar);
-        ProGPU.WinUI.Grid.SetRow(headerBar, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(headerBar, 0);
 
         // 3. BODY WORKSPACE (Premium Sidebar Navigation View)
         AppState._navigationView = new NavigationView
@@ -258,6 +263,7 @@ public static unsafe class MainWindowController
         var motionAnimationsItem = new NavigationViewItem("Motion & Animations", "🎬", MotionAnimationsPage.Create());
         var advancedItem = new NavigationViewItem("Advanced Controls", "🛠", AdvancedControlsPage.Create());
         var keyboardParityItem = new NavigationViewItem("Keyboard & Focus", "⌨️", KeyboardParityPage.Create());
+        var themeShowcaseItem = new NavigationViewItem("Theme Showcase", "🎨", ThemeShowcasePage.Create());
         var compositorItem = new NavigationViewItem("Compositor API", "🎨", CompositorShowcasePage.Create());
         var splitViewItem = new NavigationViewItem("SplitView Layout", "🪟", SplitViewShowcasePage.Create());
         var imageRepeatItem = new NavigationViewItem("Image & Buttons", "🖼️", ImageRepeatShowcasePage.Create());
@@ -278,6 +284,7 @@ public static unsafe class MainWindowController
         AppState._navigationView.MenuItems.Add(motionAnimationsItem);
         AppState._navigationView.MenuItems.Add(advancedItem);
         AppState._navigationView.MenuItems.Add(keyboardParityItem);
+        AppState._navigationView.MenuItems.Add(themeShowcaseItem);
         AppState._navigationView.MenuItems.Add(compositorItem);
         AppState._navigationView.MenuItems.Add(splitViewItem);
         AppState._navigationView.MenuItems.Add(imageRepeatItem);
@@ -311,7 +318,7 @@ public static unsafe class MainWindowController
         AppState._navigationView.SelectedItem = basicInputItem;
 
         AppState._rootGrid.AddChild(AppState._navigationView);
-        ProGPU.WinUI.Grid.SetRow(AppState._navigationView, 1);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(AppState._navigationView, 1);
 
         // 4. BOTTOM DIAGNOSTICS STATUS BAR
         var statusBar = new Border
@@ -334,7 +341,7 @@ public static unsafe class MainWindowController
         AppState._statsText.Inlines.Add(new Run("FPS: -- | CPU: -- ms | Cursor: (0, 0) | Focused Element: None"));
         statusBar.Child = AppState._statsText;
         AppState._rootGrid.AddChild(statusBar);
-        ProGPU.WinUI.Grid.SetRow(statusBar, 2);
+        Microsoft.UI.Xaml.Controls.Grid.SetRow(statusBar, 2);
 
         // Track global ThemeManager theme change event
         ThemeManager.ThemeChanged += () =>
@@ -349,7 +356,7 @@ public static unsafe class MainWindowController
         };
 
         // 5. TOP LEVEL CONTAINER GRID (App container)
-        AppState._topLevelGrid = new ProGPU.WinUI.Grid
+        AppState._topLevelGrid = new Microsoft.UI.Xaml.Controls.Grid
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
@@ -358,9 +365,9 @@ public static unsafe class MainWindowController
         AppState._topLevelGrid.ColumnDefinitions.Add(new GridLength(0f, GridUnitType.Absolute)); // Kept collapsed always
 
         AppState._topLevelGrid.AddChild(AppState._rootGrid);
-        ProGPU.WinUI.Grid.SetColumn(AppState._rootGrid, 0);
+        Microsoft.UI.Xaml.Controls.Grid.SetColumn(AppState._rootGrid, 0);
 
-        AppState._devToolsPanel = new ProGPU.WinUI.DevTools
+        AppState._devToolsPanel = new Microsoft.UI.Xaml.Controls.DevTools
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
@@ -374,7 +381,8 @@ public static unsafe class MainWindowController
             }
             else
             {
-                DevToolsWindowController.CloseDevToolsWindow();
+                // Defer the closing/disposal to prevent crash when closed via native window close button
+                AppState._needsCloseDevTools = true;
             }
         };
     }
@@ -430,6 +438,12 @@ public static unsafe class MainWindowController
         if (AppState._screenCompositor == null || AppState._offscreenCompositor == null || AppState._compute == null) return;
 
         OnWindowUpdate(delta);
+
+        if (AppState._needsCloseDevTools)
+        {
+            AppState._needsCloseDevTools = false;
+            DevToolsWindowController.CloseDevToolsWindow();
+        }
 
         if (AppState._devToolsWindow != null && AppState._devToolsWindow.IsInitialized)
         {

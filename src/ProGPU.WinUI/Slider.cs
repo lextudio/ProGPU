@@ -1,11 +1,22 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
+[TemplatePart(Name = "HorizontalThumb", Type = typeof(Thumb))]
+[TemplatePart(Name = "HorizontalTemplate", Type = typeof(Grid))]
+[TemplateVisualState(Name = "Normal", GroupName = "CommonStates")]
+[TemplateVisualState(Name = "PointerOver", GroupName = "CommonStates")]
+[TemplateVisualState(Name = "Pressed", GroupName = "CommonStates")]
+[TemplateVisualState(Name = "Disabled", GroupName = "CommonStates")]
 public class Slider : Control
 {
     private float _minimum = 0f;
@@ -13,16 +24,37 @@ public class Slider : Control
     private float _value = 0f;
     private bool _isDragging;
 
+    private Thumb? _horizontalThumb;
+    private Grid? _horizontalTemplate;
+
     public float Minimum
     {
         get => _minimum;
-        set { _minimum = value; Value = Math.Clamp(Value, _minimum, _maximum); Invalidate(); }
+        set
+        {
+            if (_minimum != value)
+            {
+                _minimum = value;
+                Value = Math.Clamp(Value, _minimum, _maximum);
+                Invalidate();
+                OnPropertyChanged();
+            }
+        }
     }
 
     public float Maximum
     {
         get => _maximum;
-        set { _maximum = value; Value = Math.Clamp(Value, _minimum, _maximum); Invalidate(); }
+        set
+        {
+            if (_maximum != value)
+            {
+                _maximum = value;
+                Value = Math.Clamp(Value, _minimum, _maximum);
+                Invalidate();
+                OnPropertyChanged();
+            }
+        }
     }
 
     public float Value
@@ -35,7 +67,9 @@ public class Slider : Control
             {
                 _value = clamped;
                 Invalidate();
+                UpdateTemplateLayout();
                 ValueChanged?.Invoke(this, EventArgs.Empty);
+                OnPropertyChanged();
             }
         }
     }
@@ -46,10 +80,71 @@ public class Slider : Control
     {
         HeightConstraint = 32f;
         WidthConstraint = 200f;
+        
+        var defaultStyle = ThemeManager.GetDefaultStyle(GetType());
+        if (defaultStyle != null)
+        {
+            Style = defaultStyle;
+        }
+    }
+
+    protected override void OnApplyTemplate()
+    {
+        base.OnApplyTemplate();
+
+        _horizontalThumb = GetTemplateChild("HorizontalThumb") as Thumb;
+        if (_horizontalThumb != null)
+        {
+            _horizontalThumb.DragDelta += OnThumbDragDelta;
+        }
+
+        _horizontalTemplate = GetTemplateChild("HorizontalTemplate") as Grid;
+        UpdateTemplateLayout();
+    }
+
+    private void OnThumbDragDelta(object sender, DragDeltaEventArgs e)
+    {
+        float totalWidth = Size.X;
+        float thumbWidth = _horizontalThumb != null ? _horizontalThumb.Size.X : 8f;
+        if (thumbWidth <= 0f) thumbWidth = 8f;
+        float trackWidth = totalWidth - thumbWidth;
+        if (trackWidth <= 0f) return;
+
+        float deltaPct = e.HorizontalChange / trackWidth;
+        Value = Math.Clamp(Value + deltaPct * (Maximum - Minimum), Minimum, Maximum);
+    }
+
+    private void UpdateTemplateLayout()
+    {
+        if (!HasTemplate || _horizontalTemplate == null) return;
+
+        float totalWidth = Size.X;
+        float thumbWidth = _horizontalThumb != null ? _horizontalThumb.Size.X : 8f;
+        if (thumbWidth <= 0f) thumbWidth = 8f;
+        float trackWidth = totalWidth - thumbWidth;
+        float pct = 0f;
+        if (Maximum > Minimum)
+        {
+            pct = (Value - Minimum) / (Maximum - Minimum);
+        }
+
+        if (_horizontalTemplate.ColumnDefinitions.Count >= 3)
+        {
+            _horizontalTemplate.ColumnDefinitions[0] = new GridLength(pct * trackWidth, GridUnitType.Absolute);
+            _horizontalTemplate.InvalidateMeasure();
+            _horizontalTemplate.InvalidateArrange();
+            _horizontalTemplate.Invalidate();
+        }
     }
 
     public override void OnPointerPressed(PointerRoutedEventArgs e)
     {
+        if (HasTemplate)
+        {
+            base.OnPointerPressed(e);
+            return;
+        }
+
         if (IsEnabled)
         {
             _isDragging = true;
@@ -61,6 +156,12 @@ public class Slider : Control
 
     public override void OnPointerReleased(PointerRoutedEventArgs e)
     {
+        if (HasTemplate)
+        {
+            base.OnPointerReleased(e);
+            return;
+        }
+
         if (_isDragging)
         {
             _isDragging = false;
@@ -71,6 +172,12 @@ public class Slider : Control
 
     public override void OnPointerMoved(PointerRoutedEventArgs e)
     {
+        if (HasTemplate)
+        {
+            base.OnPointerMoved(e);
+            return;
+        }
+
         if (_isDragging && IsEnabled)
         {
             UpdateValueFromPos(e.Position.X);
@@ -92,6 +199,10 @@ public class Slider : Control
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
+        if (HasTemplate)
+        {
+            return base.MeasureOverride(availableSize);
+        }
         float w = WidthConstraint ?? Math.Max(120f, availableSize.X);
         float h = HeightConstraint ?? 32f;
         return new Vector2(w, h);
@@ -99,11 +210,21 @@ public class Slider : Control
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        Size = new Vector2(arrangeRect.Width, arrangeRect.Height);
+        if (HasTemplate)
+        {
+            base.ArrangeOverride(arrangeRect);
+            UpdateTemplateLayout();
+            return;
+        }
     }
 
     public override void OnRender(DrawingContext context)
     {
+        if (HasTemplate)
+        {
+            base.OnRender(context);
+            return;
+        }
         float baseThumbRadius = 8f;
         float trackHeight = 4f;
         float yCenter = Size.Y / 2f;

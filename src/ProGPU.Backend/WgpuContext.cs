@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Core.Native;
@@ -38,11 +39,41 @@ public unsafe class WgpuContext : IDisposable
         }
     }
 
-    public static WgpuContext? Current { get; set; }
+    private static readonly List<WgpuContext> _activeContexts = new();
+
+    public static IReadOnlyList<WgpuContext> ActiveContexts
+    {
+        get
+        {
+            lock (_activeContexts)
+            {
+                return _activeContexts.ToArray();
+            }
+        }
+    }
+
+    private static WgpuContext? _current;
+
+    public static WgpuContext? Current
+    {
+        get => _current;
+        set => _current = value;
+    }
+
+    private IWindow? _window;
+    public IWindow? Window => _window;
 
     public void Initialize(IWindow? window)
     {
+        lock (_activeContexts)
+        {
+            if (!_activeContexts.Contains(this))
+            {
+                _activeContexts.Add(this);
+            }
+        }
         Current = this;
+        _window = window;
         Wgpu = WebGPU.GetApi();
         
         // 1. Create WebGPU Instance
@@ -155,6 +186,12 @@ public unsafe class WgpuContext : IDisposable
         _lastWidth = width;
         _lastHeight = height;
 
+        // Synchronize GLFW window VSync state with WebGPU context VSync state dynamically
+        if (_window != null)
+        {
+            _window.VSync = _vsync;
+        }
+
         // 7a. Query supported formats
         var capabilities = new SurfaceCapabilities();
         Wgpu.SurfaceGetCapabilities(Surface, Adapter, &capabilities);
@@ -182,32 +219,32 @@ public unsafe class WgpuContext : IDisposable
         }
 
         PresentMode presentMode = PresentMode.Fifo;
-        if (!_vsync && capabilities.PresentModeCount > 0 && capabilities.PresentModes != null)
+        if (!_vsync)
         {
-            // Prefer Mailbox first (VSync Off, low-latency, non-tearing)
-            bool foundMode = false;
-            for (uint i = 0; i < capabilities.PresentModeCount; i++)
+            // Prefer Immediate mode directly for truly uncapped framerates (tearing allowed),
+            // which bypasses driver and OS compositor presentation queuing / mailbox locks.
+            bool foundImmediate = false;
+            if (capabilities.PresentModeCount > 0 && capabilities.PresentModes != null)
             {
-                if (capabilities.PresentModes[i] == PresentMode.Mailbox)
-                {
-                    presentMode = PresentMode.Mailbox;
-                    foundMode = true;
-                    break;
-                }
-            }
-            if (!foundMode)
-            {
-                // Fallback to Immediate (VSync Off, tearing)
                 for (uint i = 0; i < capabilities.PresentModeCount; i++)
                 {
                     if (capabilities.PresentModes[i] == PresentMode.Immediate)
                     {
                         presentMode = PresentMode.Immediate;
+                        foundImmediate = true;
                         break;
                     }
                 }
             }
+
+            if (!foundImmediate)
+            {
+                // Force Immediate when VSync is off to guarantee uncapped framerates
+                presentMode = PresentMode.Immediate;
+            }
         }
+
+        Console.WriteLine($"[WebGPU Context] Configuring SwapChain: {width}x{height}, VSync: {_vsync}, Selected Mode: {presentMode}");
 
         Wgpu.SurfaceCapabilitiesFreeMembers(capabilities);
 
@@ -230,6 +267,11 @@ public unsafe class WgpuContext : IDisposable
     {
         if (_isDisposed) return;
         
+        lock (_activeContexts)
+        {
+            _activeContexts.Remove(this);
+        }
+        
         if (Device != null)
         {
             Wgpu.DeviceRelease(Device);
@@ -251,7 +293,6 @@ public unsafe class WgpuContext : IDisposable
             Instance = null;
         }
         
-        Wgpu.Dispose();
         _isDisposed = true;
         
         GC.SuppressFinalize(this);

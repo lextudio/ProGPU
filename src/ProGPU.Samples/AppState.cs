@@ -7,7 +7,11 @@ using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Compute;
-using ProGPU.WinUI;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 
 namespace ProGPU.Samples;
 
@@ -28,9 +32,10 @@ public static class AppState
     public static TtfFont? _fontCourier;
     public static TtfFont? _fontGeorgia;
     public static TtfFont? _fontComic;
-    public static ProGPU.WinUI.Grid? _rootGrid;
-    public static ProGPU.WinUI.Grid? _topLevelGrid;
-    public static ProGPU.WinUI.DevTools? _devToolsPanel;
+    public static Microsoft.UI.Xaml.Controls.Grid? _rootGrid;
+    public static Microsoft.UI.Xaml.Controls.Grid? _topLevelGrid;
+    public static Microsoft.UI.Xaml.Controls.DevTools? _devToolsPanel;
+    public static bool _needsCloseDevTools;
 
     // Active diagnostic metric stats
     public static RichTextBlock? _statsText;

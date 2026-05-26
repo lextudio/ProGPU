@@ -1,3 +1,8 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.IO;
 using System.Numerics;
@@ -6,7 +11,7 @@ using ProGPU.Scene;
 using ProGPU.Backend;
 using Silk.NET.WebGPU;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public enum Stretch
 {

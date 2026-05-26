@@ -73,6 +73,32 @@ public struct Thickness
     {
         return !left.Equals(right);
     }
+
+    public static Thickness Parse(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return default;
+        var parts = s.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1)
+        {
+            float val = float.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            return new Thickness(val);
+        }
+        if (parts.Length == 2)
+        {
+            float h = float.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            float v = float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+            return new Thickness(h, v);
+        }
+        if (parts.Length == 4)
+        {
+            float l = float.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            float t = float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+            float r = float.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture);
+            float b = float.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture);
+            return new Thickness(l, t, r, b);
+        }
+        throw new FormatException($"Invalid Thickness format: '{s}'");
+    }
 }
 
 public class LayoutNode : ContainerVisual, ILayoutNode
@@ -212,17 +238,30 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         if (WidthConstraint.HasValue) width = Math.Min(width, WidthConstraint.Value);
         if (HeightConstraint.HasValue) height = Math.Min(height, HeightConstraint.Value);
 
-        // 3. Delegate to core measure override
+        // 3. Delegate to core measure override or template
         Vector2 childrenAvailableSize = new Vector2(width, height);
-        Vector2 desired = MeasureOverride(childrenAvailableSize);
+        Vector2 desired;
+        bool hasTemplate = false;
+        if (this is ITemplatedControl templated && templated.HasTemplate)
+        {
+            hasTemplate = true;
+            desired = templated.MeasureTemplate(childrenAvailableSize);
+        }
+        else
+        {
+            desired = MeasureOverride(childrenAvailableSize);
+        }
 
-        // 4. Re-apply explicit dimensions and Padding
+        // Add padding BEFORE applying constraints
+        if (!hasTemplate)
+        {
+            desired.X += Padding.Horizontal;
+            desired.Y += Padding.Vertical;
+        }
+
+        // 4. Re-apply explicit dimensions constraints
         if (WidthConstraint.HasValue) desired.X = WidthConstraint.Value;
         if (HeightConstraint.HasValue) desired.Y = HeightConstraint.Value;
-
-        // Add padding
-        desired.X += Padding.Horizontal;
-        desired.Y += Padding.Vertical;
 
         // Add margin back to desired size
         desired.X += marginH;
@@ -286,8 +325,16 @@ public class LayoutNode : ContainerVisual, ILayoutNode
         Offset = offset;
         Size = size;
 
-        Rect arrangeRect = new Rect(Padding.Left, Padding.Top, Math.Max(0f, size.X - Padding.Horizontal), Math.Max(0f, size.Y - Padding.Vertical));
-        ArrangeOverride(arrangeRect);
+        if (this is ITemplatedControl templated && templated.HasTemplate)
+        {
+            Rect arrangeRect = new Rect(0f, 0f, size.X, size.Y);
+            templated.ArrangeTemplate(arrangeRect);
+        }
+        else
+        {
+            Rect arrangeRect = new Rect(Padding.Left, Padding.Top, Math.Max(0f, size.X - Padding.Horizontal), Math.Max(0f, size.Y - Padding.Vertical));
+            ArrangeOverride(arrangeRect);
+        }
         
         _previousFinalRect = finalRect;
         _isArrangeValid = true;

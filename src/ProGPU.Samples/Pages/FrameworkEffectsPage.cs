@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -20,7 +25,7 @@ public static class FrameworkEffectsPage
 {
         public static FrameworkElement Create()
         {
-            var grid = new ProGPU.WinUI.Grid();
+            var grid = new Microsoft.UI.Xaml.Controls.Grid();
             grid.ColumnDefinitions.Add(new GridLength(300, GridUnitType.Absolute)); // Adjustments panel
             grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));      // Effect Showroom
     
@@ -40,7 +45,7 @@ public static class FrameworkEffectsPage
             blurLabel.Inlines.Add(new Bold(new Run($"Glass Blur Radius: {AppState._fxBlurRadius:F1} px")));
             leftStack.AddChild(blurLabel);
     
-            var blurSlider = new ProGPU.WinUI.Slider { Minimum = 0f, Maximum = 20f, Value = AppState._fxBlurRadius, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
+            var blurSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0f, Maximum = 20f, Value = AppState._fxBlurRadius, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
             leftStack.AddChild(blurSlider);
     
             // Slider for Shadow Blur Radius
@@ -48,7 +53,7 @@ public static class FrameworkEffectsPage
             shadowBlurLabel.Inlines.Add(new Bold(new Run($"Shadow Blur: {AppState._fxShadowRadius:F1} px")));
             leftStack.AddChild(shadowBlurLabel);
     
-            var shadowBlurSlider = new ProGPU.WinUI.Slider { Minimum = 0f, Maximum = 30f, Value = AppState._fxShadowRadius, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
+            var shadowBlurSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0f, Maximum = 30f, Value = AppState._fxShadowRadius, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
             leftStack.AddChild(shadowBlurSlider);
     
             // Sliders for Shadow Offset
@@ -56,14 +61,14 @@ public static class FrameworkEffectsPage
             offsetXLabel.Inlines.Add(new Bold(new Run($"Shadow Offset X: {AppState._fxShadowOffset.X:F1} px")));
             leftStack.AddChild(offsetXLabel);
     
-            var offsetXSlider = new ProGPU.WinUI.Slider { Minimum = -30f, Maximum = 30f, Value = AppState._fxShadowOffset.X, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
+            var offsetXSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = -30f, Maximum = 30f, Value = AppState._fxShadowOffset.X, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
             leftStack.AddChild(offsetXSlider);
     
             var offsetYLabel = new RichTextBlock { Font = AppState._font, FontSize = 12f, Margin = new Thickness(0, 5, 0, 2) };
             offsetYLabel.Inlines.Add(new Bold(new Run($"Shadow Offset Y: {AppState._fxShadowOffset.Y:F1} px")));
             leftStack.AddChild(offsetYLabel);
     
-            var offsetYSlider = new ProGPU.WinUI.Slider { Minimum = -30f, Maximum = 30f, Value = AppState._fxShadowOffset.Y, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
+            var offsetYSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = -30f, Maximum = 30f, Value = AppState._fxShadowOffset.Y, Width = 260f, Margin = new Thickness(0, 0, 0, 15) };
             leftStack.AddChild(offsetYSlider);
     
             // Neon Glow Presets
@@ -87,10 +92,10 @@ public static class FrameworkEffectsPage
     
             leftStack.AddChild(colorButtonsStack);
             grid.AddChild(leftStack);
-            ProGPU.WinUI.Grid.SetColumn(leftStack, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(leftStack, 0);
     
             // ================= RIGHT: Effect Showroom =================
-            var showroomGrid = new ProGPU.WinUI.Grid { Margin = new Thickness(12) };
+            var showroomGrid = new Microsoft.UI.Xaml.Controls.Grid { Margin = new Thickness(12) };
             showroomGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             showroomGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
             showroomGrid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
@@ -132,7 +137,7 @@ public static class FrameworkEffectsPage
             shadowCardBtn.Effect = new DropShadowEffect(6f, new Vector2(0f, 3f), new Vector4(0f, 0f, 0f, 0.4f));
     
             showroomGrid.AddChild(shadowCard);
-            ProGPU.WinUI.Grid.SetColumn(shadowCard, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(shadowCard, 0);
     
             // 2. Neon Ambient Glow Card
             var col2Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(10) };
@@ -171,7 +176,7 @@ public static class FrameworkEffectsPage
             neonCardInput.Effect = new DropShadowEffect(8f, Vector2.Zero, new Vector4(0f, 0.8f, 1f, 0.85f));
     
             showroomGrid.AddChild(neonCard);
-            ProGPU.WinUI.Grid.SetColumn(neonCard, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(neonCard, 1);
     
             // 3. Frosted Glass & Backdrop Blur Card
             var col3Stack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(10) };
@@ -207,10 +212,10 @@ public static class FrameworkEffectsPage
             blurCard.Effect = cardBlur;
     
             showroomGrid.AddChild(blurCard);
-            ProGPU.WinUI.Grid.SetColumn(blurCard, 2);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(blurCard, 2);
     
             grid.AddChild(showroomGrid);
-            ProGPU.WinUI.Grid.SetColumn(showroomGrid, 1);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(showroomGrid, 1);
     
             // ================= Interactivity Hookups =================
             blurSlider.ValueChanged += (s, e) =>

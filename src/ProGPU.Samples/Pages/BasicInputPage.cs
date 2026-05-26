@@ -1,3 +1,4 @@
+using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -10,9 +11,13 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Compute;
 using ProGPU.Virtualization;
-using ProGPU.WinUI;
-using Button = ProGPU.WinUI.Button;
-using StackPanel = ProGPU.WinUI.StackPanel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
+using Button = Microsoft.UI.Xaml.Controls.Button;
+using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 
 namespace ProGPU.Samples;
 
@@ -85,7 +90,7 @@ public static class BasicInputPage
             sliderTitle.Inlines.Add(new Bold(new Run($"Accent Glow Intensity: {AppState._sliderValue:F0}%")));
             stack.AddChild(sliderTitle);
     
-            var accentSlider = new ProGPU.WinUI.Slider { Minimum = 0f, Maximum = 100f, Value = AppState._sliderValue, Width = 300f, Margin = new Thickness(0, 0, 0, 15) };
+            var accentSlider = new Microsoft.UI.Xaml.Controls.Slider { Minimum = 0f, Maximum = 100f, Value = AppState._sliderValue, Width = 300f, Margin = new Thickness(0, 0, 0, 15) };
             accentSlider.ValueChanged += (s, e) =>
             {
                 AppState._sliderValue = accentSlider.Value;

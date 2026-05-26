@@ -1,12 +1,18 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
+using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public static class DevToolsService
 {
     private static bool _isDevToolsActive;
-    private static FrameworkElement? _inspectedElement;
-    private static FrameworkElement? _hoveredElement;
+    private static Visual? _inspectedElement;
+    private static Visual? _hoveredElement;
     private static bool _isInspectModeActive;
 
     public static bool IsDevToolsActive
@@ -20,14 +26,16 @@ public static class DevToolsService
                 if (!_isDevToolsActive)
                 {
                     IsInspectModeActive = false;
-                    HoveredElement = null;
+                    _hoveredElement = null;
+                    _inspectedElement = null;
                 }
                 StateChanged?.Invoke(null, EventArgs.Empty);
+                InputSystem.Root?.Invalidate();
             }
         }
     }
 
-    public static FrameworkElement? InspectedElement
+    public static Visual? InspectedElement
     {
         get => _inspectedElement;
         set
@@ -41,7 +49,7 @@ public static class DevToolsService
         }
     }
 
-    public static FrameworkElement? HoveredElement
+    public static Visual? HoveredElement
     {
         get => _hoveredElement;
         set
@@ -64,8 +72,13 @@ public static class DevToolsService
                 _isInspectModeActive = value;
                 if (!_isInspectModeActive)
                 {
-                    HoveredElement = null;
+                    _hoveredElement = null;
                 }
+                InputSystem.Root?.Invalidate();
+            }
+            else if (!value)
+            {
+                _hoveredElement = null;
                 InputSystem.Root?.Invalidate();
             }
         }
