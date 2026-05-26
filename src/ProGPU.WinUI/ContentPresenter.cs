@@ -11,15 +11,14 @@ using ProGPU.Scene;
 
 namespace Microsoft.UI.Xaml.Controls;
 
-[ContentProperty(Name = "Child")]
-public class Border : FrameworkElement
+public class ContentPresenter : FrameworkElement
 {
     public static readonly DependencyProperty BackgroundProperty =
         DependencyProperty.Register(
             "Background",
             typeof(Brush),
-            typeof(Border),
-            new PropertyMetadata(null, (d, e) => ((Border)d).Invalidate()));
+            typeof(ContentPresenter),
+            new PropertyMetadata(null, (d, e) => ((ContentPresenter)d).Invalidate()));
 
     public Brush? Background
     {
@@ -31,8 +30,8 @@ public class Border : FrameworkElement
         DependencyProperty.Register(
             "BorderBrush",
             typeof(Brush),
-            typeof(Border),
-            new PropertyMetadata(null, (d, e) => ((Border)d).Invalidate()));
+            typeof(ContentPresenter),
+            new PropertyMetadata(null, (d, e) => ((ContentPresenter)d).Invalidate()));
 
     public Brush? BorderBrush
     {
@@ -44,11 +43,11 @@ public class Border : FrameworkElement
         DependencyProperty.Register(
             "BorderThickness",
             typeof(Thickness),
-            typeof(Border),
+            typeof(ContentPresenter),
             new PropertyMetadata(default(Thickness), (d, e) => {
-                var b = (Border)d;
-                b.Invalidate();
-                b.InvalidateMeasure();
+                var cp = (ContentPresenter)d;
+                cp.Invalidate();
+                cp.InvalidateMeasure();
             }));
 
     public Thickness BorderThickness
@@ -61,8 +60,8 @@ public class Border : FrameworkElement
         DependencyProperty.Register(
             "CornerRadius",
             typeof(float),
-            typeof(Border),
-            new PropertyMetadata(0f, (d, e) => ((Border)d).Invalidate()));
+            typeof(ContentPresenter),
+            new PropertyMetadata(0f, (d, e) => ((ContentPresenter)d).Invalidate()));
 
     public float CornerRadius
     {
@@ -74,12 +73,12 @@ public class Border : FrameworkElement
         DependencyProperty.Register(
             "Padding",
             typeof(Thickness),
-            typeof(Border),
+            typeof(ContentPresenter),
             new PropertyMetadata(default(Thickness), (d, e) => {
-                var b = (Border)d;
-                b.Padding = (Thickness)(e.NewValue ?? default(Thickness));
-                b.Invalidate();
-                b.InvalidateMeasure();
+                var cp = (ContentPresenter)d;
+                cp.Padding = (Thickness)(e.NewValue ?? default(Thickness));
+                cp.Invalidate();
+                cp.InvalidateMeasure();
             }));
 
     public new Thickness Padding
@@ -92,25 +91,62 @@ public class Border : FrameworkElement
         }
     }
 
-    public static readonly DependencyProperty ChildProperty =
+    public static readonly DependencyProperty ContentProperty =
         DependencyProperty.Register(
-            "Child",
-            typeof(FrameworkElement),
-            typeof(Border),
-            new PropertyMetadata(null, (d, e) => ((Border)d).OnChildChanged(e.OldValue as FrameworkElement, e.NewValue as FrameworkElement)));
+            "Content",
+            typeof(object),
+            typeof(ContentPresenter),
+            new PropertyMetadata(null, OnContentChanged));
 
-    public FrameworkElement? Child
+    public object? Content
     {
-        get => GetValue(ChildProperty) as FrameworkElement;
-        set => SetValue(ChildProperty, value);
+        get => GetValue(ContentProperty);
+        set => SetValue(ContentProperty, value);
     }
 
-    private void OnChildChanged(FrameworkElement? oldValue, FrameworkElement? newValue)
+    private static void OnContentChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (oldValue != null) RemoveChild(oldValue);
-        if (newValue != null) AddChild(newValue);
+        var cp = (ContentPresenter)d;
+        cp.OnContentChanged(e.OldValue, e.NewValue);
+    }
+
+    protected virtual void OnContentChanged(object? oldValue, object? newValue)
+    {
+        if (oldValue is FrameworkElement oldFe)
+        {
+            RemoveChild(oldFe);
+        }
+
+        if (newValue != null)
+        {
+            if (newValue is FrameworkElement newFe)
+            {
+                AddChild(newFe);
+            }
+            else
+            {
+                // Auto-wrap non-FrameworkElement content in a RichTextBlock
+                var tb = new RichTextBlock();
+                tb.Inlines.Add(new Run { Text = newValue.ToString() ?? string.Empty });
+                AddChild(tb);
+            }
+        }
+
         Invalidate();
         InvalidateMeasure();
+    }
+
+    protected FrameworkElement? ContentVisual
+    {
+        get
+        {
+            if (Content is FrameworkElement fe) return fe;
+            foreach (var child in Children)
+            {
+                if (child is FrameworkElement childFe) return childFe;
+            }
+            return null;
+        }
     }
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
@@ -121,37 +157,39 @@ public class Border : FrameworkElement
         float paddingV = Padding.Vertical;
 
         Vector2 inset = new Vector2(borderH + paddingH, borderV + paddingV);
-        Vector2 childAvailable = new Vector2(
+        Vector2 contentAvail = new Vector2(
             Math.Max(0f, availableSize.X - inset.X),
             Math.Max(0f, availableSize.Y - inset.Y)
         );
 
-        Vector2 childDesired = Vector2.Zero;
-        if (Child != null)
+        Vector2 contentDesired = Vector2.Zero;
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
-            Child.Measure(childAvailable);
-            childDesired = Child.DesiredSize;
+            contentVisual.Measure(contentAvail);
+            contentDesired = contentVisual.DesiredSize;
         }
 
-        return childDesired + new Vector2(borderH, borderV);
+        return contentDesired + new Vector2(borderH, borderV);
     }
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        if (Child != null)
+        var contentVisual = ContentVisual;
+        if (contentVisual != null)
         {
             float leftInset = BorderThickness.Left;
             float topInset = BorderThickness.Top;
             float rightInset = BorderThickness.Right;
             float bottomInset = BorderThickness.Bottom;
 
-            Rect childRect = new Rect(
+            Rect contentRect = new Rect(
                 arrangeRect.X + leftInset,
                 arrangeRect.Y + topInset,
                 Math.Max(0f, arrangeRect.Width - (leftInset + rightInset)),
                 Math.Max(0f, arrangeRect.Height - (topInset + bottomInset))
             );
-            Child.Arrange(childRect);
+            contentVisual.Arrange(contentRect);
         }
     }
 

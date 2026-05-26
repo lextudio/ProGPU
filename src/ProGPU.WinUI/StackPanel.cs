@@ -1,18 +1,32 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Scene;
 
-namespace ProGPU.WinUI;
+namespace Microsoft.UI.Xaml.Controls;
 
 public class StackPanel : Panel
 {
-    private Orientation _orientation = Orientation.Vertical;
+    public static readonly DependencyProperty OrientationProperty =
+        DependencyProperty.Register(
+            "Orientation",
+            typeof(Orientation),
+            typeof(StackPanel),
+            new PropertyMetadata(Orientation.Vertical, (d, e) => {
+                var sp = (StackPanel)d;
+                sp.Invalidate();
+                sp.InvalidateMeasure();
+            }));
 
     public Orientation Orientation
     {
-        get => _orientation;
-        set { if (_orientation != value) { _orientation = value; Invalidate(); } }
+        get => (Orientation)(GetValue(OrientationProperty) ?? Orientation.Vertical);
+        set => SetValue(OrientationProperty, value);
     }
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
