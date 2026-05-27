@@ -322,16 +322,7 @@ public static class DesignerSerializer
             if (contentProp != null)
             {
                 var contentVal = contentProp.GetValue(element);
-                if (contentVal is FrameworkElement contentFe)
-                {
-                    var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel);
-                    sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
-                }
-                else if (contentVal is string s && !string.IsNullOrEmpty(s))
-                {
-                    // Already set in constructor
-                }
-                else if (contentVal is RichTextBlock rtb)
+                if (contentVal is RichTextBlock rtb)
                 {
                     var rtbName = $"{varName}_content_text";
                     sb.AppendLine($"{indent}var {rtbName} = new RichTextBlock();");
@@ -343,6 +334,15 @@ public static class DesignerSerializer
                         }
                     }
                     sb.AppendLine($"{indent}{varName}.Content = {rtbName};");
+                }
+                else if (contentVal is FrameworkElement contentFe)
+                {
+                    var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel);
+                    sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
+                }
+                else if (contentVal is string s && !string.IsNullOrEmpty(s))
+                {
+                    // Already set in constructor
                 }
             }
         }

@@ -44,7 +44,6 @@ public class DesignerCanvas : Panel
     }
     private SelectionAdorner? _selectionAdorner;
 
-    public bool AllowDrop { get; set; } = true;
 
     public event EventHandler<DragEventArgs>? DragOver;
     public new event EventHandler<DragEventArgs>? Drop;
@@ -88,6 +87,7 @@ public class DesignerCanvas : Panel
         // Bind background dynamically using ThemeResourceBrush to comply with guidelines
         Background = new ThemeResourceBrush("PageBackground");
 
+        AllowDrop = true;
         ApplyTransforms();
     }
 

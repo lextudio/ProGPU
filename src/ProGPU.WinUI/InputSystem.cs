@@ -27,6 +27,9 @@ public class WindowInputState
     public System.Threading.CancellationTokenSource? HoverCancellation;
     public ToolTip? ActiveToolTip;
     public FrameworkElement? HoveredElementForTimer;
+    public bool IsLeftButtonPressed;
+    public bool IsMiddleButtonPressed;
+    public bool IsRightButtonPressed;
 }
 
 public static class InputSystem
@@ -330,7 +333,10 @@ public static class InputSystem
             _capturedElement.OnPointerMoved(new PointerRoutedEventArgs
             {
                 Position = GetLocalPosition(_capturedElement, screenPos),
-                ScreenPosition = screenPos
+                ScreenPosition = screenPos,
+                IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                IsRightButtonPressed = Current.IsRightButtonPressed
             });
             return;
         }
@@ -361,7 +367,10 @@ public static class InputSystem
                 oldPath[i].OnPointerExited(new PointerRoutedEventArgs
                 {
                     Position = GetLocalPosition(oldPath[i], screenPos),
-                    ScreenPosition = screenPos
+                    ScreenPosition = screenPos,
+                    IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                    IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                    IsRightButtonPressed = Current.IsRightButtonPressed
                 });
             }
 
@@ -371,7 +380,10 @@ public static class InputSystem
                 newPath[i].OnPointerEntered(new PointerRoutedEventArgs
                 {
                     Position = GetLocalPosition(newPath[i], screenPos),
-                    ScreenPosition = screenPos
+                    ScreenPosition = screenPos,
+                    IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                    IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                    IsRightButtonPressed = Current.IsRightButtonPressed
                 });
             }
 
@@ -384,7 +396,10 @@ public static class InputSystem
             _hoveredElement.OnPointerMoved(new PointerRoutedEventArgs
             {
                 Position = GetLocalPosition(_hoveredElement, screenPos),
-                ScreenPosition = screenPos
+                ScreenPosition = screenPos,
+                IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                IsRightButtonPressed = Current.IsRightButtonPressed
             });
         }
     }
@@ -397,6 +412,10 @@ public static class InputSystem
         DismissToolTip();
 
         if (button != MouseButton.Left && button != MouseButton.Middle && button != MouseButton.Right) return;
+
+        if (button == MouseButton.Left) Current.IsLeftButtonPressed = true;
+        if (button == MouseButton.Middle) Current.IsMiddleButtonPressed = true;
+        if (button == MouseButton.Right) Current.IsRightButtonPressed = true;
 
         var hit = HitTest(_lastMousePos);
 
@@ -483,9 +502,9 @@ public static class InputSystem
             {
                 Position = GetLocalPosition(hit, _lastMousePos),
                 ScreenPosition = _lastMousePos,
-                IsLeftButtonPressed = (button == MouseButton.Left),
-                IsMiddleButtonPressed = (button == MouseButton.Middle),
-                IsRightButtonPressed = (button == MouseButton.Right)
+                IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                IsRightButtonPressed = Current.IsRightButtonPressed
             });
         }
         else
@@ -499,6 +518,10 @@ public static class InputSystem
     {
         if (button != MouseButton.Left && button != MouseButton.Middle && button != MouseButton.Right) return;
 
+        if (button == MouseButton.Left) Current.IsLeftButtonPressed = false;
+        if (button == MouseButton.Middle) Current.IsMiddleButtonPressed = false;
+        if (button == MouseButton.Right) Current.IsRightButtonPressed = false;
+
         if (DragDropManager.IsDragging && button == MouseButton.Left)
         {
             DragDropManager.CompleteDrop(_lastMousePos);
@@ -511,9 +534,9 @@ public static class InputSystem
             {
                 Position = GetLocalPosition(_capturedElement, _lastMousePos),
                 ScreenPosition = _lastMousePos,
-                IsLeftButtonPressed = (button == MouseButton.Left),
-                IsMiddleButtonPressed = (button == MouseButton.Middle),
-                IsRightButtonPressed = (button == MouseButton.Right)
+                IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                IsRightButtonPressed = Current.IsRightButtonPressed
             });
             ReleasePointerCapture();
             return;
@@ -526,9 +549,9 @@ public static class InputSystem
             {
                 Position = GetLocalPosition(hit, _lastMousePos),
                 ScreenPosition = _lastMousePos,
-                IsLeftButtonPressed = (button == MouseButton.Left),
-                IsMiddleButtonPressed = (button == MouseButton.Middle),
-                IsRightButtonPressed = (button == MouseButton.Right)
+                IsLeftButtonPressed = Current.IsLeftButtonPressed,
+                IsMiddleButtonPressed = Current.IsMiddleButtonPressed,
+                IsRightButtonPressed = Current.IsRightButtonPressed
             });
         }
     }
