@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using netDxf.Entities;
+using ProGPU.Vector;
 using Vector2 = System.Numerics.Vector2;
 
 namespace ProGPU.Dxf;
@@ -42,10 +43,15 @@ public class DxfLeaderRenderer : IDxfEntityRenderer
             Vector2 screenLeft = context.Transform(worldLeft, transform);
             Vector2 screenRight = context.Transform(worldRight, transform);
 
-            // Draw arrowhead outline
-            context.DrawingContext.DrawLine(pen, screenTip, screenLeft);
-            context.DrawingContext.DrawLine(pen, screenTip, screenRight);
-            context.DrawingContext.DrawLine(pen, screenLeft, screenRight);
+            // Construct a closed PathGeometry triangle using the tip and back corners
+            var path = new PathGeometry();
+            var figure = new PathFigure(screenTip, isClosed: true);
+            figure.Segments.Add(new LineSegment(screenLeft));
+            figure.Segments.Add(new LineSegment(screenRight));
+            path.Figures.Add(figure);
+
+            // Draw filled via DrawPath
+            context.DrawingContext.DrawPath(pen.Brush, pen, path);
 
             // Start the actual leader line from the back of the arrowhead
             startPoint = v0 + dir * arrowLength;

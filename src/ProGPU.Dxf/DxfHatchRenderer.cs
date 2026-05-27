@@ -15,6 +15,56 @@ public class DxfHatchRenderer : IDxfEntityRenderer
 
         var combined = DxfDocumentRenderer.GetOcsMatrix(hatch.Normal) * transform;
 
+        // 1. Retrieve or initialize the cache entry for this static Hatch
+        if (!context.HatchCache.TryGetValue(hatch, out var entry))
+        {
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+
+            bool hasPoints = false;
+            foreach (var bp in hatch.BoundaryPaths)
+            {
+                var localPts = GetLocalBoundaryPoints(bp);
+                foreach (var pt in localPts)
+                {
+                    var v3 = new Vector3(pt.X, pt.Y, 0f);
+                    var v3Transformed = Vector3.Transform(v3, combined);
+                    minX = Math.Min(minX, v3Transformed.X);
+                    minY = Math.Min(minY, v3Transformed.Y);
+                    maxX = Math.Max(maxX, v3Transformed.X);
+                    maxY = Math.Max(maxY, v3Transformed.Y);
+                    hasPoints = true;
+                }
+            }
+
+            if (!hasPoints)
+            {
+                minX = minY = maxX = maxY = 0f;
+            }
+
+            entry = new HatchCacheEntry
+            {
+                MinModelBounds = new Vector2(minX, minY),
+                MaxModelBounds = new Vector2(maxX, maxY)
+            };
+            context.HatchCache[hatch] = entry;
+        }
+
+        // 2. Perform Frustum Culling
+        var minScreen = context.TransformToScreen(entry.MinModelBounds);
+        var maxScreen = context.TransformToScreen(entry.MaxModelBounds);
+        float sMinX = Math.Min(minScreen.X, maxScreen.X);
+        float sMaxX = Math.Max(minScreen.X, maxScreen.X);
+        float sMinY = Math.Min(minScreen.Y, maxScreen.Y);
+        float sMaxY = Math.Max(minScreen.Y, maxScreen.Y);
+
+        if (context.IsOffScreen(new Vector2(sMinX, sMinY), new Vector2(sMaxX, sMaxY)))
+        {
+            return; // Exit early, completely culled!
+        }
+
         bool isSolid = hatch.Pattern == null || 
                        string.Equals(hatch.Pattern.Name, "SOLID", StringComparison.OrdinalIgnoreCase);
 
@@ -22,27 +72,8 @@ public class DxfHatchRenderer : IDxfEntityRenderer
         var brushColor = (brush is SolidColorBrush solidBrush) ? solidBrush.Color : new Vector4(1f, 1f, 1f, 1f);
         var pen = context.GetCachedPen(hatch, 1f);
 
-        // Render solid fill
-        if (isSolid)
-        {
-            foreach (var bp in hatch.BoundaryPaths)
-            {
-                var pts = GetBoundaryPoints(bp, context, combined);
-                if (pts.Count >= 3)
-                {
-                    var p0 = pts[0];
-                    for (int i = 1; i < pts.Count - 1; i++)
-                    {
-                        context.DrawingContext.FillTriangle(brush, p0, pts[i], pts[i + 1]);
-                    }
-                }
-            }
-            return;
-        }
-
-        // Render pattern fill
         bool useGpuShader = false;
-        if (hatch.Pattern.LineDefinitions.Count == 1)
+        if (!isSolid && hatch.Pattern != null && hatch.Pattern.LineDefinitions.Count == 1)
         {
             var lineFam = hatch.Pattern.LineDefinitions[0];
             if (lineFam.DashPattern == null || lineFam.DashPattern.Count == 0)
@@ -51,88 +82,96 @@ public class DxfHatchRenderer : IDxfEntityRenderer
             }
         }
 
-        if (useGpuShader)
+        // 3. Render Solid / Shader-based GPU Fill (with stable screen-space PathGeometry cache)
+        if (isSolid || useGpuShader)
         {
-            // Upgrade to GPU procedural hatch brush
-            var lineFam = hatch.Pattern.LineDefinitions[0];
-            float angleRad = (float)(lineFam.Angle * Math.PI / 180.0);
-            
-            // In DXF, Delta.Y is the perpendicular distance between lines if Delta.X is 0
-            float spacing = (float)Math.Sqrt(lineFam.Delta.X * lineFam.Delta.X + lineFam.Delta.Y * lineFam.Delta.Y);
-            if (spacing < 1e-4f) spacing = 5.0f; // Default spacing
+            bool isZoomPanUnchanged = Math.Abs(entry.CachedZoom - context.Zoom) < 1e-5f &&
+                                       Vector2.Distance(entry.CachedPan, context.Pan) < 1e-4f;
 
-            float lineThickness = 1.0f; // Default pixel line thickness
-            var hatchBrush = new HatchPatternBrush(angleRad, spacing, lineThickness, brushColor)
+            PathGeometry pathGeometry;
+            if (isZoomPanUnchanged && entry.CachedPathGeometry != null)
             {
-                Opacity = brush.Opacity
-            };
-
-            foreach (var bp in hatch.BoundaryPaths)
+                pathGeometry = entry.CachedPathGeometry;
+            }
+            else
             {
-                var pts = GetBoundaryPoints(bp, context, combined);
-                if (pts.Count >= 3)
+                // Regenerate screen-space path geometry
+                pathGeometry = new PathGeometry();
+                foreach (var bp in hatch.BoundaryPaths)
                 {
-                    var p0 = pts[0];
-                    for (int i = 1; i < pts.Count - 1; i++)
+                    var pts = GetBoundaryPoints(bp, context, combined);
+                    if (pts.Count >= 3)
                     {
-                        context.DrawingContext.FillTriangle(hatchBrush, p0, pts[i], pts[i + 1]);
+                        var fig = new PathFigure(pts[0], isClosed: true);
+                        for (int i = 1; i < pts.Count; i++)
+                        {
+                            fig.Segments.Add(new LineSegment(pts[i]));
+                        }
+                        pathGeometry.Figures.Add(fig);
                     }
+                }
+
+                entry.CachedPathGeometry = pathGeometry;
+                entry.CachedZoom = context.Zoom;
+                entry.CachedPan = context.Pan;
+            }
+
+            if (pathGeometry.Figures.Count > 0)
+            {
+                // Count segments across all figures
+                int segmentCount = 0;
+                foreach (var fig in pathGeometry.Figures)
+                {
+                    segmentCount += fig.Segments.Count;
+                    if (fig.IsClosed)
+                    {
+                        segmentCount++;
+                    }
+                }
+
+                Brush activeBrush;
+                if (isSolid)
+                {
+                    activeBrush = brush;
+                }
+                else
+                {
+                    var lineFam = hatch.Pattern!.LineDefinitions[0];
+                    float angleRad = (float)(lineFam.Angle * Math.PI / 180.0);
+                    float spacing = (float)Math.Sqrt(lineFam.Delta.X * lineFam.Delta.X + lineFam.Delta.Y * lineFam.Delta.Y);
+                    if (spacing < 1e-4f) spacing = 5.0f;
+                    float lineThickness = 1.0f;
+                    activeBrush = new HatchPatternBrush(angleRad, spacing, lineThickness, brushColor)
+                    {
+                        Opacity = brush.Opacity
+                    };
+                }
+
+                if (segmentCount <= 120)
+                {
+                    context.DrawingContext.DrawHatch(activeBrush, pathGeometry);
+                }
+                else
+                {
+                    context.DrawingContext.DrawPath(activeBrush, null, pathGeometry);
                 }
             }
+
+            RenderBoundaryOutlines(hatch, context, transform);
+            return;
         }
-        else
+
+        // 4. Render Pattern Fallback with OCS-space segment pre-calculation
+        if (entry.ModelCpuLines == null)
         {
-            // CPU Line Pattern Generator Fallback
+            var cpuLines = new List<(Vector2 Start, Vector2 End)>();
+
             foreach (var bp in hatch.BoundaryPaths)
             {
-                var pts = GetBoundaryPoints(bp, context, combined);
-                if (pts.Count < 3) continue;
-
-                // Collect local model-space polygon vertices
-                var localPts = new List<Vector2>();
-                if (bp.Entities != null)
-                {
-                    foreach (var ent in bp.Entities)
-                    {
-                        if (ent is Line line)
-                        {
-                            localPts.Add(new Vector2((float)line.StartPoint.X, (float)line.StartPoint.Y));
-                        }
-                        else if (ent is Arc arc)
-                        {
-                            var center = new Vector2((float)arc.Center.X, (float)arc.Center.Y);
-                            float radius = (float)arc.Radius;
-                            float startAng = (float)(arc.StartAngle * Math.PI / 180.0);
-                            float endAng = (float)(arc.EndAngle * Math.PI / 180.0);
-                            if (endAng < startAng) endAng += 2f * MathF.PI;
-
-                            int steps = 16;
-                            for (int i = 0; i <= steps; i++)
-                            {
-                                float angle = startAng + (endAng - startAng) * (i / (float)steps);
-                                localPts.Add(center + new Vector2(MathF.Cos(angle) * radius, MathF.Sin(angle) * radius));
-                            }
-                        }
-                        else if (ent is LwPolyline lw)
-                        {
-                            foreach (var v in lw.Vertexes)
-                            {
-                                localPts.Add(new Vector2((float)v.Position.X, (float)v.Position.Y));
-                            }
-                        }
-                        else if (ent is Polyline poly)
-                        {
-                            foreach (var v in poly.Vertexes)
-                            {
-                                localPts.Add(new Vector2((float)v.Position.X, (float)v.Position.Y));
-                            }
-                        }
-                    }
-                }
-
-                // If localPts is empty, fall back to transformed points (mapped back)
+                var localPts = GetLocalBoundaryPoints(bp);
                 if (localPts.Count < 3)
                 {
+                    var pts = GetBoundaryPoints(bp, context, combined);
                     Matrix4x4.Invert(combined, out var inv);
                     foreach (var p in pts)
                     {
@@ -155,19 +194,17 @@ public class DxfHatchRenderer : IDxfEntityRenderer
 
                 if (localPts.Count < 3) continue;
 
-                foreach (var lineFam in hatch.Pattern.LineDefinitions)
+                foreach (var lineFam in hatch.Pattern!.LineDefinitions)
                 {
                     double angleRad = lineFam.Angle * Math.PI / 180.0;
                     var d = new Vector2((float)Math.Cos(angleRad), (float)Math.Sin(angleRad));
                     var n = new Vector2(-d.Y, d.X); // Perpendicular
 
-                    // Project all polygon vertices onto the normal to find k range
                     var basePt = new Vector2((float)lineFam.Origin.X, (float)lineFam.Origin.Y);
                     var offset = new Vector2((float)lineFam.Delta.X, (float)lineFam.Delta.Y);
 
-                    // Compute denominator for projection
                     float denomProj = Vector2.Dot(offset, n);
-                    if (Math.Abs(denomProj) < 1e-5f) denomProj = 5.0f; // Default spacing fallback
+                    if (Math.Abs(denomProj) < 1e-5f) denomProj = 5.0f;
 
                     float minK = float.MaxValue;
                     float maxK = float.MinValue;
@@ -187,7 +224,6 @@ public class DxfHatchRenderer : IDxfEntityRenderer
                         var pBase = basePt + k * offset;
                         var intersections = new List<float>();
 
-                        // Intersect line P(t) = pBase + t * d with all polygon segments
                         for (int i = 0; i < localPts.Count; i++)
                         {
                             var A = localPts[i];
@@ -195,7 +231,7 @@ public class DxfHatchRenderer : IDxfEntityRenderer
                             var v = B - A;
 
                             float det = d.X * (-v.Y) - d.Y * (-v.X);
-                            if (Math.Abs(det) < 1e-6f) continue; // Parallel
+                            if (Math.Abs(det) < 1e-6f) continue;
 
                             float t = ((A.X - pBase.X) * (-v.Y) - (A.Y - pBase.Y) * (-v.X)) / det;
                             float u = (d.X * (A.Y - pBase.Y) - d.Y * (A.X - pBase.X)) / det;
@@ -210,7 +246,6 @@ public class DxfHatchRenderer : IDxfEntityRenderer
 
                         intersections.Sort();
 
-                        // Pairwise intersections represent inside segments
                         for (int i = 0; i < intersections.Count - 1; i += 2)
                         {
                             float t0 = intersections[i];
@@ -218,23 +253,81 @@ public class DxfHatchRenderer : IDxfEntityRenderer
 
                             if (lineFam.DashPattern == null || lineFam.DashPattern.Count == 0)
                             {
-                                // Draw solid line family segment
-                                var startPt = context.Transform(pBase + t0 * d, combined);
-                                var endPt = context.Transform(pBase + t1 * d, combined);
-                                context.DrawingContext.DrawLine(pen, startPt, endPt);
+                                cpuLines.Add((pBase + t0 * d, pBase + t1 * d));
                             }
                             else
                             {
-                                // Draw dashed line family segment
-                                DrawDashedSegment(pBase, d, t0, t1, lineFam.DashPattern, pen, context, combined);
+                                CollectDashedSegments(pBase, d, t0, t1, lineFam.DashPattern, cpuLines);
                             }
                         }
                     }
                 }
             }
+
+            entry.ModelCpuLines = cpuLines;
         }
 
-        // Draw boundaries outline as thin lines
+        // Draw cached CPU lines transformed to screen space
+        foreach (var lineSeg in entry.ModelCpuLines)
+        {
+            var startPt = context.Transform(lineSeg.Start, combined);
+            var endPt = context.Transform(lineSeg.End, combined);
+            context.DrawingContext.DrawLine(pen, startPt, endPt);
+        }
+
+        RenderBoundaryOutlines(hatch, context, transform);
+    }
+
+    private void CollectDashedSegments(Vector2 pBase, Vector2 d, float t0, float t1, IList<double> dashes, List<(Vector2 Start, Vector2 End)> cpuLines)
+    {
+        float totalLength = 0f;
+        foreach (var dash in dashes)
+        {
+            totalLength += (float)Math.Abs(dash);
+        }
+        if (totalLength < 1e-4f) return;
+
+        float segmentStart = t0;
+        float segmentEnd = t1;
+        float currentT = segmentStart;
+        
+        while (currentT < segmentEnd)
+        {
+            float relativeT = currentT >= 0f ? (currentT % totalLength) : (totalLength + (currentT % totalLength));
+            if (relativeT >= totalLength) relativeT -= totalLength;
+
+            float accum = 0f;
+            int dashIdx = 0;
+            float currentDashLen = 0f;
+            bool isPenDown = true;
+
+            for (int i = 0; i < dashes.Count; i++)
+            {
+                float len = (float)Math.Abs(dashes[i]);
+                if (relativeT >= accum && relativeT < accum + len)
+                {
+                    dashIdx = i;
+                    currentDashLen = len;
+                    isPenDown = dashes[i] >= 0.0;
+                    break;
+                }
+                accum += len;
+            }
+
+            float remainingInDash = (accum + currentDashLen) - relativeT;
+            float step = Math.Min(remainingInDash, segmentEnd - currentT);
+
+            if (isPenDown)
+            {
+                cpuLines.Add((pBase + currentT * d, pBase + (currentT + step) * d));
+            }
+
+            currentT += step;
+        }
+    }
+
+    private void RenderBoundaryOutlines(Hatch hatch, DxfRenderContext context, Matrix4x4 transform)
+    {
         foreach (var bp in hatch.BoundaryPaths)
         {
             if (bp.Entities == null) continue;
@@ -249,58 +342,56 @@ public class DxfHatchRenderer : IDxfEntityRenderer
         }
     }
 
-    private void DrawDashedSegment(Vector2 pBase, Vector2 d, float t0, float t1, IList<double> dashes, Pen pen, DxfRenderContext context, Matrix4x4 combined)
+    private List<Vector2> GetLocalBoundaryPoints(HatchBoundaryPath bp)
     {
-        float totalLength = 0f;
-        foreach (var dash in dashes)
+        var points = new List<Vector2>();
+        if (bp.Entities == null) return points;
+
+        foreach (var ent in bp.Entities)
         {
-            totalLength += (float)Math.Abs(dash);
-        }
-        if (totalLength < 1e-4f) return;
-
-        float segmentStart = t0;
-        float segmentEnd = t1;
-
-        // Pattern cycle alignment: find how many cycles before segmentStart
-        float currentT = segmentStart;
-        
-        while (currentT < segmentEnd)
-        {
-            // Determine relative position inside pattern cycle
-            float relativeT = currentT >= 0f ? (currentT % totalLength) : (totalLength + (currentT % totalLength));
-            if (relativeT >= totalLength) relativeT -= totalLength;
-
-            // Find which dash segment we are in
-            float accum = 0f;
-            int dashIdx = 0;
-            float currentDashLen = 0f;
-            bool isPenDown = true;
-
-            for (int i = 0; i < dashes.Count; i++)
+            if (ent is Line line)
             {
-                float len = (float)Math.Abs(dashes[i]);
-                if (relativeT >= accum && relativeT < accum + len)
+                points.Add(new Vector2((float)line.StartPoint.X, (float)line.StartPoint.Y));
+            }
+            else if (ent is Arc arc)
+            {
+                var center = new Vector2((float)arc.Center.X, (float)arc.Center.Y);
+                float radius = (float)arc.Radius;
+                float startAng = (float)(arc.StartAngle * Math.PI / 180.0);
+                float endAng = (float)(arc.EndAngle * Math.PI / 180.0);
+                if (endAng < startAng) endAng += 2f * MathF.PI;
+
+                int steps = 16;
+                for (int i = 0; i <= steps; i++)
                 {
-                    dashIdx = i;
-                    currentDashLen = len;
-                    isPenDown = dashes[i] >= 0.0; // Positive is dash (pen down), negative is space (pen up)
-                    break;
+                    float angle = startAng + (endAng - startAng) * (i / (float)steps);
+                    points.Add(center + new Vector2(MathF.Cos(angle) * radius, MathF.Sin(angle) * radius));
                 }
-                accum += len;
             }
-
-            float remainingInDash = (accum + currentDashLen) - relativeT;
-            float step = Math.Min(remainingInDash, segmentEnd - currentT);
-
-            if (isPenDown)
+            else if (ent is LwPolyline lw)
             {
-                var startPt = context.Transform(pBase + currentT * d, combined);
-                var endPt = context.Transform(pBase + (currentT + step) * d, combined);
-                context.DrawingContext.DrawLine(pen, startPt, endPt);
+                foreach (var vertex in lw.Vertexes)
+                {
+                    points.Add(new Vector2((float)vertex.Position.X, (float)vertex.Position.Y));
+                }
             }
-
-            currentT += step;
+            else if (ent is Polyline poly)
+            {
+                foreach (var vertex in poly.Vertexes)
+                {
+                    points.Add(new Vector2((float)vertex.Position.X, (float)vertex.Position.Y));
+                }
+            }
         }
+
+        for (int i = points.Count - 1; i > 0; i--)
+        {
+            if (Vector2.Distance(points[i], points[i - 1]) < 1e-3f)
+            {
+                points.RemoveAt(i);
+            }
+        }
+        return points;
     }
 
     private List<Vector2> GetBoundaryPoints(HatchBoundaryPath bp, DxfRenderContext context, Matrix4x4 combined)
@@ -349,7 +440,6 @@ public class DxfHatchRenderer : IDxfEntityRenderer
             }
         }
 
-        // Deduplicate adjacent vertices
         for (int i = points.Count - 1; i > 0; i--)
         {
             if (Vector2.Distance(points[i], points[i - 1]) < 1e-3f)

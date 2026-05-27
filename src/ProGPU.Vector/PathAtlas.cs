@@ -117,6 +117,7 @@ public unsafe class PathAtlas : IDisposable
     private bool _isDisposed;
 
     public GpuTexture AtlasTexture => _atlasTexture;
+    public int CachedPathCount => _paths.Count;
 
     public PathAtlas(WgpuContext context, uint atlasSize = 2048)
     {
