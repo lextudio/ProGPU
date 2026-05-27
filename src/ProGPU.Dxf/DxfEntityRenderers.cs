@@ -461,10 +461,21 @@ public class DxfTextRenderer : IDxfEntityRenderer
         string valStr = attr.Value?.ToString() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(valStr)) return;
 
+        float rot = (float)(attr.Rotation * Math.PI / 180.0);
         var origin = new Vector2((float)attr.Position.X, (float)attr.Position.Y);
         var screenPos = context.Transform(origin, transform);
 
-        float screenFontSize = (float)attr.Height * context.Zoom;
+        // Project coordinate baseline to find exact screen scale and rotation angle
+        var originPlusBaseline = origin + new Vector2(MathF.Cos(rot), MathF.Sin(rot));
+        var screenBaselinePt = context.Transform(originPlusBaseline, transform);
+        var baselineVec = screenBaselinePt - screenPos;
+        float screenScale = baselineVec.Length();
+        if (screenScale < 1e-4f) return;
+
+        var u = baselineVec / screenScale;
+        var v = new Vector2(-u.Y, u.X);
+
+        float screenFontSize = (float)attr.Height * screenScale;
         if (screenFontSize < 4f) return;
 
         float horizontalShiftMultiplier = 0f;
@@ -516,8 +527,8 @@ public class DxfTextRenderer : IDxfEntityRenderer
                 break;
         }
 
-        // Measure text width using 0.55f as font size ratio
-        float screenWidth = valStr.Length * screenFontSize * 0.55f;
+        // Measure text width using exact glyph metrics
+        float screenWidth = MeasureLineWidthStatic(valStr, context.Font, screenFontSize);
         float shiftX = -screenWidth * horizontalShiftMultiplier;
         float shiftY = screenFontSize * verticalShiftMultiplier;
 
@@ -547,8 +558,8 @@ public class DxfTextRenderer : IDxfEntityRenderer
         }
         var brush = new SolidColorBrush(color);
 
-        var drawPos = new Vector2(screenPos.X + shiftX, screenPos.Y + shiftY);
-        float rotationRad = (float)(attr.Rotation * Math.PI / 180.0);
+        var drawPos = screenPos + u * shiftX + v * shiftY;
+        float rotationRad = MathF.Atan2(baselineVec.Y, baselineVec.X);
         context.DrawingContext.DrawText(valStr, context.Font, screenFontSize, brush, drawPos, rotation: rotationRad);
     }
 
@@ -560,10 +571,21 @@ public class DxfTextRenderer : IDxfEntityRenderer
         {
             if (string.IsNullOrWhiteSpace(text.Value)) return;
 
+            float rot = (float)(text.Rotation * Math.PI / 180.0);
             var origin = new Vector2((float)text.Position.X, (float)text.Position.Y);
             var screenPos = context.Transform(origin, transform);
 
-            float screenFontSize = (float)text.Height * context.Zoom;
+            // Project coordinate baseline to find exact screen scale and rotation angle
+            var originPlusBaseline = origin + new Vector2(MathF.Cos(rot), MathF.Sin(rot));
+            var screenBaselinePt = context.Transform(originPlusBaseline, transform);
+            var baselineVec = screenBaselinePt - screenPos;
+            float screenScale = baselineVec.Length();
+            if (screenScale < 1e-4f) return;
+
+            var u = baselineVec / screenScale;
+            var v = new Vector2(-u.Y, u.X);
+
+            float screenFontSize = (float)text.Height * screenScale;
             if (screenFontSize < 4f) return;
 
             float horizontalShiftMultiplier = 0f;
@@ -615,9 +637,8 @@ public class DxfTextRenderer : IDxfEntityRenderer
                     break;
             }
 
-            float screenWidth = MeasureLineWidth(text.Value, context.Font, screenFontSize);
+            float screenWidth = MeasureLineWidthStatic(text.Value, context.Font, screenFontSize);
             float shiftX = -screenWidth * horizontalShiftMultiplier;
-            // Screen Y goes downwards, so to shift baseline downwards we add shiftY (positive value)
             float shiftY = screenFontSize * verticalShiftMultiplier;
 
             // Viewport culling (estimate rotated text bounds with generous padding)
@@ -626,8 +647,8 @@ public class DxfTextRenderer : IDxfEntityRenderer
             var maxPt = new Vector2(screenPos.X + maxDim, screenPos.Y + maxDim);
             if (context.IsOffScreen(minPt, maxPt)) return;
 
-            var drawPos = new Vector2(screenPos.X + shiftX, screenPos.Y + shiftY);
-            float rotationRad = (float)(text.Rotation * Math.PI / 180.0);
+            var drawPos = screenPos + u * shiftX + v * shiftY;
+            float rotationRad = MathF.Atan2(baselineVec.Y, baselineVec.X);
             context.DrawingContext.DrawText(text.Value, context.Font, screenFontSize, brush, drawPos, rotation: rotationRad);
         }
         else if (entity is MText mtext)
@@ -637,10 +658,21 @@ public class DxfTextRenderer : IDxfEntityRenderer
             string cleanedValue = CleanMText(mtext.Value);
             var lines = cleanedValue.Split('\n');
 
+            float rot = (float)(mtext.Rotation * Math.PI / 180.0);
             var origin = new Vector2((float)mtext.Position.X, (float)mtext.Position.Y);
             var screenPos = context.Transform(origin, transform);
 
-            float screenFontSize = (float)mtext.Height * context.Zoom;
+            // Project coordinate baseline to find exact screen scale and rotation angle
+            var originPlusBaseline = origin + new Vector2(MathF.Cos(rot), MathF.Sin(rot));
+            var screenBaselinePt = context.Transform(originPlusBaseline, transform);
+            var baselineVec = screenBaselinePt - screenPos;
+            float screenScale = baselineVec.Length();
+            if (screenScale < 1e-4f) return;
+
+            var u = baselineVec / screenScale;
+            var v = new Vector2(-u.Y, u.X);
+
+            float screenFontSize = (float)mtext.Height * screenScale;
             if (screenFontSize < 4f) return;
 
             float screenLineOffset = screenFontSize * 1.25f;
@@ -695,28 +727,28 @@ public class DxfTextRenderer : IDxfEntityRenderer
             var lineWidths = new float[lines.Length];
             for (int i = 0; i < lines.Length; i++)
             {
-                lineWidths[i] = MeasureLineWidth(lines[i], context.Font, screenFontSize);
+                lineWidths[i] = MeasureLineWidthStatic(lines[i], context.Font, screenFontSize);
                 maxLineWidth = Math.Max(maxLineWidth, lineWidths[i]);
             }
 
-            float minX = screenPos.X - maxLineWidth * horizontalShiftMultiplier;
-            float maxX = minX + maxLineWidth;
-            float minY = screenPos.Y + verticalShift;
-            float maxY = minY + totalHeight;
+            // Estimate diagonal culling radius
+            float maxDim = Math.Max(maxLineWidth, totalHeight) * 1.5f;
+            if (context.IsOffScreen(screenPos - new Vector2(maxDim), screenPos + new Vector2(maxDim))) return;
 
-            if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY))) return;
+            float rotationRad = MathF.Atan2(baselineVec.Y, baselineVec.X);
 
             for (int i = 0; i < lines.Length; i++)
             {
-                float lineX = screenPos.X - lineWidths[i] * horizontalShiftMultiplier;
-                float lineY = screenPos.Y + verticalShift + i * screenLineOffset;
-                var pos = new Vector2(lineX, lineY);
-                context.DrawingContext.DrawText(lines[i], context.Font, screenFontSize, brush, pos);
+                // Shift along u and v directions matching text baseline rotation and scale
+                var lineShift = u * (-lineWidths[i] * horizontalShiftMultiplier) + 
+                                v * (verticalShift + i * screenLineOffset);
+                var pos = screenPos + lineShift;
+                context.DrawingContext.DrawText(lines[i], context.Font, screenFontSize, brush, pos, rotation: rotationRad);
             }
         }
     }
 
-    private float MeasureLineWidth(string line, ProGPU.Text.TtfFont font, float fontSize)
+    private static float MeasureLineWidthStatic(string line, ProGPU.Text.TtfFont font, float fontSize)
     {
         float totalWidth = 0f;
         for (int i = 0; i < line.Length; i++)
@@ -725,6 +757,11 @@ public class DxfTextRenderer : IDxfEntityRenderer
             totalWidth += font.GetAdvanceWidth(idx, fontSize);
         }
         return totalWidth;
+    }
+
+    private float MeasureLineWidth(string line, ProGPU.Text.TtfFont font, float fontSize)
+    {
+        return MeasureLineWidthStatic(line, font, fontSize);
     }
 
     private string CleanMText(string mtext)
