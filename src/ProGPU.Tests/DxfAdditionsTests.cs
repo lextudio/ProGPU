@@ -400,5 +400,249 @@ EOF";
             if (File.Exists(tempPath)) File.Delete(tempPath);
         }
     }
+
+    [Fact]
+    public void CalculateBounds_WithMLeaderAnd3dSolid_ComputesCorrectBounds()
+    {
+        // 1. Create binary SAB data for a 3D Solid
+        var ms = new MemoryStream();
+        using (var writer = new BinaryWriter(ms))
+        {
+            void WriteRawString(string s)
+            {
+                writer.Write((byte)s.Length);
+                writer.Write(System.Text.Encoding.ASCII.GetBytes(s));
+            }
+            WriteRawString("body"); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+            WriteRawString("lump"); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+            WriteRawString("shell"); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+            WriteRawString("face"); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+            WriteRawString("loop"); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+            WriteRawString("coedge"); writer.Write(-1); writer.Write(-1); writer.Write(-1); writer.Write(-1);
+            WriteRawString("edge"); writer.Write(-1); writer.Write(-1); writer.Write(7); writer.Write(8); writer.Write(11);
+            WriteRawString("vertex"); writer.Write(-1); writer.Write(9);
+            WriteRawString("vertex"); writer.Write(-1); writer.Write(10);
+            WriteRawString("point"); writer.Write(-1); writer.Write(10.0); writer.Write(20.0); writer.Write(30.0);
+            WriteRawString("point"); writer.Write(-1); writer.Write(50.0); writer.Write(60.0); writer.Write(70.0);
+            WriteRawString("straight"); writer.Write(-1);
+        }
+
+        byte[] sabBytes = ms.ToArray();
+        string hex = BitConverter.ToString(sabBytes).Replace("-", "");
+
+        // 2. Combine MULTILEADER and 3DSOLID into one mock DXF
+        string mockDxf = $@"  0
+SECTION
+  2
+ENTITIES
+  0
+MULTILEADER
+  8
+0
+300
+CONTEXT_DATA{{
+ 10
+100.0
+ 20
+200.0
+ 30
+300.0
+140
+4.5
+304
+Hello MLeader
+301
+}}
+302
+LEADER{{
+304
+LEADER_LINE{{
+ 10
+5.0
+ 20
+15.0
+ 30
+25.0
+ 10
+15.0
+ 20
+25.0
+ 30
+35.0
+305
+}}
+303
+}}
+  0
+3DSOLID
+  8
+0
+310
+{hex}
+  0
+ENDSEC
+  0
+EOF";
+
+        string tempPath = Path.GetTempFileName();
+        File.WriteAllText(tempPath, mockDxf);
+
+        try
+        {
+            var doc = new netDxf.DxfDocument();
+            var ctx = new DxfRenderContext(new ProGPU.Scene.DrawingContext(), null!);
+            ctx.FilePath = tempPath;
+
+            // Let's set a non-identity current transform to verify correct transform application!
+            // E.g. translation by (10, 20, 0)
+            ctx.PushTransform(Matrix4x4.CreateTranslation(10f, 20f, 0f));
+
+            var (min, max) = DxfDocumentRenderer.CalculateBounds(doc, ctx);
+
+            // With translation (10, 20):
+            // Multileader TextInsertionPoint: (100, 200, 300) -> transformed (110, 220, 300)
+            // Multileader LeaderLines:
+            //   (5, 15, 25) -> transformed (15, 35, 25)
+            //   (15, 25, 35) -> transformed (25, 45, 35)
+            // 3D Solid points:
+            //   (10, 20, 30) -> transformed (20, 40, 30)
+            //   (50, 60, 70) -> transformed (60, 80, 70)
+            //
+            // Overall min/max bounds:
+            // X min = 15, X max = 110
+            // Y min = 35, Y max = 220
+
+            Assert.Equal(15f, min.X, 1);
+            Assert.Equal(35f, min.Y, 1);
+            Assert.Equal(110f, max.X, 1);
+            Assert.Equal(220f, max.Y, 1);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
+    }
+
+    [Fact]
+    public void DrawingContext_DrawHatch_CreatesCorrectCommand()
+    {
+        var drawingContext = new ProGPU.Scene.DrawingContext();
+        var brush = new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f));
+        var boundaries = new PathGeometry();
+        var figure = new PathFigure(new Vector2(0f, 0f), isClosed: true);
+        figure.Segments.Add(new LineSegment(new Vector2(100f, 0f)));
+        figure.Segments.Add(new LineSegment(new Vector2(100f, 100f)));
+        figure.Segments.Add(new LineSegment(new Vector2(0f, 100f)));
+        boundaries.Figures.Add(figure);
+
+        drawingContext.DrawHatch(brush, boundaries);
+
+        Assert.Single(drawingContext.Commands);
+        var cmd = drawingContext.Commands[0];
+        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawHatch, cmd.Type);
+        Assert.Equal(brush, cmd.Brush);
+        Assert.Equal(boundaries, cmd.Path);
+    }
+
+    [Fact]
+    public void DrawingContext_DrawAcisSolid_CreatesCorrectCommand()
+    {
+        var drawingContext = new ProGPU.Scene.DrawingContext();
+        var brush = new SolidColorBrush(new Vector4(0f, 0f, 1f, 1f));
+        var pen = new Pen(brush, 2.0f);
+        var edges = new List<ProGPU.Scene.Line3D>
+        {
+            new ProGPU.Scene.Line3D(new Vector3(0f, 0f, 0f), new Vector3(10f, 20f, 30f)),
+            new ProGPU.Scene.Line3D(new Vector3(10f, 20f, 30f), new Vector3(40f, 50f, 60f))
+        };
+        var matrix = Matrix4x4.Identity;
+
+        drawingContext.DrawAcisSolid(pen, edges, matrix);
+
+        Assert.Single(drawingContext.Commands);
+        var cmd = drawingContext.Commands[0];
+        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawAcisSolid, cmd.Type);
+        Assert.Equal(pen, cmd.Pen);
+        Assert.Equal(edges, cmd.Edges3D);
+        Assert.Equal(matrix, cmd.Transform);
+    }
+
+    [Fact]
+    public void DxfDocumentRenderer_Render_UsesPreFlattenedEntities()
+    {
+        var doc = new netDxf.DxfDocument();
+        var line = new netDxf.Entities.Line(new netDxf.Vector3(0, 0, 0), new netDxf.Vector3(100, 200, 0));
+        doc.AddEntity(line);
+
+        var drawingContext = new ProGPU.Scene.DrawingContext();
+        var ctx = new DxfRenderContext(drawingContext, null!);
+
+        // Pre-populate layer in active layers
+        ctx.ActiveLayers.Clear();
+        ctx.ActiveLayers.Add("0");
+
+        DxfDocumentRenderer.Render(doc, ctx);
+
+        Assert.NotEmpty(ctx.FlatWcsEntities);
+        Assert.Single(ctx.FlatWcsEntities);
+        var flat = ctx.FlatWcsEntities[0];
+        Assert.Equal(line, flat.Entity);
+        Assert.Equal(Matrix4x4.Identity, flat.Transform);
+
+        // Ensure it rendered the line command
+        Assert.NotEmpty(drawingContext.Commands);
+    }
+
+    [Fact]
+    public void DxfDocumentRenderer_Render_LargeDxfFile()
+    {
+        string path = "/Users/wieslawsoltes/Downloads/dwg/dxf/Schemat IOS Karvina CZ.dxf";
+        if (!File.Exists(path)) return;
+
+        string fontPath = "/System/Library/Fonts/Supplemental/Arial.ttf";
+        if (!File.Exists(fontPath)) fontPath = "Arial.ttf";
+        var font = File.Exists(fontPath) ? new ProGPU.Text.TtfFont(fontPath) : null!;
+
+        var doc = netDxf.DxfDocument.Load(path);
+        var drawingContext = new ProGPU.Scene.DrawingContext();
+        var ctx = new DxfRenderContext(drawingContext, font);
+
+        ctx.ActiveLayers.Clear();
+        foreach (var l in doc.Layers) ctx.ActiveLayers.Add(l.Name);
+
+        DxfDocumentRenderer.Render(doc, ctx);
+
+        Console.WriteLine($"[Diagnostic] Large DXF rendering output:");
+        Console.WriteLine($"  ActiveLayout: '{doc.ActiveLayout}'");
+        Console.WriteLine($"  FlatWcsEntities.Count: {ctx.FlatWcsEntities.Count}");
+        Console.WriteLine($"  DrawingContext commands count: {drawingContext.Commands.Count}");
+        
+        Assert.NotEmpty(ctx.FlatWcsEntities);
+        Assert.NotEmpty(drawingContext.Commands);
+    }
+
+    [Fact]
+    public void DxfRenderContext_DocumentPropertyChange_InvalidatesFlatteningCache()
+    {
+        var ctx = new DxfRenderContext(new ProGPU.Scene.DrawingContext(), null!);
+        var doc1 = new netDxf.DxfDocument();
+        var doc2 = new netDxf.DxfDocument();
+
+        // Add some dummy lines to doc1 to produce a flat list
+        doc1.AddEntity(new netDxf.Entities.Line(new netDxf.Vector3(0, 0, 0), new netDxf.Vector3(10, 10, 0)));
+        doc1.AddEntity(new netDxf.Entities.Line(new netDxf.Vector3(10, 10, 0), new netDxf.Vector3(20, 20, 0)));
+
+        // Flatten doc1
+        ctx.Document = doc1;
+        ctx.FlattenDxfEntities(doc1);
+        Assert.NotEmpty(ctx.FlatWcsEntities);
+
+        // Change Document to doc2
+        ctx.Document = doc2;
+        
+        // The cache must be automatically cleared!
+        Assert.Empty(ctx.FlatWcsEntities);
+        Assert.Null(ctx.CachedActiveLayout);
+    }
 }
 

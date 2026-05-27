@@ -51,6 +51,12 @@ public class DxfLineRenderer : IDxfEntityRenderer
         var max = Vector2.Max(p1, p2);
         if (context.IsOffScreen(min, max)) return;
 
+        // screen-space length LOD culling
+        float dx = p2.X - p1.X;
+        float dy = p2.Y - p1.Y;
+        float lenSq = dx * dx + dy * dy;
+        if (context.EnableLod ? (lenSq < 1.5f) : (lenSq < 0.01f)) return;
+
         var pen = context.GetCachedPen(line, 1f);
 
         context.DrawingContext.DrawLine(pen, p1, p2);
@@ -283,6 +289,10 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
         if (hasVertices)
         {
             if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY))) return;
+
+            float width = maxX - minX;
+            float height = maxY - minY;
+            if (context.EnableLod ? (width < 2f && height < 2f) : (width < 0.2f && height < 0.2f)) return;
         }
 
         var pen = context.GetCachedPen(entity, 1.2f);
@@ -964,13 +974,35 @@ public class DxfInsertRenderer : IDxfEntityRenderer
         var origin = insert.Block.Origin;
 
         // Correct AutoCAD standard local block transform mapping:
-        // Correct AutoCAD standard local block transform mapping:
         // Translate by pos (insertion point) in WCS/parent space *after* applying the extrusion normal OCS-to-WCS rotation!
         var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
                        Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                        Matrix4x4.CreateRotationZ(radAngle) *
                        DxfDocumentRenderer.GetOcsMatrix(insert.Normal) *
                        Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
+
+        // Pre-calculate block bounds once and perform block-level viewport and LOD culling
+        var blockBounds = context.GetOrCalculateBlockBounds(insert.Block);
+        var combinedMat = localMat * transform;
+        var sMin = context.Transform(blockBounds.Min, combinedMat);
+        var sMax = context.Transform(blockBounds.Max, combinedMat);
+
+        float minX = Math.Min(sMin.X, sMax.X);
+        float minY = Math.Min(sMin.Y, sMax.Y);
+        float maxX = Math.Max(sMin.X, sMax.X);
+        float maxY = Math.Max(sMin.Y, sMax.Y);
+
+        if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY)))
+        {
+            return; // Completely out of bounds, cull early!
+        }
+
+        float width = maxX - minX;
+        float height = maxY - minY;
+        if (context.EnableLod ? (width < 3.5f && height < 3.5f) : (width < 0.2f && height < 0.2f))
+        {
+            return; // Too tiny on the screen, skip traversing child entities!
+        }
 
         context.PushTransform(localMat);
 
@@ -1260,3 +1292,5 @@ public class DxfWipeoutRenderer : IDxfEntityRenderer
         }
     }
 }
+
+

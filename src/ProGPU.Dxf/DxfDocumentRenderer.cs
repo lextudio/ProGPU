@@ -60,26 +60,54 @@ public static class DxfDocumentRenderer
         context.Reset();
         context.Document = doc;
         
-        bool renderedFromLayout = false;
-        if (doc.Layouts != null && !string.IsNullOrEmpty(doc.ActiveLayout) && doc.Layouts.Contains(doc.ActiveLayout))
+        if (context.EnableFlattening)
         {
-            var layout = doc.Layouts[doc.ActiveLayout];
-            if (layout.AssociatedBlock != null && layout.AssociatedBlock.Entities != null && layout.AssociatedBlock.Entities.Count > 0)
+            if (context.FlatWcsEntities.Count == 0 || context.CachedActiveLayout != doc.ActiveLayout)
             {
-                foreach (var entity in layout.AssociatedBlock.Entities)
+                context.FlattenDxfEntities(doc);
+            }
+
+            foreach (var flatEntity in context.FlatWcsEntities)
+            {
+                if (flatEntity.Entity is netDxf.Entities.Attribute attr)
+                {
+                    if (context.ActiveLayers.Contains(attr.Layer.Name))
+                    {
+                        DxfTextRenderer.RenderAttribute(attr, context, flatEntity.Transform, flatEntity.ScaleY);
+                    }
+                }
+                else if (flatEntity.Entity is EntityObject entity)
                 {
                     if (context.ActiveLayers.Contains(entity.Layer.Name))
                     {
-                        RenderEntity(entity, context, Matrix4x4.Identity);
+                        RenderEntity(entity, context, flatEntity.Transform);
                     }
                 }
-                renderedFromLayout = true;
             }
         }
-
-        if (!renderedFromLayout)
+        else
         {
-            RenderFlatCollections(doc, context);
+            bool renderedFromLayout = false;
+            if (doc.Layouts != null && !string.IsNullOrEmpty(doc.ActiveLayout) && doc.Layouts.Contains(doc.ActiveLayout))
+            {
+                var layout = doc.Layouts[doc.ActiveLayout];
+                if (layout.AssociatedBlock != null && layout.AssociatedBlock.Entities != null && layout.AssociatedBlock.Entities.Count > 0)
+                {
+                    foreach (var entity in layout.AssociatedBlock.Entities)
+                    {
+                        if (context.ActiveLayers.Contains(entity.Layer.Name))
+                        {
+                            RenderEntity(entity, context, Matrix4x4.Identity);
+                        }
+                    }
+                    renderedFromLayout = true;
+                }
+            }
+
+            if (!renderedFromLayout)
+            {
+                RenderFlatCollections(doc, context);
+            }
         }
 
         // Render 3D ACIS Solids if cached in context via GPU projection
@@ -318,6 +346,11 @@ public static class DxfDocumentRenderer
     /// </summary>
     public static (Vector2 Min, Vector2 Max) CalculateBounds(DxfDocument doc, HashSet<string>? activeLayers = null)
     {
+        return CalculateBounds(doc, null, activeLayers);
+    }
+
+    public static (Vector2 Min, Vector2 Max) CalculateBounds(DxfDocument doc, DxfRenderContext? context, HashSet<string>? activeLayers = null)
+    {
         var min = new Vector2(float.MaxValue, float.MaxValue);
         var max = new Vector2(float.MinValue, float.MinValue);
         bool hasData = false;
@@ -342,6 +375,55 @@ public static class DxfDocumentRenderer
         if (!calculatedFromLayout)
         {
             AccumulateFlatCollectionsBounds(doc, ref min, ref max, ref hasData, activeLayers);
+        }
+
+        if (context != null)
+        {
+            // Accumulate bounds from Cached3dSolids in WCS space (using context.CurrentTransform)
+            foreach (var solid in context.Cached3dSolids)
+            {
+                if (activeLayers != null && !activeLayers.Contains(solid.Layer)) continue;
+                foreach (var edge in solid.Edges)
+                {
+                    var p1 = Vector3.Transform(edge.StartPoint, context.CurrentTransform);
+                    var p2 = Vector3.Transform(edge.EndPoint, context.CurrentTransform);
+                    
+                    min.X = Math.Min(min.X, Math.Min(p1.X, p2.X));
+                    min.Y = Math.Min(min.Y, Math.Min(p1.Y, p2.Y));
+                    
+                    max.X = Math.Max(max.X, Math.Max(p1.X, p2.X));
+                    max.Y = Math.Max(max.Y, Math.Max(p1.Y, p2.Y));
+                    hasData = true;
+                }
+            }
+
+            // Accumulate bounds from CachedMLeaders in WCS space (using context.CurrentTransform)
+            foreach (var mleader in context.CachedMLeaders)
+            {
+                if (activeLayers != null && !activeLayers.Contains(mleader.Layer)) continue;
+                foreach (var line in mleader.LeaderLines)
+                {
+                    foreach (var pt in line)
+                    {
+                        var p = Vector3.Transform(pt, context.CurrentTransform);
+                        min.X = Math.Min(min.X, p.X);
+                        min.Y = Math.Min(min.Y, p.Y);
+                        max.X = Math.Max(max.X, p.X);
+                        max.Y = Math.Max(max.Y, p.Y);
+                        hasData = true;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(mleader.TextValue))
+                {
+                    var p = Vector3.Transform(mleader.TextInsertionPoint, context.CurrentTransform);
+                    min.X = Math.Min(min.X, p.X);
+                    min.Y = Math.Min(min.Y, p.Y);
+                    max.X = Math.Max(max.X, p.X);
+                    max.Y = Math.Max(max.Y, p.Y);
+                    hasData = true;
+                }
+            }
         }
 
         if (!hasData)

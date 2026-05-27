@@ -4,6 +4,7 @@ using System.Numerics;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
+using netDxf.Entities;
 
 namespace ProGPU.Dxf;
 
@@ -17,11 +18,28 @@ public class DxfRenderContext
     public Vector2 Center { get; set; } = Vector2.Zero;
     public Vector2 ScreenCenter { get; set; } = Vector2.Zero;
     
+    private netDxf.DxfDocument? _document;
+    
     // Active document reference for layout and space rendering
-    public netDxf.DxfDocument? Document { get; set; }
+    public netDxf.DxfDocument? Document
+    {
+        get => _document;
+        set
+        {
+            if (_document != value)
+            {
+                _document = value;
+                _flatWcsEntities.Clear();
+                CachedActiveLayout = null;
+            }
+        }
+    }
     
     // Level of Detail rendering optimization flag
     public bool EnableLod { get; set; } = false;
+
+    // Entity flattening optimization flag
+    public bool EnableFlattening { get; set; } = true;
     
     // Font and Styling fallback
     public TtfFont Font { get; set; }
@@ -185,6 +203,8 @@ public class DxfRenderContext
                 _filePath = value;
                 _cached3dSolids.Clear();
                 _cachedMLeaders.Clear();
+                _hatchCache.Clear();
+                _flatWcsEntities.Clear();
                 if (!string.IsNullOrEmpty(_filePath) && System.IO.File.Exists(_filePath))
                 {
                     try
@@ -207,7 +227,169 @@ public class DxfRenderContext
     private readonly List<DxfMLeader> _cachedMLeaders = new();
     public IReadOnlyList<DxfMLeader> CachedMLeaders => _cachedMLeaders;
 
+    private readonly Dictionary<netDxf.Entities.Hatch, HatchCacheEntry> _hatchCache = new();
+    public Dictionary<netDxf.Entities.Hatch, HatchCacheEntry> HatchCache => _hatchCache;
+
     public int Solid3DCount { get; set; } = 0;
+
+    public string? CachedActiveLayout { get; set; }
+
+    public class FlatWcsEntity
+    {
+        public object Entity { get; }
+        public Matrix4x4 Transform { get; }
+        public float ScaleY { get; }
+
+        public FlatWcsEntity(object entity, Matrix4x4 transform, float scaleY = 1.0f)
+        {
+            Entity = entity;
+            Transform = transform;
+            ScaleY = scaleY;
+        }
+    }
+
+    private readonly List<FlatWcsEntity> _flatWcsEntities = new();
+    public IReadOnlyList<FlatWcsEntity> FlatWcsEntities => _flatWcsEntities;
+
+    public void FlattenDxfEntities(netDxf.DxfDocument doc)
+    {
+        _flatWcsEntities.Clear();
+        CachedActiveLayout = doc.ActiveLayout;
+        
+        bool flattenedFromLayout = false;
+        if (doc.Layouts != null && !string.IsNullOrEmpty(doc.ActiveLayout) && doc.Layouts.Contains(doc.ActiveLayout))
+        {
+            var layout = doc.Layouts[doc.ActiveLayout];
+            if (layout.AssociatedBlock != null && layout.AssociatedBlock.Entities != null && layout.AssociatedBlock.Entities.Count > 0)
+            {
+                foreach (var entity in layout.AssociatedBlock.Entities)
+                {
+                    FlattenEntityRecursive(entity, Matrix4x4.Identity);
+                }
+                flattenedFromLayout = true;
+            }
+        }
+
+        if (!flattenedFromLayout)
+        {
+            foreach (var line in doc.Lines) FlattenEntityRecursive(line, Matrix4x4.Identity);
+            foreach (var circle in doc.Circles) FlattenEntityRecursive(circle, Matrix4x4.Identity);
+            foreach (var arc in doc.Arcs) FlattenEntityRecursive(arc, Matrix4x4.Identity);
+            foreach (var ellipse in doc.Ellipses) FlattenEntityRecursive(ellipse, Matrix4x4.Identity);
+            foreach (var lw in doc.LwPolylines) FlattenEntityRecursive(lw, Matrix4x4.Identity);
+            foreach (var poly in doc.Polylines) FlattenEntityRecursive(poly, Matrix4x4.Identity);
+            foreach (var spline in doc.Splines) FlattenEntityRecursive(spline, Matrix4x4.Identity);
+            foreach (var txt in doc.Texts) FlattenEntityRecursive(txt, Matrix4x4.Identity);
+            foreach (var mtxt in doc.MTexts) FlattenEntityRecursive(mtxt, Matrix4x4.Identity);
+            foreach (var ins in doc.Inserts) FlattenEntityRecursive(ins, Matrix4x4.Identity);
+            foreach (var solid in doc.Solids) FlattenEntityRecursive(solid, Matrix4x4.Identity);
+            foreach (var hatch in doc.Hatches) FlattenEntityRecursive(hatch, Matrix4x4.Identity);
+            foreach (var img in doc.Images) FlattenEntityRecursive(img, Matrix4x4.Identity);
+            foreach (var face in doc.Faces3d) FlattenEntityRecursive(face, Matrix4x4.Identity);
+            foreach (var pt in doc.Points) FlattenEntityRecursive(pt, Matrix4x4.Identity);
+            foreach (var wo in doc.Wipeouts) FlattenEntityRecursive(wo, Matrix4x4.Identity);
+        }
+    }
+
+    private void FlattenEntityRecursive(netDxf.Entities.EntityObject entity, Matrix4x4 currentTransform)
+    {
+        if (entity is Insert insert)
+        {
+            var scale = insert.Scale;
+            var pos = insert.Position;
+            float radAngle = (float)(insert.Rotation * Math.PI / 180.0);
+            var origin = insert.Block.Origin;
+
+            var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
+                           Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
+                           Matrix4x4.CreateRotationZ(radAngle) *
+                           DxfDocumentRenderer.GetOcsMatrix(insert.Normal) *
+                           Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
+
+            var combined = localMat * currentTransform;
+
+            foreach (var childEntity in insert.Block.Entities)
+            {
+                FlattenEntityRecursive(childEntity, combined);
+            }
+            
+            foreach (var attr in insert.Attributes)
+            {
+                var flatAttr = new FlatWcsEntity(attr, currentTransform, (float)insert.Scale.Y);
+                _flatWcsEntities.Add(flatAttr);
+            }
+        }
+        else
+        {
+            _flatWcsEntities.Add(new FlatWcsEntity(entity, currentTransform));
+        }
+    }
+
+    private readonly Dictionary<netDxf.Blocks.Block, (Vector2 Min, Vector2 Max)> _blockBoundsCache = new();
+
+    public (Vector2 Min, Vector2 Max) GetOrCalculateBlockBounds(netDxf.Blocks.Block block)
+    {
+        if (!_blockBoundsCache.TryGetValue(block, out var bounds))
+        {
+            float minX = float.MaxValue, minY = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue;
+            bool hasPoints = false;
+
+            foreach (var ent in block.Entities)
+            {
+                if (ent is Line line)
+                {
+                    minX = Math.Min(minX, (float)Math.Min(line.StartPoint.X, line.EndPoint.X));
+                    minY = Math.Min(minY, (float)Math.Min(line.StartPoint.Y, line.EndPoint.Y));
+                    maxX = Math.Max(maxX, (float)Math.Max(line.StartPoint.X, line.EndPoint.X));
+                    maxY = Math.Max(maxY, (float)Math.Max(line.StartPoint.Y, line.EndPoint.Y));
+                    hasPoints = true;
+                }
+                else if (ent is LwPolyline lw)
+                {
+                    foreach (var v in lw.Vertexes)
+                    {
+                        minX = Math.Min(minX, (float)v.Position.X);
+                        minY = Math.Min(minY, (float)v.Position.Y);
+                        maxX = Math.Max(maxX, (float)v.Position.X);
+                        maxY = Math.Max(maxY, (float)v.Position.Y);
+                        hasPoints = true;
+                    }
+                }
+                else if (ent is Circle circle)
+                {
+                    float cx = (float)circle.Center.X;
+                    float cy = (float)circle.Center.Y;
+                    float r = (float)circle.Radius;
+                    minX = Math.Min(minX, cx - r);
+                    minY = Math.Min(minY, cy - r);
+                    maxX = Math.Max(maxX, cx + r);
+                    maxY = Math.Max(maxY, cy + r);
+                    hasPoints = true;
+                }
+                else if (ent is Arc arc)
+                {
+                    float cx = (float)arc.Center.X;
+                    float cy = (float)arc.Center.Y;
+                    float r = (float)arc.Radius;
+                    minX = Math.Min(minX, cx - r);
+                    minY = Math.Min(minY, cy - r);
+                    maxX = Math.Max(maxX, cx + r);
+                    maxY = Math.Max(maxY, cy + r);
+                    hasPoints = true;
+                }
+            }
+
+            if (!hasPoints)
+            {
+                minX = minY = maxX = maxY = 0f;
+            }
+
+            bounds = (new Vector2(minX, minY), new Vector2(maxX, maxY));
+            _blockBoundsCache[block] = bounds;
+        }
+        return bounds;
+    }
 
     private void ParseAndCache3dSolids(string path)
     {
@@ -517,6 +699,7 @@ public class DxfRenderContext
         _transformStack.Clear();
         CurrentTransform = Matrix4x4.Identity;
         Solid3DCount = 0;
+        _blockBoundsCache.Clear();
     }
 }
 
@@ -533,4 +716,14 @@ public class Dxf3dSolid
 {
     public string Layer { get; set; } = "0";
     public List<Acis3dEdge> Edges { get; } = new();
+}
+
+public class HatchCacheEntry
+{
+    public Vector2 MinModelBounds { get; set; }
+    public Vector2 MaxModelBounds { get; set; }
+    public float CachedZoom { get; set; } = -1f;
+    public Vector2 CachedPan { get; set; } = new Vector2(float.NaN, float.NaN);
+    public PathGeometry? CachedPathGeometry { get; set; }
+    public List<(Vector2 Start, Vector2 End)>? ModelCpuLines { get; set; }
 }

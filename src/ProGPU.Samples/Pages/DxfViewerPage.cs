@@ -72,7 +72,7 @@ public class DxfCanvasControl : FrameworkElement
         if (Document == null || Size.X <= 0 || Size.Y <= 0) return;
 
         // Calculate drawing min/max bounds based on active visible layers only
-        var (min, max) = DxfDocumentRenderer.CalculateBounds(Document, Context.ActiveLayers);
+        var (min, max) = DxfDocumentRenderer.CalculateBounds(Document, Context, Context.ActiveLayers);
 
         float dxfWidth = max.X - min.X;
         float dxfHeight = max.Y - min.Y;
@@ -200,9 +200,13 @@ public static class DxfViewerPage
 
     public static FrameworkElement Create()
     {
+        var mainGrid = new Grid();
+
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new GridLength(280f, GridUnitType.Absolute)); // Sidebar
         grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));       // Main canvas card
+
+        mainGrid.AddChild(grid);
 
         // 1. LEFT SIDEBAR PANEL
         var sidebarCard = new Border
@@ -244,11 +248,17 @@ public static class DxfViewerPage
         sampleBtn.Content = sampleBtnText;
         sidebarStack.AddChild(sampleBtn);
 
-        var fitBtn = new Button { HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 16f), HorizontalAlignment = HorizontalAlignment.Stretch };
+        var fitBtn = new Button { HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 8f), HorizontalAlignment = HorizontalAlignment.Stretch };
         var fitBtnText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         fitBtnText.Inlines.Add(new Bold(new Run("📐 Zoom to Fit Bounds")));
         fitBtn.Content = fitBtnText;
         sidebarStack.AddChild(fitBtn);
+
+        var benchBtn = new Button { HeightConstraint = 32f, CornerRadius = 4f, Margin = new Thickness(0, 0, 0, 16f), HorizontalAlignment = HorizontalAlignment.Stretch };
+        var benchBtnText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 11.5f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        benchBtnText.Inlines.Add(new Bold(new Run("⚡ Run Performance Benchmark")));
+        benchBtn.Content = benchBtnText;
+        sidebarStack.AddChild(benchBtn);
 
         // LOD Optimization CheckBox
         var lodStack = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16f) };
@@ -271,6 +281,28 @@ public static class DxfViewerPage
         };
         lodStack.AddChild(lodChk);
         sidebarStack.AddChild(lodStack);
+
+        // Flattening CheckBox
+        var flatStack = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16f) };
+        var flatText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f };
+        flatText.Inlines.Add(new Run("Enable Entity Flattening"));
+        var flatChk = new CheckBox
+        {
+            Content = flatText,
+            IsChecked = true, // enabled by default!
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        flatChk.CheckedChanged += (s, e) =>
+        {
+            if (_canvas != null)
+            {
+                _canvas.Context.EnableFlattening = flatChk.IsChecked;
+                _canvas.Invalidate();
+                UpdateStatus($"Entity Flattening: {(flatChk.IsChecked ? "Enabled" : "Disabled")}");
+            }
+        };
+        flatStack.AddChild(flatChk);
+        sidebarStack.AddChild(flatStack);
 
         // Layout Space Selection section header
         var layoutsHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 13f, Margin = new Thickness(0, 8, 0, 8) };
@@ -391,13 +423,150 @@ public static class DxfViewerPage
             }
         };
 
+        // Create overlay popup dialog controls
+        var overlay = new Border
+        {
+            CornerRadius = 12f,
+            BorderThickness = new Thickness(1.5f),
+            BorderBrush = new ThemeResourceBrush("AccentTextFillColorPrimaryBrush"),
+            Background = new ThemeResourceBrush("ControlBackground"),
+            Padding = new Thickness(24f),
+            WidthConstraint = 440f,
+            HeightConstraint = 330f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var overlayStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Stretch };
+        overlay.Child = overlayStack;
+
+        var overlayHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 16f, Margin = new Thickness(0, 0, 0, 16f) };
+        overlayHeader.Inlines.Add(new Bold(new Run("⚡ Performance Benchmark Results")));
+        overlayStack.AddChild(overlayHeader);
+
+        var overlayText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 20f), Foreground = new ThemeResourceBrush("TextPrimary") };
+        overlayStack.AddChild(overlayText);
+
+        var closeBtn = new Button { HeightConstraint = 32f, CornerRadius = 4f, WidthConstraint = 100f, HorizontalAlignment = HorizontalAlignment.Right };
+        var closeBtnText = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        closeBtnText.Inlines.Add(new Bold(new Run("Close")));
+        closeBtn.Content = closeBtnText;
+        overlayStack.AddChild(closeBtn);
+
+        closeBtn.Click += (s, e) =>
+        {
+            mainGrid.RemoveChild(overlay);
+        };
+
+        // Hook up benchmark button click event
+        benchBtn.Click += async (s, e) =>
+        {
+            if (_canvas == null || _canvas.Document == null) return;
+            
+            UpdateStatus("Running Benchmark...");
+            benchBtn.IsEnabled = false;
+
+            var frameTimes = new List<double>();
+            var compileTimes = new List<double>();
+            var uploadTimes = new List<double>();
+            var renderTimes = new List<double>();
+            var drawCalls = new List<int>();
+            int initialGcCount = GC.CollectionCount(0);
+
+            // Record initial camera state
+            float initialZoom = _canvas.Context.Zoom;
+            Vector2 initialPan = _canvas.Context.Pan;
+
+            // Run 60 frames of animation
+            for (int frame = 0; frame < 60; frame++)
+            {
+                float angle = (float)(frame * Math.PI * 2.0 / 60.0);
+                _canvas.Context.Pan = initialPan + new Vector2(MathF.Cos(angle) * 80f, MathF.Sin(angle) * 80f);
+                _canvas.Context.Zoom = initialZoom * (1.0f + MathF.Sin(angle) * 0.12f);
+
+                _canvas.Invalidate();
+                
+                await System.Threading.Tasks.Task.Delay(16);
+
+                var metrics = AppState._screenCompositor != null ? AppState._screenCompositor.Metrics : new CompositorMetrics();
+                frameTimes.Add(AppState._cpuFrameTimeMs);
+                compileTimes.Add(metrics.VisualTreeCompileTimeMs);
+                uploadTimes.Add(metrics.GpuUploadTimeMs);
+                renderTimes.Add(metrics.RenderPassTimeMs);
+                drawCalls.Add(metrics.DrawCallsCount);
+            }
+
+            // Restore camera state
+            _canvas.Context.Zoom = initialZoom;
+            _canvas.Context.Pan = initialPan;
+            _canvas.Invalidate();
+
+            int finalGcCount = GC.CollectionCount(0);
+            int gcCollections = finalGcCount - initialGcCount;
+
+            double avgFrame = 0, peakFrame = 0;
+            double avgCompile = 0, avgUpload = 0, avgRender = 0;
+            double avgDrawCalls = 0;
+
+            if (frameTimes.Count > 0)
+            {
+                foreach (var t in frameTimes)
+                {
+                    avgFrame += t;
+                    if (t > peakFrame) peakFrame = t;
+                }
+                avgFrame /= frameTimes.Count;
+                
+                foreach (var t in compileTimes) avgCompile += t;
+                avgCompile /= compileTimes.Count;
+
+                foreach (var t in uploadTimes) avgUpload += t;
+                avgUpload /= uploadTimes.Count;
+
+                foreach (var t in renderTimes) avgRender += t;
+                avgRender /= renderTimes.Count;
+
+                foreach (var dc in drawCalls) avgDrawCalls += dc;
+                avgDrawCalls /= drawCalls.Count;
+            }
+
+            benchBtn.IsEnabled = true;
+            UpdateStatus("Benchmark Complete!");
+
+            // Update overlay text and show it by adding to the main Grid layout
+            overlayText.Inlines.Clear();
+            overlayText.Inlines.Add(new Run("Completed 60 frames of panning/zooming simulations.\n\n"));
+            
+            overlayText.Inlines.Add(new Run("• Average CPU Frame: "));
+            overlayText.Inlines.Add(new Bold(new Run($"{avgFrame:F2} ms\n")) { Foreground = new SolidColorBrush(0x0078D4FF) });
+            
+            overlayText.Inlines.Add(new Run("• Peak CPU Frame: "));
+            overlayText.Inlines.Add(new Bold(new Run($"{peakFrame:F2} ms\n")) { Foreground = new SolidColorBrush(0x0078D4FF) });
+
+            double avgLayout = avgFrame - (avgCompile + avgUpload + avgRender);
+            if (avgLayout < 0) avgLayout = 0;
+            overlayText.Inlines.Add(new Run($"  - Layout Pass: {avgLayout:F2} ms\n"));
+            overlayText.Inlines.Add(new Run($"  - Tree Compile: {avgCompile:F2} ms\n"));
+            overlayText.Inlines.Add(new Run($"  - GPU Buffer Upload: {avgUpload:F2} ms\n"));
+            overlayText.Inlines.Add(new Run($"  - WebGPU Submission: {avgRender:F2} ms\n\n"));
+
+            overlayText.Inlines.Add(new Run("• Average Draw Calls: "));
+            overlayText.Inlines.Add(new Bold(new Run($"{avgDrawCalls:F1}\n")) { Foreground = new SolidColorBrush(0x0078D4FF) });
+
+            overlayText.Inlines.Add(new Run("• GC Collections (Gen 0): "));
+            overlayText.Inlines.Add(new Bold(new Run($"{gcCollections}")) { Foreground = new SolidColorBrush(0x0078D4FF) });
+            
+            mainGrid.AddChild(overlay);
+            overlayText.Invalidate();
+        };
+
         // Load the sample DXF by default so the user is wowed immediately!
         var initialDoc = SampleDxfGenerator.GenerateSample();
         _canvas.LoadDocument(initialDoc);
         PopulateLayers(initialDoc);
         PopulateLayouts(initialDoc);
 
-        return grid;
+        return mainGrid;
     }
 
     private static void PopulateLayouts(DxfDocument doc)
