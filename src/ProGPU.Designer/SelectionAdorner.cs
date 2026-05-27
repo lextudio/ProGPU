@@ -7,6 +7,7 @@ using System.Numerics;
 using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Layout;
+using ProGPU.Text;
 
 namespace ProGPU.Designer;
 
@@ -23,6 +24,8 @@ public class SelectionAdorner : Panel
 
     public FrameworkElement? AssociatedElement { get; }
     public DesignerCanvas? ParentCanvas { get; }
+
+    public float ZoomScale => ParentCanvas?.ZoomScale ?? 1.0f;
 
     public SelectionAdorner(FrameworkElement associatedElement, DesignerCanvas parentCanvas)
     {
@@ -106,7 +109,7 @@ public class SelectionAdorner : Panel
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
-        float handleSize = 8f;
+        float handleSize = 8f / ZoomScale;
         Vector2 handleAvailable = new Vector2(handleSize, handleSize);
         foreach (var child in Children)
         {
@@ -120,7 +123,7 @@ public class SelectionAdorner : Panel
 
     protected override void ArrangeOverride(Rect arrangeRect)
     {
-        float handleSize = 8f;
+        float handleSize = 8f / ZoomScale;
         float halfSize = handleSize / 2f;
         float w = arrangeRect.Width;
         float h = arrangeRect.Height;
@@ -141,6 +144,10 @@ public class SelectionAdorner : Panel
     {
         if (AssociatedElement == null || ParentCanvas == null) return;
 
+        float z = ZoomScale;
+        float dxScaled = dx / z;
+        float dyScaled = dy / z;
+
         var element = AssociatedElement;
         float minWidth = 20f;
         float minHeight = 20f;
@@ -157,10 +164,10 @@ public class SelectionAdorner : Panel
 
         if (thumb == _topLeftThumb)
         {
-            float targetLeft = currentLeft + dx;
-            float targetTop = currentTop + dy;
-            float targetWidth = currentWidth - dx;
-            float targetHeight = currentHeight - dy;
+            float targetLeft = currentLeft + dxScaled;
+            float targetTop = currentTop + dyScaled;
+            float targetWidth = currentWidth - dxScaled;
+            float targetHeight = currentHeight - dyScaled;
 
             Vector2 snappedLeftTop = ParentCanvas.SnapPosition(element, new Vector2(targetLeft, targetTop));
             
@@ -175,8 +182,8 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _topCenterThumb)
         {
-            float targetTop = currentTop + dy;
-            float targetHeight = currentHeight - dy;
+            float targetTop = currentTop + dyScaled;
+            float targetHeight = currentHeight - dyScaled;
 
             Vector2 snapped = ParentCanvas.SnapPosition(element, new Vector2(currentLeft, targetTop));
             float snapDy = snapped.Y - currentTop;
@@ -186,8 +193,8 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _topRightThumb)
         {
-            float targetTop = currentTop + dy;
-            float targetWidth = currentWidth + dx;
+            float targetTop = currentTop + dyScaled;
+            float targetWidth = currentWidth + dxScaled;
 
             Vector2 snapped = ParentCanvas.SnapPosition(element, new Vector2(currentLeft, targetTop));
             float snapDy = snapped.Y - currentTop;
@@ -208,7 +215,7 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _middleLeftThumb)
         {
-            float targetLeft = currentLeft + dx;
+            float targetLeft = currentLeft + dxScaled;
             Vector2 snapped = ParentCanvas.SnapPosition(element, new Vector2(targetLeft, currentTop));
             float snapDx = snapped.X - currentLeft;
 
@@ -217,7 +224,7 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _middleRightThumb)
         {
-            float targetWidth = currentWidth + dx;
+            float targetWidth = currentWidth + dxScaled;
             float candidateRight = currentLeft + targetWidth;
             float? snapX = ParentCanvas.GetSnapX(element, candidateRight);
             if (snapX != null)
@@ -231,8 +238,8 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _bottomLeftThumb)
         {
-            float targetLeft = currentLeft + dx;
-            float targetHeight = currentHeight + dy;
+            float targetLeft = currentLeft + dxScaled;
+            float targetHeight = currentHeight + dyScaled;
 
             Vector2 snapped = ParentCanvas.SnapPosition(element, new Vector2(targetLeft, currentTop));
             float snapDx = snapped.X - currentLeft;
@@ -252,7 +259,7 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _bottomCenterThumb)
         {
-            float targetHeight = currentHeight + dy;
+            float targetHeight = currentHeight + dyScaled;
             float candidateBottom = currentTop + targetHeight;
             float? snapYVal = ParentCanvas.GetSnapY(element, candidateBottom);
             if (snapYVal != null)
@@ -266,8 +273,8 @@ public class SelectionAdorner : Panel
         }
         else if (thumb == _bottomRightThumb)
         {
-            float targetWidth = currentWidth + dx;
-            float targetHeight = currentHeight + dy;
+            float targetWidth = currentWidth + dxScaled;
+            float targetHeight = currentHeight + dyScaled;
 
             float candidateRight = currentLeft + targetWidth;
             float? snapX = ParentCanvas.GetSnapX(element, candidateRight);
@@ -302,6 +309,7 @@ public class SelectionAdorner : Panel
         element.InvalidateArrange();
         element.Invalidate();
         
+        ParentCanvas.NotifyCanvasModified();
         ParentCanvas.InvalidateArrange();
         ParentCanvas.Invalidate();
     }
@@ -310,10 +318,169 @@ public class SelectionAdorner : Panel
     {
         base.OnRender(context);
 
+        if (AssociatedElement == null || ParentCanvas == null) return;
+
+        float z = ZoomScale;
         var borderBrush = ThemeManager.GetBrush("SystemAccentColor", ActualTheme);
-        var borderPen = new Pen(borderBrush, 1.5f);
+        var borderPen = new Pen(borderBrush, 1.5f / z);
         
         Rect borderRect = new Rect(0, 0, Size.X, Size.Y);
         context.DrawRectangle(null, borderPen, borderRect);
+
+        // Render WPF-style margin guidelines and distance markers
+        DrawMarginGuidelines(context, z);
+    }
+
+    private void DrawMarginGuidelines(DrawingContext context, float z)
+    {
+        if (AssociatedElement == null || ParentCanvas == null) return;
+
+        float left = Canvas.GetLeft(AssociatedElement);
+        float top = Canvas.GetTop(AssociatedElement);
+        float width = Size.X;
+        float height = Size.Y;
+
+        float canvasWidth = ParentCanvas.Size.X;
+        float canvasHeight = ParentCanvas.Size.Y;
+
+        float rightDistance = canvasWidth - (left + width);
+        float bottomDistance = canvasHeight - (top + height);
+
+        float dpiScale = ParentCanvas.GetDpiScale?.Invoke() ?? 1.0f;
+        if (dpiScale <= 0f) dpiScale = 1.0f;
+
+        float Snap(float coord) => MathF.Round(coord * dpiScale * 4f) / 4f / dpiScale;
+
+        // Dashed pen for guidelines
+        var guidelineBrush = new SolidColorBrush(new Vector4(0.55f, 0.55f, 0.55f, 0.8f));
+        var guidelinePen = new Pen(guidelineBrush, 1f / z);
+
+        var font = PopupService.DefaultFont;
+        if (font == null) return;
+
+        float fontSize = 9f / z;
+
+        // 1. Left Guideline and Pill
+        if (left > 0f)
+        {
+            float y = height / 2f;
+            float snappedY = Snap(y);
+            float startX = Snap(-left);
+            float endX = Snap(0f);
+            DrawDashedHorizontalLine(context, guidelinePen, snappedY, startX, endX, 6f / z, 4f / z);
+
+            // Left Pill
+            float cx = -left / 2f;
+            float cy = height / 2f;
+            DrawDistancePill(context, font, fontSize, $"Left: {Math.Round(left)}", cx, cy, z, dpiScale);
+        }
+
+        // 2. Top Guideline and Pill
+        if (top > 0f)
+        {
+            float x = width / 2f;
+            float snappedX = Snap(x);
+            float startY = Snap(-top);
+            float endY = Snap(0f);
+            DrawDashedVerticalLine(context, guidelinePen, snappedX, startY, endY, 6f / z, 4f / z);
+
+            // Top Pill
+            float cx = width / 2f;
+            float cy = -top / 2f;
+            DrawDistancePill(context, font, fontSize, $"Top: {Math.Round(top)}", cx, cy, z, dpiScale);
+        }
+
+        // 3. Right Guideline and Pill
+        if (rightDistance > 0f)
+        {
+            float y = height / 2f;
+            float snappedY = Snap(y);
+            float startX = Snap(width);
+            float endX = Snap(canvasWidth - left);
+            DrawDashedHorizontalLine(context, guidelinePen, snappedY, startX, endX, 6f / z, 4f / z);
+
+            // Right Pill
+            float cx = width + rightDistance / 2f;
+            float cy = height / 2f;
+            DrawDistancePill(context, font, fontSize, $"Right: {Math.Round(rightDistance)}", cx, cy, z, dpiScale);
+        }
+
+        // 4. Bottom Guideline and Pill
+        if (bottomDistance > 0f)
+        {
+            float x = width / 2f;
+            float snappedX = Snap(x);
+            float startY = Snap(height);
+            float endY = Snap(canvasHeight - top);
+            DrawDashedVerticalLine(context, guidelinePen, snappedX, startY, endY, 6f / z, 4f / z);
+
+            // Bottom Pill
+            float cx = width / 2f;
+            float cy = height + bottomDistance / 2f;
+            DrawDistancePill(context, font, fontSize, $"Bottom: {Math.Round(bottomDistance)}", cx, cy, z, dpiScale);
+        }
+    }
+
+    private void DrawDistancePill(DrawingContext context, TtfFont font, float fontSize, string text, float cx, float cy, float z, float dpiScale)
+    {
+        float Snap(float coord) => MathF.Round(coord * dpiScale * 4f) / 4f / dpiScale;
+
+        // Measure text
+        var textLayout = new TextLayout(text, font, fontSize, float.PositiveInfinity, TextAlignment.Left, null);
+        float textWidth = textLayout.MeasuredSize.X;
+        float textHeight = textLayout.MeasuredSize.Y;
+
+        // Pill dimensions with scaled padding
+        float horizPadding = 8f / z;
+        float vertPadding = 4f / z;
+        float pillWidth = textWidth + horizPadding * 2f;
+        float pillHeight = textHeight + vertPadding * 2f;
+
+        // Snap positions
+        float pillLeft = Snap(cx - pillWidth / 2f);
+        float pillTop = Snap(cy - pillHeight / 2f);
+        float pillRight = Snap(cx + pillWidth / 2f);
+        float pillBottom = Snap(cy + pillHeight / 2f);
+        
+        Rect pillRect = new Rect(pillLeft, pillTop, pillRight - pillLeft, pillBottom - pillTop);
+        float cornerRadius = pillRect.Height / 2f;
+
+        // Brushes
+        var bgBrush = new SolidColorBrush(new Vector4(0.08f, 0.08f, 0.08f, 0.65f)); // 65% opacity dark grey
+        var textBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.95f)); // 95% opacity white for high readability
+
+        context.DrawRoundedRectangle(bgBrush, null, pillRect, cornerRadius);
+
+        // Snap text position
+        Vector2 textPos = new Vector2(
+            Snap(cx - textWidth / 2f),
+            Snap(cy - textHeight / 2f)
+        );
+
+        context.DrawText(text, font, fontSize, textBrush, textPos);
+    }
+
+    private void DrawDashedVerticalLine(DrawingContext context, Pen pen, float x, float y1, float y2, float dashLength, float gapLength)
+    {
+        if (dashLength + gapLength <= 0.001f) return;
+        float y = y1;
+        while (y < y2)
+        {
+            float nextY = Math.Min(y + dashLength, y2);
+            context.DrawLine(pen, new Vector2(x, y), new Vector2(x, nextY));
+            y += dashLength + gapLength;
+        }
+    }
+
+    private void DrawDashedHorizontalLine(DrawingContext context, Pen pen, float y, float x1, float x2, float dashLength, float gapLength)
+    {
+        if (dashLength + gapLength <= 0.001f) return;
+        float x = x1;
+        while (x < x2)
+        {
+            float nextX = Math.Min(x + dashLength, x2);
+            context.DrawLine(pen, new Vector2(x, y), new Vector2(nextX, y));
+            x += dashLength + gapLength;
+        }
     }
 }

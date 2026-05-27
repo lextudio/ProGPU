@@ -18,26 +18,22 @@ using Thickness = Microsoft.UI.Xaml.Thickness;
 
 namespace ProGPU.Designer;
 
-
-
 public class DesignerHost : Grid
 {
     private readonly Border _sidebarLeftBorder;
     private readonly Grid _sidebarLeft;
     private readonly Grid _workspaceCenter;
     private readonly Border _sidebarRightBorder;
-    private readonly Grid _sidebarRight;
+    private readonly PropertyGrid _propertyGrid;
     private readonly Border _bottomPanel;
     
-    private readonly StackPanel _toolboxPanel;
+    private readonly Toolbox _toolbox;
     private readonly StackPanel _outlinePanel;
-    private readonly StackPanel _propertiesPanel;
-    private readonly RichTextBlock _xamlCodeBlock;
+    private readonly RichTextBlock _csharpCodeBlock;
     
     private readonly DesignerCanvas _designerCanvas;
     
     private bool _isBottomExpanded = true;
-    private bool _isUpdatingProperties = false;
 
     public DesignerCanvas WorkspaceCanvas => _designerCanvas;
 
@@ -58,6 +54,7 @@ public class DesignerHost : Grid
         Grid.SetRow(contentGrid, 0);
         AddChild(contentGrid);
 
+        // 1. Left Sidebar
         _sidebarLeftBorder = new Border
         {
             Background = new ThemeResourceBrush("CardBackground"),
@@ -67,31 +64,44 @@ public class DesignerHost : Grid
         _sidebarLeft = new Grid();
         _sidebarLeftBorder.Child = _sidebarLeft;
 
-        _sidebarLeft.RowDefinitions.Add(GridLength.Star(1.2f));
-        _sidebarLeft.RowDefinitions.Add(GridLength.Star(0.8f));
+        _sidebarLeft.RowDefinitions.Add(GridLength.Star(1.0f));
+        _sidebarLeft.RowDefinitions.Add(GridLength.Star(1.0f));
         Grid.SetColumn(_sidebarLeftBorder, 0);
         contentGrid.AddChild(_sidebarLeftBorder);
 
-        var toolboxContainer = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(12) };
-        var toolboxTitle = new RichTextBlock { FontSize = 14f, Margin = new Thickness(0, 0, 0, 8) };
-        toolboxTitle.Inlines.Add(new Bold(new Run("Toolbox & Palette")));
-        toolboxContainer.AddChild(toolboxTitle);
-        
-        _toolboxPanel = new StackPanel { Orientation = Orientation.Vertical };
-        toolboxContainer.AddChild(_toolboxPanel);
-        Grid.SetRow(toolboxContainer, 0);
-        _sidebarLeft.AddChild(toolboxContainer);
+        // Top half: Toolbox
+        _toolbox = new Toolbox(DesignerFont);
+        Grid.SetRow(_toolbox, 0);
+        _sidebarLeft.AddChild(_toolbox);
 
-        var outlineContainer = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(12) };
-        var outlineTitle = new RichTextBlock { FontSize = 14f, Margin = new Thickness(0, 8, 0, 8) };
+        // Bottom half: Visual Tree Outline
+        var outlineContainer = new Border
+        {
+            Background = new ThemeResourceBrush("CardBackground"),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Padding = new Thickness(8)
+        };
+        var outlineStack = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var outlineTitle = new RichTextBlock { FontSize = 14f, Margin = new Thickness(4, 4, 4, 8) };
         outlineTitle.Inlines.Add(new Bold(new Run("Visual Tree Outline")));
-        outlineContainer.AddChild(outlineTitle);
+        outlineStack.AddChild(outlineTitle);
 
-        _outlinePanel = new StackPanel { Orientation = Orientation.Vertical };
-        outlineContainer.AddChild(_outlinePanel);
+        _outlinePanel = new StackPanel { Orientation = Orientation.Vertical, HorizontalAlignment = HorizontalAlignment.Stretch };
+        outlineStack.AddChild(_outlinePanel);
+
+        var outlineScroll = new ScrollViewer
+        {
+            Content = outlineStack,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        outlineContainer.Child = outlineScroll;
+
         Grid.SetRow(outlineContainer, 1);
         _sidebarLeft.AddChild(outlineContainer);
 
+        // 2. Center Workspace
         _workspaceCenter = new Grid();
         _workspaceCenter.RowDefinitions.Add(GridLength.Auto);
         _workspaceCenter.RowDefinitions.Add(GridLength.Star(1f));
@@ -111,7 +121,7 @@ public class DesignerHost : Grid
 
         var snapCheck = new CheckBox { IsChecked = true, Margin = new Thickness(0, 0, 16, 0) };
         var snapLabel = new RichTextBlock { FontSize = 11f };
-        snapLabel.Inlines.Add(new Run("Snap to Grid (8px)"));
+        snapLabel.Inlines.Add(new Run("Snap to Grid (10px)"));
         snapCheck.Content = snapLabel;
         snapCheck.CheckedChanged += (s, e) => {
             _designerCanvas.GridSnappingEnabled = snapCheck.IsChecked;
@@ -123,11 +133,10 @@ public class DesignerHost : Grid
         clearBtnText.Inlines.Add(new Run("Clear Workspace"));
         clearBtn.Content = clearBtnText;
         clearBtn.Click += (s, e) => {
-            _designerCanvas.Children.Clear();
-            _designerCanvas.SelectedElement = null;
+            _designerCanvas.DesignSurface.Children.Clear();
+            _designerCanvas.SelectElement(null);
             _designerCanvas.Invalidate();
             OnCanvasModified();
-            UpdatePropertyGrid();
             UpdateOutline();
         };
         actionBar.AddChild(clearBtn);
@@ -136,38 +145,42 @@ public class DesignerHost : Grid
         _workspaceCenter.AddChild(actionBar);
 
         _designerCanvas = new DesignerCanvas();
-        _designerCanvas.GetDpiScale = () => GetDpiScale?.Invoke() ?? 1.0f;
         _designerCanvas.SelectionChanged += () => {
-            UpdatePropertyGrid();
+            _propertyGrid.SelectedElement = _designerCanvas.SelectedElement;
             UpdateOutline();
         };
         _designerCanvas.CanvasModified += OnCanvasModified;
         
-        Grid.SetRow(_designerCanvas, 1);
-        _workspaceCenter.AddChild(_designerCanvas);
+        var canvasScrollViewer = new ScrollViewer
+        {
+            Content = _designerCanvas,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+
+        Grid.SetRow(canvasScrollViewer, 1);
+        _workspaceCenter.AddChild(canvasScrollViewer);
+
+        // 3. Right Sidebar - PropertyGrid
+        _propertyGrid = new PropertyGrid(DesignerFont);
+        _propertyGrid.PropertyChanged += () => {
+            _designerCanvas.UpdateSelectionAdorner();
+            _designerCanvas.Invalidate();
+            OnCanvasModified();
+            UpdateOutline();
+        };
 
         _sidebarRightBorder = new Border
         {
             Background = new ThemeResourceBrush("CardBackground"),
             BorderThickness = new Thickness(1, 0, 0, 0),
-            BorderBrush = new ThemeResourceBrush("ControlBorder")
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Child = _propertyGrid
         };
-        _sidebarRight = new Grid();
-        _sidebarRightBorder.Child = _sidebarRight;
-
-        _sidebarRight.RowDefinitions.Add(GridLength.Star(1f));
         Grid.SetColumn(_sidebarRightBorder, 2);
         contentGrid.AddChild(_sidebarRightBorder);
 
-        var propContainer = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(12) };
-        var propTitle = new RichTextBlock { FontSize = 14f, Margin = new Thickness(0, 0, 0, 8) };
-        propTitle.Inlines.Add(new Bold(new Run("Properties Reflective Editor")));
-        propContainer.AddChild(propTitle);
-
-        _propertiesPanel = new StackPanel { Orientation = Orientation.Vertical };
-        propContainer.AddChild(_propertiesPanel);
-        _sidebarRight.AddChild(propContainer);
-
+        // 4. Bottom Collapsible Panel - C# Script Preview
         _bottomPanel = new Border { Background = new ThemeResourceBrush("CardBackground") };
         _bottomPanel.BorderThickness = new Thickness(0, 1, 0, 0);
         _bottomPanel.BorderBrush = new ThemeResourceBrush("ControlBorder");
@@ -189,32 +202,32 @@ public class DesignerHost : Grid
         bottomContainer.AddChild(bottomHeaderBorder);
 
         var bottomTitle = new RichTextBlock { FontSize = 12f, Margin = new Thickness(12, 6, 0, 0) };
-        bottomTitle.Inlines.Add(new Bold(new Run("LIVE XAML CODE SERIALIZATION DISPLAY")));
+        bottomTitle.Inlines.Add(new Bold(new Run("LIVE C# CREATION SCRIPT PREVIEW")));
         Grid.SetColumn(bottomTitle, 0);
         bottomHeader.AddChild(bottomTitle);
 
         var toggleBottomBtn = new Button { Width = 140f, Height = 24f, Margin = new Thickness(0, 4, 12, 0) };
         var toggleText = new RichTextBlock { FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
-        toggleText.Inlines.Add(new Run("Collapse Code Panel"));
+        toggleText.Inlines.Add(new Run("Collapse Preview Panel"));
         toggleBottomBtn.Content = toggleText;
         
-        _xamlCodeBlock = new RichTextBlock { FontSize = 11f, Margin = new Thickness(12) };
-        _xamlCodeBlock.Foreground = new ThemeResourceBrush("TextSecondary");
-        bottomContainer.AddChild(_xamlCodeBlock);
+        _csharpCodeBlock = new RichTextBlock { FontSize = 11f, Margin = new Thickness(12) };
+        _csharpCodeBlock.Foreground = new ThemeResourceBrush("TextSecondary");
+        bottomContainer.AddChild(_csharpCodeBlock);
 
         toggleBottomBtn.Click += (s, e) => {
             _isBottomExpanded = !_isBottomExpanded;
             if (_isBottomExpanded)
             {
                 toggleText.Inlines.Clear();
-                toggleText.Inlines.Add(new Run("Collapse Code Panel"));
-                bottomContainer.AddChild(_xamlCodeBlock);
+                toggleText.Inlines.Add(new Run("Collapse Preview Panel"));
+                bottomContainer.AddChild(_csharpCodeBlock);
             }
             else
             {
                 toggleText.Inlines.Clear();
-                toggleText.Inlines.Add(new Run("Expand Code Panel"));
-                bottomContainer.RemoveChild(_xamlCodeBlock);
+                toggleText.Inlines.Add(new Run("Expand Preview Panel"));
+                bottomContainer.RemoveChild(_csharpCodeBlock);
             }
             InvalidateMeasure();
             InvalidateArrange();
@@ -225,19 +238,15 @@ public class DesignerHost : Grid
         TtfFont primaryFont = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont;
         TtfFont courierFont = DesignerFontCourier ?? DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont;
         
-        toolboxTitle.Font = primaryFont;
         outlineTitle.Font = primaryFont;
         gridLinesLabel.Font = primaryFont;
         snapLabel.Font = primaryFont;
         clearBtnText.Font = primaryFont;
-        propTitle.Font = primaryFont;
         bottomTitle.Font = primaryFont;
         toggleText.Font = primaryFont;
-        _xamlCodeBlock.Font = courierFont;
+        _csharpCodeBlock.Font = courierFont;
 
-        PopulateToolbox();
         OnCanvasModified();
-        UpdatePropertyGrid();
         UpdateOutline();
     }
 
@@ -254,10 +263,8 @@ public class DesignerHost : Grid
             ApplyFontToVisualTree(child, primaryFont, courierFont);
         }
         
-        _xamlCodeBlock.Font = courierFont;
+        _csharpCodeBlock.Font = courierFont;
         
-        PopulateToolbox();
-        UpdatePropertyGrid();
         UpdateOutline();
         OnCanvasModified();
     }
@@ -266,7 +273,7 @@ public class DesignerHost : Grid
     {
         if (element is RichTextBlock rtb)
         {
-            if (rtb == _xamlCodeBlock) rtb.Font = codeFont;
+            if (rtb == _csharpCodeBlock) rtb.Font = codeFont;
             else rtb.Font = mainFont;
         }
         else if (element is TextBox tb)
@@ -283,107 +290,93 @@ public class DesignerHost : Grid
         }
     }
 
-    private void PopulateToolbox()
-    {
-        _toolboxPanel.Children.Clear();
-        var controls = new[] { "Button", "TextBox", "CheckBox", "Slider", "ToggleSwitch" };
-        foreach (var cName in controls)
-        {
-            var btn = new Button { Width = 220f, Height = 32f, Margin = new Thickness(0, 4, 0, 4) };
-            var txt = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
-            txt.Inlines.Add(new Run($"Add premium {cName}"));
-            btn.Content = txt;
-
-            string localName = cName;
-            btn.Click += (s, e) => AddControlToCanvas(localName);
-            _toolboxPanel.AddChild(btn);
-        }
-    }
-
     public void AddControlToCanvas(string controlType, float defaultX = 100f, float defaultY = 100f)
     {
-        FrameworkElement newControl = controlType switch
-        {
-            "Button" => CreateSampleButton(),
-            "TextBox" => CreateSampleTextBox(),
-            "CheckBox" => CreateSampleCheckBox(),
-            "Slider" => CreateSampleSlider(),
-            "ToggleSwitch" => CreateSampleToggleSwitch(),
-            _ => throw new ArgumentException("Unknown control type")
+        Type? type = null;
+        string[] searchNamespaces = {
+            "Microsoft.UI.Xaml.Controls",
+            "Microsoft.UI.Xaml",
+            "ProGPU.Designer"
         };
 
-        newControl.Name = $"{controlType}_{_designerCanvas.Children.Count + 1}";
-        Microsoft.UI.Xaml.Controls.Canvas.SetLeft(newControl, defaultX);
-        Microsoft.UI.Xaml.Controls.Canvas.SetTop(newControl, defaultY);
+        foreach (var ns in searchNamespaces)
+        {
+            var typeName = $"{ns}.{controlType}";
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                type = assembly.GetType(typeName);
+                if (type != null) break;
+            }
+            if (type != null) break;
+        }
 
-        _designerCanvas.AddChild(newControl);
-        _designerCanvas.SelectedElement = newControl;
+        if (type != null && typeof(FrameworkElement).IsAssignableFrom(type))
+        {
+            try
+            {
+                var newInstance = Activator.CreateInstance(type) as FrameworkElement;
+                if (newInstance != null)
+                {
+                    Canvas.SetLeft(newInstance, defaultX);
+                    Canvas.SetTop(newInstance, defaultY);
 
-        _designerCanvas.Invalidate();
-        OnCanvasModified();
-        UpdatePropertyGrid();
-        UpdateOutline();
-    }
+                    if (float.IsNaN(newInstance.Width) || newInstance.Width <= 0) newInstance.Width = 120f;
+                    if (float.IsNaN(newInstance.Height) || newInstance.Height <= 0) newInstance.Height = 36f;
 
-    private Button CreateSampleButton()
-    {
-        var btn = new Button { Width = 140f, Height = 36f };
-        var txt = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
-        txt.Inlines.Add(new Run("Sample Button"));
-        btn.Content = txt;
-        return btn;
-    }
+                    newInstance.Name = $"{controlType}_{_designerCanvas.DesignSurface.Children.Count + 1}";
 
-    private TextBox CreateSampleTextBox()
-    {
-        return new TextBox { Width = 150f, Height = 32f, Text = "Sample TextBox", Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont };
-    }
+                    if (newInstance is Button button)
+                    {
+                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(controlType));
+                        button.Content = richText;
+                    }
+                    else if (newInstance is TextBlock textBlock)
+                    {
+                        textBlock.Text = controlType;
+                    }
 
-    private CheckBox CreateSampleCheckBox()
-    {
-        var chk = new CheckBox { IsChecked = false };
-        var txt = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 12f };
-        txt.Inlines.Add(new Run("Sample CheckBox"));
-        chk.Content = txt;
-        return chk;
-    }
+                    _designerCanvas.DesignSurface.Children.Add(newInstance);
+                    _designerCanvas.SelectElement(newInstance);
 
-    private Slider CreateSampleSlider()
-    {
-        return new Slider { Width = 180f, Minimum = 0f, Maximum = 100f, Value = 50f };
-    }
-
-    private ToggleSwitch CreateSampleToggleSwitch()
-    {
-        var tgl = new ToggleSwitch { IsOn = false };
-        var txt = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 12f };
-        txt.Inlines.Add(new Run("Sample Toggle"));
-        tgl.Content = txt;
-        return tgl;
+                    OnCanvasModified();
+                    UpdateOutline();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DesignerHost] Error instantiating {controlType}: {ex.Message}");
+            }
+        }
     }
 
     private void OnCanvasModified()
     {
-        string xaml = SerializeToXaml(_designerCanvas.DesignSurface);
-        _xamlCodeBlock.Inlines.Clear();
+        string csharpScript = DesignerSerializer.SerializeToCSharp(_designerCanvas.DesignSurface);
+        _csharpCodeBlock.Inlines.Clear();
         
-        var lines = xaml.Split('\n');
+        var lines = csharpScript.Split('\n');
         foreach (var line in lines)
         {
             var run = new Run(line + "\n");
-            if (line.Trim().StartsWith("<") || line.Trim().StartsWith("</"))
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("var ") || trimmed.StartsWith("Canvas.Set") || trimmed.StartsWith("Grid.Set"))
             {
                 run.Foreground = new ThemeResourceBrush("SystemAccentColor");
             }
-            _xamlCodeBlock.Inlines.Add(run);
+            else if (trimmed.StartsWith("//"))
+            {
+                run.Foreground = new ThemeResourceBrush("TextSecondary");
+            }
+            _csharpCodeBlock.Inlines.Add(run);
         }
-        _xamlCodeBlock.Invalidate();
+        _csharpCodeBlock.Invalidate();
     }
 
     private void UpdateOutline()
     {
         _outlinePanel.Children.Clear();
-        foreach (var child in _designerCanvas.Children)
+        foreach (var child in _designerCanvas.DesignSurface.Children)
         {
             if (child is FrameworkElement fe)
             {
@@ -404,256 +397,13 @@ public class DesignerHost : Grid
                 
                 selectBtn.Content = label;
                 selectBtn.Click += (s, e) => {
-                    _designerCanvas.SelectedElement = fe;
+                    _designerCanvas.SelectElement(fe);
                     _designerCanvas.Invalidate();
-                    UpdatePropertyGrid();
                     UpdateOutline();
                 };
                 _outlinePanel.AddChild(selectBtn);
             }
         }
         _outlinePanel.InvalidateMeasure();
-    }
-
-    private void UpdatePropertyGrid()
-    {
-        _propertiesPanel.Children.Clear();
-        var selected = _designerCanvas.SelectedElement;
-        if (selected == null)
-        {
-            var noSelection = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 12f, Margin = new Thickness(0, 16, 0, 0) };
-            noSelection.Inlines.Add(new Run("Select an element on the canvas to edit its properties."));
-            _propertiesPanel.AddChild(noSelection);
-            _propertiesPanel.InvalidateMeasure();
-            return;
-        }
-
-        _isUpdatingProperties = true;
-
-        AddPropertyTextBox("Name", selected.Name, val => selected.Name = val);
-
-        float left = Microsoft.UI.Xaml.Controls.Canvas.GetLeft(selected);
-        AddPropertyTextBox("Canvas.Left", left.ToString("F1"), val => {
-            if (float.TryParse(val, out float l)) {
-                Microsoft.UI.Xaml.Controls.Canvas.SetLeft(selected, l);
-                selected.InvalidateArrange();
-                _designerCanvas.Invalidate();
-            }
-        });
-
-        float top = Microsoft.UI.Xaml.Controls.Canvas.GetTop(selected);
-        AddPropertyTextBox("Canvas.Top", top.ToString("F1"), val => {
-            if (float.TryParse(val, out float t)) {
-                Microsoft.UI.Xaml.Controls.Canvas.SetTop(selected, t);
-                selected.InvalidateArrange();
-                _designerCanvas.Invalidate();
-            }
-        });
-
-        float width = selected.Width;
-        if (float.IsNaN(width)) width = selected.Size.X;
-        AddPropertyTextBox("Width", width.ToString("F1"), val => {
-            if (float.TryParse(val, out float w)) {
-                selected.Width = w;
-                selected.InvalidateMeasure();
-                selected.InvalidateArrange();
-                _designerCanvas.Invalidate();
-            }
-        });
-
-        float height = selected.Height;
-        if (float.IsNaN(height)) height = selected.Size.Y;
-        AddPropertyTextBox("Height", height.ToString("F1"), val => {
-            if (float.TryParse(val, out float h)) {
-                selected.Height = h;
-                selected.InvalidateMeasure();
-                selected.InvalidateArrange();
-                _designerCanvas.Invalidate();
-            }
-        });
-
-        var contentProp = selected.GetType().GetProperty("Content");
-        if (contentProp != null)
-        {
-            var val = contentProp.GetValue(selected);
-            string contentStr = "";
-            if (val is RichTextBlock rtb)
-            {
-                contentStr = GetTextFromRichText(rtb);
-            }
-            else if (val != null)
-            {
-                contentStr = val.ToString() ?? "";
-            }
-
-            AddPropertyTextBox("Content", contentStr, newVal => {
-                if (val is RichTextBlock richText)
-                {
-                    richText.Inlines.Clear();
-                    richText.Inlines.Add(new Run(newVal));
-                    richText.Invalidate();
-                }
-                else
-                {
-                    contentProp.SetValue(selected, newVal);
-                }
-                selected.InvalidateMeasure();
-                selected.InvalidateArrange();
-                _designerCanvas.Invalidate();
-            });
-        }
-
-        var textProp = selected.GetType().GetProperty("Text");
-        if (textProp != null)
-        {
-            string val = textProp.GetValue(selected) as string ?? "";
-            AddPropertyTextBox("Text", val, newVal => {
-                textProp.SetValue(selected, newVal);
-                selected.InvalidateMeasure();
-                selected.InvalidateArrange();
-                _designerCanvas.Invalidate();
-            });
-        }
-
-        var isCheckedProp = selected.GetType().GetProperty("IsChecked");
-        if (isCheckedProp != null)
-        {
-            bool val = (bool)(isCheckedProp.GetValue(selected) ?? false);
-            AddPropertyCheckBox("IsChecked", val, newVal => {
-                isCheckedProp.SetValue(selected, newVal);
-                _designerCanvas.Invalidate();
-            });
-        }
-
-        var isOnProp = selected.GetType().GetProperty("IsOn");
-        if (isOnProp != null)
-        {
-            bool val = (bool)(isOnProp.GetValue(selected) ?? false);
-            AddPropertyCheckBox("IsOn", val, newVal => {
-                isOnProp.SetValue(selected, newVal);
-                _designerCanvas.Invalidate();
-            });
-        }
-
-        _isUpdatingProperties = false;
-        _propertiesPanel.InvalidateMeasure();
-    }
-
-    private void AddPropertyTextBox(string labelName, string initialValue, Action<string> onValueSubmitted)
-    {
-        var label = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 10f, Margin = new Thickness(0, 6, 0, 2) };
-        label.Inlines.Add(new Run(labelName));
-        _propertiesPanel.AddChild(label);
-
-        var box = new TextBox { Width = 240f, Height = 28f, Text = initialValue, Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont };
-        box.TextChanged += (s, e) => {
-            if (!_isUpdatingProperties)
-            {
-                onValueSubmitted(box.Text);
-                OnCanvasModified();
-            }
-        };
-        _propertiesPanel.AddChild(box);
-    }
-
-    private void AddPropertyCheckBox(string labelName, bool initialValue, Action<bool> onValueChanged)
-    {
-        var check = new CheckBox { IsChecked = initialValue, Margin = new Thickness(0, 6, 0, 6) };
-        var label = new RichTextBlock { Font = DesignerFont ?? Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, FontSize = 11f };
-        label.Inlines.Add(new Run(labelName));
-        check.Content = label;
-
-        check.CheckedChanged += (s, e) => {
-            if (!_isUpdatingProperties)
-            {
-                onValueChanged(check.IsChecked);
-                OnCanvasModified();
-            }
-        };
-        _propertiesPanel.AddChild(check);
-    }
-
-    public static string SerializeToXaml(Canvas canvas)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("<Canvas Width=\"800\" Height=\"600\">");
-        foreach (var child in canvas.Children)
-        {
-            if (child is FrameworkElement fe)
-            {
-                string typeName = fe.GetType().Name;
-                float left = Microsoft.UI.Xaml.Controls.Canvas.GetLeft(fe);
-                float top = Microsoft.UI.Xaml.Controls.Canvas.GetTop(fe);
-                float width = fe.Width;
-                float height = fe.Height;
-                if (float.IsNaN(width)) width = fe.Size.X;
-                if (float.IsNaN(height)) height = fe.Size.Y;
-
-                sb.Append($"    <{typeName} Name=\"{fe.Name}\" Canvas.Left=\"{left:F1}\" Canvas.Top=\"{top:F1}\" Width=\"{width:F1}\" Height=\"{height:F1}\"");
-
-                var contentProp = fe.GetType().GetProperty("Content");
-                if (contentProp != null)
-                {
-                    var contentVal = contentProp.GetValue(fe);
-                    if (contentVal is RichTextBlock rtb)
-                    {
-                        string runText = GetTextFromRichText(rtb);
-                        sb.Append($" Content=\"{runText}\"");
-                    }
-                    else if (contentVal != null)
-                    {
-                        sb.Append($" Content=\"{contentVal}\"");
-                    }
-                }
-
-                var textProp = fe.GetType().GetProperty("Text");
-                if (textProp != null)
-                {
-                    sb.Append($" Text=\"{textProp.GetValue(fe)}\"");
-                }
-
-                var valueProp = fe.GetType().GetProperty("Value");
-                if (valueProp != null)
-                {
-                    sb.Append($" Value=\"{valueProp.GetValue(fe):F1}\"");
-                }
-
-                var isCheckedProp = fe.GetType().GetProperty("IsChecked");
-                if (isCheckedProp != null)
-                {
-                    sb.Append($" IsChecked=\"{isCheckedProp.GetValue(fe)}\"");
-                }
-
-                var isOnProp = fe.GetType().GetProperty("IsOn");
-                if (isOnProp != null)
-                {
-                    sb.Append($" IsOn=\"{isOnProp.GetValue(fe)}\"");
-                }
-
-                sb.AppendLine(" />");
-            }
-        }
-        sb.AppendLine("</Canvas>");
-        return sb.ToString();
-    }
-
-    private static string GetTextFromRichText(RichTextBlock rtb)
-    {
-        var sb = new StringBuilder();
-        foreach (var inline in rtb.Inlines)
-        {
-            if (inline is Run r)
-            {
-                sb.Append(r.Text);
-            }
-            else if (inline is Bold b)
-            {
-                foreach (var binline in b.Inlines)
-                {
-                    if (binline is Run br) sb.Append(br.Text);
-                }
-            }
-        }
-        return sb.ToString();
     }
 }

@@ -97,6 +97,11 @@ public class DesignerCanvas : Panel
         CanvasModified?.Invoke();
     }
 
+    public void NotifyCanvasModified()
+    {
+        CanvasModified?.Invoke();
+    }
+
     public void ApplyTransforms()
     {
         Matrix4x4 scale = Matrix4x4.CreateScale(ZoomScale, ZoomScale, 1.0f);
@@ -139,9 +144,13 @@ public class DesignerCanvas : Panel
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
-        DesignSurface.Measure(availableSize);
-        AdornerSurface.Measure(availableSize);
-        return availableSize;
+        float w = !float.IsFinite(availableSize.X) ? 2000f : availableSize.X;
+        float h = !float.IsFinite(availableSize.Y) ? 2000f : availableSize.Y;
+        
+        DesignSurface.Measure(new Vector2(w, h));
+        AdornerSurface.Measure(new Vector2(w, h));
+        
+        return new Vector2(w, h);
     }
 
     protected override void ArrangeOverride(Rect arrangeRect)
@@ -633,6 +642,12 @@ public class DesignerCanvas : Panel
             float minY = MathF.Floor(minLogical.Y / gridSpacing) * gridSpacing;
             float maxY = MathF.Ceiling(maxLogical.Y / gridSpacing) * gridSpacing;
 
+            if (!float.IsFinite(minX) || !float.IsFinite(maxX) ||
+                !float.IsFinite(minY) || !float.IsFinite(maxY))
+            {
+                return;
+            }
+
             for (float x = minX; x <= maxX; x += gridSpacing)
             {
                 for (float y = minY; y <= maxY; y += gridSpacing)
@@ -678,6 +693,7 @@ public class DesignerCanvas : Panel
 
     private void DrawDashedVerticalLine(DrawingContext context, Pen pen, float x, float y1, float y2, float dashLength = 6f, float gapLength = 4f)
     {
+        if (dashLength + gapLength <= 0.001f) return;
         float y = y1;
         while (y < y2)
         {
@@ -689,6 +705,7 @@ public class DesignerCanvas : Panel
 
     private void DrawDashedHorizontalLine(DrawingContext context, Pen pen, float y, float x1, float x2, float dashLength = 6f, float gapLength = 4f)
     {
+        if (dashLength + gapLength <= 0.001f) return;
         float x = x1;
         while (x < x2)
         {

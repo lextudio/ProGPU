@@ -82,7 +82,7 @@ public class ToolboxItem : Border
         if (e.IsLeftButtonPressed)
         {
             var dp = new DataPackage();
-            dp.Properties["ToolType"] = _controlName;
+            dp.SetData(StandardDataFormats.Tool, _controlName);
             
             var dragVisual = new Border
             {
@@ -107,7 +107,7 @@ public class ToolboxItem : Border
             visualText.Inlines.Add(new Run(_controlName));
             dragVisual.Child = visualText;
 
-            DragDropManager.StartDrag(this, dp, dragVisual);
+            DragDropManager.StartDrag(this, dp, DragDropEffects.Copy, dragVisual);
             e.Handled = true;
         }
         base.OnPointerPressed(e);
@@ -117,7 +117,6 @@ public class ToolboxItem : Border
     {
         if (DragDropManager.IsDragging)
         {
-            DragDropManager.EndDrag();
             Background = new ThemeResourceBrush("ControlBackground");
             BorderBrush = new ThemeResourceBrush("ControlBorder");
         }
@@ -158,6 +157,7 @@ public class Toolbox : Border
 
         var controls = new (string Name, string DisplayName, string Icon)[]
         {
+            // Controls (16)
             ("Button", "Button", "🔘"),
             ("TextBox", "TextBox", "📝"),
             ("TextBlock", "TextBlock", "🔤"),
@@ -165,9 +165,23 @@ public class Toolbox : Border
             ("Slider", "Slider", "🎛️"),
             ("CheckBox", "CheckBox", "☑️"),
             ("RadioButton", "RadioButton", "🔘"),
-            ("Border", "Border", "🔲"),
+            ("ProgressBar", "ProgressBar", "📊"),
+            ("ProgressRing", "ProgressRing", "🔄"),
+            ("RatingControl", "RatingControl", "⭐"),
+            ("ToggleSwitch", "ToggleSwitch", "🎚️"),
+            ("CalendarView", "CalendarView", "📅"),
+            ("DatePicker", "DatePicker", "📆"),
+            ("PasswordBox", "PasswordBox", "🔒"),
+            ("TreeView", "TreeView", "🌲"),
+            ("DataGrid", "DataGrid", "🔢"),
+            
+            // Panels (6)
             ("StackPanel", "StackPanel", "🥞"),
-            ("Grid", "Grid", "🌐")
+            ("Grid", "Grid", "🌐"),
+            ("Canvas", "Canvas", "🎨"),
+            ("Border", "Border", "🔲"),
+            ("ScrollViewer", "ScrollViewer", "📜"),
+            ("SplitView", "SplitView", "📖")
         };
 
         foreach (var ctrl in controls)

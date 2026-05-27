@@ -2,6 +2,8 @@ namespace ProGPU.Designer;
 
 using System;
 using System.Reflection;
+using System.Text;
+using System.Collections.Generic;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -11,17 +13,50 @@ using ProGPU.Layout;
 using Thickness = Microsoft.UI.Xaml.Thickness;
 using HorizontalAlignment = ProGPU.Layout.HorizontalAlignment;
 using VerticalAlignment = ProGPU.Layout.VerticalAlignment;
-using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
-using Grid = Microsoft.UI.Xaml.Controls.Grid;
 using System.Numerics;
+
+public class PropertyItem
+{
+    private string _value = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+    public string Value
+    {
+        get => _value;
+        set
+        {
+            if (_value != value)
+            {
+                _value = value;
+                try
+                {
+                    OnChanged?.Invoke(_value);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[PropertyGrid] Error setting {Name}: {ex.Message}");
+                }
+            }
+        }
+    }
+    public Action<string>? OnChanged { get; set; }
+
+    public PropertyItem(string name, string value, Action<string> onChanged)
+    {
+        Name = name;
+        _value = value;
+        OnChanged = onChanged;
+    }
+}
 
 public class PropertyGrid : Border
 {
     private FrameworkElement? _selectedElement;
-    private readonly StackPanel _mainStack;
-    private readonly ScrollViewer _scrollViewer;
+    private readonly DataGrid _dataGrid;
     private readonly ProGPU.Text.TtfFont? _font;
-    private bool _isUpdating;
+    private readonly RichTextBlock _titleText;
+
+    public event Action? PropertyChanged;
 
     public FrameworkElement? SelectedElement
     {
@@ -47,413 +82,284 @@ public class PropertyGrid : Border
         HorizontalAlignment = HorizontalAlignment.Stretch;
         VerticalAlignment = VerticalAlignment.Stretch;
 
-        _mainStack = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
+        var mainGrid = new Grid();
+        mainGrid.RowDefinitions.Add(GridLength.Auto);
+        mainGrid.RowDefinitions.Add(GridLength.Star(1f));
 
-        var titleText = new RichTextBlock
+        _titleText = new RichTextBlock
         {
             Font = font,
             FontSize = 14f,
             Margin = new Thickness(4, 4, 4, 12),
             HorizontalAlignment = HorizontalAlignment.Left
         };
-        titleText.Inlines.Add(new Bold(new Run("Properties")));
-        _mainStack.AddChild(titleText);
+        _titleText.Inlines.Add(new Bold(new Run("Properties")));
+        Grid.SetRow(_titleText, 0);
+        mainGrid.AddChild(_titleText);
 
-        _scrollViewer = new ScrollViewer
+        _dataGrid = new DataGrid
         {
-            Content = _mainStack,
+            Font = font,
+            FontSize = 11f,
+            RowHeight = 26f,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
         };
+        _dataGrid.Columns.Add(new DataGridColumn("Property", "110", "Name"));
+        _dataGrid.Columns.Add(new DataGridColumn("Value", "*", "Value"));
 
-        Child = _scrollViewer;
-        
+        Grid.SetRow(_dataGrid, 1);
+        mainGrid.AddChild(_dataGrid);
+
+        Child = mainGrid;
+
         RefreshProperties();
     }
 
     public void RefreshProperties()
     {
-        while (_mainStack.Children.Count > 1)
-        {
-            _mainStack.RemoveChild(_mainStack.Children[1]);
-        }
+        _dataGrid.ClearItems();
 
         if (_selectedElement == null)
         {
-            var noSelectionText = new RichTextBlock
-            {
-                Font = _font,
-                FontSize = 12f,
-                Foreground = new ThemeResourceBrush("TextSecondary"),
-                Margin = new Thickness(4, 10, 4, 4)
-            };
-            noSelectionText.Inlines.Add(new Run("No element selected"));
-            _mainStack.AddChild(noSelectionText);
+            _titleText.Inlines.Clear();
+            _titleText.Inlines.Add(new Bold(new Run("Properties (No Selection)")));
             return;
         }
 
-        var typeHeader = new Border
+        string typeName = _selectedElement.GetType().Name;
+        _titleText.Inlines.Clear();
+        _titleText.Inlines.Add(new Bold(new Run($"Properties: {typeName}")));
+
+        // Name
+        _dataGrid.AddItem(new PropertyItem("Name", _selectedElement.Name ?? "", val =>
         {
-            Background = new ThemeResourceBrush("ControlBackground"),
-            CornerRadius = 4f,
-            Padding = new Thickness(8, 6, 8, 6),
-            Margin = new Thickness(0, 0, 0, 12),
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-        var typeText = new RichTextBlock { Font = _font, FontSize = 12f };
-        typeText.Inlines.Add(new Bold(new Run("Type: ")));
-        typeText.Inlines.Add(new Run(_selectedElement.GetType().Name));
-        if (!string.IsNullOrEmpty(_selectedElement.Name))
+            _selectedElement.Name = val;
+            PropertyChanged?.Invoke();
+        }));
+
+        // Canvas.Left
+        float left = Canvas.GetLeft(_selectedElement);
+        _dataGrid.AddItem(new PropertyItem("Canvas.Left", left.ToString("F1"), val =>
         {
-            typeText.Inlines.Add(new Run($" ({_selectedElement.Name})"));
-        }
-        typeHeader.Child = typeText;
-        _mainStack.AddChild(typeHeader);
-
-        // 1. Layout Properties
-        var layoutStack = CreateCategoryGroup("Layout");
-        AddPropertyRow(layoutStack, "Width", CreateFloatEditor(
-            () => float.IsNaN(_selectedElement.Width) ? "" : _selectedElement.Width.ToString(),
-            val => {
-                if (float.TryParse(val, out float f)) _selectedElement.Width = f;
-                else _selectedElement.Width = float.NaN;
-                _selectedElement.InvalidateMeasure();
-                _selectedElement.Invalidate();
-            }
-        ));
-        AddPropertyRow(layoutStack, "Height", CreateFloatEditor(
-            () => float.IsNaN(_selectedElement.Height) ? "" : _selectedElement.Height.ToString(),
-            val => {
-                if (float.TryParse(val, out float f)) _selectedElement.Height = f;
-                else _selectedElement.Height = float.NaN;
-                _selectedElement.InvalidateMeasure();
-                _selectedElement.Invalidate();
-            }
-        ));
-        AddPropertyRow(layoutStack, "Horz Align", CreateEnumEditor<HorizontalAlignment>(
-            () => _selectedElement.HorizontalAlignment,
-            val => {
-                _selectedElement.HorizontalAlignment = val;
+            if (float.TryParse(val, out float l))
+            {
+                Canvas.SetLeft(_selectedElement, l);
                 _selectedElement.InvalidateArrange();
-                _selectedElement.Invalidate();
+                PropertyChanged?.Invoke();
             }
-        ));
-        AddPropertyRow(layoutStack, "Vert Align", CreateEnumEditor<VerticalAlignment>(
-            () => _selectedElement.VerticalAlignment,
-            val => {
-                _selectedElement.VerticalAlignment = val;
+        }));
+
+        // Canvas.Top
+        float top = Canvas.GetTop(_selectedElement);
+        _dataGrid.AddItem(new PropertyItem("Canvas.Top", top.ToString("F1"), val =>
+        {
+            if (float.TryParse(val, out float t))
+            {
+                Canvas.SetTop(_selectedElement, t);
                 _selectedElement.InvalidateArrange();
-                _selectedElement.Invalidate();
+                PropertyChanged?.Invoke();
             }
-        ));
-        AddPropertyRow(layoutStack, "Margin", CreateThicknessEditor(
-            () => _selectedElement.Margin,
-            val => {
-                _selectedElement.Margin = val;
-                _selectedElement.InvalidateMeasure();
-                _selectedElement.Invalidate();
-            }
-        ));
-        AddPropertyRow(layoutStack, "Padding", CreateThicknessEditor(
-            () => _selectedElement.Padding,
-            val => {
-                _selectedElement.Padding = val;
-                _selectedElement.InvalidateMeasure();
-                _selectedElement.Invalidate();
-            }
-        ));
-        _mainStack.AddChild(layoutStack);
+        }));
 
-        // 2. Appearance Properties
-        var appearanceStack = CreateCategoryGroup("Appearance");
-        
-        AddPropertyRow(appearanceStack, "Background", CreateBrushEditor(
-            () => {
-                if (_selectedElement is Control ctrl)
-                {
-                    if (ctrl.Background is SolidColorBrush scb)
-                    {
-                        var col = scb.Color;
-                        return $"#{(byte)(col.W * 255):X2}{(byte)(col.X * 255):X2}{(byte)(col.Y * 255):X2}{(byte)(col.Z * 255):X2}";
-                    }
-                    else if (ctrl.Background is ThemeResourceBrush trb)
-                    {
-                        return trb.ResourceKey;
-                    }
-                }
-                else if (_selectedElement is Border b)
-                {
-                    if (b.Background is SolidColorBrush scb)
-                    {
-                        var col = scb.Color;
-                        return $"#{(byte)(col.W * 255):X2}{(byte)(col.X * 255):X2}{(byte)(col.Y * 255):X2}{(byte)(col.Z * 255):X2}";
-                    }
-                    else if (b.Background is ThemeResourceBrush trb)
-                    {
-                        return trb.ResourceKey;
-                    }
-                }
-                return "";
-            },
-            val => {
-                Brush? brush = null;
-                if (val.StartsWith("#"))
-                {
-                    var hex = val.Substring(1);
-                    if (hex.Length == 6) hex = "FF" + hex;
-                    if (hex.Length == 8 && uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out uint rgba))
-                    {
-                        float a = ((rgba >> 24) & 0xFF) / 255f;
-                        float r = ((rgba >> 16) & 0xFF) / 255f;
-                        float g = ((rgba >> 8) & 0xFF) / 255f;
-                        float b = (rgba & 0xFF) / 255f;
-                        brush = new SolidColorBrush(new Vector4(r, g, b, a));
-                    }
-                }
-                else if (!string.IsNullOrEmpty(val))
-                {
-                    brush = new ThemeResourceBrush(val);
-                }
-
-                if (_selectedElement is Control ctrl)
-                {
-                    ctrl.Background = brush;
-                    ctrl.Invalidate();
-                }
-                else if (_selectedElement is Border border)
-                {
-                    border.Background = brush;
-                    border.Invalidate();
-                }
+        // Width
+        float w = float.IsNaN(_selectedElement.Width) ? _selectedElement.Size.X : _selectedElement.Width;
+        _dataGrid.AddItem(new PropertyItem("Width", w.ToString("F1"), val =>
+        {
+            if (float.TryParse(val, out float widthVal))
+            {
+                _selectedElement.Width = widthVal;
+                _selectedElement.InvalidateMeasure();
+                _selectedElement.InvalidateArrange();
+                PropertyChanged?.Invoke();
             }
-        ));
-        
-        AddPropertyRow(appearanceStack, "Opacity", CreateFloatEditor(
-            () => _selectedElement.Opacity.ToString("0.00"),
-            val => {
-                if (float.TryParse(val, out float f))
+        }));
+
+        // Height
+        float h = float.IsNaN(_selectedElement.Height) ? _selectedElement.Size.Y : _selectedElement.Height;
+        _dataGrid.AddItem(new PropertyItem("Height", h.ToString("F1"), val =>
+        {
+            if (float.TryParse(val, out float heightVal))
+            {
+                _selectedElement.Height = heightVal;
+                _selectedElement.InvalidateMeasure();
+                _selectedElement.InvalidateArrange();
+                PropertyChanged?.Invoke();
+            }
+        }));
+
+        // Opacity
+        _dataGrid.AddItem(new PropertyItem("Opacity", _selectedElement.Opacity.ToString("F2"), val =>
+        {
+            if (float.TryParse(val, out float op))
+            {
+                _selectedElement.Opacity = Math.Clamp(op, 0f, 1f);
+                _selectedElement.Invalidate();
+                PropertyChanged?.Invoke();
+            }
+        }));
+
+        var type = _selectedElement.GetType();
+
+        // CornerRadius
+        var crProp = type.GetProperty("CornerRadius");
+        if (crProp != null)
+        {
+            float crVal = crProp.GetValue(_selectedElement) is float f ? f : 0f;
+            _dataGrid.AddItem(new PropertyItem("CornerRadius", crVal.ToString("F1"), val =>
+            {
+                if (float.TryParse(val, out float fcr))
                 {
-                    _selectedElement.Opacity = Math.Clamp(f, 0f, 1f);
+                    crProp.SetValue(_selectedElement, fcr);
                     _selectedElement.Invalidate();
+                    PropertyChanged?.Invoke();
                 }
-            }
-        ));
+            }));
+        }
 
-        var hasCornerRadius = _selectedElement.GetType().GetProperty("CornerRadius") != null;
-        if (hasCornerRadius)
+        // Text
+        var textProp = type.GetProperty("Text");
+        if (textProp != null && textProp.PropertyType == typeof(string))
         {
-            AddPropertyRow(appearanceStack, "CornerRadius", CreateFloatEditor(
-                () => {
-                    var prop = _selectedElement.GetType().GetProperty("CornerRadius");
-                    return prop?.GetValue(_selectedElement)?.ToString() ?? "0";
-                },
-                val => {
-                    if (float.TryParse(val, out float f))
-                    {
-                        var prop = _selectedElement.GetType().GetProperty("CornerRadius");
-                        prop?.SetValue(_selectedElement, f);
-                        _selectedElement.Invalidate();
-                    }
+            string txtVal = textProp.GetValue(_selectedElement) as string ?? "";
+            _dataGrid.AddItem(new PropertyItem("Text", txtVal, val =>
+            {
+                textProp.SetValue(_selectedElement, val);
+                _selectedElement.InvalidateMeasure();
+                _selectedElement.Invalidate();
+                PropertyChanged?.Invoke();
+            }));
+        }
+
+        // Content (for strings/buttons)
+        var contentProp = type.GetProperty("Content");
+        if (contentProp != null)
+        {
+            var contentVal = contentProp.GetValue(_selectedElement);
+            string contentStr = "";
+            if (contentVal is string s) contentStr = s;
+            else if (contentVal is RichTextBlock rtb)
+            {
+                var sb = new StringBuilder();
+                foreach (var inline in rtb.Inlines)
+                {
+                    if (inline is Run r) sb.Append(r.Text);
                 }
-            ));
+                contentStr = sb.ToString();
+            }
+
+            _dataGrid.AddItem(new PropertyItem("Content", contentStr, val =>
+            {
+                if (contentVal is RichTextBlock richText)
+                {
+                    richText.Inlines.Clear();
+                    richText.Inlines.Add(new Run(val));
+                    richText.Invalidate();
+                }
+                else
+                {
+                    contentProp.SetValue(_selectedElement, val);
+                }
+                _selectedElement.InvalidateMeasure();
+                _selectedElement.InvalidateArrange();
+                PropertyChanged?.Invoke();
+            }));
         }
 
-        _mainStack.AddChild(appearanceStack);
-
-        // 3. Content / Text Properties
-        var textProp = _selectedElement.GetType().GetProperty("Text");
-        var contentProp = _selectedElement.GetType().GetProperty("Content");
-        
-        if (textProp != null || contentProp != null)
+        // Minimum
+        var minProp = type.GetProperty("Minimum");
+        if (minProp != null && minProp.PropertyType == typeof(float))
         {
-            var contentStack = CreateCategoryGroup("Content & Text");
-            if (textProp != null && textProp.PropertyType == typeof(string))
+            float minVal = (float)minProp.GetValue(_selectedElement);
+            _dataGrid.AddItem(new PropertyItem("Minimum", minVal.ToString("F1"), val =>
             {
-                AddPropertyRow(contentStack, "Text", CreateTextEditor(
-                    () => (string)(textProp.GetValue(_selectedElement) ?? ""),
-                    val => {
-                        textProp.SetValue(_selectedElement, val);
-                        _selectedElement.InvalidateMeasure();
-                        _selectedElement.Invalidate();
-                    }
-                ));
-            }
-            else if (contentProp != null)
-            {
-                AddPropertyRow(contentStack, "Content", CreateTextEditor(
-                    () => {
-                        var val = contentProp.GetValue(_selectedElement);
-                        return val is string s ? s : "";
-                    },
-                    val => {
-                        if (contentProp.PropertyType == typeof(object) || contentProp.PropertyType == typeof(string))
-                        {
-                            contentProp.SetValue(_selectedElement, val);
-                            _selectedElement.InvalidateMeasure();
-                            _selectedElement.Invalidate();
-                        }
-                    }
-                ));
-            }
-            _mainStack.AddChild(contentStack);
-        }
-    }
-
-    private StackPanel CreateCategoryGroup(string title)
-    {
-        var categoryStack = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            Margin = new Thickness(0, 0, 0, 16),
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-
-        var catTitle = new RichTextBlock
-        {
-            Font = _font,
-            FontSize = 12f,
-            Foreground = new ThemeResourceBrush("SystemAccentColor"),
-            Margin = new Thickness(4, 4, 4, 8)
-        };
-        catTitle.Inlines.Add(new Bold(new Run(title)));
-        categoryStack.AddChild(catTitle);
-
-        return categoryStack;
-    }
-
-    private void AddPropertyRow(StackPanel parent, string labelText, FrameworkElement editor)
-    {
-        var grid = new Grid { Margin = new Thickness(4, 3, 4, 3), HeightConstraint = 32f };
-        grid.ColumnDefinitions.Add(new GridLength(90, GridUnitType.Absolute));
-        grid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));
-
-        var label = new RichTextBlock
-        {
-            Font = _font,
-            FontSize = 11f,
-            Foreground = new ThemeResourceBrush("TextSecondary"),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        label.Inlines.Add(new Run(labelText));
-        grid.AddChild(label);
-        Grid.SetColumn(label, 0);
-
-        editor.Font = _font;
-        var fontSizeProp = editor.GetType().GetProperty("FontSize");
-        if (fontSizeProp != null && fontSizeProp.CanWrite)
-        {
-            try { fontSizeProp.SetValue(editor, 11f); } catch { }
-        }
-        editor.HorizontalAlignment = HorizontalAlignment.Stretch;
-        editor.VerticalAlignment = VerticalAlignment.Center;
-        grid.AddChild(editor);
-        Grid.SetColumn(editor, 1);
-
-        parent.AddChild(grid);
-    }
-
-    private TextBox CreateTextEditor(Func<string> getter, Action<string> setter)
-    {
-        var tb = new TextBox
-        {
-            Text = getter(),
-            HeightConstraint = 26f
-        };
-        tb.TextChanged += (s, e) => {
-            if (_isUpdating) return;
-            _isUpdating = true;
-            try { setter(tb.Text); } catch { }
-            _isUpdating = false;
-        };
-        return tb;
-    }
-
-    private TextBox CreateFloatEditor(Func<string> getter, Action<string> setter)
-    {
-        var tb = new TextBox
-        {
-            Text = getter(),
-            HeightConstraint = 26f
-        };
-        tb.TextChanged += (s, e) => {
-            if (_isUpdating) return;
-            _isUpdating = true;
-            try { setter(tb.Text); } catch { }
-            _isUpdating = false;
-        };
-        return tb;
-    }
-
-    private ComboBox CreateEnumEditor<T>(Func<T> getter, Action<T> setter) where T : struct, Enum
-    {
-        var cb = new ComboBox { HeightConstraint = 26f };
-        var values = Enum.GetValues<T>();
-        foreach (var val in values)
-        {
-            cb.Items.Add(new ComboBoxItem { Text = val.ToString() });
+                if (float.TryParse(val, out float fval))
+                {
+                    minProp.SetValue(_selectedElement, fval);
+                    _selectedElement.Invalidate();
+                    PropertyChanged?.Invoke();
+                }
+            }));
         }
 
-        var currentVal = getter();
-        foreach (var item in cb.Items)
+        // Maximum
+        var maxProp = type.GetProperty("Maximum");
+        if (maxProp != null && maxProp.PropertyType == typeof(float))
         {
-            if (item.Text == currentVal.ToString())
+            float maxVal = (float)maxProp.GetValue(_selectedElement);
+            _dataGrid.AddItem(new PropertyItem("Maximum", maxVal.ToString("F1"), val =>
             {
-                cb.SelectedItem = item;
-                break;
-            }
+                if (float.TryParse(val, out float fval))
+                {
+                    maxProp.SetValue(_selectedElement, fval);
+                    _selectedElement.Invalidate();
+                    PropertyChanged?.Invoke();
+                }
+            }));
         }
 
-        cb.SelectionChanged += (s, e) => {
-            if (_isUpdating) return;
-            if (cb.SelectedItem != null && Enum.TryParse<T>(cb.SelectedItem.Text, out var val))
-            {
-                _isUpdating = true;
-                try { setter(val); } catch { }
-                _isUpdating = false;
-            }
-        };
-        return cb;
-    }
-
-    private TextBox CreateThicknessEditor(Func<ProGPU.Layout.Thickness> getter, Action<ProGPU.Layout.Thickness> setter)
-    {
-        var t = getter();
-        var tb = new TextBox
+        // Value
+        var valProp = type.GetProperty("Value");
+        if (valProp != null && valProp.PropertyType == typeof(float))
         {
-            Text = $"{t.Left},{t.Top},{t.Right},{t.Bottom}",
-            HeightConstraint = 26f
-        };
-        tb.TextChanged += (s, e) => {
-            if (_isUpdating) return;
-            _isUpdating = true;
-            try
+            float valVal = (float)valProp.GetValue(_selectedElement);
+            _dataGrid.AddItem(new PropertyItem("Value", valVal.ToString("F1"), val =>
             {
-                var val = ProGPU.Layout.Thickness.Parse(tb.Text);
-                setter(val);
-            }
-            catch { }
-            _isUpdating = false;
-        };
-        return tb;
-    }
+                if (float.TryParse(val, out float fval))
+                {
+                    valProp.SetValue(_selectedElement, fval);
+                    _selectedElement.Invalidate();
+                    PropertyChanged?.Invoke();
+                }
+            }));
+        }
 
-    private TextBox CreateBrushEditor(Func<string> getter, Action<string> setter)
-    {
-        var tb = new TextBox
+        // IsChecked
+        var isCheckedProp = type.GetProperty("IsChecked");
+        if (isCheckedProp != null && isCheckedProp.PropertyType == typeof(bool))
         {
-            Text = getter(),
-            HeightConstraint = 26f
-        };
-        tb.TextChanged += (s, e) => {
-            if (_isUpdating) return;
-            _isUpdating = true;
-            try { setter(tb.Text); } catch { }
-            _isUpdating = false;
-        };
-        return tb;
+            bool isCheckedVal = (bool)isCheckedProp.GetValue(_selectedElement);
+            _dataGrid.AddItem(new PropertyItem("IsChecked", isCheckedVal.ToString(), val =>
+            {
+                if (bool.TryParse(val, out bool bval))
+                {
+                    isCheckedProp.SetValue(_selectedElement, bval);
+                    _selectedElement.Invalidate();
+                    PropertyChanged?.Invoke();
+                }
+            }));
+        }
+
+        // IsOn
+        var isOnProp = type.GetProperty("IsOn");
+        if (isOnProp != null && isOnProp.PropertyType == typeof(bool))
+        {
+            bool isOnVal = (bool)isOnProp.GetValue(_selectedElement);
+            _dataGrid.AddItem(new PropertyItem("IsOn", isOnVal.ToString(), val =>
+            {
+                if (bool.TryParse(val, out bool bval))
+                {
+                    isOnProp.SetValue(_selectedElement, bval);
+                    _selectedElement.Invalidate();
+                    PropertyChanged?.Invoke();
+                }
+            }));
+        }
+
+        // Orientation
+        var orientProp = type.GetProperty("Orientation");
+        if (orientProp != null)
+        {
+            var orientVal = orientProp.GetValue(_selectedElement);
+            _dataGrid.AddItem(new PropertyItem("Orientation", orientVal.ToString(), val =>
+            {
+                if (Enum.TryParse(orientProp.PropertyType, val, out var eval))
+                {
+                    orientProp.SetValue(_selectedElement, eval);
+                    _selectedElement.InvalidateMeasure();
+                    PropertyChanged?.Invoke();
+                }
+            }));
+        }
     }
 }

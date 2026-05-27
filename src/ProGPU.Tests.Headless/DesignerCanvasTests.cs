@@ -5,7 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using ProGPU.Designer;
-using DataPackage = ProGPU.Designer.DataPackage;
+using DataPackage = Microsoft.UI.Xaml.DataPackage;
 using DragEventArgs = ProGPU.Designer.DragEventArgs;
 using StandardDataFormats = ProGPU.Designer.StandardDataFormats;
 using ProGPU.Vector;
@@ -127,5 +127,27 @@ public class DesignerCanvasTests
         {
             Assert.IsType<Thumb>(child);
         }
+    }
+
+    [Fact]
+    public void Test_DesignerHost_Measure_Arrange_Hang()
+    {
+        var designerHost = new DesignerHost
+        {
+            Height = 700f,
+            DesignerFont = Microsoft.UI.Xaml.Controls.PopupService.DefaultFont,
+            DesignerFontCourier = Microsoft.UI.Xaml.Controls.PopupService.DefaultFont,
+            GetDpiScale = () => 1.0f
+        };
+
+        designerHost.InitializeFonts(Microsoft.UI.Xaml.Controls.PopupService.DefaultFont, Microsoft.UI.Xaml.Controls.PopupService.DefaultFont);
+
+        designerHost.AddControlToCanvas("Button", 100f, 80f);
+        designerHost.AddControlToCanvas("TextBox", 300f, 80f);
+        designerHost.AddControlToCanvas("CheckBox", 100f, 160f);
+        designerHost.AddControlToCanvas("Slider", 300f, 160f);
+
+        designerHost.Measure(new Vector2(1024, 768));
+        designerHost.Arrange(new ProGPU.Scene.Rect(0, 0, 1024, 768));
     }
 }
