@@ -80,27 +80,109 @@ public static class DxfDocumentRenderer
             RenderFlatCollections(doc, context);
         }
 
-        // Render 3D ACIS Solids if cached in context
+        // Render 3D ACIS Solids if cached in context via GPU projection
         if (context.Cached3dSolids.Count > 0)
         {
-            var pen = new ProGPU.Vector.Pen(context.FallbackBrush, 1f);
+            var pen = new ProGPU.Vector.Pen(context.FallbackBrush, 1.0f);
             foreach (var edges in context.Cached3dSolids)
             {
                 foreach (var edge in edges)
                 {
-                    var p1 = context.Transform(edge.StartPoint, Matrix4x4.Identity);
-                    var p2 = context.Transform(edge.EndPoint, Matrix4x4.Identity);
+                    // Project 3D coordinate to screen space using our custom 3D projection
+                    var screenP1 = context.TransformToScreen3D(edge.StartPoint, Matrix4x4.Identity);
+                    var screenP2 = context.TransformToScreen3D(edge.EndPoint, Matrix4x4.Identity);
                     
-                    float minX = Math.Min(p1.X, p2.X);
-                    float minY = Math.Min(p1.Y, p2.Y);
-                    float maxX = Math.Max(p1.X, p2.X);
-                    float maxY = Math.Max(p1.Y, p2.Y);
+                    // Simple frustum culling on screen coordinates
+                    float minX = Math.Min(screenP1.X, screenP2.X);
+                    float minY = Math.Min(screenP1.Y, screenP2.Y);
+                    float maxX = Math.Max(screenP1.X, screenP2.X);
+                    float maxY = Math.Max(screenP1.Y, screenP2.Y);
                     if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY))) continue;
 
-                    context.DrawingContext.DrawLine(pen, p1, p2);
+                    // Draw via high-performance GPU 3D Line Projector (sType == 8)
+                    context.DrawingContext.DrawLine3D(pen, screenP1, screenP2);
                 }
             }
         }
+
+        // Render MULTILEADER entities if cached in context
+        if (context.CachedMLeaders.Count > 0)
+        {
+            foreach (var mleader in context.CachedMLeaders)
+            {
+                if (!context.ActiveLayers.Contains(mleader.Layer)) continue;
+
+                // 1. Draw leader line segments
+                foreach (var line in mleader.LeaderLines)
+                {
+                    if (line.Count < 2) continue;
+
+                    // Gather screen space points
+                    var screenPoints = new List<Vector2>();
+                    foreach (var pt in line)
+                    {
+                        screenPoints.Add(context.Transform(pt, Matrix4x4.Identity));
+                    }
+
+                    // Draw segments
+                    var pen = new ProGPU.Vector.Pen(context.FallbackBrush, 1.5f);
+                    for (int i = 0; i < screenPoints.Count - 1; i++)
+                    {
+                        context.DrawingContext.DrawLine(pen, screenPoints[i], screenPoints[i + 1]);
+                    }
+
+                    // Draw standard CAD arrowhead at V0 pointing towards V1
+                    DrawArrowhead(context, screenPoints[0], screenPoints[1], context.FallbackBrush, pen, mleader.TextHeight);
+                }
+
+                // 2. Draw the text label
+                if (!string.IsNullOrEmpty(mleader.TextValue))
+                {
+                    // Clean MText formatting using DxfTextRenderer.CleanMText
+                    string cleanText = DxfTextRenderer.CleanMText(mleader.TextValue);
+                    
+                    var pos = context.Transform(mleader.TextInsertionPoint, Matrix4x4.Identity);
+                    
+                    // Render using default font and scale
+                    float fontSize = mleader.TextHeight * context.Zoom;
+                    if (fontSize > 0.1f)
+                    {
+                        context.DrawingContext.DrawText(
+                            cleanText, 
+                            context.Font, 
+                            fontSize, 
+                            context.FallbackBrush, 
+                            pos
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    private static void DrawArrowhead(DxfRenderContext context, Vector2 v0, Vector2 v1, ProGPU.Vector.Brush brush, ProGPU.Vector.Pen pen, float textHeight)
+    {
+        var diff = v0 - v1;
+        float len = diff.Length();
+        if (len < 0.001f) return;
+        
+        var dir = Vector2.Normalize(diff);
+        var perp = new Vector2(-dir.Y, dir.X);
+        
+        float arrowLength = Math.Clamp(textHeight * context.Zoom * 0.8f, 6f, 30f);
+        float arrowWidth = arrowLength * 0.35f;
+        
+        var backCenter = v0 - dir * arrowLength;
+        var corner1 = backCenter + perp * arrowWidth;
+        var corner2 = backCenter - perp * arrowWidth;
+        
+        // Construct SVG path data for the solid arrowhead
+        string svg = $"M {v0.X.ToString(System.Globalization.CultureInfo.InvariantCulture)},{v0.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
+                     $"L {corner1.X.ToString(System.Globalization.CultureInfo.InvariantCulture)},{corner1.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)} " +
+                     $"L {corner2.X.ToString(System.Globalization.CultureInfo.InvariantCulture)},{corner2.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)} Z";
+                     
+        var path = ProGPU.Vector.PathGeometry.Parse(svg);
+        context.DrawingContext.DrawPath(brush, pen, path);
     }
 
     private static void RenderFlatCollections(DxfDocument doc, DxfRenderContext context)

@@ -814,7 +814,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
         return MeasureLineWidthStatic(line, font, fontSize);
     }
 
-    private string CleanMText(string mtext)
+    public static string CleanMText(string mtext)
     {
         if (string.IsNullOrEmpty(mtext)) return string.Empty;
 

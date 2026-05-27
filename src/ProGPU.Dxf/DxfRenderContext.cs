@@ -95,6 +95,22 @@ public class DxfRenderContext
     }
 
     /// <summary>
+    /// Transforms a 3D point from CAD world space to screen space, keeping the Z coordinate.
+    /// </summary>
+    public Vector3 TransformToScreen3D(Vector3 worldPoint, Matrix4x4 modelMatrix)
+    {
+        var v3Transformed = Vector3.Transform(worldPoint, modelMatrix);
+        float localX = v3Transformed.X - Center.X;
+        float localY = v3Transformed.Y - Center.Y;
+        
+        float screenX = localX * Zoom + ScreenCenter.X + Pan.X;
+        float screenY = -localY * Zoom + ScreenCenter.Y + Pan.Y;
+        float screenZ = v3Transformed.Z * Zoom;
+        
+        return new Vector3(screenX, screenY, screenZ);
+    }
+
+    /// <summary>
     /// Checks if the given screen-space bounding box is completely off-screen.
     /// Uses a small safety padding to prevent abrupt clipping artifacts.
     /// </summary>
@@ -168,11 +184,13 @@ public class DxfRenderContext
             {
                 _filePath = value;
                 _cached3dSolids.Clear();
+                _cachedMLeaders.Clear();
                 if (!string.IsNullOrEmpty(_filePath) && System.IO.File.Exists(_filePath))
                 {
                     try
                     {
                         ParseAndCache3dSolids(_filePath);
+                        ParseAndCacheMLeaders(_filePath);
                     }
                     catch
                     {
@@ -186,46 +204,94 @@ public class DxfRenderContext
     private readonly List<List<Acis3dEdge>> _cached3dSolids = new();
     public IReadOnlyList<List<Acis3dEdge>> Cached3dSolids => _cached3dSolids;
 
+    private readonly List<DxfMLeader> _cachedMLeaders = new();
+    public IReadOnlyList<DxfMLeader> CachedMLeaders => _cachedMLeaders;
+
     public int Solid3DCount { get; set; } = 0;
 
     private void ParseAndCache3dSolids(string path)
     {
         var satBlocks = new List<string>();
-        using var reader = new System.IO.StreamReader(path);
+        var sabBlocks = new List<byte[]>();
         
+        using var reader = new System.IO.StreamReader(path);
         string? line;
+        
         bool collectingSat = false;
         var currentBlock = new System.Text.StringBuilder();
+        
+        string currentEntity = "";
+        var currentSabBytes = new List<byte>();
 
         while ((line = reader.ReadLine()) != null)
         {
             line = line.Trim();
 
-            // ACIS data in proxy objects is stored under group code 1, 3, or 310
-            if (line == "1" || line == "3")
+            // Read group code
+            if (int.TryParse(line, out int code))
             {
                 string? val = reader.ReadLine()?.Trim();
                 if (val == null) continue;
 
-                // Check if this is the start of an ACIS block
-                if (!collectingSat && (val.Contains("sb_version") || val.Contains("20800 0 1 0") || val.Contains("40000 0 1 0") || val.Contains("21200 0 1 0")))
+                if (code == 0)
                 {
-                    collectingSat = true;
-                    currentBlock.Clear();
-                }
+                    // New entity starts
+                    currentEntity = val;
 
-                if (collectingSat)
-                {
-                    currentBlock.AppendLine(val);
-                    if (val.Contains("End of ACIS") || val.Contains("End of ACIS Solid"))
+                    // If we were collecting SAB for a 3D solid, flush it
+                    if (currentSabBytes.Count > 0)
                     {
-                        collectingSat = false;
-                        satBlocks.Add(currentBlock.ToString());
+                        sabBlocks.Add(currentSabBytes.ToArray());
+                        currentSabBytes.Clear();
+                    }
+
+                    collectingSat = false;
+                }
+                else if (currentEntity == "3DSOLID" || currentEntity == "REGION" || currentEntity == "BODY")
+                {
+                    if (code == 1 || code == 3)
+                    {
+                        // Check if this is the start of an ACIS block
+                        if (!collectingSat && (val.Contains("sb_version") || val.Contains("20800 0 1 0") || val.Contains("40000 0 1 0") || val.Contains("21200 0 1 0")))
+                        {
+                            collectingSat = true;
+                            currentBlock.Clear();
+                        }
+
+                        if (collectingSat)
+                        {
+                            currentBlock.AppendLine(val);
+                            if (val.Contains("End of ACIS") || val.Contains("End of ACIS Solid"))
+                            {
+                                collectingSat = false;
+                                satBlocks.Add(currentBlock.ToString());
+                            }
+                        }
+                    }
+                    else if (code == 310)
+                    {
+                        // Hex-encoded binary SAB
+                        try
+                        {
+                            byte[] chunk = ConvertHexStringToBytes(val);
+                            currentSabBytes.AddRange(chunk);
+                        }
+                        catch
+                        {
+                            // Ignore corrupt hex lines
+                        }
                     }
                 }
             }
         }
 
+        // Flush any remaining SAB bytes
+        if (currentSabBytes.Count > 0)
+        {
+            sabBlocks.Add(currentSabBytes.ToArray());
+        }
+
+        // Parse SAT blocks
         foreach (var sat in satBlocks)
         {
             try
@@ -241,6 +307,199 @@ public class DxfRenderContext
                 // Skip invalid blocks
             }
         }
+
+        // Parse SAB blocks
+        foreach (var sab in sabBlocks)
+        {
+            try
+            {
+                var edges = AcisSabParser.ParseSab(sab);
+                if (edges.Count > 0)
+                {
+                    _cached3dSolids.Add(edges);
+                }
+            }
+            catch
+            {
+                // Skip invalid blocks
+            }
+        }
+    }
+
+    private static byte[] ConvertHexStringToBytes(string hex)
+    {
+        hex = hex.Replace(" ", "");
+        if (hex.Length % 2 != 0)
+        {
+            hex = hex.Substring(0, hex.Length - 1);
+        }
+        byte[] bytes = new byte[hex.Length / 2];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+        }
+        return bytes;
+    }
+
+    private void ParseAndCacheMLeaders(string path)
+    {
+        using var reader = new System.IO.StreamReader(path);
+        string? line;
+        
+        DxfMLeader? currentMLeader = null;
+        bool inContextData = false;
+        bool inLeader = false;
+        bool inLeaderLine = false;
+        
+        var currentLeaderLinePoints = new List<Vector3>();
+        
+        float cx = 0f, cy = 0f, cz = 0f;
+        bool hasX = false, hasY = false, hasZ = false;
+
+        while ((line = reader.ReadLine()) != null)
+        {
+            line = line.Trim();
+            if (int.TryParse(line, out int code))
+            {
+                string? val = reader.ReadLine()?.Trim();
+                if (val == null) continue;
+
+                if (code == 0)
+                {
+                    if (currentMLeader != null)
+                    {
+                        _cachedMLeaders.Add(currentMLeader);
+                        currentMLeader = null;
+                    }
+
+                    if (val == "MULTILEADER")
+                    {
+                        currentMLeader = new DxfMLeader();
+                        inContextData = false;
+                        inLeader = false;
+                        inLeaderLine = false;
+                    }
+                    continue;
+                }
+
+                if (currentMLeader != null)
+                {
+                    if (code == 8)
+                    {
+                        currentMLeader.Layer = val;
+                    }
+                    else if (code == 300 && val == "CONTEXT_DATA{")
+                    {
+                        inContextData = true;
+                    }
+                    else if (code == 301 && val == "}")
+                    {
+                        inContextData = false;
+                    }
+                    else if (code == 302 && val == "LEADER{")
+                    {
+                        inLeader = true;
+                    }
+                    else if (code == 303 && val == "}")
+                    {
+                        inLeader = false;
+                    }
+                    else if (code == 304 && val == "LEADER_LINE{")
+                    {
+                        inLeaderLine = true;
+                        currentLeaderLinePoints = new List<Vector3>();
+                        hasX = hasY = hasZ = false;
+                        cx = cy = cz = 0f;
+                    }
+                    else if (code == 305 && val == "}")
+                    {
+                        if (inLeaderLine)
+                        {
+                            if (hasX && hasY)
+                            {
+                                currentLeaderLinePoints.Add(new Vector3(cx, cy, cz));
+                            }
+                            if (currentLeaderLinePoints.Count > 0)
+                            {
+                                currentMLeader.LeaderLines.Add(currentLeaderLinePoints);
+                            }
+                            inLeaderLine = false;
+                        }
+                    }
+                    else if (inContextData)
+                    {
+                        if (code == 10)
+                        {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x))
+                                currentMLeader.TextInsertionPoint = new Vector3(x, currentMLeader.TextInsertionPoint.Y, currentMLeader.TextInsertionPoint.Z);
+                        }
+                        else if (code == 20)
+                        {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float y))
+                                currentMLeader.TextInsertionPoint = new Vector3(currentMLeader.TextInsertionPoint.X, y, currentMLeader.TextInsertionPoint.Z);
+                        }
+                        else if (code == 30)
+                        {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
+                                currentMLeader.TextInsertionPoint = new Vector3(currentMLeader.TextInsertionPoint.X, currentMLeader.TextInsertionPoint.Y, z);
+                        }
+                        else if (code == 41 || code == 140)
+                        {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float h))
+                                currentMLeader.TextHeight = h;
+                        }
+                        else if (code == 304)
+                        {
+                            currentMLeader.TextValue = val;
+                        }
+                    }
+                    else if (inLeaderLine)
+                    {
+                        if (code == 10)
+                        {
+                            if (hasX && hasY)
+                            {
+                                currentLeaderLinePoints.Add(new Vector3(cx, cy, cz));
+                                hasX = hasY = hasZ = false;
+                                cz = 0f;
+                            }
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x))
+                            {
+                                cx = x;
+                                hasX = true;
+                            }
+                        }
+                        else if (code == 20)
+                        {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float y))
+                            {
+                                cy = y;
+                                hasY = true;
+                            }
+                        }
+                        else if (code == 30)
+                        {
+                            if (float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
+                            {
+                                cz = z;
+                                hasZ = true;
+                            }
+                            if (hasX && hasY)
+                            {
+                                currentLeaderLinePoints.Add(new Vector3(cx, cy, cz));
+                                hasX = hasY = hasZ = false;
+                                cz = 0f;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (currentMLeader != null)
+        {
+            _cachedMLeaders.Add(currentMLeader);
+        }
     }
 
     public void Reset()
@@ -249,4 +508,13 @@ public class DxfRenderContext
         CurrentTransform = Matrix4x4.Identity;
         Solid3DCount = 0;
     }
+}
+
+public class DxfMLeader
+{
+    public string Layer { get; set; } = "0";
+    public Vector3 TextInsertionPoint { get; set; } = Vector3.Zero;
+    public float TextHeight { get; set; } = 1.0f;
+    public string TextValue { get; set; } = "";
+    public List<List<Vector3>> LeaderLines { get; } = new();
 }
