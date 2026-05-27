@@ -69,8 +69,9 @@ public class DxfCanvasControl : FrameworkElement
         PointerWheelChanged += OnPointerWheelChanged;
     }
 
-    public void LoadDocument(DxfDocument doc)
+    public void LoadDocument(DxfDocument doc, string? filePath = null)
     {
+        Context.FilePath = filePath;
         Document = doc;
         _firstLayout = true;
         _cachedCommands = null;
@@ -579,8 +580,7 @@ public static class DxfViewerPage
                     var doc = DxfDocument.Load(stream);
                     if (doc != null)
                     {
-                        _canvas.Context.FilePath = file.Path;
-                        _canvas.LoadDocument(doc);
+                        _canvas.LoadDocument(doc, file.Path);
                         PopulateLayers(doc);
                         PopulateLayouts(doc);
                         UpdateStatus($"Loaded: {Path.GetFileName(file.Path)}");
