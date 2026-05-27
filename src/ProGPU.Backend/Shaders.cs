@@ -22,7 +22,9 @@ struct Brush {
 struct Uniforms {
     projection: mat4x4<f32>,
     mvp: mat4x4<f32>,
+    view: mat4x4<f32>,
 };
+
 
 struct GpuHatchRecord {
     startSegment: u32,
@@ -96,7 +98,17 @@ struct VertexOutput {
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
     var output: VertexOutput;
-    let sType = u32(round(input.shapeType));
+    
+    var sType = u32(round(input.shapeType));
+    var isStatic = false;
+    var useGpuTransforms = false;
+    if (input.shapeType >= 195.0) {
+        isStatic = true;
+        sType = u32(round(input.shapeType - 200.0));
+    } else if (input.shapeType >= 95.0) {
+        useGpuTransforms = true;
+        sType = u32(round(input.shapeType - 100.0));
+    }
     
     if (sType == 10u) {
         let edgeIdx = u32(round(input.position.x));
@@ -129,7 +141,13 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         let texCoord10 = pos;
         let gridIndex10 = signVal * expandedDistance;
         
-        output.position = uniforms.mvp * vec4<f32>(worldPos10, z, 1.0);
+        if (useGpuTransforms) {
+            output.position = uniforms.projection * uniforms.view * vec4<f32>(worldPos10, z, 1.0);
+        } else if (isStatic) {
+            output.position = uniforms.projection * uniforms.mvp * vec4<f32>(worldPos10, z, 1.0);
+        } else {
+            output.position = uniforms.mvp * vec4<f32>(worldPos10, z, 1.0);
+        }
         output.color = vec4<f32>(record.color.rgb, record.color.a * record.opacity);
         output.texCoord = texCoord10;
         output.brushIndex = input.brushIndex;
@@ -141,8 +159,30 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         return output;
     }
 
-    var worldPos = input.position;
-    var texCoord = input.texCoord;
+    var inPos = input.position;
+    var inTexCoord = input.texCoord;
+    var inShapeSize = input.shapeSize;
+    var inColor = input.color;
+
+    if (isStatic) {
+        inPos = (uniforms.mvp * vec4<f32>(input.position, 0.0, 1.0)).xy;
+        if (sType == 3u || sType == 5u || sType == 6u) {
+            inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 1.0)).xy;
+            inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 1.0)).xy;
+            if (sType == 6u) {
+                inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.rg, 0.0, 1.0)).xy, input.color.b, input.color.a);
+            }
+        } else if (sType < 3u) {
+            let bIdx = u32(round(input.brushIndex));
+            let brush = brushes[bIdx];
+            if (brush.brushType > 0u) {
+                inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
+            }
+        }
+    }
+
+    var worldPos = inPos;
+    var texCoord = inTexCoord;
     var gridIndex = 0.0;
 
     if (sType == 3u) {
@@ -150,11 +190,11 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         var miterN = vec2<f32>(0.0, 0.0);
         var miterScale: f32 = 1.0;
         
-        let p0 = input.texCoord;
-        let p1 = input.shapeSize;
+        let p0 = inTexCoord;
+        let p1 = inShapeSize;
         
         let isStart = abs(input.cornerRadius) < 1.5;
-        worldPos = input.position;
+        worldPos = inPos;
 
         let len1 = length(worldPos - p0);
         let len2 = length(p1 - worldPos);
@@ -183,9 +223,9 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         gridIndex = signVal * expandedDistance;
     } else if (sType == 5u) {
         // GPU Quadratic Bezier Curve Evaluation
-        let p0 = input.position;
-        let p1 = input.texCoord;
-        let p2 = input.shapeSize;
+        let p0 = inPos;
+        let p1 = inTexCoord;
+        let p2 = inShapeSize;
         
         let idxStart = u32(round(input.cornerRadius));
         let localIndex = vertexIndex - idxStart;
@@ -209,10 +249,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         gridIndex = signVal * expandedDistance;
     } else if (sType == 6u) {
         // GPU Cubic Bezier Curve Evaluation
-        let p0 = input.position;
-        let p1 = input.texCoord;
-        let p2 = input.shapeSize;
-        let p3 = input.color.rg;
+        let p0 = inPos;
+        let p1 = inTexCoord;
+        let p2 = inShapeSize;
+        let p3 = inColor.rg;
         
         let idxStart = u32(round(input.cornerRadius));
         let localIndex = vertexIndex - idxStart;
@@ -245,15 +285,27 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     }
 
     if (sType == 8u) {
-        let local3D = vec3<f32>(input.position.xy, input.texCoord.x);
-        output.position = uniforms.mvp * vec4<f32>(local3D, 1.0);
+        let local3D = vec3<f32>(inPos, inTexCoord.x);
+        var pos3D = local3D;
+        if (useGpuTransforms) {
+            pos3D = (uniforms.view * vec4<f32>(local3D, 1.0)).xyz;
+        } else if (isStatic) {
+            pos3D = (uniforms.mvp * vec4<f32>(local3D, 1.0)).xyz;
+        }
+        output.position = uniforms.projection * vec4<f32>(pos3D, 1.0);
     } else {
-        output.position = uniforms.projection * vec4<f32>(worldPos, 0.0, 1.0);
+        var pos = worldPos;
+        if (useGpuTransforms) {
+            pos = (uniforms.view * vec4<f32>(worldPos, 0.0, 1.0)).xy;
+        } else if (isStatic) {
+            pos = (uniforms.mvp * vec4<f32>(worldPos, 0.0, 1.0)).xy;
+        }
+        output.position = uniforms.projection * vec4<f32>(pos, 0.0, 1.0);
     }
-    output.color = input.color;
+    output.color = inColor;
     output.texCoord = texCoord;
     output.brushIndex = input.brushIndex;
-    output.shapeSize = input.shapeSize;
+    output.shapeSize = inShapeSize;
     output.cornerRadius = input.cornerRadius;
     output.strokeThickness = input.strokeThickness;
     output.shapeType = input.shapeType;
@@ -633,6 +685,7 @@ struct VertexOutput {
 struct Uniforms {
     projection: mat4x4<f32>,
     mvp: mat4x4<f32>,
+    view: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -640,7 +693,13 @@ struct Uniforms {
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.position = uniforms.projection * vec4<f32>(input.position, 0.0, 1.0);
+    var pos = input.position;
+    if (input.shapeType >= 195.0) {
+        pos = (uniforms.mvp * vec4<f32>(input.position, 0.0, 1.0)).xy;
+    } else if (input.shapeType >= 95.0) {
+        pos = (uniforms.view * vec4<f32>(input.position, 0.0, 1.0)).xy;
+    }
+    output.position = uniforms.projection * vec4<f32>(pos, 0.0, 1.0);
     output.color = input.color;
     output.texCoord = input.texCoord;
     output.cornerRadius = input.cornerRadius;
@@ -676,6 +735,7 @@ struct VertexOutput {
 struct Uniforms {
     projection: mat4x4<f32>,
     mvp: mat4x4<f32>,
+    view: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -683,7 +743,11 @@ struct Uniforms {
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.position = uniforms.projection * vec4<f32>(input.position, 0.0, 1.0);
+    var pos = input.position;
+    if (uniforms.view[3][3] > 0.5) {
+        pos = (uniforms.view * vec4<f32>(input.position, 0.0, 1.0)).xy;
+    }
+    output.position = uniforms.projection * vec4<f32>(pos, 0.0, 1.0);
     output.color = input.color;
     output.texCoord = input.texCoord;
     return output;

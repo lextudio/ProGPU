@@ -28,7 +28,8 @@ public enum RenderCommandType
     FillQuad,
     DrawLine3D,
     DrawHatch,
-    DrawAcisSolid
+    DrawAcisSolid,
+    DrawStaticDxf
 }
 
 public struct Line3D
@@ -144,7 +145,15 @@ public struct RenderCommand
     // ACIS Solid properties
     public List<Line3D>? Edges3D;
     public Matrix4x4 Transform;
+
+    // Static buffer property
+    public object? StaticBuffer;
+
+    // GPU Transform properties
+    public bool UseGpuTransforms;
+    public Matrix4x4 CameraView;
 }
+
 
 public class DrawingContext
 {
@@ -398,6 +407,15 @@ public class DrawingContext
             Position2 = p2,
             Position3 = p3,
             Position4 = p4
+        });
+    }
+
+    public void DrawStaticDxf(object staticBuffer)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawStaticDxf,
+            StaticBuffer = staticBuffer
         });
     }
 

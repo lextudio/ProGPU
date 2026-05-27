@@ -36,6 +36,7 @@ public struct GpuUniforms
 {
     public Matrix4x4 Projection;
     public Matrix4x4 Mvp;
+    public Matrix4x4 View;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -136,6 +137,8 @@ public unsafe class Compositor : IDisposable
     private BindGroupLayout* _vectorUniformBindGroupLayoutOffscreen;
     private BindGroupLayout* _textUniformBindGroupLayoutOffscreen;
     private BindGroupLayout* _textureUniformBindGroupLayoutOffscreen;
+    private bool _useGpuTransformsActive;
+    private Matrix4x4 _cameraViewMatrix;
 
     // Sampler & Texture Bind Group for Typography
     private Sampler* _atlasSampler;
@@ -176,7 +179,8 @@ public unsafe class Compositor : IDisposable
     {
         Vector,
         Texture,
-        Text
+        Text,
+        StaticDxf
     }
 
     public struct CompositorDrawCall
@@ -185,6 +189,7 @@ public unsafe class Compositor : IDisposable
         public uint IndexStart;
         public uint IndexCount;
         public GpuTexture? Texture;
+        public object? StaticBuffer;
     }
 
     private readonly List<VectorVertex> _vectorVerticesList = new();
@@ -666,6 +671,9 @@ public unsafe class Compositor : IDisposable
         // Invoke pre-render actions (e.g. measure/arrange popups in UI framework)
         PreRender?.Invoke(width, height);
 
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+
         // 1. Calculate orthographic projection matrix for modern 2D rendering
         // Maps X in [0, width] to [-1, 1], and Y in [0, height] to [1, -1]
         var projection = new Matrix4x4(
@@ -801,7 +809,8 @@ public unsafe class Compositor : IDisposable
         var uniformsData = new GpuUniforms
         {
             Projection = projection,
-            Mvp = projection
+            Mvp = _useGpuTransformsActive ? Matrix4x4.Identity : projection,
+            View = _useGpuTransformsActive ? _cameraViewMatrix : Matrix4x4.Identity
         };
         _uniformBuffer.WriteSingle(uniformsData);
 
@@ -980,6 +989,11 @@ public unsafe class Compositor : IDisposable
                 var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;
                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, bindGroup, 0, null);
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
+            }
+            else if (dc.Type == DrawCallType.StaticDxf && dc.StaticBuffer != null)
+            {
+                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: false);
+                currentType = DrawCallType.StaticDxf;
             }
         }
 
@@ -1209,6 +1223,9 @@ public unsafe class Compositor : IDisposable
 
         foreach (var cmd in ctx.Commands)
         {
+            int vectorStart = _vectorVerticesList.Count;
+            int textStart = _textVerticesList.Count;
+
             switch (cmd.Type)
             {
                 case RenderCommandType.DrawRect:
@@ -1274,6 +1291,35 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.FillQuad:
                     CompileFillQuadCommand(cmd, globalTransform);
                     break;
+                case RenderCommandType.DrawStaticDxf:
+                    CommitPendingDrawCalls();
+                    _drawCalls.Add(new CompositorDrawCall
+                    {
+                        Type = DrawCallType.StaticDxf,
+                        StaticBuffer = cmd.StaticBuffer
+                    });
+                    _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                    _pendingTextStart = (uint)_textIndicesList.Count;
+                    break;
+            }
+
+            if (cmd.UseGpuTransforms)
+            {
+                _useGpuTransformsActive = true;
+                _cameraViewMatrix = cmd.CameraView;
+
+                for (int i = vectorStart; i < _vectorVerticesList.Count; i++)
+                {
+                    var v = _vectorVerticesList[i];
+                    v.ShapeType += 100f;
+                    _vectorVerticesList[i] = v;
+                }
+                for (int i = textStart; i < _textVerticesList.Count; i++)
+                {
+                    var v = _textVerticesList[i];
+                    v.ShapeType += 100f;
+                    _textVerticesList[i] = v;
+                }
             }
         }
 
@@ -3566,7 +3612,8 @@ public unsafe class Compositor : IDisposable
         var uniformsData = new GpuUniforms
         {
             Projection = projection,
-            Mvp = projection
+            Mvp = _useGpuTransformsActive ? Matrix4x4.Identity : projection,
+            View = _useGpuTransformsActive ? _cameraViewMatrix : Matrix4x4.Identity
         };
         _uniformBuffer.WriteSingle(uniformsData);
         if (_activeBrushes.Count > 0)
@@ -3681,6 +3728,11 @@ public unsafe class Compositor : IDisposable
                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, bindGroup, 0, null);
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
+            else if (dc.Type == DrawCallType.StaticDxf && dc.StaticBuffer != null)
+            {
+                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: true);
+                currentType = DrawCallType.StaticDxf;
+            }
         }
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
@@ -3717,5 +3769,172 @@ public unsafe class Compositor : IDisposable
         _activeOpacity = savedActiveOpacity;
         _pendingVectorStart = savedPendingVectorStart;
         _pendingTextStart = savedPendingTextStart;
+    }
+
+    public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands)
+    {
+        // Save current lists
+        var savedVectorVertices = _vectorVerticesList.ToArray();
+        var savedVectorIndices = _vectorIndicesList.ToArray();
+        var savedTextVertices = _textVerticesList.ToArray();
+        var savedTextIndices = _textIndicesList.ToArray();
+        var savedActiveBrushes = _activeBrushes.ToArray();
+        var savedHatchRecords = _hatchRecordsList.ToArray();
+        var savedHatchSegments = _hatchSegmentsList.ToArray();
+        var savedAcisRecords = _acisRecordsList.ToArray();
+        var savedAcisEdges = _acisEdgesList.ToArray();
+        
+        // Clear for compilation
+        _vectorVerticesList.Clear();
+        _vectorIndicesList.Clear();
+        _textVerticesList.Clear();
+        _textIndicesList.Clear();
+        _activeBrushes.Clear();
+        _hatchRecordsList.Clear();
+        _hatchSegmentsList.Clear();
+        _acisRecordsList.Clear();
+        _acisEdgesList.Clear();
+        
+        foreach (var cmd in commands)
+        {
+            switch (cmd.Type)
+            {
+                case RenderCommandType.DrawRect:
+                    CompileRectCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawPath:
+                    CompilePathCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawHatch:
+                    CompileHatchCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawAcisSolid:
+                    CompileAcisCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawText:
+                    CompileTextCommand(cmd, null, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawTexture:
+                    CompileTextureCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawLine:
+                    CompileLineCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawLine3D:
+                    CompileLine3DCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawEllipse:
+                    CompileEllipseCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawCircle:
+                    CompileCircleCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawRoundedRect:
+                    CompileRoundedRectCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawBezier:
+                    CompileBezierCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawCubicBezier:
+                    CompileCubicBezierCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawPolyline:
+                    CompilePolylineCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawSpline:
+                    CompileSplineCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.FillTriangle:
+                    CompileFillTriangleCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.FillQuad:
+                    CompileFillQuadCommand(cmd, Matrix4x4.Identity);
+                    break;
+            }
+        }
+        for (int i = 0; i < _vectorVerticesList.Count; i++)
+        {
+            var v = _vectorVerticesList[i];
+            v.ShapeType += 200f;
+            _vectorVerticesList[i] = v;
+        }
+        for (int i = 0; i < _textVerticesList.Count; i++)
+        {
+            var v = _textVerticesList[i];
+            v.ShapeType += 200f;
+            _textVerticesList[i] = v;
+        }
+
+        var staticBuffer = new DxfStaticBuffer(
+            _context,
+            _vectorVerticesList.ToArray(),
+            _vectorIndicesList.ToArray(),
+            _textVerticesList.ToArray(),
+            _textIndicesList.ToArray(),
+            _activeBrushes.ToArray(),
+            _hatchRecordsList.ToArray(),
+            _hatchSegmentsList.ToArray(),
+            _acisRecordsList.ToArray(),
+            _acisEdgesList.ToArray()
+        );
+        
+        staticBuffer.InitializeBindGroups(
+            _vectorUniformBindGroupLayout,
+            _vectorUniformBindGroupLayoutOffscreen,
+            _textUniformBindGroupLayout,
+            _textUniformBindGroupLayoutOffscreen
+        );
+        
+        // Restore dynamic lists
+        _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
+        _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
+        _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
+        _textIndicesList.Clear(); _textIndicesList.AddRange(savedTextIndices);
+        _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
+        _hatchRecordsList.Clear(); _hatchRecordsList.AddRange(savedHatchRecords);
+        _hatchSegmentsList.Clear(); _hatchSegmentsList.AddRange(savedHatchSegments);
+        _acisRecordsList.Clear(); _acisRecordsList.AddRange(savedAcisRecords);
+        _acisEdgesList.Clear(); _acisEdgesList.AddRange(savedAcisEdges);
+        
+        return staticBuffer;
+    }
+
+    private unsafe void DrawStaticDxfBuffer(RenderPassEncoder* pass, object staticBufferObj, bool isOffscreen)
+    {
+        if (staticBufferObj is not DxfStaticBuffer sb) return;
+        
+        // 1. Draw static vectors
+        if (sb.VertexBuffer != null && sb.IndexBuffer != null && sb.IndexCount > 0)
+        {
+            var pipeline = isOffscreen ? _vectorPipelineOffscreen : _vectorPipeline;
+            var uniformBg = isOffscreen ? sb.UniformBindGroupOffscreen : sb.UniformBindGroup;
+            var pathAtlasBg = isOffscreen ? _pathAtlasBindGroupOffscreen : _pathAtlasBindGroup;
+            
+            _context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, pathAtlasBg, 0, null);
+            
+            var buffer = sb.VertexBuffer.BufferPtr;
+            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.VertexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, sb.IndexBuffer.BufferPtr, IndexFormat.Uint32, 0, sb.IndexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderDrawIndexed(pass, sb.IndexCount, 1, 0, 0, 0);
+        }
+        
+        // 2. Draw static text
+        if (sb.TextVertexBuffer != null && sb.TextIndexBuffer != null && sb.TextIndexCount > 0)
+        {
+            var pipeline = isOffscreen ? _textPipelineOffscreen : _textPipeline;
+            var uniformBg = isOffscreen ? sb.TextUniformBindGroupOffscreen : sb.TextUniformBindGroup;
+            var atlasBg = isOffscreen ? _atlasBindGroupOffscreen : _atlasBindGroup;
+            
+            _context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, atlasBg, 0, null);
+            
+            var buffer = sb.TextVertexBuffer.BufferPtr;
+            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.TextVertexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, sb.TextIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, sb.TextIndexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderDrawIndexed(pass, sb.TextIndexCount, 1, 0, 0, 0);
+        }
     }
 }
