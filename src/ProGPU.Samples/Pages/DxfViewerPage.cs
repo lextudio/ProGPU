@@ -39,6 +39,8 @@ public class DxfCanvasControl : FrameworkElement
     private List<RenderCommand>? _cachedCommands;
     private float _lastZoom;
     private Vector2 _lastPan;
+    private bool _lastEnableGpuTransforms;
+    private bool _lastEnableStaticGpuBuffers;
 
     private int GetActiveLayersHash()
     {
@@ -167,7 +169,9 @@ public class DxfCanvasControl : FrameworkElement
             bool invalidateCache = _cachedCommands == null 
                 || Context.FilePath != _lastFilePath 
                 || Document.ActiveLayout != _lastActiveLayout 
-                || layersHash != _lastActiveLayersHash;
+                || layersHash != _lastActiveLayersHash
+                || AppState.EnableGpuTransforms != _lastEnableGpuTransforms
+                || AppState.EnableStaticGpuBuffers != _lastEnableStaticGpuBuffers;
 
             if (invalidateCache || _needsRecompile || _staticBuffer == null)
             {
@@ -177,6 +181,8 @@ public class DxfCanvasControl : FrameworkElement
                 _lastActiveLayersHash = layersHash;
                 _lastZoom = Context.Zoom;
                 _lastPan = Context.Pan;
+                _lastEnableGpuTransforms = AppState.EnableGpuTransforms;
+                _lastEnableStaticGpuBuffers = AppState.EnableStaticGpuBuffers;
 
                 _cachedCommands = null;
                 _staticBuffer?.Dispose();
@@ -245,7 +251,9 @@ public class DxfCanvasControl : FrameworkElement
             bool invalidateCache = _cachedCommands == null 
                 || Context.FilePath != _lastFilePath 
                 || Document.ActiveLayout != _lastActiveLayout 
-                || layersHash != _lastActiveLayersHash;
+                || layersHash != _lastActiveLayersHash
+                || AppState.EnableGpuTransforms != _lastEnableGpuTransforms
+                || AppState.EnableStaticGpuBuffers != _lastEnableStaticGpuBuffers;
 
             if (!AppState.EnableGpuTransforms)
             {
@@ -267,6 +275,8 @@ public class DxfCanvasControl : FrameworkElement
                 _lastActiveLayersHash = layersHash;
                 _lastZoom = Context.Zoom;
                 _lastPan = Context.Pan;
+                _lastEnableGpuTransforms = AppState.EnableGpuTransforms;
+                _lastEnableStaticGpuBuffers = AppState.EnableStaticGpuBuffers;
 
                 Context.DrawingContext.Clear();
                 DxfDocumentRenderer.Render(Document, Context);
