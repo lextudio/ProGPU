@@ -154,7 +154,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         output.shapeSize = vec2<f32>(record.penThickness, 0.0);
         output.cornerRadius = 0.0;
         output.strokeThickness = record.penThickness;
-        output.shapeType = input.shapeType;
+        output.shapeType = f32(sType);
         output.gridIndex = gridIndex10;
         return output;
     }
@@ -325,7 +325,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     output.shapeSize = inShapeSize;
     output.cornerRadius = input.cornerRadius;
     output.strokeThickness = input.strokeThickness;
-    output.shapeType = input.shapeType;
+    output.shapeType = f32(sType);
     output.gridIndex = gridIndex;
     return output;
 }
