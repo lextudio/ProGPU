@@ -67,6 +67,7 @@ public static unsafe class MainWindowController
             {
                 Microsoft.UI.Xaml.Controls.AdornerLayer.Render(diagContext, w, h);
             }
+            Microsoft.UI.Xaml.DragDropManager.RenderDragVisual(diagContext, w, h);
         };
         AppState._offscreenCompositor = new Compositor(AppState._wgpuContext, TextureFormat.Rgba8Unorm);
         AppState._compute = new ComputeAccelerator(AppState._wgpuContext);

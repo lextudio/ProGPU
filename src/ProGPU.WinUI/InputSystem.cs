@@ -298,6 +298,12 @@ public static class InputSystem
     {
         _lastMousePos = screenPos;
 
+        if (DragDropManager.IsDragging)
+        {
+            DragDropManager.UpdateDrag(screenPos);
+            return;
+        }
+
         if (DevToolsService.IsInspectModeActive || (IsControlPressedDynamic() && IsShiftPressedDynamic()))
         {
             var inspectHit = HitTest(screenPos);
@@ -490,6 +496,12 @@ public static class InputSystem
     private static void OnMouseUp(MouseButton button)
     {
         if (button != MouseButton.Left) return;
+
+        if (DragDropManager.IsDragging)
+        {
+            DragDropManager.CompleteDrop(_lastMousePos);
+            return;
+        }
 
         if (_capturedElement != null)
         {
