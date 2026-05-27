@@ -164,19 +164,36 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     var inShapeSize = input.shapeSize;
     var inColor = input.color;
 
-    if (isStatic) {
-        inPos = (uniforms.mvp * vec4<f32>(input.position, 0.0, 1.0)).xy;
-        if (sType == 3u || sType == 5u || sType == 6u) {
-            inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 1.0)).xy;
-            inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 1.0)).xy;
-            if (sType == 6u) {
-                inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.rg, 0.0, 1.0)).xy, input.color.b, input.color.a);
+    if ((isStatic || useGpuTransforms) && sType != 8u) {
+        if (useGpuTransforms) {
+            inPos = (uniforms.view * vec4<f32>(input.position, 0.0, 1.0)).xy;
+            if (sType == 3u || sType == 5u || sType == 6u) {
+                inTexCoord = (uniforms.view * vec4<f32>(input.texCoord, 0.0, 1.0)).xy;
+                inShapeSize = (uniforms.view * vec4<f32>(input.shapeSize, 0.0, 1.0)).xy;
+                if (sType == 6u) {
+                    inColor = vec4<f32>((uniforms.view * vec4<f32>(input.color.rg, 0.0, 1.0)).xy, input.color.b, input.color.a);
+                }
+            } else if (sType < 3u) {
+                let bIdx = u32(round(input.brushIndex));
+                let brush = brushes[bIdx];
+                if (brush.brushType > 0u) {
+                    inColor = vec4<f32>((uniforms.view * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
+                }
             }
-        } else if (sType < 3u) {
-            let bIdx = u32(round(input.brushIndex));
-            let brush = brushes[bIdx];
-            if (brush.brushType > 0u) {
-                inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
+        } else {
+            inPos = (uniforms.mvp * vec4<f32>(input.position, 0.0, 1.0)).xy;
+            if (sType == 3u || sType == 5u || sType == 6u) {
+                inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 1.0)).xy;
+                inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 1.0)).xy;
+                if (sType == 6u) {
+                    inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.rg, 0.0, 1.0)).xy, input.color.b, input.color.a);
+                }
+            } else if (sType < 3u) {
+                let bIdx = u32(round(input.brushIndex));
+                let brush = brushes[bIdx];
+                if (brush.brushType > 0u) {
+                    inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
+                }
             }
         }
     }
@@ -294,7 +311,9 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     } else {
         var pos = worldPos;
         if (useGpuTransforms) {
-            pos = (uniforms.view * vec4<f32>(worldPos, 0.0, 1.0)).xy;
+            // Since we pre-transformed inPos/inTexCoord/inShapeSize by uniforms.view,
+            // worldPos is already in screen-space. Do not transform it again!
+            pos = worldPos;
         }
         output.position = uniforms.projection * vec4<f32>(pos, 0.0, 1.0);
     }
@@ -740,9 +759,6 @@ struct Uniforms {
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     var pos = input.position;
-    if (uniforms.view[3][3] > 0.5) {
-        pos = (uniforms.view * vec4<f32>(input.position, 0.0, 1.0)).xy;
-    }
     output.position = uniforms.projection * vec4<f32>(pos, 0.0, 1.0);
     output.color = input.color;
     output.texCoord = input.texCoord;
