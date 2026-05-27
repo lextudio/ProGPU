@@ -95,12 +95,15 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
             else
             {
                 // Non-uniform fallback using dynamic LOD segment interpolation
-                int numSegments = 32;
-                if (screenR < 5f) numSegments = 8;
-                else if (screenR < 15f) numSegments = 12;
-                else if (screenR < 50f) numSegments = 24;
-                else if (screenR < 150f) numSegments = 36;
-                else numSegments = 64;
+                int numSegments = 64;
+                if (context.EnableLod)
+                {
+                    if (screenR < 5f) numSegments = 8;
+                    else if (screenR < 15f) numSegments = 12;
+                    else if (screenR < 50f) numSegments = 24;
+                    else if (screenR < 150f) numSegments = 36;
+                    else numSegments = 64;
+                }
 
                 Span<Vector2> points = numSegments <= 64 ? stackalloc Vector2[numSegments + 1] : new Vector2[numSegments + 1];
 
@@ -134,12 +137,15 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
             if (screenR < 1f) return; // Too small to render
 
             // Dynamic LOD for Arc segment count
-            int numSegments = 32;
-            if (screenR < 5f) numSegments = 6;
-            else if (screenR < 15f) numSegments = 12;
-            else if (screenR < 50f) numSegments = 18;
-            else if (screenR < 150f) numSegments = 24;
-            else numSegments = 32;
+            int numSegments = 64;
+            if (context.EnableLod)
+            {
+                if (screenR < 5f) numSegments = 6;
+                else if (screenR < 15f) numSegments = 12;
+                else if (screenR < 50f) numSegments = 18;
+                else if (screenR < 150f) numSegments = 24;
+                else numSegments = 32;
+            }
 
             float startRad = (float)(arc.StartAngle * Math.PI / 180.0);
             float endRad = (float)(arc.EndAngle * Math.PI / 180.0);
@@ -189,11 +195,14 @@ public class DxfEllipseRenderer : IDxfEntityRenderer
 
         // Dynamic LOD for ellipse segment count
         int numSegments = 64;
-        if (maxScreenR < 5f) numSegments = 8;
-        else if (maxScreenR < 15f) numSegments = 16;
-        else if (maxScreenR < 50f) numSegments = 24;
-        else if (maxScreenR < 150f) numSegments = 36;
-        else numSegments = 64;
+        if (context.EnableLod)
+        {
+            if (maxScreenR < 5f) numSegments = 8;
+            else if (maxScreenR < 15f) numSegments = 16;
+            else if (maxScreenR < 50f) numSegments = 24;
+            else if (maxScreenR < 150f) numSegments = 36;
+            else numSegments = 64;
+        }
 
         float rotationRad = (float)(ellipse.Rotation * Math.PI / 180.0);
 
@@ -381,7 +390,7 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
 
             if (d > 1e-5f)
             {
-                float r = d / (2f * MathF.Sin(alpha));
+                float r = d * (1f + b * b) / (4f * b);
                 var perp = new Vector2(-dVec.Y, dVec.X) / d;
                 float h = d * (1f - b * b) / (4f * b);
                 var center = mid + perp * h;
@@ -399,10 +408,13 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
 
                 // Dynamic LOD for bulge arc segment count
                 int numSegments = 16;
-                if (screenR < 5f) numSegments = 4;
-                else if (screenR < 15f) numSegments = 8;
-                else if (screenR < 50f) numSegments = 12;
-                else numSegments = 16;
+                if (context.EnableLod)
+                {
+                    if (screenR < 5f) numSegments = 4;
+                    else if (screenR < 15f) numSegments = 8;
+                    else if (screenR < 50f) numSegments = 12;
+                    else numSegments = 16;
+                }
 
                 float angle1 = MathF.Atan2(p1.Y - center.Y, p1.X - center.X);
                 float angle2 = MathF.Atan2(p2.Y - center.Y, p2.X - center.X);
@@ -472,6 +484,8 @@ public class DxfTextRenderer : IDxfEntityRenderer
 {
     public static void RenderAttribute(netDxf.Entities.Attribute attr, DxfRenderContext context, Matrix4x4 transform, float scaleY)
     {
+        if (attr.Flags.HasFlag(netDxf.Entities.AttributeFlags.Hidden)) return;
+
         string valStr = attr.Value?.ToString() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(valStr)) return;
 
@@ -489,8 +503,8 @@ public class DxfTextRenderer : IDxfEntityRenderer
         var u = baselineVec / screenScale;
         var v = new Vector2(-u.Y, u.X);
 
-        float screenFontSize = (float)attr.Height * MathF.Abs(scaleY) * screenScale;
-        if (screenFontSize < 4f) return;
+        float screenFontSize = (float)attr.Height * screenScale;
+        if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
 
         float horizontalShiftMultiplier = 0f;
         float verticalShiftMultiplier = 0f;
@@ -585,13 +599,14 @@ public class DxfTextRenderer : IDxfEntityRenderer
         {
             if (string.IsNullOrWhiteSpace(text.Value)) return;
 
+            var combined = DxfDocumentRenderer.GetOcsMatrix(text.Normal) * transform;
             float rot = (float)(text.Rotation * Math.PI / 180.0);
             var origin = new Vector2((float)text.Position.X, (float)text.Position.Y);
-            var screenPos = context.Transform(origin, transform);
+            var screenPos = context.Transform(origin, combined);
 
             // Project coordinate baseline to find exact screen scale and rotation angle
             var originPlusBaseline = origin + new Vector2(MathF.Cos(rot), MathF.Sin(rot));
-            var screenBaselinePt = context.Transform(originPlusBaseline, transform);
+            var screenBaselinePt = context.Transform(originPlusBaseline, combined);
             var baselineVec = screenBaselinePt - screenPos;
             float screenScale = baselineVec.Length();
             if (screenScale < 1e-4f) return;
@@ -600,7 +615,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
             var v = new Vector2(-u.Y, u.X);
 
             float screenFontSize = (float)text.Height * screenScale;
-            if (screenFontSize < 4f) return;
+            if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
 
             float horizontalShiftMultiplier = 0f;
             float verticalShiftMultiplier = 0f;
@@ -672,13 +687,14 @@ public class DxfTextRenderer : IDxfEntityRenderer
             string cleanedValue = CleanMText(mtext.Value);
             var lines = cleanedValue.Split('\n');
 
+            var combined = DxfDocumentRenderer.GetOcsMatrix(mtext.Normal) * transform;
             float rot = (float)(mtext.Rotation * Math.PI / 180.0);
             var origin = new Vector2((float)mtext.Position.X, (float)mtext.Position.Y);
-            var screenPos = context.Transform(origin, transform);
+            var screenPos = context.Transform(origin, combined);
 
             // Project coordinate baseline to find exact screen scale and rotation angle
             var originPlusBaseline = origin + new Vector2(MathF.Cos(rot), MathF.Sin(rot));
-            var screenBaselinePt = context.Transform(originPlusBaseline, transform);
+            var screenBaselinePt = context.Transform(originPlusBaseline, combined);
             var baselineVec = screenBaselinePt - screenPos;
             float screenScale = baselineVec.Length();
             if (screenScale < 1e-4f) return;
@@ -687,7 +703,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
             var v = new Vector2(-u.Y, u.X);
 
             float screenFontSize = (float)mtext.Height * screenScale;
-            if (screenFontSize < 4f) return;
+            if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
 
             float screenLineOffset = screenFontSize * 1.25f;
             float totalHeight = lines.Length * screenLineOffset;
@@ -818,12 +834,13 @@ public class DxfInsertRenderer : IDxfEntityRenderer
         var origin = insert.Block.Origin;
 
         // Correct AutoCAD standard local block transform mapping:
-        // Translate by pos (insertion point) in OCS *before* applying the parent extrusion normal OCS-to-WCS rotation!
+        // Correct AutoCAD standard local block transform mapping:
+        // Translate by pos (insertion point) in WCS/parent space *after* applying the extrusion normal OCS-to-WCS rotation!
         var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
                        Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                        Matrix4x4.CreateRotationZ(radAngle) *
-                       Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z) *
-                       DxfDocumentRenderer.GetOcsMatrix(insert.Normal);
+                       DxfDocumentRenderer.GetOcsMatrix(insert.Normal) *
+                       Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
 
         context.PushTransform(localMat);
 

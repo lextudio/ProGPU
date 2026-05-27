@@ -20,6 +20,9 @@ public class DxfRenderContext
     // Active document reference for layout and space rendering
     public netDxf.DxfDocument? Document { get; set; }
     
+    // Level of Detail rendering optimization flag
+    public bool EnableLod { get; set; } = false;
+    
     // Font and Styling fallback
     public TtfFont Font { get; set; }
     public Brush FallbackBrush { get; set; } = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f));

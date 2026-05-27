@@ -170,7 +170,7 @@ public static class DxfDocumentRenderer
     /// Computes the exact 2D Cartesian bounding box of all active visible entities in the document.
     /// Supports nested block inserts.
     /// </summary>
-    public static (Vector2 Min, Vector2 Max) CalculateBounds(DxfDocument doc)
+    public static (Vector2 Min, Vector2 Max) CalculateBounds(DxfDocument doc, HashSet<string>? activeLayers = null)
     {
         var min = new Vector2(float.MaxValue, float.MaxValue);
         var max = new Vector2(float.MinValue, float.MinValue);
@@ -184,7 +184,10 @@ public static class DxfDocumentRenderer
             {
                 foreach (var entity in layout.AssociatedBlock.Entities)
                 {
-                    AccumulateEntityBounds(entity, Matrix4x4.Identity, ref min, ref max, ref hasData);
+                    if (activeLayers == null || activeLayers.Contains(entity.Layer.Name))
+                    {
+                        AccumulateEntityBounds(entity, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
+                    }
                 }
                 calculatedFromLayout = true;
             }
@@ -192,7 +195,7 @@ public static class DxfDocumentRenderer
 
         if (!calculatedFromLayout)
         {
-            AccumulateFlatCollectionsBounds(doc, ref min, ref max, ref hasData);
+            AccumulateFlatCollectionsBounds(doc, ref min, ref max, ref hasData, activeLayers);
         }
 
         if (!hasData)
@@ -203,42 +206,45 @@ public static class DxfDocumentRenderer
         return (min, max);
     }
 
-    private static void AccumulateFlatCollectionsBounds(DxfDocument doc, ref Vector2 min, ref Vector2 max, ref bool hasData)
+    private static void AccumulateFlatCollectionsBounds(DxfDocument doc, ref Vector2 min, ref Vector2 max, ref bool hasData, HashSet<string>? activeLayers = null)
     {
         foreach (var line in doc.Lines)
-            AccumulateEntityBounds(line, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(line, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var circle in doc.Circles)
-            AccumulateEntityBounds(circle, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(circle, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var arc in doc.Arcs)
-            AccumulateEntityBounds(arc, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(arc, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var ellipse in doc.Ellipses)
-            AccumulateEntityBounds(ellipse, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(ellipse, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var lwPoly in doc.LwPolylines)
-            AccumulateEntityBounds(lwPoly, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(lwPoly, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var poly in doc.Polylines)
-            AccumulateEntityBounds(poly, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(poly, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var spline in doc.Splines)
-            AccumulateEntityBounds(spline, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(spline, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var text in doc.Texts)
-            AccumulateEntityBounds(text, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(text, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var mtext in doc.MTexts)
-            AccumulateEntityBounds(mtext, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(mtext, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var insert in doc.Inserts)
-            AccumulateEntityBounds(insert, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(insert, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var solid in doc.Solids)
-            AccumulateEntityBounds(solid, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(solid, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var dim in doc.Dimensions)
-            AccumulateEntityBounds(dim, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(dim, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var leader in doc.Leaders)
-            AccumulateEntityBounds(leader, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(leader, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var hatch in doc.Hatches)
-            AccumulateEntityBounds(hatch, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(hatch, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var image in doc.Images)
-            AccumulateEntityBounds(image, Matrix4x4.Identity, ref min, ref max, ref hasData);
+            AccumulateEntityBounds(image, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
     }
 
-    public static void AccumulateAttributeBounds(netDxf.Entities.Attribute attr, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData)
+    public static void AccumulateAttributeBounds(netDxf.Entities.Attribute attr, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData, HashSet<string>? activeLayers = null)
     {
+        if (activeLayers != null && !activeLayers.Contains(attr.Layer.Name)) return;
+        if (attr.Flags.HasFlag(netDxf.Entities.AttributeFlags.Hidden)) return;
+
         var v3 = new Vector3((float)attr.Position.X, (float)attr.Position.Y, 0f);
         var v3Transformed = Vector3.Transform(v3, transform);
         
@@ -251,8 +257,9 @@ public static class DxfDocumentRenderer
         hasData = true;
     }
 
-    private static void AccumulateEntityBounds(EntityObject entity, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData)
+    private static void AccumulateEntityBounds(EntityObject entity, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData, HashSet<string>? activeLayers = null)
     {
+        if (activeLayers != null && !activeLayers.Contains(entity.Layer.Name)) return;
         if (entity is Line line)
         {
             UpdateBounds(new Vector2((float)line.StartPoint.X, (float)line.StartPoint.Y), transform, ref min, ref max, ref hasData);
@@ -325,22 +332,22 @@ public static class DxfDocumentRenderer
             var origin = insert.Block.Origin;
 
             // Correct AutoCAD standard local block transform mapping:
-            // Translate by pos (insertion point) in OCS *before* applying the parent extrusion normal OCS-to-WCS rotation!
+            // Translate by pos (insertion point) in WCS/parent space *after* applying the extrusion normal OCS-to-WCS rotation!
             var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
                            Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                            Matrix4x4.CreateRotationZ(radAngle) *
-                           Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z) *
-                           GetOcsMatrix(insert.Normal);
+                           GetOcsMatrix(insert.Normal) *
+                           Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
 
             var combinedMat = localMat * transform;
 
             foreach (var childEntity in insert.Block.Entities)
             {
-                AccumulateEntityBounds(childEntity, combinedMat, ref min, ref max, ref hasData);
+                AccumulateEntityBounds(childEntity, combinedMat, ref min, ref max, ref hasData, activeLayers);
             }
             foreach (var attr in insert.Attributes)
             {
-                AccumulateAttributeBounds(attr, transform, ref min, ref max, ref hasData);
+                AccumulateAttributeBounds(attr, transform, ref min, ref max, ref hasData, activeLayers);
             }
         }
         else if (entity is netDxf.Entities.Solid solid)
@@ -357,7 +364,7 @@ public static class DxfDocumentRenderer
             {
                 foreach (var childEntity in dimension.Block.Entities)
                 {
-                    AccumulateEntityBounds(childEntity, transform, ref min, ref max, ref hasData);
+                    AccumulateEntityBounds(childEntity, transform, ref min, ref max, ref hasData, activeLayers);
                 }
             }
         }
@@ -377,7 +384,7 @@ public static class DxfDocumentRenderer
                     if (bp.Entities == null) continue;
                     foreach (var childEntity in bp.Entities)
                     {
-                        AccumulateEntityBounds(childEntity, transform, ref min, ref max, ref hasData);
+                        AccumulateEntityBounds(childEntity, transform, ref min, ref max, ref hasData, activeLayers);
                     }
                 }
             }
