@@ -246,6 +246,16 @@ public static class InputSystem
         return HitTestInternal(_root, screenPoint, Matrix4x4.Identity);
     }
 
+    private static bool HasBackground(FrameworkElement fe)
+    {
+        var prop = fe.GetType().GetProperty("Background");
+        if (prop != null)
+        {
+            return prop.GetValue(fe) != null;
+        }
+        return false;
+    }
+
     private static FrameworkElement? HitTestInternal(Visual visual, Vector2 screenPoint, Matrix4x4 parentTransform)
     {
         if (visual is not FrameworkElement fe || !fe.IsHitTestVisible || !fe.IsEnabled)
@@ -274,6 +284,13 @@ public static class InputSystem
                     if (hit != null)
                         return hit;
                 }
+            }
+
+            // If we are a container and have no background, do not intercept hit-test
+            if (fe is Panel || fe is Border || fe is ContentPresenter)
+            {
+                if (!HasBackground(fe))
+                    return null;
             }
 
             return fe;

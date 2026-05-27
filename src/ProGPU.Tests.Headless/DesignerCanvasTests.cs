@@ -121,8 +121,8 @@ public class DesignerCanvasTests
         Assert.NotNull(adorner);
         Assert.Same(button, adorner.AssociatedElement);
 
-        // Assert 8 thumbs exist as children in SelectionAdorner
-        Assert.Equal(8, adorner.Children.Count);
+        // Assert 9 thumbs exist as children in SelectionAdorner (8 resize + 1 rotate)
+        Assert.Equal(9, adorner.Children.Count);
         foreach (var child in adorner.Children)
         {
             Assert.IsType<Thumb>(child);

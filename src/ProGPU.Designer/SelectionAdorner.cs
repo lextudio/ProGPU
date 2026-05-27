@@ -21,6 +21,7 @@ public class SelectionAdorner : Panel
     private readonly Thumb _bottomLeftThumb = new();
     private readonly Thumb _bottomCenterThumb = new();
     private readonly Thumb _bottomRightThumb = new();
+    private readonly Thumb _rotateThumb = new();
 
     public FrameworkElement? AssociatedElement { get; }
     public DesignerCanvas? ParentCanvas { get; }
@@ -42,6 +43,7 @@ public class SelectionAdorner : Panel
         Children.Add(_bottomLeftThumb);
         Children.Add(_bottomCenterThumb);
         Children.Add(_bottomRightThumb);
+        Children.Add(_rotateThumb);
 
         ApplyThumbStyle(_topLeftThumb);
         ApplyThumbStyle(_topCenterThumb);
@@ -51,6 +53,7 @@ public class SelectionAdorner : Panel
         ApplyThumbStyle(_bottomLeftThumb);
         ApplyThumbStyle(_bottomCenterThumb);
         ApplyThumbStyle(_bottomRightThumb);
+        ApplyThumbStyle(_rotateThumb);
 
         _topLeftThumb.DragDelta += (s, e) => HandleDragDelta((Thumb)s, e.HorizontalChange, e.VerticalChange);
         _topCenterThumb.DragDelta += (s, e) => HandleDragDelta((Thumb)s, e.HorizontalChange, e.VerticalChange);
@@ -60,6 +63,7 @@ public class SelectionAdorner : Panel
         _bottomLeftThumb.DragDelta += (s, e) => HandleDragDelta((Thumb)s, e.HorizontalChange, e.VerticalChange);
         _bottomCenterThumb.DragDelta += (s, e) => HandleDragDelta((Thumb)s, e.HorizontalChange, e.VerticalChange);
         _bottomRightThumb.DragDelta += (s, e) => HandleDragDelta((Thumb)s, e.HorizontalChange, e.VerticalChange);
+        _rotateThumb.DragDelta += (s, e) => HandleRotateDrag();
 
         void ClearSnapGuidelines(object sender, DragCompletedEventArgs e)
         {
@@ -78,6 +82,7 @@ public class SelectionAdorner : Panel
         _bottomLeftThumb.DragCompleted += ClearSnapGuidelines;
         _bottomCenterThumb.DragCompleted += ClearSnapGuidelines;
         _bottomRightThumb.DragCompleted += ClearSnapGuidelines;
+        _rotateThumb.DragCompleted += ClearSnapGuidelines;
     }
 
     private void ApplyThumbStyle(Thumb thumb)
@@ -101,6 +106,8 @@ public class SelectionAdorner : Panel
         Canvas.SetTop(this, top);
         this.Width = width;
         this.Height = height;
+        
+        this.Rotation = AssociatedElement.Rotation;
         
         InvalidateMeasure();
         InvalidateArrange();
@@ -138,6 +145,9 @@ public class SelectionAdorner : Panel
         _bottomLeftThumb.Arrange(new Rect(-halfSize, h - halfSize, handleSize, handleSize));
         _bottomCenterThumb.Arrange(new Rect(w / 2f - halfSize, h - halfSize, handleSize, handleSize));
         _bottomRightThumb.Arrange(new Rect(w - halfSize, h - halfSize, handleSize, handleSize));
+
+        float rotateOffset = 20f / ZoomScale;
+        _rotateThumb.Arrange(new Rect(w / 2f - halfSize, -halfSize - rotateOffset, handleSize, handleSize));
     }
 
     private void HandleDragDelta(Thumb thumb, float dx, float dy)
@@ -327,8 +337,42 @@ public class SelectionAdorner : Panel
         Rect borderRect = new Rect(0, 0, Size.X, Size.Y);
         context.DrawRectangle(null, borderPen, borderRect);
 
+        // Draw connection line to rotate handle
+        float w = Size.X;
+        float rotateOffset = 20f / z;
+        float lineX = w / 2f;
+        context.DrawLine(borderPen, new Vector2(lineX, 0f), new Vector2(lineX, -rotateOffset));
+
         // Render WPF-style margin guidelines and distance markers
         DrawMarginGuidelines(context, z);
+    }
+
+    private void HandleRotateDrag()
+    {
+        if (AssociatedElement == null || ParentCanvas == null) return;
+
+        var element = AssociatedElement;
+        float left = Canvas.GetLeft(element);
+        float top = Canvas.GetTop(element);
+        float width = float.IsNaN(element.Width) ? element.Size.X : element.Width;
+        float height = float.IsNaN(element.Height) ? element.Size.Y : element.Height;
+
+        float centerX = left + width / 2f;
+        float centerY = top + height / 2f;
+
+        Vector2 screenMouse = InputSystem.LastMousePosition;
+        Vector2 canvasMouse = (screenMouse - ParentCanvas.PanOffset) / ParentCanvas.ZoomScale;
+
+        float angle = MathF.Atan2(canvasMouse.Y - centerY, canvasMouse.X - centerX);
+        float rotation = angle + MathF.PI / 2f;
+
+        element.Rotation = rotation;
+        this.Rotation = rotation;
+
+        UpdatePositionAndSize();
+        element.Invalidate();
+        ParentCanvas.NotifyCanvasModified();
+        ParentCanvas.Invalidate();
     }
 
     private void DrawMarginGuidelines(DrawingContext context, float z)
