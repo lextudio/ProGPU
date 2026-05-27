@@ -213,6 +213,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else if (sType == 4u) {
         // Path rendering: sample coverage directly from PathAtlas
         shapeAlpha = textureSample(pathAtlasTexture, pathAtlasSampler, input.texCoord).r;
+    } else if (sType == 7u) {
+        // Direct solid fill
+        shapeAlpha = 1.0;
     }
 
     if (shapeAlpha <= 0.0) {
@@ -230,6 +233,23 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
         } else {
             finalColor = vec4<f32>(input.color.rgb, input.color.a * brush.opacity);
+        }
+    } else if (brush.brushType == 3u) {
+        // Procedural Hatch Pattern (Parallel Lines)
+        let theta = brush.gradientRadius;
+        let spacing = brush.gradientCenter.x;
+        let thickness = brush.gradientCenter.y;
+        
+        let dir = vec2<f32>(cos(theta), sin(theta));
+        let dist = dot(input.texCoord, dir);
+        
+        // Compute fraction distance relative to spacing
+        let modDist = abs(fract(dist / spacing) * spacing - spacing * 0.5);
+        if (modDist < thickness * 0.5) {
+            finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
+            shapeAlpha = brush.opacity;
+        } else {
+            discard; // Transparent between lines
         }
     } else {
         var evalCoord = input.texCoord;
