@@ -1041,11 +1041,9 @@ public class DxfInsertRenderer : IDxfEntityRenderer
 
         context.PushTransform(localMat);
 
-        Matrix4x4 activeMatrix = context.CurrentTransform;
-
         foreach (var childEntity in insert.Block.Entities)
         {
-            DxfDocumentRenderer.RenderEntity(childEntity, context, activeMatrix);
+            DxfDocumentRenderer.RenderEntity(childEntity, context, combinedMat);
         }
 
         // Render block insert attributes (tags, labels, etc.) using the insert's parent transform but scaling the height by insert Y scale
@@ -1122,6 +1120,38 @@ public class DxfViewportRenderer : IDxfEntityRenderer
                     if (context.ActiveLayers.Contains(modelEntity.Layer.Name))
                     {
                         DxfDocumentRenderer.RenderEntity(modelEntity, context, combinedTransform);
+                    }
+                }
+            }
+
+            // Render cached 3D ACIS solids through this paper-space viewport
+            if (context.Cached3dSolids.Count > 0)
+            {
+                foreach (var solid in context.Cached3dSolids)
+                {
+                    if (!context.ActiveLayers.Contains(solid.Layer)) continue;
+
+                    var color = new Vector4(1f, 1f, 1f, 1f);
+                    if (context.LayerColors.TryGetValue(solid.Layer, out var lColor))
+                    {
+                        color = lColor;
+                    }
+                    var brush = new SolidColorBrush(color);
+                    var pen = new ProGPU.Vector.Pen(brush, 1.0f);
+
+                    foreach (var edge in solid.Edges)
+                    {
+                        var screenP1 = context.TransformToScreen3D(edge.StartPoint, combinedTransform);
+                        var screenP2 = context.TransformToScreen3D(edge.EndPoint, combinedTransform);
+                        
+                        float sMinX = Math.Min(screenP1.X, screenP2.X);
+                        float sMaxX = Math.Max(screenP1.X, screenP2.X);
+                        float sMinY = Math.Min(screenP1.Y, screenP2.Y);
+                        float sMaxY = Math.Max(screenP1.Y, screenP2.Y);
+
+                        if (context.IsOffScreen(new Vector2(sMinX, sMinY), new Vector2(sMaxX, sMaxY))) continue;
+
+                        context.DrawingContext.DrawLine(pen, new Vector2(screenP1.X, screenP1.Y), new Vector2(screenP2.X, screenP2.Y));
                     }
                 }
             }
