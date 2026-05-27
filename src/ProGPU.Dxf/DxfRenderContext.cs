@@ -767,6 +767,7 @@ public class HatchCacheEntry
     public Vector2 MaxModelBounds { get; set; }
     public float CachedZoom { get; set; } = -1f;
     public Vector2 CachedPan { get; set; } = new Vector2(float.NaN, float.NaN);
+    public Matrix4x4 CachedTransform { get; set; } = Matrix4x4.Identity;
     public PathGeometry? CachedPathGeometry { get; set; }
     public List<(Vector2 Start, Vector2 End)>? ModelCpuLines { get; set; }
 }

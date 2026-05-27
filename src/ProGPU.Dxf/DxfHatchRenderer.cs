@@ -29,12 +29,10 @@ public class DxfHatchRenderer : IDxfEntityRenderer
                 var localPts = GetLocalBoundaryPoints(bp);
                 foreach (var pt in localPts)
                 {
-                    var v3 = new Vector3(pt.X, pt.Y, 0f);
-                    var v3Transformed = Vector3.Transform(v3, combined);
-                    minX = Math.Min(minX, v3Transformed.X);
-                    minY = Math.Min(minY, v3Transformed.Y);
-                    maxX = Math.Max(maxX, v3Transformed.X);
-                    maxY = Math.Max(maxY, v3Transformed.Y);
+                    minX = Math.Min(minX, pt.X);
+                    minY = Math.Min(minY, pt.Y);
+                    maxX = Math.Max(maxX, pt.X);
+                    maxY = Math.Max(maxY, pt.Y);
                     hasPoints = true;
                 }
             }
@@ -53,12 +51,15 @@ public class DxfHatchRenderer : IDxfEntityRenderer
         }
 
         // 2. Perform Frustum Culling
-        var minScreen = context.TransformToScreen(entry.MinModelBounds);
-        var maxScreen = context.TransformToScreen(entry.MaxModelBounds);
-        float sMinX = Math.Min(minScreen.X, maxScreen.X);
-        float sMaxX = Math.Max(minScreen.X, maxScreen.X);
-        float sMinY = Math.Min(minScreen.Y, maxScreen.Y);
-        float sMaxY = Math.Max(minScreen.Y, maxScreen.Y);
+        var c0 = context.Transform(entry.MinModelBounds, combined);
+        var c1 = context.Transform(new Vector2(entry.MaxModelBounds.X, entry.MinModelBounds.Y), combined);
+        var c2 = context.Transform(entry.MaxModelBounds, combined);
+        var c3 = context.Transform(new Vector2(entry.MinModelBounds.X, entry.MaxModelBounds.Y), combined);
+
+        float sMinX = Math.Min(Math.Min(c0.X, c1.X), Math.Min(c2.X, c3.X));
+        float sMaxX = Math.Max(Math.Max(c0.X, c1.X), Math.Max(c2.X, c3.X));
+        float sMinY = Math.Min(Math.Min(c0.Y, c1.Y), Math.Min(c2.Y, c3.Y));
+        float sMaxY = Math.Max(Math.Max(c0.Y, c1.Y), Math.Max(c2.Y, c3.Y));
 
         if (context.IsOffScreen(new Vector2(sMinX, sMinY), new Vector2(sMaxX, sMaxY)))
         {
@@ -85,9 +86,10 @@ public class DxfHatchRenderer : IDxfEntityRenderer
         // 3. Render Solid / Shader-based GPU Fill (with stable screen-space PathGeometry cache)
         if (isSolid || useGpuShader)
         {
-            bool isZoomPanUnchanged = context.EnableGpuTransforms ||
+            bool isZoomPanUnchanged = (context.EnableGpuTransforms ||
                                       (Math.Abs(entry.CachedZoom - context.Zoom) < 1e-5f &&
-                                       Vector2.Distance(entry.CachedPan, context.Pan) < 1e-4f);
+                                       Vector2.Distance(entry.CachedPan, context.Pan) < 1e-4f)) &&
+                                      entry.CachedTransform == combined;
 
             PathGeometry pathGeometry;
             if (isZoomPanUnchanged && entry.CachedPathGeometry != null)
@@ -115,6 +117,7 @@ public class DxfHatchRenderer : IDxfEntityRenderer
                 entry.CachedPathGeometry = pathGeometry;
                 entry.CachedZoom = context.Zoom;
                 entry.CachedPan = context.Pan;
+                entry.CachedTransform = combined;
             }
 
             if (pathGeometry.Figures.Count > 0)
