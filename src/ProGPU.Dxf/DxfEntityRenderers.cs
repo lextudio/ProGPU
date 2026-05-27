@@ -1155,6 +1155,72 @@ public class DxfViewportRenderer : IDxfEntityRenderer
                     }
                 }
             }
+
+            // Render cached MULTILEADERs through this paper-space viewport
+            if (context.CachedMLeaders.Count > 0)
+            {
+                foreach (var mleader in context.CachedMLeaders)
+                {
+                    if (!context.ActiveLayers.Contains(mleader.Layer)) continue;
+
+                    var color = new Vector4(1f, 1f, 1f, 1f);
+                    if (context.LayerColors.TryGetValue(mleader.Layer, out var lColor))
+                    {
+                        color = lColor;
+                    }
+                    var brush = new SolidColorBrush(color);
+                    var pen = new ProGPU.Vector.Pen(brush, 1.5f);
+
+                    // 1. Draw leader line segments
+                    foreach (var line in mleader.LeaderLines)
+                    {
+                        if (line.Count < 2) continue;
+
+                        var screenPoints = new List<Vector2>();
+                        float minX = float.MaxValue;
+                        float minY = float.MaxValue;
+                        float maxX = float.MinValue;
+                        float maxY = float.MinValue;
+
+                        foreach (var pt in line)
+                        {
+                            var sPt = context.Transform(pt, combinedTransform);
+                            screenPoints.Add(sPt);
+                            minX = Math.Min(minX, sPt.X);
+                            minY = Math.Min(minY, sPt.Y);
+                            maxX = Math.Max(maxX, sPt.X);
+                            maxY = Math.Max(maxY, sPt.Y);
+                        }
+
+                        if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY))) continue;
+
+                        for (int i = 0; i < screenPoints.Count - 1; i++)
+                        {
+                            context.DrawingContext.DrawLine(pen, screenPoints[i], screenPoints[i + 1]);
+                        }
+
+                        DxfDocumentRenderer.DrawArrowhead(context, screenPoints[0], screenPoints[1], brush, pen, mleader.TextHeight);
+                    }
+
+                    // 2. Draw the text label
+                    if (!string.IsNullOrEmpty(mleader.TextValue))
+                    {
+                        string cleanText = DxfTextRenderer.CleanMText(mleader.TextValue);
+                        var pos = context.Transform(mleader.TextInsertionPoint, combinedTransform);
+                        float fontSize = mleader.TextHeight * context.Zoom;
+                        if (fontSize > 0.1f)
+                        {
+                            context.DrawingContext.DrawText(
+                                cleanText,
+                                context.Font,
+                                fontSize,
+                                brush,
+                                pos
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         // 5. Pop Clip Rect
