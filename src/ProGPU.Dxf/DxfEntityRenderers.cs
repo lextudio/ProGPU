@@ -820,6 +820,116 @@ public class DxfTextRenderer : IDxfEntityRenderer
 
         return result;
     }
+
+    public static void RenderAttributeDefinition(AttributeDefinition attdef, DxfRenderContext context, Matrix4x4 transform)
+    {
+        if (attdef.Flags.HasFlag(netDxf.Entities.AttributeFlags.Hidden)) return;
+
+        string valStr = attdef.Tag ?? attdef.Value?.ToString() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(valStr)) return;
+
+        var combined = DxfDocumentRenderer.GetOcsMatrix(attdef.Normal) * transform;
+        float rot = (float)(attdef.Rotation * Math.PI / 180.0);
+        var origin = new Vector2((float)attdef.Position.X, (float)attdef.Position.Y);
+        var screenPos = context.Transform(origin, combined);
+
+        // Project coordinate baseline to find exact screen scale and rotation angle
+        var originPlusBaseline = origin + new Vector2(MathF.Cos(rot), MathF.Sin(rot));
+        var screenBaselinePt = context.Transform(originPlusBaseline, combined);
+        var baselineVec = screenBaselinePt - screenPos;
+        float screenScale = baselineVec.Length();
+        if (screenScale < 1e-4f) return;
+
+        var u = baselineVec / screenScale;
+        var v = new Vector2(-u.Y, u.X);
+
+        float screenFontSize = (float)attdef.Height * screenScale;
+        if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
+
+        float horizontalShiftMultiplier = 0f;
+        float verticalShiftMultiplier = 0f;
+
+        switch (attdef.Alignment)
+        {
+            case netDxf.Entities.TextAlignment.TopLeft:
+                horizontalShiftMultiplier = 0f;
+                verticalShiftMultiplier = 1.0f;
+                break;
+            case netDxf.Entities.TextAlignment.TopCenter:
+                horizontalShiftMultiplier = 0.5f;
+                verticalShiftMultiplier = 1.0f;
+                break;
+            case netDxf.Entities.TextAlignment.TopRight:
+                horizontalShiftMultiplier = 1.0f;
+                verticalShiftMultiplier = 1.0f;
+                break;
+            case netDxf.Entities.TextAlignment.MiddleLeft:
+                horizontalShiftMultiplier = 0f;
+                verticalShiftMultiplier = 0.5f;
+                break;
+            case netDxf.Entities.TextAlignment.MiddleCenter:
+            case netDxf.Entities.TextAlignment.Middle:
+                horizontalShiftMultiplier = 0.5f;
+                verticalShiftMultiplier = 0.5f;
+                break;
+            case netDxf.Entities.TextAlignment.MiddleRight:
+                horizontalShiftMultiplier = 1.0f;
+                verticalShiftMultiplier = 0.5f;
+                break;
+            case netDxf.Entities.TextAlignment.BottomLeft:
+            case netDxf.Entities.TextAlignment.BaselineLeft:
+                horizontalShiftMultiplier = 0f;
+                verticalShiftMultiplier = 0f;
+                break;
+            case netDxf.Entities.TextAlignment.BottomCenter:
+            case netDxf.Entities.TextAlignment.BaselineCenter:
+            case netDxf.Entities.TextAlignment.Aligned:
+            case netDxf.Entities.TextAlignment.Fit:
+                horizontalShiftMultiplier = 0.5f;
+                verticalShiftMultiplier = 0f;
+                break;
+            case netDxf.Entities.TextAlignment.BottomRight:
+            case netDxf.Entities.TextAlignment.BaselineRight:
+                horizontalShiftMultiplier = 1.0f;
+                verticalShiftMultiplier = 0f;
+                break;
+        }
+
+        // Measure text width using exact glyph metrics
+        float screenWidth = MeasureLineWidthStatic(valStr, context.Font, screenFontSize);
+        float shiftX = -screenWidth * horizontalShiftMultiplier;
+        float shiftY = screenFontSize * verticalShiftMultiplier;
+
+        float maxDim = Math.Max(screenWidth, screenFontSize) * 1.5f;
+        var minPt = new Vector2(screenPos.X - maxDim, screenPos.Y - maxDim);
+        var maxPt = new Vector2(screenPos.X + maxDim, screenPos.Y + maxDim);
+        if (context.IsOffScreen(minPt, maxPt)) return;
+
+        // Resolve Brush
+        var color = new Vector4(1f, 1f, 1f, 1f); // Default white/fallback
+        if (attdef.Color.IsByLayer)
+        {
+            if (context.LayerColors.TryGetValue(attdef.Layer.Name, out var lColor))
+            {
+                color = lColor;
+            }
+            else
+            {
+                var aci = attdef.Layer.Color;
+                color = new Vector4(aci.R / 255f, aci.G / 255f, aci.B / 255f, 1f);
+            }
+        }
+        else
+        {
+            var aci = attdef.Color;
+            color = new Vector4(aci.R / 255f, aci.G / 255f, aci.B / 255f, 1f);
+        }
+        var brush = new SolidColorBrush(color);
+
+        var drawPos = screenPos + u * shiftX + v * shiftY;
+        float rotationRad = MathF.Atan2(baselineVec.Y, baselineVec.X);
+        context.DrawingContext.DrawText(valStr, context.Font, screenFontSize, brush, drawPos, rotation: rotationRad);
+    }
 }
 
 public class DxfInsertRenderer : IDxfEntityRenderer
@@ -1031,5 +1141,104 @@ public class DxfImageRenderer : IDxfEntityRenderer
             dc.DrawText(mainText, font, titleFontSize, textBrush, mainPos);
             dc.DrawText(subText, font, subFontSize, subBrush, subPos);
         }
+    }
+}
+
+public class DxfFace3dRenderer : IDxfEntityRenderer
+{
+    public void Render(EntityObject entity, DxfRenderContext context, Matrix4x4 transform)
+    {
+        if (entity is not Face3d face) return;
+
+        var combined = DxfDocumentRenderer.GetOcsMatrix(face.Normal) * transform;
+
+        var p1 = context.Transform(new Vector2((float)face.FirstVertex.X, (float)face.FirstVertex.Y), combined);
+        var p2 = context.Transform(new Vector2((float)face.SecondVertex.X, (float)face.SecondVertex.Y), combined);
+        var p3 = context.Transform(new Vector2((float)face.ThirdVertex.X, (float)face.ThirdVertex.Y), combined);
+        var p4 = context.Transform(new Vector2((float)face.FourthVertex.X, (float)face.FourthVertex.Y), combined);
+
+        // Viewport culling (bounding box of all 4 points)
+        float minX = Math.Min(p1.X, Math.Min(p2.X, Math.Min(p3.X, p4.X)));
+        float minY = Math.Min(p1.Y, Math.Min(p2.Y, Math.Min(p3.Y, p4.Y)));
+        float maxX = Math.Max(p1.X, Math.Max(p2.X, Math.Max(p3.X, p4.X)));
+        float maxY = Math.Max(p1.Y, Math.Max(p2.Y, Math.Max(p3.Y, p4.Y)));
+        if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY))) return;
+
+        var pen = context.GetCachedPen(face, 1f);
+
+        // In DXF 3DFACE, if ThirdVertex == FourthVertex, the face is a triangle.
+        context.DrawingContext.DrawLine(pen, p1, p2);
+        context.DrawingContext.DrawLine(pen, p2, p3);
+        if (face.ThirdVertex != face.FourthVertex)
+        {
+            context.DrawingContext.DrawLine(pen, p3, p4);
+            context.DrawingContext.DrawLine(pen, p4, p1);
+        }
+        else
+        {
+            context.DrawingContext.DrawLine(pen, p3, p1);
+        }
+    }
+}
+
+public class DxfPointRenderer : IDxfEntityRenderer
+{
+    public void Render(EntityObject entity, DxfRenderContext context, Matrix4x4 transform)
+    {
+        if (entity is not netDxf.Entities.Point point) return;
+
+        var combined = DxfDocumentRenderer.GetOcsMatrix(point.Normal) * transform;
+        var p = context.Transform(new Vector2((float)point.Position.X, (float)point.Position.Y), combined);
+
+        // Viewport culling
+        if (context.IsOffScreen(p - new Vector2(3f), p + new Vector2(3f))) return;
+
+        var pen = context.GetCachedPen(point, 1f);
+
+        // Draw a small vector cross-hair representing the point in world space
+        float size = 1.5f; 
+        context.DrawingContext.DrawLine(pen, p - new Vector2(size, 0f), p + new Vector2(size, 0f));
+        context.DrawingContext.DrawLine(pen, p - new Vector2(0f, size), p + new Vector2(0f, size));
+    }
+}
+
+public class DxfWipeoutRenderer : IDxfEntityRenderer
+{
+    public void Render(EntityObject entity, DxfRenderContext context, Matrix4x4 transform)
+    {
+        if (entity is not Wipeout wipeout) return;
+        if (wipeout.ClippingBoundary == null || wipeout.ClippingBoundary.Vertexes == null || wipeout.ClippingBoundary.Vertexes.Count < 3) return;
+
+        var combined = DxfDocumentRenderer.GetOcsMatrix(wipeout.Normal) * transform;
+
+        // Transform vertices to screen coordinates and collect bounds for culling
+        var points = new Vector2[wipeout.ClippingBoundary.Vertexes.Count];
+        float minX = float.MaxValue, minY = float.MaxValue;
+        float maxX = float.MinValue, maxY = float.MinValue;
+
+        for (int i = 0; i < points.Length; i++)
+        {
+            var v = wipeout.ClippingBoundary.Vertexes[i];
+            points[i] = context.Transform(new Vector2((float)v.X, (float)v.Y), combined);
+            minX = Math.Min(minX, points[i].X);
+            minY = Math.Min(minY, points[i].Y);
+            maxX = Math.Max(maxX, points[i].X);
+            maxY = Math.Max(maxY, points[i].Y);
+        }
+
+        // Viewport culling
+        if (context.IsOffScreen(new Vector2(minX, minY), new Vector2(maxX, maxY))) return;
+
+        // Construct PathGeometry representing the closed polygon boundary
+        var path = new PathGeometry();
+        var figure = new PathFigure(points[0], isClosed: true);
+        for (int i = 1; i < points.Length; i++)
+        {
+            figure.Segments.Add(new LineSegment(points[i]));
+        }
+        path.Figures.Add(figure);
+
+        // Fill with background brush to wipeout/mask everything behind
+        context.DrawingContext.DrawPath(context.BackgroundBrush, null, path);
     }
 }

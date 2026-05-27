@@ -47,8 +47,10 @@ public static class DxfDocumentRenderer
         { typeof(Image), new DxfImageRenderer() },
         
         // Viewport and Attribute support
-        { typeof(netDxf.Entities.Viewport), new DxfViewportRenderer() }
-        // { typeof(netDxf.Entities.Attribute), new DxfTextRenderer() }
+        { typeof(netDxf.Entities.Viewport), new DxfViewportRenderer() },
+        { typeof(Face3d), new DxfFace3dRenderer() },
+        { typeof(netDxf.Entities.Point), new DxfPointRenderer() },
+        { typeof(Wipeout), new DxfWipeoutRenderer() }
     };
 
     public static void Render(DxfDocument doc, DxfRenderContext context)
@@ -156,6 +158,26 @@ public static class DxfDocumentRenderer
             if (context.ActiveLayers.Contains(image.Layer.Name))
                 RenderEntity(image, context, Matrix4x4.Identity);
         }
+        foreach (var point in doc.Points)
+        {
+            if (context.ActiveLayers.Contains(point.Layer.Name))
+                RenderEntity(point, context, Matrix4x4.Identity);
+        }
+        foreach (var face in doc.Faces3d)
+        {
+            if (context.ActiveLayers.Contains(face.Layer.Name))
+                RenderEntity(face, context, Matrix4x4.Identity);
+        }
+        foreach (var attdef in doc.AttributeDefinitions)
+        {
+            if (context.ActiveLayers.Contains(attdef.Layer.Name))
+                DxfTextRenderer.RenderAttributeDefinition(attdef, context, Matrix4x4.Identity);
+        }
+        foreach (var wipeout in doc.Wipeouts)
+        {
+            if (context.ActiveLayers.Contains(wipeout.Layer.Name))
+                RenderEntity(wipeout, context, Matrix4x4.Identity);
+        }
     }
 
     public static void RenderEntity(EntityObject entity, DxfRenderContext context, Matrix4x4 transform)
@@ -238,6 +260,14 @@ public static class DxfDocumentRenderer
             AccumulateEntityBounds(hatch, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
         foreach (var image in doc.Images)
             AccumulateEntityBounds(image, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
+        foreach (var point in doc.Points)
+            AccumulateEntityBounds(point, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
+        foreach (var face in doc.Faces3d)
+            AccumulateEntityBounds(face, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
+        foreach (var attdef in doc.AttributeDefinitions)
+            AccumulateAttributeDefinitionBounds(attdef, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
+        foreach (var wipeout in doc.Wipeouts)
+            AccumulateEntityBounds(wipeout, Matrix4x4.Identity, ref min, ref max, ref hasData, activeLayers);
     }
 
     public static void AccumulateAttributeBounds(netDxf.Entities.Attribute attr, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData, HashSet<string>? activeLayers = null)
@@ -255,6 +285,29 @@ public static class DxfDocumentRenderer
         max.Y = Math.Max(max.Y, v3Transformed.Y);
         
         hasData = true;
+    }
+
+    public static void AccumulateAttributeDefinitionBounds(AttributeDefinition attdef, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData, HashSet<string>? activeLayers = null)
+    {
+        if (activeLayers != null && !activeLayers.Contains(attdef.Layer.Name)) return;
+        if (attdef.Flags.HasFlag(netDxf.Entities.AttributeFlags.Hidden)) return;
+
+        var combined = GetOcsMatrix(attdef.Normal) * transform;
+        var v3 = new Vector3((float)attdef.Position.X, (float)attdef.Position.Y, 0f);
+        var v3Transformed = Vector3.Transform(v3, combined);
+        
+        var pt = new Vector2(v3Transformed.X, v3Transformed.Y);
+        if (!hasData)
+        {
+            min = pt;
+            max = pt;
+            hasData = true;
+        }
+        else
+        {
+            min = Vector2.Min(min, pt);
+            max = Vector2.Max(max, pt);
+        }
     }
 
     private static void AccumulateEntityBounds(EntityObject entity, Matrix4x4 transform, ref Vector2 min, ref Vector2 max, ref bool hasData, HashSet<string>? activeLayers = null)
@@ -403,6 +456,30 @@ public static class DxfDocumentRenderer
                 float halfH = (float)(vp.Height * 0.5);
                 UpdateBounds(new Vector2((float)(vp.Center.X - halfW), (float)(vp.Center.Y - halfH)), transform, ref min, ref max, ref hasData);
                 UpdateBounds(new Vector2((float)(vp.Center.X + halfW), (float)(vp.Center.Y + halfH)), transform, ref min, ref max, ref hasData);
+            }
+        }
+        else if (entity is Face3d face)
+        {
+            var combined = GetOcsMatrix(face.Normal) * transform;
+            UpdateBounds(new Vector2((float)face.FirstVertex.X, (float)face.FirstVertex.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)face.SecondVertex.X, (float)face.SecondVertex.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)face.ThirdVertex.X, (float)face.ThirdVertex.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)face.FourthVertex.X, (float)face.FourthVertex.Y), combined, ref min, ref max, ref hasData);
+        }
+        else if (entity is netDxf.Entities.Point point)
+        {
+            var combined = GetOcsMatrix(point.Normal) * transform;
+            UpdateBounds(new Vector2((float)point.Position.X, (float)point.Position.Y), combined, ref min, ref max, ref hasData);
+        }
+        else if (entity is Wipeout wipeout)
+        {
+            var combined = GetOcsMatrix(wipeout.Normal) * transform;
+            if (wipeout.ClippingBoundary != null && wipeout.ClippingBoundary.Vertexes != null)
+            {
+                foreach (var v in wipeout.ClippingBoundary.Vertexes)
+                {
+                    UpdateBounds(new Vector2((float)v.X, (float)v.Y), combined, ref min, ref max, ref hasData);
+                }
             }
         }
     }
