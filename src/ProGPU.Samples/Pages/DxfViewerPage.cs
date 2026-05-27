@@ -197,14 +197,16 @@ public class DxfCanvasControl : FrameworkElement
                 Vector2 savedPan = Context.Pan;
                 Vector2 savedCenter = Context.Center;
                 Vector2 savedScreenCenter = Context.ScreenCenter;
+                bool savedEnableGpuTransforms = Context.EnableGpuTransforms;
+                bool savedIsCompilingStatic = Context.IsCompilingStatic;
 
-                if (AppState.EnableGpuTransforms)
-                {
-                    Context.Zoom = 1.0f;
-                    Context.Pan = Vector2.Zero;
-                    Context.Center = Vector2.Zero;
-                    Context.ScreenCenter = Vector2.Zero;
-                }
+                // Always force unprojected model space compilation with all entities enabled for the static buffer.
+                Context.Zoom = 1.0f;
+                Context.Pan = Vector2.Zero;
+                Context.Center = Vector2.Zero;
+                Context.ScreenCenter = Vector2.Zero;
+                Context.EnableGpuTransforms = true;
+                Context.IsCompilingStatic = true;
 
                 Context.DrawingContext.Clear();
                 DxfDocumentRenderer.Render(Document, Context);
@@ -217,13 +219,13 @@ public class DxfCanvasControl : FrameworkElement
                 var commandsToCompile = _cachedCommands ?? Context.DrawingContext.Commands;
                 _staticBuffer = AppState._screenCompositor.CompileStaticDxf(commandsToCompile);
 
-                if (AppState.EnableGpuTransforms)
-                {
-                    Context.Zoom = savedZoom;
-                    Context.Pan = savedPan;
-                    Context.Center = savedCenter;
-                    Context.ScreenCenter = savedScreenCenter;
-                }
+                // Restore camera and optimization properties for regular frame rendering
+                Context.Zoom = savedZoom;
+                Context.Pan = savedPan;
+                Context.Center = savedCenter;
+                Context.ScreenCenter = savedScreenCenter;
+                Context.EnableGpuTransforms = savedEnableGpuTransforms;
+                Context.IsCompilingStatic = savedIsCompilingStatic;
             }
         }
 

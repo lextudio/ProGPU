@@ -41,6 +41,8 @@ public class DxfRenderContext
     // GPU camera transform optimization flag
     public bool EnableGpuTransforms { get; set; } = false;
 
+    // Static buffer compilation flag to bypass culling and micro-LOD
+    public bool IsCompilingStatic { get; set; } = false;
 
     // Entity flattening optimization flag
     public bool EnableFlattening { get; set; } = true;
@@ -148,6 +150,8 @@ public class DxfRenderContext
     /// </summary>
     public bool IsOffScreen(Vector2 minScreen, Vector2 maxScreen)
     {
+        if (IsCompilingStatic) return false;
+
         if (EnableGpuTransforms)
         {
             // If GPU transforms are active, minScreen and maxScreen are raw WCS coords.

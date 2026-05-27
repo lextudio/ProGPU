@@ -56,7 +56,7 @@ public class DxfLineRenderer : IDxfEntityRenderer
         float dy = p2.Y - p1.Y;
         float lenSq = dx * dx + dy * dy;
         if (context.EnableGpuTransforms) lenSq *= context.Zoom * context.Zoom;
-        if (context.EnableLod ? (lenSq < 1.5f) : (lenSq < 0.01f)) return;
+        if (!context.IsCompilingStatic && (context.EnableLod ? (lenSq < 1.5f) : (lenSq < 0.01f))) return;
 
         var pen = context.GetCachedPen(line, 1f);
 
@@ -301,7 +301,7 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
                 width *= context.Zoom;
                 height *= context.Zoom;
             }
-            if (context.EnableLod ? (width < 2f && height < 2f) : (width < 0.2f && height < 0.2f)) return;
+            if (!context.IsCompilingStatic && (context.EnableLod ? (width < 2f && height < 2f) : (width < 0.2f && height < 0.2f))) return;
         }
 
         var pen = context.GetCachedPen(entity, 1.2f);
@@ -545,7 +545,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
 
         float screenFontSize = (float)attr.Height * screenScale;
         if (context.EnableGpuTransforms) screenFontSize *= context.Zoom;
-        if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
+        if (!context.IsCompilingStatic && (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f))) return;
 
         float horizontalShiftMultiplier = 0f;
         float verticalShiftMultiplier = 0f;
@@ -657,7 +657,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
 
             float screenFontSize = (float)text.Height * screenScale;
             if (context.EnableGpuTransforms) screenFontSize *= context.Zoom;
-            if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
+            if (!context.IsCompilingStatic && (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f))) return;
 
             float horizontalShiftMultiplier = 0f;
             float verticalShiftMultiplier = 0f;
@@ -746,7 +746,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
 
             float screenFontSize = (float)mtext.Height * screenScale;
             if (context.EnableGpuTransforms) screenFontSize *= context.Zoom;
-            if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
+            if (!context.IsCompilingStatic && (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f))) return;
 
             float screenLineOffset = screenFontSize * 1.25f;
             float totalHeight = lines.Length * screenLineOffset;
@@ -888,7 +888,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
 
         float screenFontSize = (float)attdef.Height * screenScale;
         if (context.EnableGpuTransforms) screenFontSize *= context.Zoom;
-        if (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f)) return;
+        if (!context.IsCompilingStatic && (context.EnableLod ? (screenFontSize < 4f) : (screenFontSize < 0.1f))) return;
 
         float horizontalShiftMultiplier = 0f;
         float verticalShiftMultiplier = 0f;
@@ -1018,7 +1018,7 @@ public class DxfInsertRenderer : IDxfEntityRenderer
             width *= context.Zoom;
             height *= context.Zoom;
         }
-        if (context.EnableLod ? (width < 3.5f && height < 3.5f) : (width < 0.2f && height < 0.2f))
+        if (!context.IsCompilingStatic && (context.EnableLod ? (width < 3.5f && height < 3.5f) : (width < 0.2f && height < 0.2f)))
         {
             return; // Too tiny on the screen, skip traversing child entities!
         }

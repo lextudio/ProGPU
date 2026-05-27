@@ -289,16 +289,12 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         var pos3D = local3D;
         if (useGpuTransforms) {
             pos3D = (uniforms.view * vec4<f32>(local3D, 1.0)).xyz;
-        } else if (isStatic) {
-            pos3D = (uniforms.mvp * vec4<f32>(local3D, 1.0)).xyz;
         }
         output.position = uniforms.projection * vec4<f32>(pos3D, 1.0);
     } else {
         var pos = worldPos;
         if (useGpuTransforms) {
             pos = (uniforms.view * vec4<f32>(worldPos, 0.0, 1.0)).xy;
-        } else if (isStatic) {
-            pos = (uniforms.mvp * vec4<f32>(worldPos, 0.0, 1.0)).xy;
         }
         output.position = uniforms.projection * vec4<f32>(pos, 0.0, 1.0);
     }
