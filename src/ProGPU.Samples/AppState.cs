@@ -73,6 +73,11 @@ public static class AppState
     public static GpuTexture? _canvasBlurTexture;
     public static GpuTexture? _canvasShadowTexture;
 
+    // DXF viewer optimization controls
+    public static bool EnableGpuTransforms { get; set; } = false;
+    public static bool EnableStaticGpuBuffers { get; set; } = false;
+    public static bool EnableCommandCaching { get; set; } = false;
+
     // Basic Input Page Interactive State
     public static int _clickCount = 0;
     public static string _checkboxStatus = "Unchecked";

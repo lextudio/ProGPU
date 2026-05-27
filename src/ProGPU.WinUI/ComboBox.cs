@@ -196,9 +196,28 @@ public class ComboBox : Control
     public override void OnVisualStateChanged()
     {
         // Automatically collapse dropdown when focus is lost
-        if (!IsFocused && IsDropDownOpen)
+        if (!IsFocused && !IsPointerPressed && IsDropDownOpen)
         {
-            IsDropDownOpen = false;
+            bool focusIsWithinPopup = false;
+            var focused = InputSystem.FocusedElement;
+            if (focused != null && _dropDownPopup != null)
+            {
+                Visual? current = focused;
+                while (current != null)
+                {
+                    if (current == _dropDownPopup)
+                    {
+                        focusIsWithinPopup = true;
+                        break;
+                    }
+                    current = current.Parent;
+                }
+            }
+
+            if (!focusIsWithinPopup)
+            {
+                IsDropDownOpen = false;
+            }
         }
         base.OnVisualStateChanged();
     }
@@ -207,13 +226,14 @@ public class ComboBox : Control
     {
         if (IsEnabled)
         {
-            base.OnPointerPressed(e); // Sets focus to this ComboBox
-
             // Toggle dropdown if clicked on the header button area
             if (e.Position.Y < 32f)
             {
                 IsDropDownOpen = !IsDropDownOpen;
+                e.Handled = true;
             }
+
+            base.OnPointerPressed(e); // Sets focus to this ComboBox
         }
     }
 

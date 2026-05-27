@@ -318,6 +318,7 @@ public class Visual
 public class ContainerVisual : Visual
 {
     private readonly List<Visual> _children = new();
+    private readonly object _childrenLock = new();
 
     public IReadOnlyList<Visual> Children => _children;
 
@@ -328,8 +329,11 @@ public class ContainerVisual : Visual
             child.Parent.RemoveChild(child);
         }
 
-        child.Parent = this;
-        _children.Add(child);
+        lock (_childrenLock)
+        {
+            child.Parent = this;
+            _children.Add(child);
+        }
         Invalidate();
         if (this is ILayoutNode layoutNode)
         {
@@ -339,9 +343,17 @@ public class ContainerVisual : Visual
 
     public void RemoveChild(Visual child)
     {
-        if (_children.Remove(child))
+        bool removed;
+        lock (_childrenLock)
         {
-            child.Parent = null;
+            removed = _children.Remove(child);
+            if (removed)
+            {
+                child.Parent = null;
+            }
+        }
+        if (removed)
+        {
             Invalidate();
             if (this is ILayoutNode layoutNode)
             {
@@ -352,11 +364,14 @@ public class ContainerVisual : Visual
 
     public void ClearChildren()
     {
-        foreach (var child in _children)
+        lock (_childrenLock)
         {
-            child.Parent = null;
+            foreach (var child in _children)
+            {
+                child.Parent = null;
+            }
+            _children.Clear();
         }
-        _children.Clear();
         Invalidate();
         if (this is ILayoutNode layoutNode)
         {

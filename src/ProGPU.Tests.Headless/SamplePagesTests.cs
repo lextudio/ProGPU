@@ -239,6 +239,33 @@ public class SamplePagesTests
     }
 
     [Fact]
+    public void Test_DxfViewerPage_Renders_GpuTransforms()
+    {
+        EnsureFontsAndStateLoaded();
+        
+        bool savedEnableGpuTransforms = AppState.EnableGpuTransforms;
+        bool savedEnableStatic = AppState.EnableStaticGpuBuffers;
+        bool savedEnableCaching = AppState.EnableCommandCaching;
+        
+        try
+        {
+            AppState.EnableGpuTransforms = true;
+            AppState.EnableStaticGpuBuffers = false;
+            AppState.EnableCommandCaching = false;
+            
+            var page = DxfViewerPage.Create();
+            RunPageTest(page, "Dxf Viewer Gpu Transforms");
+        }
+        finally
+        {
+            AppState.EnableGpuTransforms = savedEnableGpuTransforms;
+            AppState.EnableStaticGpuBuffers = savedEnableStatic;
+            AppState.EnableCommandCaching = savedEnableCaching;
+        }
+    }
+
+
+    [Fact]
     public void Benchmark_CacheAsLayer_Performance_Comparison()
     {
         EnsureFontsAndStateLoaded();
@@ -649,6 +676,109 @@ public class SamplePagesTests
 
         // Cleanup
         window.Content = null;
+    }
+
+    [Fact]
+    public void Test_Compositor_GpuTransforms_BypassesScreenClipping()
+    {
+        EnsureFontsAndStateLoaded();
+
+        var window = HeadlessWindow.Shared;
+        var compositor = window.Compositor;
+
+        var drawingContext = new ProGPU.Scene.DrawingContext();
+        var pen = new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)), 1f);
+
+        // Push a clip that would normally crop/clamp coordinates outside [0, 100]
+        drawingContext.PushClip(new Rect(0, 0, 100, 100));
+
+        // Draw a line located far outside the clip boundaries (e.g. from 500 to 600)
+        // Under standard CPU transforms, this line would be clamped to [100, 100]
+        // But under GPU transforms (Option A), the vertices must preserve their original CAD coordinate values!
+        drawingContext.DrawLine(pen, new Vector2(500f, 500f), new Vector2(600f, 600f));
+        drawingContext.PopClip();
+
+        // Compile with UseGpuTransforms = true
+        var cmd = drawingContext.Commands[1];
+        cmd.UseGpuTransforms = true;
+        cmd.CameraView = Matrix4x4.Identity;
+
+        var buffer = compositor.CompileStaticDxf(new List<ProGPU.Scene.RenderCommand> { cmd });
+
+        // Retrieve compiled vertices from the buffer
+        var vertices = buffer.VectorVertices;
+
+        // Since UseGpuTransforms is active, the vertices should NOT have been clamped to [100, 100]!
+        // They must preserve their original pre-centered coordinate values!
+        var v0 = vertices[0];
+        var v2 = vertices[2];
+
+        Assert.Equal(500f, v0.Position.X);
+        Assert.Equal(500f, v0.Position.Y);
+        Assert.Equal(600f, v2.Position.X);
+        Assert.Equal(600f, v2.Position.Y);
+
+        buffer.Dispose();
+        window.Content = null;
+    }
+
+    [Fact]
+    public void Test_DxfCanvasControl_Invalidates_OnSizeChange()
+    {
+        EnsureFontsAndStateLoaded();
+
+        bool savedEnableStatic = AppState.EnableStaticGpuBuffers;
+        var savedCompositor = AppState._screenCompositor;
+
+        try
+        {
+            AppState.EnableStaticGpuBuffers = true;
+            var window = HeadlessWindow.Shared;
+            AppState._screenCompositor = window.Compositor;
+
+            var ctrl = new DxfCanvasControl();
+            var doc = SampleDxfGenerator.GenerateSample();
+            ctrl.LoadDocument(doc);
+
+            window.Resize(800, 600);
+            window.Content = ctrl;
+
+            // Force initial render to build static buffer and cache commands
+            window.Render();
+
+            // Access internal private fields via reflection to verify they are set
+            var lastSizeField = typeof(DxfCanvasControl).GetField("_lastSize", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.NotNull(lastSizeField);
+            var initialLastSize = (Vector2?)lastSizeField.GetValue(ctrl);
+            Assert.NotNull(initialLastSize);
+            Assert.Equal(800f, initialLastSize.Value.X);
+            Assert.Equal(600f, initialLastSize.Value.Y);
+
+            // Get the compiled static buffer
+            var staticBufferField = typeof(DxfCanvasControl).GetField("_staticBuffer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.NotNull(staticBufferField);
+            var initialBuffer = staticBufferField.GetValue(ctrl);
+            Assert.NotNull(initialBuffer);
+
+            // Now resize the window!
+            window.Resize(1024, 768);
+            
+            // Force render again, which should invalidate and rebuild because size changed!
+            window.Render();
+
+            var newLastSize = (Vector2?)lastSizeField.GetValue(ctrl);
+            Assert.NotNull(newLastSize);
+            Assert.Equal(1024f, newLastSize.Value.X);
+            Assert.Equal(768f, newLastSize.Value.Y);
+
+            // Clean up
+            window.Content = null;
+        }
+        finally
+        {
+            AppState.EnableStaticGpuBuffers = savedEnableStatic;
+            AppState._screenCompositor = savedCompositor;
+        }
     }
 }
 

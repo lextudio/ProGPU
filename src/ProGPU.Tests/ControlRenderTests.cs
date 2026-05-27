@@ -187,6 +187,98 @@ public class ControlRenderTests
     }
 
     [Fact]
+    public void ComboBox_PointerSelection_WorksCorrectly()
+    {
+        var window = SharedWindow;
+        var combo = new ComboBox
+        {
+            Width = 200f,
+            Height = 32f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var item1 = new ComboBoxItem("Item 1");
+        var item2 = new ComboBoxItem("Item 2");
+        combo.Items.Add(item1);
+        combo.Items.Add(item2);
+
+        window.Content = combo;
+        window.Render(); // Measure & Arrange
+
+        // 1. Initially nothing is selected
+        Assert.Null(combo.SelectedItem);
+
+        // 2. Open dropdown
+        combo.IsDropDownOpen = true;
+        Assert.True(combo.IsDropDownOpen);
+        Assert.NotNull(combo.DropDownPopup);
+
+        // 3. Simulate pointer entering and pressing on item2
+        var pointerEnteredArgs = new PointerRoutedEventArgs { Position = new Vector2(10f, 10f) };
+        item2.OnPointerEntered(pointerEnteredArgs);
+
+        var pointerPressedArgs = new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = true };
+        item2.OnPointerPressed(pointerPressedArgs);
+
+        // Dropdown should still be open (the bug was that it collapsed immediately on focus lost)
+        Assert.True(combo.IsDropDownOpen);
+
+        // 4. Simulate pointer release on item2
+        var pointerReleasedArgs = new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = false };
+        item2.OnPointerReleased(pointerReleasedArgs);
+
+        // Dropdown should now be closed and item2 selected!
+        Assert.False(combo.IsDropDownOpen);
+        Assert.Equal(item2, combo.SelectedItem);
+        Assert.True(item2.IsSelected);
+        Assert.False(item1.IsSelected);
+
+        // Cleanup
+        window.Content = null;
+    }
+
+    [Fact]
+    public void ComboBox_InsideScrollViewer_DropdownStaysOpen()
+    {
+        var window = SharedWindow;
+        var scroll = new ScrollViewer
+        {
+            Width = 300f,
+            Height = 150f,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        var combo = new ComboBox
+        {
+            Width = 200f,
+            Height = 32f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        combo.Items.Add(new ComboBoxItem("Item 1"));
+        combo.Items.Add(new ComboBoxItem("Item 2"));
+
+        scroll.Content = combo;
+        window.Content = scroll;
+        window.Render(); // Measure & Arrange
+
+        // 1. Dropdown initially closed
+        Assert.False(combo.IsDropDownOpen);
+
+        // 2. Simulate pointer press on ComboBox header inside ScrollViewer
+        var pointerPressedArgs = new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = true };
+        combo.OnPointerPressed(pointerPressedArgs);
+
+        // 3. Dropdown should open and stay open
+        Assert.True(combo.IsDropDownOpen);
+        Assert.True(combo.IsFocused);
+        Assert.False(scroll.IsFocused); // ScrollViewer should not have stolen focus
+
+        // Cleanup
+        window.Content = null;
+    }
+
+    [Fact]
     public void ProgressBar_AllStates_RenderCorrectly()
     {
         var progress = new ProgressBar

@@ -21,7 +21,27 @@ public enum RenderCommandType
     DrawCircle,
     DrawRoundedRect,
     DrawBezier,
-    DrawCubicBezier
+    DrawCubicBezier,
+    DrawPolyline,
+    DrawSpline,
+    FillTriangle,
+    FillQuad,
+    DrawLine3D,
+    DrawHatch,
+    DrawAcisSolid,
+    DrawStaticDxf
+}
+
+public struct Line3D
+{
+    public Vector3 Start;
+    public Vector3 End;
+
+    public Line3D(Vector3 start, Vector3 end)
+    {
+        Start = start;
+        End = end;
+    }
 }
 
 public struct Rect
@@ -96,6 +116,7 @@ public struct RenderCommand
     public Vector2 Position;
     public bool IsBold;
     public bool IsItalic;
+    public float Rotation;
 
     // Texture properties
     public GpuTexture? Texture;
@@ -107,7 +128,32 @@ public struct RenderCommand
     public float RadiusX;
     public float RadiusY;
     public float CornerRadius;
+
+    // Polyline properties
+    public Vector2[]? PolylinePoints;
+    public bool IsClosed;
+
+    // Spline properties
+    public double[]? SplineKnots;
+    public double[]? SplineWeights;
+    public int SplineDegree;
+
+    // 3D properties
+    public Vector3 Position3D1;
+    public Vector3 Position3D2;
+
+    // ACIS Solid properties
+    public List<Line3D>? Edges3D;
+    public Matrix4x4 Transform;
+
+    // Static buffer property
+    public object? StaticBuffer;
+
+    // GPU Transform properties
+    public bool UseGpuTransforms;
+    public Matrix4x4 CameraView;
 }
+
 
 public class DrawingContext
 {
@@ -135,7 +181,7 @@ public class DrawingContext
         });
     }
 
-    public void DrawText(string text, TtfFont font, float fontSize, Brush brush, Vector2 position, bool isBold = false, bool isItalic = false)
+    public void DrawText(string text, TtfFont font, float fontSize, Brush brush, Vector2 position, bool isBold = false, bool isItalic = false, float rotation = 0f)
     {
         Commands.Add(new RenderCommand
         {
@@ -146,7 +192,8 @@ public class DrawingContext
             Brush = brush,
             Position = position,
             IsBold = isBold,
-            IsItalic = isItalic
+            IsItalic = isItalic,
+            Rotation = rotation
         });
     }
 
@@ -196,6 +243,38 @@ public class DrawingContext
             Pen = pen,
             Position = p1,
             Position2 = p2
+        });
+    }
+
+    public void DrawLine3D(Pen pen, Vector3 p1, Vector3 p2)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawLine3D,
+            Pen = pen,
+            Position3D1 = p1,
+            Position3D2 = p2
+        });
+    }
+
+    public void DrawHatch(Brush brush, PathGeometry boundaries)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawHatch,
+            Brush = brush,
+            Path = boundaries
+        });
+    }
+
+    public void DrawAcisSolid(Pen pen, List<Line3D> edges, Matrix4x4 modelTransform)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawAcisSolid,
+            Pen = pen,
+            Edges3D = edges,
+            Transform = modelTransform
         });
     }
 
@@ -273,6 +352,70 @@ public class DrawingContext
             Position2 = p1,
             Position3 = p2,
             Position4 = p3
+        });
+    }
+
+    public void DrawPolyline(Pen pen, Vector2[] points, bool isClosed = false)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPolyline,
+            Pen = pen,
+            PolylinePoints = points,
+            IsClosed = isClosed
+        });
+    }
+
+    public void DrawSpline(Pen pen, Vector2[] controlPoints, double[] knots, int degree)
+    {
+        DrawSpline(pen, controlPoints, knots, null, degree, false);
+    }
+
+    public void DrawSpline(Pen pen, Vector2[] controlPoints, double[] knots, double[]? weights, int degree, bool isClosed)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawSpline,
+            Pen = pen,
+            PolylinePoints = controlPoints,
+            SplineKnots = knots,
+            SplineWeights = weights,
+            SplineDegree = degree,
+            IsClosed = isClosed
+        });
+    }
+
+    public void FillTriangle(Brush brush, Vector2 p1, Vector2 p2, Vector2 p3)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.FillTriangle,
+            Brush = brush,
+            Position = p1,
+            Position2 = p2,
+            Position3 = p3
+        });
+    }
+
+    public void FillQuad(Brush brush, Vector2 p1, Vector2 p2, Vector2 p3, Vector2 p4)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.FillQuad,
+            Brush = brush,
+            Position = p1,
+            Position2 = p2,
+            Position3 = p3,
+            Position4 = p4
+        });
+    }
+
+    public void DrawStaticDxf(object staticBuffer)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawStaticDxf,
+            StaticBuffer = staticBuffer
         });
     }
 

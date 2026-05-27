@@ -31,14 +31,74 @@ public struct GpuBrush
     [FieldOffset(112)] public Vector4 Offsets;
 }
 
-[StructLayout(LayoutKind.Sequential, Pack = 16)]
+[StructLayout(LayoutKind.Explicit, Size = 192)]
 public struct GpuUniforms
 {
-    public Matrix4x4 Projection;
+    [FieldOffset(0)] public Matrix4x4 Projection;
+    [FieldOffset(64)] public Matrix4x4 Mvp;
+    [FieldOffset(128)] public Matrix4x4 View;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuHatchRecord
+{
+    public uint StartSegment;
+    public uint SegmentCount;
+    public float MinX;
+    public float MinY;
+    public float MaxX;
+    public float MaxY;
+    public uint Pad0;
+    public uint Pad1;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuHatchSegment
+{
+    public Vector2 P0;
+    public Vector2 P1;
+    public Vector2 P2;
+    public Vector2 P3;
+    public uint SegmentType;
+    public uint Pad0;
+    public uint Pad1;
+    public uint Pad2;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuAcisEdge
+{
+    public Vector4 P0; // p0.xyz = start coordinate, p0.w = unused
+    public Vector4 P1; // p1.xyz = end coordinate, p1.w = unused
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuAcisRecord
+{
+    public Matrix4x4 Transform;
+    public Vector4 Color;
+    public uint StartEdge;
+    public uint EdgeCount;
+    public float PenThickness;
+    public float Opacity;
+}
+
+public struct CompositorMetrics
+{
+    public double FrameTimeMs;
+    public double VisualTreeCompileTimeMs;
+    public double GpuUploadTimeMs;
+    public double RenderPassTimeMs;
+    public int DrawCallsCount;
+    public int VectorVerticesCount;
+    public int TextVerticesCount;
+    public int PathAtlasCachedCount;
 }
 
 public unsafe class Compositor : IDisposable
 {
+    public CompositorMetrics Metrics { get; private set; }
+
     // Decoupled hooks to remove hard dependency on UI layer
     public event Action<uint, uint>? PreRender;
     public Func<System.Collections.Generic.IReadOnlyList<Visual>>? GetExternalLayers { get; set; }
@@ -77,6 +137,10 @@ public unsafe class Compositor : IDisposable
     private BindGroupLayout* _vectorUniformBindGroupLayoutOffscreen;
     private BindGroupLayout* _textUniformBindGroupLayoutOffscreen;
     private BindGroupLayout* _textureUniformBindGroupLayoutOffscreen;
+    private bool _useGpuTransformsActive;
+    private Matrix4x4 _cameraViewMatrix;
+    private bool _hasGpuTransformsInFrame;
+    private Matrix4x4 _gpuTransformsCameraView;
 
     // Sampler & Texture Bind Group for Typography
     private Sampler* _atlasSampler;
@@ -95,6 +159,16 @@ public unsafe class Compositor : IDisposable
     private BindGroupLayout* _textureBindGroupLayout;
     private BindGroupLayout* _textureBindGroupLayoutOffscreen;
 
+    private GpuBuffer _hatchRecordsBuffer;
+    private GpuBuffer _hatchSegmentsBuffer;
+    private readonly List<GpuHatchRecord> _hatchRecordsList = new();
+    private readonly List<GpuHatchSegment> _hatchSegmentsList = new();
+
+    private GpuBuffer _acisRecordsBuffer;
+    private GpuBuffer _acisEdgesBuffer;
+    private readonly List<GpuAcisRecord> _acisRecordsList = new();
+    private readonly List<GpuAcisEdge> _acisEdgesList = new();
+
     // Batch buffers (Dynamic GPU vertex & index buffers)
     private GpuBuffer _vectorVertexBuffer;
     private GpuBuffer _vectorIndexBuffer;
@@ -107,7 +181,8 @@ public unsafe class Compositor : IDisposable
     {
         Vector,
         Texture,
-        Text
+        Text,
+        StaticDxf
     }
 
     public struct CompositorDrawCall
@@ -116,6 +191,7 @@ public unsafe class Compositor : IDisposable
         public uint IndexStart;
         public uint IndexCount;
         public GpuTexture? Texture;
+        public object? StaticBuffer;
     }
 
     private readonly List<VectorVertex> _vectorVerticesList = new();
@@ -182,6 +258,7 @@ public unsafe class Compositor : IDisposable
     public static bool IsCacheAsLayerEnabled { get; set; } = true;
 
     public int VectorVertexCount => _vectorVerticesList.Count;
+    public IReadOnlyList<VectorVertex> VectorVertices => _vectorVerticesList;
     public int VectorIndexCount => _vectorIndicesList.Count;
     public int TextVertexCount => _textVerticesList.Count;
     public int TextIndexCount => _textIndicesList.Count;
@@ -210,14 +287,14 @@ public unsafe class Compositor : IDisposable
         _pipelineCache = new RenderPipelineCache(_context);
         _compute = new ComputeAccelerator(_context);
         
-        // 1. Initialize Glyph Atlas (1024x1024)
-        _atlas = new GlyphAtlas(_context, 1024);
-        _pathAtlas = new PathAtlas(_context, 2048);
+        // 1. Initialize Glyph Atlas (4096x4096)
+        _atlas = new GlyphAtlas(_context, 4096);
+        _pathAtlas = new PathAtlas(_context, 4096);
 
-        // 2. Uniform Buffer allocation (Projection Matrix - 64 bytes)
+        // 2. Uniform Buffer allocation (Projection Matrix + MVP - 128 bytes)
         _uniformBuffer = new GpuBuffer(
             _context, 
-            64, 
+            (uint)Marshal.SizeOf<GpuUniforms>(), 
             BufferUsage.Uniform | BufferUsage.CopyDst, 
             "Compositor Uniform Projection Buffer"
         );
@@ -243,6 +320,33 @@ public unsafe class Compositor : IDisposable
 
         _textureVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Texture Vertex Buffer");
         _textureIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Texture Index Buffer");
+
+        // Allocate persistent direct hatch storage buffers
+        _hatchRecordsBuffer = new GpuBuffer(
+            _context,
+            8192 * (uint)Marshal.SizeOf<GpuHatchRecord>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Hatch Records Storage Buffer"
+        );
+        _hatchSegmentsBuffer = new GpuBuffer(
+            _context,
+            65536 * (uint)Marshal.SizeOf<GpuHatchSegment>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Hatch Segments Storage Buffer"
+        );
+
+        _acisRecordsBuffer = new GpuBuffer(
+            _context,
+            8192 * (uint)Marshal.SizeOf<GpuAcisRecord>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "ACIS Records Storage Buffer"
+        );
+        _acisEdgesBuffer = new GpuBuffer(
+            _context,
+            65536 * (uint)Marshal.SizeOf<GpuAcisEdge>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "ACIS Edges Storage Buffer"
+        );
 
         InitializePipelinesAndBindGroups();
     }
@@ -377,12 +481,20 @@ public unsafe class Compositor : IDisposable
         _textUniformBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_textPipelineOffscreen, 0);
         _textureUniformBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_texturePipelineOffscreen, 0);
 
+        var uBufferEntryVector = new BindGroupEntry
+        {
+            Binding = 0,
+            Buffer = _uniformBuffer.BufferPtr,
+            Offset = 0,
+            Size = (uint)Marshal.SizeOf<GpuUniforms>()
+        };
+
         var uBufferEntry = new BindGroupEntry
         {
             Binding = 0,
             Buffer = _uniformBuffer.BufferPtr,
             Offset = 0,
-            Size = 64
+            Size = (uint)Marshal.SizeOf<GpuUniforms>()
         };
 
         var brushesEntry = new BindGroupEntry
@@ -393,14 +505,50 @@ public unsafe class Compositor : IDisposable
             Size = _brushesStorageBuffer.Size
         };
 
-        var vectorEntries = stackalloc BindGroupEntry[2];
-        vectorEntries[0] = uBufferEntry;
+        var hatchRecordsEntry = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = _hatchRecordsBuffer.BufferPtr,
+            Offset = 0,
+            Size = _hatchRecordsBuffer.Size
+        };
+
+        var hatchSegmentsEntry = new BindGroupEntry
+        {
+            Binding = 3,
+            Buffer = _hatchSegmentsBuffer.BufferPtr,
+            Offset = 0,
+            Size = _hatchSegmentsBuffer.Size
+        };
+
+        var acisRecordsEntry = new BindGroupEntry
+        {
+            Binding = 4,
+            Buffer = _acisRecordsBuffer.BufferPtr,
+            Offset = 0,
+            Size = _acisRecordsBuffer.Size
+        };
+
+        var acisEdgesEntry = new BindGroupEntry
+        {
+            Binding = 5,
+            Buffer = _acisEdgesBuffer.BufferPtr,
+            Offset = 0,
+            Size = _acisEdgesBuffer.Size
+        };
+
+        var vectorEntries = stackalloc BindGroupEntry[6];
+        vectorEntries[0] = uBufferEntryVector;
         vectorEntries[1] = brushesEntry;
+        vectorEntries[2] = hatchRecordsEntry;
+        vectorEntries[3] = hatchSegmentsEntry;
+        vectorEntries[4] = acisRecordsEntry;
+        vectorEntries[5] = acisEdgesEntry;
 
         var uDescVector = new BindGroupDescriptor
         {
             Layout = _vectorUniformBindGroupLayout,
-            EntryCount = 2,
+            EntryCount = 6,
             Entries = vectorEntries
         };
         _vectorUniformBindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVector);
@@ -408,7 +556,7 @@ public unsafe class Compositor : IDisposable
         var uDescVectorOffscreen = new BindGroupDescriptor
         {
             Layout = _vectorUniformBindGroupLayoutOffscreen,
-            EntryCount = 2,
+            EntryCount = 6,
             Entries = vectorEntries
         };
         _vectorUniformBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVectorOffscreen);
@@ -514,10 +662,22 @@ public unsafe class Compositor : IDisposable
     public void RenderScene(Visual root, uint width, uint height, TextureView* targetView)
     {
         if (_isDisposed) return;
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        var compileSw = System.Diagnostics.Stopwatch.StartNew();
         _pathAtlas.CleanupFrame();
+
+        if (_atlas.IsAlmostFull)
+        {
+            _atlas.Clear();
+        }
 
         // Invoke pre-render actions (e.g. measure/arrange popups in UI framework)
         PreRender?.Invoke(width, height);
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
 
         // 1. Calculate orthographic projection matrix for modern 2D rendering
         // Maps X in [0, width] to [-1, 1], and Y in [0, height] to [1, -1]
@@ -537,6 +697,10 @@ public unsafe class Compositor : IDisposable
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
         _drawCalls.Clear();
+        _hatchRecordsList.Clear();
+        _hatchSegmentsList.Clear();
+        _acisRecordsList.Clear();
+        _acisEdgesList.Clear();
 
         if (_layoutCache.Count > 1000)
         {
@@ -607,6 +771,9 @@ public unsafe class Compositor : IDisposable
             CommitPendingDrawCalls();
         }
 
+        compileSw.Stop();
+        var uploadSw = System.Diagnostics.Stopwatch.StartNew();
+
         // Dynamic buffer writing will happen after uploads to keep logic clear
 
         // Upload CPU batches to dynamic GPU buffers
@@ -643,8 +810,14 @@ public unsafe class Compositor : IDisposable
             _textureIndexBuffer.Write(CollectionsMarshal.AsSpan(_textureIndicesList));
         }
 
-        // Upload unified projection matrix (64 bytes)
-        _uniformBuffer.WriteSingle(projection);
+        // Upload unified projection and MVP matrices
+        var uniformsData = new GpuUniforms
+        {
+            Projection = projection,
+            Mvp = _hasGpuTransformsInFrame ? Matrix4x4.Identity : projection,
+            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity
+        };
+        _uniformBuffer.WriteSingle(uniformsData);
 
         // Upload compiled active brushes to storage buffer
         if (_activeBrushes.Count > 0)
@@ -652,8 +825,52 @@ public unsafe class Compositor : IDisposable
             _brushesStorageBuffer.Write(CollectionsMarshal.AsSpan(_activeBrushes));
         }
 
+        // Upload direct hatch records and segments to storage buffers
+        if (_hatchRecordsList.Count > 0)
+        {
+            _hatchRecordsBuffer.Write(CollectionsMarshal.AsSpan(_hatchRecordsList));
+        }
+        else
+        {
+            var dummy = new GpuHatchRecord();
+            _hatchRecordsBuffer.Write(new ReadOnlySpan<GpuHatchRecord>(ref dummy));
+        }
+
+        if (_hatchSegmentsList.Count > 0)
+        {
+            _hatchSegmentsBuffer.Write(CollectionsMarshal.AsSpan(_hatchSegmentsList));
+        }
+        else
+        {
+            var dummy = new GpuHatchSegment();
+            _hatchSegmentsBuffer.Write(new ReadOnlySpan<GpuHatchSegment>(ref dummy));
+        }
+
+        if (_acisRecordsList.Count > 0)
+        {
+            _acisRecordsBuffer.Write(CollectionsMarshal.AsSpan(_acisRecordsList));
+        }
+        else
+        {
+            var dummy = new GpuAcisRecord();
+            _acisRecordsBuffer.Write(new ReadOnlySpan<GpuAcisRecord>(ref dummy));
+        }
+
+        if (_acisEdgesList.Count > 0)
+        {
+            _acisEdgesBuffer.Write(CollectionsMarshal.AsSpan(_acisEdgesList));
+        }
+        else
+        {
+            var dummy = new GpuAcisEdge();
+            _acisEdgesBuffer.Write(new ReadOnlySpan<GpuAcisEdge>(ref dummy));
+        }
+
         // Rasterize all pending paths before starting the render pass
         _pathAtlas.RasterizePendingPaths();
+
+        uploadSw.Stop();
+        var passSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Determine physical render target size for MSAA matching the physical FramebufferSize.
         uint renderWidth = width;
@@ -778,6 +995,11 @@ public unsafe class Compositor : IDisposable
                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, bindGroup, 0, null);
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
+            else if (dc.Type == DrawCallType.StaticDxf && dc.StaticBuffer != null)
+            {
+                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: false);
+                currentType = DrawCallType.StaticDxf;
+            }
         }
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
@@ -796,6 +1018,21 @@ public unsafe class Compositor : IDisposable
         _frameNumber++;
         EvictUnusedBindGroups();
         SweepUnusedEffectTextures(root, externalLayers, activeToolTip);
+
+        passSw.Stop();
+        totalSw.Stop();
+
+        Metrics = new CompositorMetrics
+        {
+            FrameTimeMs = totalSw.Elapsed.TotalMilliseconds,
+            VisualTreeCompileTimeMs = compileSw.Elapsed.TotalMilliseconds,
+            GpuUploadTimeMs = uploadSw.Elapsed.TotalMilliseconds,
+            RenderPassTimeMs = passSw.Elapsed.TotalMilliseconds,
+            DrawCallsCount = _drawCalls.Count,
+            VectorVerticesCount = _vectorVerticesList.Count,
+            TextVerticesCount = _textVerticesList.Count,
+            PathAtlasCachedCount = _pathAtlas.CachedPathCount
+        };
     }
 
     private void EvictUnusedBindGroups()
@@ -924,6 +1161,29 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    [ThreadStatic]
+    private static List<DrawingContext>? _contextPool;
+    
+    [ThreadStatic]
+    private static int _poolIndex;
+
+    private static DrawingContext GetDrawingContext()
+    {
+        _contextPool ??= new List<DrawingContext>();
+        if (_poolIndex >= _contextPool.Count)
+        {
+            _contextPool.Add(new DrawingContext());
+        }
+        var ctx = _contextPool[_poolIndex++];
+        ctx.Commands.Clear();
+        return ctx;
+    }
+
+    private static void ReleaseDrawingContext()
+    {
+        _poolIndex--;
+    }
+
     private void CompileVisualTree(Visual node, Matrix4x4 parentTransform)
     {
         if (node.Opacity <= 0.0001f || _activeOpacity <= 0.0001f)
@@ -963,24 +1223,45 @@ public unsafe class Compositor : IDisposable
         }
 
         // 2. Playback recorded commands
-        var ctx = new DrawingContext();
+        var ctx = GetDrawingContext();
         node.OnRender(ctx);
 
         foreach (var cmd in ctx.Commands)
         {
+            int vectorStart = _vectorVerticesList.Count;
+            int textStart = _textVerticesList.Count;
+            var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
+
+            bool savedUseGpuTransformsActive = _useGpuTransformsActive;
+            Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
+
+            if (cmd.UseGpuTransforms)
+            {
+                _useGpuTransformsActive = true;
+                _cameraViewMatrix = cmd.CameraView * globalTransform;
+                _hasGpuTransformsInFrame = true;
+                _gpuTransformsCameraView = cmd.CameraView * globalTransform;
+            }
+
             switch (cmd.Type)
             {
                 case RenderCommandType.DrawRect:
-                    CompileRectCommand(cmd, globalTransform);
+                    CompileRectCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPath:
-                    CompilePathCommand(cmd, globalTransform);
+                    CompilePathCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.DrawHatch:
+                    CompileHatchCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.DrawAcisSolid:
+                    CompileAcisCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawText:
-                    CompileTextCommand(cmd, node as ITextLayoutProvider, globalTransform);
+                    CompileTextCommand(cmd, node as ITextLayoutProvider, activeTransform);
                     break;
                 case RenderCommandType.DrawTexture:
-                    CompileTextureCommand(cmd, globalTransform);
+                    CompileTextureCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.PushClip:
                     PushClipRect(cmd.Rect, globalTransform);
@@ -995,32 +1276,79 @@ public unsafe class Compositor : IDisposable
                     PopOpacityValue();
                     break;
                 case RenderCommandType.DrawLine:
-                    CompileLineCommand(cmd, globalTransform);
+                    CompileLineCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.DrawLine3D:
+                    CompileLine3DCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawEllipse:
-                    CompileEllipseCommand(cmd, globalTransform);
+                    CompileEllipseCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawCircle:
-                    CompileCircleCommand(cmd, globalTransform);
+                    CompileCircleCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawRoundedRect:
-                    CompileRoundedRectCommand(cmd, globalTransform);
+                    CompileRoundedRectCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawBezier:
-                    CompileBezierCommand(cmd, globalTransform);
+                    CompileBezierCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawCubicBezier:
-                    CompileCubicBezierCommand(cmd, globalTransform);
+                    CompileCubicBezierCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.DrawPolyline:
+                    CompilePolylineCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.DrawSpline:
+                    CompileSplineCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.FillTriangle:
+                    CompileFillTriangleCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.FillQuad:
+                    CompileFillQuadCommand(cmd, activeTransform);
+                    break;
+                case RenderCommandType.DrawStaticDxf:
+                    CommitPendingDrawCalls();
+                    _drawCalls.Add(new CompositorDrawCall
+                    {
+                        Type = DrawCallType.StaticDxf,
+                        StaticBuffer = cmd.StaticBuffer
+                    });
+                    _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                    _pendingTextStart = (uint)_textIndicesList.Count;
                     break;
             }
+
+            if (cmd.UseGpuTransforms)
+            {
+                for (int i = vectorStart; i < _vectorVerticesList.Count; i++)
+                {
+                    var v = _vectorVerticesList[i];
+                    v.ShapeType += 100f;
+                    _vectorVerticesList[i] = v;
+                }
+                for (int i = textStart; i < _textVerticesList.Count; i++)
+                {
+                    var v = _textVerticesList[i];
+                    v.ShapeType += 100f;
+                    _textVerticesList[i] = v;
+                }
+            }
+
+            _useGpuTransformsActive = savedUseGpuTransformsActive;
+            _cameraViewMatrix = savedCameraViewMatrix;
         }
 
-        // 3. Process children recursively
+        ReleaseDrawingContext();
+
         if (node is ContainerVisual container)
         {
-            foreach (var child in container.Children)
+            var children = container.Children;
+            int count = children.Count;
+            for (int i = 0; i < count; i++)
             {
-                CompileVisualTree(child, globalTransform);
+                CompileVisualTree(children[i], globalTransform);
             }
         }
 
@@ -1166,7 +1494,7 @@ public unsafe class Compositor : IDisposable
                 var cp2 = new Vector2(unscaledMinX + unscaledWidth, unscaledMinY + unscaledHeight);
                 var cp3 = new Vector2(unscaledMinX, unscaledMinY + unscaledHeight);
 
-                if (_activeClipRect.HasValue)
+                if (_activeClipRect.HasValue && !_useGpuTransformsActive)
                 {
                     float rx1 = v0.X;
                     float ry1 = v0.Y;
@@ -1447,6 +1775,208 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private void CompileHatchCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Path == null) return;
+        int startIndex = _vectorVerticesList.Count;
+
+        if (cmd.Brush != null)
+        {
+            float bIdx = RegisterBrush(cmd.Brush);
+
+            uint startSegment = (uint)_hatchSegmentsList.Count;
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+
+            void UpdateBounds(Vector2 p)
+            {
+                minX = Math.Min(minX, p.X);
+                minY = Math.Min(minY, p.Y);
+                maxX = Math.Max(maxX, p.X);
+                maxY = Math.Max(maxY, p.Y);
+            }
+
+            foreach (var figure in cmd.Path.Figures)
+            {
+                if (figure.Segments.Count == 0) continue;
+
+                Vector2 currentPoint = figure.StartPoint;
+                UpdateBounds(currentPoint);
+
+                foreach (var segment in figure.Segments)
+                {
+                    if (segment is LineSegment line)
+                    {
+                        _hatchSegmentsList.Add(new GpuHatchSegment
+                        {
+                            P0 = currentPoint,
+                            P1 = line.Point,
+                            SegmentType = 0
+                        });
+                        UpdateBounds(line.Point);
+                        currentPoint = line.Point;
+                    }
+                    else if (segment is QuadraticBezierSegment quad)
+                    {
+                        _hatchSegmentsList.Add(new GpuHatchSegment
+                        {
+                            P0 = currentPoint,
+                            P1 = quad.ControlPoint,
+                            P2 = quad.Point,
+                            SegmentType = 1
+                        });
+                        UpdateBounds(quad.ControlPoint);
+                        UpdateBounds(quad.Point);
+                        currentPoint = quad.Point;
+                    }
+                    else if (segment is CubicBezierSegment cubic)
+                    {
+                        _hatchSegmentsList.Add(new GpuHatchSegment
+                        {
+                            P0 = currentPoint,
+                            P1 = cubic.ControlPoint1,
+                            P2 = cubic.ControlPoint2,
+                            P3 = cubic.Point,
+                            SegmentType = 2
+                        });
+                        UpdateBounds(cubic.ControlPoint1);
+                        UpdateBounds(cubic.ControlPoint2);
+                        UpdateBounds(cubic.Point);
+                        currentPoint = cubic.Point;
+                    }
+                }
+
+                if (figure.IsClosed && currentPoint != figure.StartPoint)
+                {
+                    _hatchSegmentsList.Add(new GpuHatchSegment
+                    {
+                        P0 = currentPoint,
+                        P1 = figure.StartPoint,
+                        SegmentType = 0
+                    });
+                    UpdateBounds(figure.StartPoint);
+                }
+            }
+
+            uint segmentCount = (uint)_hatchSegmentsList.Count - startSegment;
+            if (segmentCount == 0) return;
+
+            uint hatchRecordIndex = (uint)_hatchRecordsList.Count;
+            _hatchRecordsList.Add(new GpuHatchRecord
+            {
+                StartSegment = startSegment,
+                SegmentCount = segmentCount,
+                MinX = minX,
+                MinY = minY,
+                MaxX = maxX,
+                MaxY = maxY
+            });
+
+            var v0 = Vector2.Transform(new Vector2(minX, minY), transform);
+            var v1 = Vector2.Transform(new Vector2(maxX, minY), transform);
+            var v2 = Vector2.Transform(new Vector2(maxX, maxY), transform);
+            var v3 = Vector2.Transform(new Vector2(minX, maxY), transform);
+
+            var c0 = new Vector4(minX, minY, hatchRecordIndex, 0f);
+            var c1 = new Vector4(maxX, minY, hatchRecordIndex, 0f);
+            var c2 = new Vector4(maxX, maxY, hatchRecordIndex, 0f);
+            var c3 = new Vector4(minX, maxY, hatchRecordIndex, 0f);
+
+            int originalVertexCount = _vectorVerticesList.Count;
+            CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
+            var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
+
+            vertexSpan[0] = new VectorVertex(v0, c0, new Vector2(0f, 0f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+            vertexSpan[1] = new VectorVertex(v1, c1, new Vector2(1f, 0f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+            vertexSpan[2] = new VectorVertex(v2, c2, new Vector2(1f, 1f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+            vertexSpan[3] = new VectorVertex(v3, c3, new Vector2(0f, 1f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+
+            int originalIndexCount = _vectorIndicesList.Count;
+            CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
+            var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
+
+            indexSpan[0] = (uint)startIndex;
+            indexSpan[1] = (uint)(startIndex + 1);
+            indexSpan[2] = (uint)(startIndex + 2);
+            indexSpan[3] = (uint)startIndex;
+            indexSpan[4] = (uint)(startIndex + 2);
+            indexSpan[5] = (uint)(startIndex + 3);
+        }
+    }
+
+    private void CompileAcisCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Edges3D == null || cmd.Pen == null) return;
+
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+        float thickness = cmd.Pen.Thickness;
+
+        uint startEdge = (uint)_acisEdgesList.Count;
+        uint edgeCount = (uint)cmd.Edges3D.Count;
+
+        foreach (var edge in cmd.Edges3D)
+        {
+            _acisEdgesList.Add(new GpuAcisEdge
+            {
+                P0 = new Vector4(edge.Start, 0f),
+                P1 = new Vector4(edge.End, 0f)
+            });
+        }
+
+        uint acisRecordIndex = (uint)_acisRecordsList.Count;
+        _acisRecordsList.Add(new GpuAcisRecord
+        {
+            Transform = cmd.Transform * transform,
+            Color = penSolidColor,
+            StartEdge = startEdge,
+            EdgeCount = edgeCount,
+            PenThickness = thickness,
+            Opacity = cmd.Pen.Brush.Opacity * _activeOpacity
+        });
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + (int)edgeCount * 4);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, (int)edgeCount * 4);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + (int)edgeCount * 6);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, (int)edgeCount * 6);
+
+        for (int i = 0; i < (int)edgeCount; i++)
+        {
+            uint edgeIdx = startEdge + (uint)i;
+            int vOffset = i * 4;
+            int iOffset = i * 6;
+            uint vStart = (uint)originalVertexCount + (uint)vOffset;
+
+            vertexSpan[vOffset + 0] = new VectorVertex(new Vector2(edgeIdx, 0f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+            vertexSpan[vOffset + 1] = new VectorVertex(new Vector2(edgeIdx, 1f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+            vertexSpan[vOffset + 2] = new VectorVertex(new Vector2(edgeIdx, 2f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+            vertexSpan[vOffset + 3] = new VectorVertex(new Vector2(edgeIdx, 3f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+
+            indexSpan[iOffset + 0] = vStart;
+            indexSpan[iOffset + 1] = vStart + 1;
+            indexSpan[iOffset + 2] = vStart + 2;
+            indexSpan[iOffset + 3] = vStart + 1;
+            indexSpan[iOffset + 4] = vStart + 3;
+            indexSpan[iOffset + 5] = vStart + 2;
+        }
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = originalVertexCount; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
+            }
+        }
+    }
+
     private void CompileLineCommand(RenderCommand cmd, Matrix4x4 transform)
     {
         if (cmd.Pen == null) return;
@@ -1466,8 +1996,56 @@ public unsafe class Compositor : IDisposable
 
         vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
         vertexSpan[1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
-        vertexSpan[2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
-        vertexSpan[3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
+        vertexSpan[2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, 3f);
+        vertexSpan[3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, 3f);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
+
+        indexSpan[0] = idxStart;
+        indexSpan[1] = idxStart + 1;
+        indexSpan[2] = idxStart + 2;
+        indexSpan[3] = idxStart + 1;
+        indexSpan[4] = idxStart + 3;
+        indexSpan[5] = idxStart + 2;
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
+            }
+        }
+    }
+
+    private void CompileLine3DCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Pen == null) return;
+        int startIndex = _vectorVerticesList.Count;
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+
+        var p0_trans = Vector3.Transform(cmd.Position3D1, transform);
+        var p1_trans = Vector3.Transform(cmd.Position3D2, transform);
+        
+        var p0_xy = new Vector2(p0_trans.X, p0_trans.Y);
+        var p1_xy = new Vector2(p1_trans.X, p1_trans.Y);
+        float thickness = cmd.Pen.Thickness;
+
+        uint idxStart = (uint)startIndex;
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
+
+        vertexSpan[0] = new VectorVertex(p0_xy, penSolidColor, new Vector2(p0_trans.Z, 0f), penBrushIdx, p1_xy, 1f, thickness, 8f);
+        vertexSpan[1] = new VectorVertex(p0_xy, penSolidColor, new Vector2(p0_trans.Z, 0f), penBrushIdx, p1_xy, -1f, thickness, 8f);
+        vertexSpan[2] = new VectorVertex(p1_xy, penSolidColor, new Vector2(p1_trans.Z, 0f), penBrushIdx, p1_xy, 2f, thickness, 8f);
+        vertexSpan[3] = new VectorVertex(p1_xy, penSolidColor, new Vector2(p1_trans.Z, 0f), penBrushIdx, p1_xy, -2f, thickness, 8f);
 
         int originalIndexCount = _vectorIndicesList.Count;
         CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1603,6 +2181,324 @@ public unsafe class Compositor : IDisposable
                 vertices[i] = v;
             }
         }
+    }
+
+    private void CompilePolylineCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Pen == null || cmd.PolylinePoints == null || cmd.PolylinePoints.Length < 2) return;
+        int startIndex = _vectorVerticesList.Count;
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+        float thickness = cmd.Pen.Thickness;
+
+        int count = cmd.PolylinePoints.Length;
+        int segmentCount = count - 1;
+        if (cmd.IsClosed) segmentCount++;
+
+        // Pre-transform all points to screen space in one batch
+        Span<Vector2> transformed = count <= 512 ? stackalloc Vector2[count] : new Vector2[count];
+        for (int i = 0; i < count; i++)
+        {
+            transformed[i] = Vector2.Transform(cmd.PolylinePoints[i], transform);
+        }
+
+        // We will append 4 vertices and 6 indices for each segment
+        int totalVerticesToAdd = segmentCount * 4;
+        int totalIndicesToAdd = segmentCount * 6;
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + totalVerticesToAdd);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, totalVerticesToAdd);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + totalIndicesToAdd);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, totalIndicesToAdd);
+
+        for (int i = 0; i < segmentCount; i++)
+        {
+            var p0_pos = transformed[i % count];
+            var p1_pos = transformed[(i + 1) % count];
+
+            uint idxStart = (uint)(originalVertexCount + i * 4);
+
+            int vIdx = i * 4;
+            vertexSpan[vIdx] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
+            vertexSpan[vIdx + 1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
+            vertexSpan[vIdx + 2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, 3f);
+            vertexSpan[vIdx + 3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, 3f);
+
+            int iIdx = i * 6;
+            indexSpan[iIdx] = idxStart;
+            indexSpan[iIdx + 1] = idxStart + 1;
+            indexSpan[iIdx + 2] = idxStart + 2;
+            indexSpan[iIdx + 3] = idxStart + 1;
+            indexSpan[iIdx + 4] = idxStart + 3;
+            indexSpan[iIdx + 5] = idxStart + 2;
+        }
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
+            }
+        }
+    }
+
+    private void CompileSplineCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Pen == null || cmd.PolylinePoints == null || cmd.PolylinePoints.Length < 2 || cmd.SplineKnots == null) return;
+        int startIndex = _vectorVerticesList.Count;
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+        float thickness = cmd.Pen.Thickness;
+
+        int degree = cmd.SplineDegree;
+        var controlPoints = cmd.PolylinePoints;
+        var knots = cmd.SplineKnots;
+
+        if (knots.Length < controlPoints.Length + degree + 1)
+        {
+            // Fallback: draw control points as a polyline
+            var fallbackCmd = new RenderCommand
+            {
+                Pen = cmd.Pen,
+                PolylinePoints = controlPoints,
+                IsClosed = false
+            };
+            CompilePolylineCommand(fallbackCmd, transform);
+            return;
+        }
+
+        double startKnot = knots[degree];
+        double endKnot = knots[knots.Length - degree - 1];
+
+        // Calculate screen-space bounding box of control points to determine dynamic LOD
+        float minX = float.MaxValue, minY = float.MaxValue;
+        float maxX = float.MinValue, maxY = float.MinValue;
+        foreach (var cp in controlPoints)
+        {
+            var sp = Vector2.Transform(cp, transform);
+            minX = Math.Min(minX, sp.X);
+            minY = Math.Min(minY, sp.Y);
+            maxX = Math.Max(maxX, sp.X);
+            maxY = Math.Max(maxY, sp.Y);
+        }
+
+        var minPt = new Vector2(minX, minY);
+        var maxPt = new Vector2(maxX, maxY);
+
+        float sizeOnScreen = Vector2.Distance(minPt, maxPt);
+        if (sizeOnScreen < 2f) return; // Too small to see
+
+        // Determine dynamic segment count (LOD) based on screen size
+        int numPoints = 100;
+        if (sizeOnScreen < 20f) numPoints = 10;
+        else if (sizeOnScreen < 80f) numPoints = 25;
+        else if (sizeOnScreen < 250f) numPoints = 50;
+        else numPoints = 100;
+
+        // Pre-evaluate B-spline points directly to screen space
+        Span<Vector2> transformed = numPoints + 1 <= 512 ? stackalloc Vector2[numPoints + 1] : new Vector2[numPoints + 1];
+        double delta = (endKnot - startKnot) / numPoints;
+        for (int i = 0; i <= numPoints; i++)
+        {
+            double u = startKnot + i * delta;
+            transformed[i] = EvaluateBSpline(degree, controlPoints, knots, cmd.SplineWeights, u, transform);
+        }
+
+        // Compile segments into the vertex/index buffer in exactly one batch operation
+        int totalVerticesToAdd = numPoints * 4;
+        int totalIndicesToAdd = numPoints * 6;
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + totalVerticesToAdd);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, totalVerticesToAdd);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + totalIndicesToAdd);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, totalIndicesToAdd);
+
+        for (int i = 0; i < numPoints; i++)
+        {
+            var p0_pos = transformed[i];
+            var p1_pos = transformed[i + 1];
+
+            uint idxStart = (uint)(originalVertexCount + i * 4);
+
+            int vIdx = i * 4;
+            vertexSpan[vIdx] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
+            vertexSpan[vIdx + 1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
+            vertexSpan[vIdx + 2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, 3f);
+            vertexSpan[vIdx + 3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, 3f);
+
+            int iIdx = i * 6;
+            indexSpan[iIdx] = idxStart;
+            indexSpan[iIdx + 1] = idxStart + 1;
+            indexSpan[iIdx + 2] = idxStart + 2;
+            indexSpan[iIdx + 3] = idxStart + 1;
+            indexSpan[iIdx + 4] = idxStart + 3;
+            indexSpan[iIdx + 5] = idxStart + 2;
+        }
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
+            }
+        }
+    }
+
+    private void CompileFillTriangleCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Brush == null) return;
+        int startIndex = _vectorVerticesList.Count;
+        float brushIdx = RegisterBrush(cmd.Brush);
+        var brushColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+
+        var p1 = Vector2.Transform(cmd.Position, transform);
+        var p2 = Vector2.Transform(cmd.Position2, transform);
+        var p3 = Vector2.Transform(cmd.Position3, transform);
+
+        uint idxStart = (uint)startIndex;
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 3);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 3);
+
+        vertexSpan[0] = new VectorVertex(p1, brushColor, cmd.Position, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[1] = new VectorVertex(p2, brushColor, cmd.Position2, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[2] = new VectorVertex(p3, brushColor, cmd.Position3, brushIdx, default, 0f, 0f, 7f);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 3);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 3);
+
+        indexSpan[0] = idxStart;
+        indexSpan[1] = idxStart + 1;
+        indexSpan[2] = idxStart + 2;
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
+            }
+        }
+    }
+
+    private void CompileFillQuadCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Brush == null) return;
+        int startIndex = _vectorVerticesList.Count;
+        float brushIdx = RegisterBrush(cmd.Brush);
+        var brushColor = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+
+        var p1 = Vector2.Transform(cmd.Position, transform);
+        var p2 = Vector2.Transform(cmd.Position2, transform);
+        var p3 = Vector2.Transform(cmd.Position3, transform);
+        var p4 = Vector2.Transform(cmd.Position4, transform);
+
+        uint idxStart = (uint)startIndex;
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
+
+        vertexSpan[0] = new VectorVertex(p1, brushColor, cmd.Position, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[1] = new VectorVertex(p2, brushColor, cmd.Position2, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[2] = new VectorVertex(p3, brushColor, cmd.Position3, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[3] = new VectorVertex(p4, brushColor, cmd.Position4, brushIdx, default, 0f, 0f, 7f);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
+
+        indexSpan[0] = idxStart;
+        indexSpan[1] = idxStart + 1;
+        indexSpan[2] = idxStart + 2;
+        indexSpan[3] = idxStart;
+        indexSpan[4] = idxStart + 2;
+        indexSpan[5] = idxStart + 3;
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = startIndex; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
+            }
+        }
+    }
+
+    private Vector2 EvaluateBSpline(int degree, Vector2[] controlPoints, double[] knots, double[]? weights, double u, Matrix4x4 transform)
+    {
+        int k = -1;
+        if (u < knots[degree]) u = knots[degree];
+        if (u > knots[knots.Length - degree - 1]) u = knots[knots.Length - degree - 1];
+
+        for (int i = degree; i < knots.Length - 1; i++)
+        {
+            if (u >= knots[i] && u <= knots[i + 1])
+            {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1)
+        {
+            k = knots.Length - degree - 2;
+        }
+
+        Span<Vector3> d = stackalloc Vector3[degree + 1];
+        for (int j = 0; j <= degree; j++)
+        {
+            int idx = k - degree + j;
+            if (idx >= 0 && idx < controlPoints.Length)
+            {
+                float w = 1f;
+                if (weights != null && idx < weights.Length)
+                {
+                    w = (float)weights[idx];
+                }
+                d[j] = new Vector3(controlPoints[idx].X * w, controlPoints[idx].Y * w, w);
+            }
+            else
+            {
+                d[j] = Vector3.Zero;
+            }
+        }
+
+        for (int r = 1; r <= degree; r++)
+        {
+            for (int j = degree; j >= r; j--)
+            {
+                int i = k - degree + j;
+                double denom = knots[i + degree + 1 - r] - knots[i];
+                float alpha = (denom > 1e-9) ? (float)((u - knots[i]) / denom) : 0f;
+                d[j] = (1f - alpha) * d[j - 1] + alpha * d[j];
+            }
+        }
+
+        Vector3 finalH = d[degree];
+        Vector2 cartesianPt = (Math.Abs(finalH.Z) > 1e-9f) 
+            ? new Vector2(finalH.X / finalH.Z, finalH.Y / finalH.Z) 
+            : new Vector2(finalH.X, finalH.Y);
+
+        return Vector2.Transform(cartesianPt, transform);
     }
 
     private void CompileEllipseCommand(RenderCommand cmd, Matrix4x4 transform)
@@ -1847,6 +2743,22 @@ public unsafe class Compositor : IDisposable
                 gpuBrush.Offsets = new Vector4(o0, o1, o2, o3);
             }
         }
+        else if (brush is HatchPatternBrush hatch)
+        {
+            gpuBrush.Type = 3;
+            gpuBrush.Radius = hatch.Angle;
+            gpuBrush.Center = new Vector2(hatch.Spacing, hatch.Thickness);
+            gpuBrush.Color0 = hatch.Color;
+            gpuBrush.StopCount = 1;
+        }
+        else if (brush is CrossHatchBrush crossHatch)
+        {
+            gpuBrush.Type = 4;
+            gpuBrush.Radius = crossHatch.Angle;
+            gpuBrush.Center = new Vector2(crossHatch.Spacing, crossHatch.Thickness);
+            gpuBrush.Color0 = crossHatch.Color;
+            gpuBrush.StopCount = 1;
+        }
 
         for (int i = 0; i < _activeBrushes.Count; i++)
         {
@@ -1883,6 +2795,15 @@ public unsafe class Compositor : IDisposable
 
     private void CompileTextCommand(RenderCommand cmd, ITextLayoutProvider? textNode, Matrix4x4 transform)
     {
+        var activeTransform = transform;
+        if (MathF.Abs(cmd.Rotation) > 0.0001f)
+        {
+            var localMat = Matrix4x4.CreateTranslation(-cmd.Position.X, -cmd.Position.Y, 0f) *
+                           Matrix4x4.CreateRotationZ(cmd.Rotation) *
+                           Matrix4x4.CreateTranslation(cmd.Position.X, cmd.Position.Y, 0f);
+            activeTransform = localMat * transform;
+        }
+
         var font = cmd.Font ?? textNode?.Font;
         if (font == null || cmd.Text == null) return;
 
@@ -1978,7 +2899,7 @@ public unsafe class Compositor : IDisposable
                         Path = transformedOutline,
                         Brush = new SolidColorBrush(layer.Color)
                     };
-                    CompilePathCommand(pathCmd, transform);
+                    CompilePathCommand(pathCmd, activeTransform);
                 }
                 continue;
             }
@@ -1995,17 +2916,17 @@ public unsafe class Compositor : IDisposable
             }
 
             float physicalFontSize = cmd.FontSize * dpiScale;
-            bool isRotated = MathF.Abs(transform.M12) > 0.0001f ||
-                             MathF.Abs(transform.M21) > 0.0001f ||
-                             transform.M11 < 0.0f ||
-                             transform.M22 < 0.0f;
+            bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
+                             MathF.Abs(activeTransform.M21) > 0.0001f ||
+                             activeTransform.M11 < 0.0f ||
+                             activeTransform.M22 < 0.0f;
 
             // Compute subpixel positioning and snap vertices to integer pixels to avoid bilinear blur.
-            Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), transform);
+            Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), activeTransform);
             Vector2 transPosPhysical = transPos * dpiScale;
 
-            float scaleX = new Vector2(transform.M11, transform.M12).Length();
-            float scaleY = new Vector2(transform.M21, transform.M22).Length();
+            float scaleX = new Vector2(activeTransform.M11, activeTransform.M12).Length();
+            float scaleY = new Vector2(activeTransform.M21, activeTransform.M22).Length();
 
             byte subpixelX = 0;
             float ipartX = 0f;
@@ -2029,8 +2950,12 @@ public unsafe class Compositor : IDisposable
                 snappedY = MathF.Round(screenY);
             }
 
-            // Cache and rasterize the glyph in the atlas at its actual physical pixel font size
-            var info = _atlas.GetOrCreateGlyph(glyphFont, runGlyph.CodePoint, physicalFontSize, subpixelX);
+            // Cap the physical font size rasterized into the atlas to prevent blowout on huge zoom levels.
+            // Scale the mapped UV quad coordinates proportionally for perfect high-DPI scaling.
+            float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 128f);
+            float scaleRatio = physicalFontSize / rasterFontSize;
+
+            var info = _atlas.GetOrCreateGlyph(glyphFont, runGlyph.CodePoint, rasterFontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
 
             int passCount = cmd.IsBold ? 2 : 1;
@@ -2043,11 +2968,11 @@ public unsafe class Compositor : IDisposable
 
                 if (!isRotated)
                 {
-                    // Position the quad in physical screen pixels
-                    float rx0 = ipartX + info.BearX * scaleX + xOffset * scaleX * dpiScale;
-                    float ry0 = snappedY + info.BearY * scaleY;
-                    float rx1 = rx0 + info.Width * scaleX;
-                    float ry1 = ry0 + info.Height * scaleY;
+                    // Position the quad in physical screen pixels scaled by scaleRatio
+                    float rx0 = ipartX + info.BearX * scaleX * scaleRatio + xOffset * scaleX * dpiScale;
+                    float ry0 = snappedY + info.BearY * scaleY * scaleRatio;
+                    float rx1 = rx0 + info.Width * scaleX * scaleRatio;
+                    float ry1 = ry0 + info.Height * scaleY * scaleRatio;
 
                     float skewFactor = cmd.IsItalic ? 0.22f : 0f;
                     float yBase = snappedY; // Baseline is snappedY
@@ -2065,11 +2990,11 @@ public unsafe class Compositor : IDisposable
                 }
                 else
                 {
-                    // Rotated text: transform each vertex individually on the CPU to follow the rotation angle
-                    float lx0 = info.BearX / dpiScale + xOffset;
-                    float ly0 = info.BearY / dpiScale;
-                    float lx1 = lx0 + info.Width / dpiScale;
-                    float ly1 = ly0 + info.Height / dpiScale;
+                    // Rotated text: transform each vertex individually on the CPU scaled by scaleRatio
+                    float lx0 = info.BearX / dpiScale * scaleRatio + xOffset;
+                    float ly0 = info.BearY / dpiScale * scaleRatio;
+                    float lx1 = lx0 + info.Width / dpiScale * scaleRatio;
+                    float ly1 = ly0 + info.Height / dpiScale * scaleRatio;
 
                     float skewFactor = cmd.IsItalic ? 0.22f : 0f;
                     float yBase = 0f;
@@ -2084,10 +3009,10 @@ public unsafe class Compositor : IDisposable
                     Vector2 localP2 = new Vector2(baseCursorX + cmd.Position.X + lsx2, baseCursorY + cmd.Position.Y + ly1);
                     Vector2 localP3 = new Vector2(baseCursorX + cmd.Position.X + lsx3, baseCursorY + cmd.Position.Y + ly1);
 
-                    v0 = Vector2.Transform(localP0, transform);
-                    v1 = Vector2.Transform(localP1, transform);
-                    v2 = Vector2.Transform(localP2, transform);
-                    v3 = Vector2.Transform(localP3, transform);
+                    v0 = Vector2.Transform(localP0, activeTransform);
+                    v1 = Vector2.Transform(localP1, activeTransform);
+                    v2 = Vector2.Transform(localP2, activeTransform);
+                    v3 = Vector2.Transform(localP3, activeTransform);
                 }
 
                 uint idxStart = (uint)currentVertexCount;
@@ -2098,7 +3023,7 @@ public unsafe class Compositor : IDisposable
                 var uv2 = new Vector2(info.TexCoordMax.X, info.TexCoordMax.Y);
                 var uv3 = new Vector2(info.TexCoordMin.X, info.TexCoordMax.Y);
 
-                if (_activeClipRect.HasValue)
+                if (_activeClipRect.HasValue && !_useGpuTransformsActive)
                 {
                     if (isRotated)
                     {
@@ -2206,7 +3131,7 @@ public unsafe class Compositor : IDisposable
                          MathF.Abs(transform.M21) > 0.0001f ||
                          transform.M11 < 0.0f ||
                          transform.M22 < 0.0f;
-        if (_activeClipRect.HasValue)
+        if (_activeClipRect.HasValue && !_useGpuTransformsActive)
         {
             if (isRotated)
             {
@@ -2322,6 +3247,10 @@ public unsafe class Compositor : IDisposable
 
         _uniformBuffer.Dispose();
         _brushesStorageBuffer.Dispose();
+        _hatchRecordsBuffer.Dispose();
+        _hatchSegmentsBuffer.Dispose();
+        _acisRecordsBuffer.Dispose();
+        _acisEdgesBuffer.Dispose();
         _vectorVertexBuffer.Dispose();
         _vectorIndexBuffer.Dispose();
         _textVertexBuffer.Dispose();
@@ -2450,7 +3379,7 @@ public unsafe class Compositor : IDisposable
 
     private Vector2 ClampToClip(Vector2 p)
     {
-        if (!_activeClipRect.HasValue) return p;
+        if (!_activeClipRect.HasValue || _useGpuTransformsActive) return p;
         var r = _activeClipRect.Value;
         float x = Math.Max(r.X, Math.Min(r.X + r.Width, p.X));
         float y = Math.Max(r.Y, Math.Min(r.Y + r.Height, p.Y));
@@ -2637,6 +3566,16 @@ public unsafe class Compositor : IDisposable
         var savedPendingVectorStart = _pendingVectorStart;
         var savedPendingTextStart = _pendingTextStart;
 
+        var savedUseGpuTransformsActive = _useGpuTransformsActive;
+        var savedCameraViewMatrix = _cameraViewMatrix;
+        var savedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
+        var savedGpuTransformsCameraView = _gpuTransformsCameraView;
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
+
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
@@ -2697,7 +3636,13 @@ public unsafe class Compositor : IDisposable
             _textureIndexBuffer.Write(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_textureIndicesList));
         }
 
-        _uniformBuffer.WriteSingle(projection);
+        var uniformsData = new GpuUniforms
+        {
+            Projection = projection,
+            Mvp = _hasGpuTransformsInFrame ? Matrix4x4.Identity : projection,
+            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity
+        };
+        _uniformBuffer.WriteSingle(uniformsData);
         if (_activeBrushes.Count > 0)
         {
             _brushesStorageBuffer.Write(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_activeBrushes));
@@ -2810,6 +3755,11 @@ public unsafe class Compositor : IDisposable
                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, bindGroup, 0, null);
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
+            else if (dc.Type == DrawCallType.StaticDxf && dc.StaticBuffer != null)
+            {
+                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: true);
+                currentType = DrawCallType.StaticDxf;
+            }
         }
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
@@ -2846,5 +3796,204 @@ public unsafe class Compositor : IDisposable
         _activeOpacity = savedActiveOpacity;
         _pendingVectorStart = savedPendingVectorStart;
         _pendingTextStart = savedPendingTextStart;
+
+        _useGpuTransformsActive = savedUseGpuTransformsActive;
+        _cameraViewMatrix = savedCameraViewMatrix;
+        _hasGpuTransformsInFrame = savedHasGpuTransformsInFrame;
+        _gpuTransformsCameraView = savedGpuTransformsCameraView;
+    }
+
+    public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands)
+    {
+        // Save current lists
+        var savedVectorVertices = _vectorVerticesList.ToArray();
+        var savedVectorIndices = _vectorIndicesList.ToArray();
+        var savedTextVertices = _textVerticesList.ToArray();
+        var savedTextIndices = _textIndicesList.ToArray();
+        var savedActiveBrushes = _activeBrushes.ToArray();
+        var savedHatchRecords = _hatchRecordsList.ToArray();
+        var savedHatchSegments = _hatchSegmentsList.ToArray();
+        var savedAcisRecords = _acisRecordsList.ToArray();
+        var savedAcisEdges = _acisEdgesList.ToArray();
+
+        var savedActiveClipRect = _activeClipRect;
+        var savedClipStack = _clipStack.ToArray();
+
+        _activeClipRect = null;
+        _clipStack.Clear();
+        
+        // Clear for compilation
+        _vectorVerticesList.Clear();
+        _vectorIndicesList.Clear();
+        _textVerticesList.Clear();
+        _textIndicesList.Clear();
+        _activeBrushes.Clear();
+        _hatchRecordsList.Clear();
+        _hatchSegmentsList.Clear();
+        _acisRecordsList.Clear();
+        _acisEdgesList.Clear();
+        
+        foreach (var cmd in commands)
+        {
+            bool savedUseGpuTransformsActive = _useGpuTransformsActive;
+            if (cmd.UseGpuTransforms)
+            {
+                _useGpuTransformsActive = true;
+            }
+
+            switch (cmd.Type)
+            {
+                case RenderCommandType.DrawRect:
+                    CompileRectCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawPath:
+                    CompilePathCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawHatch:
+                    CompileHatchCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawAcisSolid:
+                    CompileAcisCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawText:
+                    CompileTextCommand(cmd, null, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawTexture:
+                    CompileTextureCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.PushClip:
+                    PushClipRect(cmd.Rect, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.PopClip:
+                    PopClipRect();
+                    break;
+                case RenderCommandType.DrawLine:
+                    CompileLineCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawLine3D:
+                    CompileLine3DCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawEllipse:
+                    CompileEllipseCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawCircle:
+                    CompileCircleCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawRoundedRect:
+                    CompileRoundedRectCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawBezier:
+                    CompileBezierCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawCubicBezier:
+                    CompileCubicBezierCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawPolyline:
+                    CompilePolylineCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.DrawSpline:
+                    CompileSplineCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.FillTriangle:
+                    CompileFillTriangleCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.FillQuad:
+                    CompileFillQuadCommand(cmd, Matrix4x4.Identity);
+                    break;
+            }
+
+            _useGpuTransformsActive = savedUseGpuTransformsActive;
+        }
+        for (int i = 0; i < _vectorVerticesList.Count; i++)
+        {
+            var v = _vectorVerticesList[i];
+            v.ShapeType += 200f;
+            _vectorVerticesList[i] = v;
+        }
+        for (int i = 0; i < _textVerticesList.Count; i++)
+        {
+            var v = _textVerticesList[i];
+            v.ShapeType += 200f;
+            _textVerticesList[i] = v;
+        }
+
+        var staticBuffer = new DxfStaticBuffer(
+            _context,
+            _vectorVerticesList.ToArray(),
+            _vectorIndicesList.ToArray(),
+            _textVerticesList.ToArray(),
+            _textIndicesList.ToArray(),
+            _activeBrushes.ToArray(),
+            _hatchRecordsList.ToArray(),
+            _hatchSegmentsList.ToArray(),
+            _acisRecordsList.ToArray(),
+            _acisEdgesList.ToArray()
+        );
+        
+        staticBuffer.InitializeBindGroups(
+            _vectorUniformBindGroupLayout,
+            _vectorUniformBindGroupLayoutOffscreen,
+            _textUniformBindGroupLayout,
+            _textUniformBindGroupLayoutOffscreen
+        );
+        
+        // Restore dynamic lists
+        _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
+        _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
+        _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
+        _textIndicesList.Clear(); _textIndicesList.AddRange(savedTextIndices);
+        _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
+        _hatchRecordsList.Clear(); _hatchRecordsList.AddRange(savedHatchRecords);
+        _hatchSegmentsList.Clear(); _hatchSegmentsList.AddRange(savedHatchSegments);
+        _acisRecordsList.Clear(); _acisRecordsList.AddRange(savedAcisRecords);
+        _acisEdgesList.Clear(); _acisEdgesList.AddRange(savedAcisEdges);
+        
+        _activeClipRect = savedActiveClipRect;
+        _clipStack.Clear();
+        for (int i = savedClipStack.Length - 1; i >= 0; i--)
+        {
+            _clipStack.Push(savedClipStack[i]);
+        }
+        
+        return staticBuffer;
+    }
+
+    private unsafe void DrawStaticDxfBuffer(RenderPassEncoder* pass, object staticBufferObj, bool isOffscreen)
+    {
+        if (staticBufferObj is not DxfStaticBuffer sb) return;
+        
+        // 1. Draw static vectors
+        if (sb.VertexBuffer != null && sb.IndexBuffer != null && sb.IndexCount > 0)
+        {
+            var pipeline = isOffscreen ? _vectorPipelineOffscreen : _vectorPipeline;
+            var uniformBg = isOffscreen ? sb.UniformBindGroupOffscreen : sb.UniformBindGroup;
+            var pathAtlasBg = isOffscreen ? _pathAtlasBindGroupOffscreen : _pathAtlasBindGroup;
+            
+            _context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, pathAtlasBg, 0, null);
+            
+            var buffer = sb.VertexBuffer.BufferPtr;
+            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.VertexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, sb.IndexBuffer.BufferPtr, IndexFormat.Uint32, 0, sb.IndexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderDrawIndexed(pass, sb.IndexCount, 1, 0, 0, 0);
+        }
+        
+        // 2. Draw static text
+        if (sb.TextVertexBuffer != null && sb.TextIndexBuffer != null && sb.TextIndexCount > 0)
+        {
+            var pipeline = isOffscreen ? _textPipelineOffscreen : _textPipeline;
+            var uniformBg = isOffscreen ? sb.TextUniformBindGroupOffscreen : sb.TextUniformBindGroup;
+            var atlasBg = isOffscreen ? _atlasBindGroupOffscreen : _atlasBindGroup;
+            
+            _context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
+            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, atlasBg, 0, null);
+            
+            var buffer = sb.TextVertexBuffer.BufferPtr;
+            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.TextVertexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, sb.TextIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, sb.TextIndexBuffer.Size);
+            _context.Wgpu.RenderPassEncoderDrawIndexed(pass, sb.TextIndexCount, 1, 0, 0, 0);
+        }
     }
 }
