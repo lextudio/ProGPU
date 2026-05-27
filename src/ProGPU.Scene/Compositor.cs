@@ -38,8 +38,66 @@ public struct GpuUniforms
     public Matrix4x4 Mvp;
 }
 
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuHatchRecord
+{
+    public uint StartSegment;
+    public uint SegmentCount;
+    public float MinX;
+    public float MinY;
+    public float MaxX;
+    public float MaxY;
+    public uint Pad0;
+    public uint Pad1;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuHatchSegment
+{
+    public Vector2 P0;
+    public Vector2 P1;
+    public Vector2 P2;
+    public Vector2 P3;
+    public uint SegmentType;
+    public uint Pad0;
+    public uint Pad1;
+    public uint Pad2;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuAcisEdge
+{
+    public Vector4 P0; // p0.xyz = start coordinate, p0.w = unused
+    public Vector4 P1; // p1.xyz = end coordinate, p1.w = unused
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 16)]
+public struct GpuAcisRecord
+{
+    public Matrix4x4 Transform;
+    public Vector4 Color;
+    public uint StartEdge;
+    public uint EdgeCount;
+    public float PenThickness;
+    public float Opacity;
+}
+
+public struct CompositorMetrics
+{
+    public double FrameTimeMs;
+    public double VisualTreeCompileTimeMs;
+    public double GpuUploadTimeMs;
+    public double RenderPassTimeMs;
+    public int DrawCallsCount;
+    public int VectorVerticesCount;
+    public int TextVerticesCount;
+    public int PathAtlasCachedCount;
+}
+
 public unsafe class Compositor : IDisposable
 {
+    public CompositorMetrics Metrics { get; private set; }
+
     // Decoupled hooks to remove hard dependency on UI layer
     public event Action<uint, uint>? PreRender;
     public Func<System.Collections.Generic.IReadOnlyList<Visual>>? GetExternalLayers { get; set; }
@@ -95,6 +153,16 @@ public unsafe class Compositor : IDisposable
     private RenderPipeline* _texturePipelineOffscreen;
     private BindGroupLayout* _textureBindGroupLayout;
     private BindGroupLayout* _textureBindGroupLayoutOffscreen;
+
+    private GpuBuffer _hatchRecordsBuffer;
+    private GpuBuffer _hatchSegmentsBuffer;
+    private readonly List<GpuHatchRecord> _hatchRecordsList = new();
+    private readonly List<GpuHatchSegment> _hatchSegmentsList = new();
+
+    private GpuBuffer _acisRecordsBuffer;
+    private GpuBuffer _acisEdgesBuffer;
+    private readonly List<GpuAcisRecord> _acisRecordsList = new();
+    private readonly List<GpuAcisEdge> _acisEdgesList = new();
 
     // Batch buffers (Dynamic GPU vertex & index buffers)
     private GpuBuffer _vectorVertexBuffer;
@@ -244,6 +312,33 @@ public unsafe class Compositor : IDisposable
 
         _textureVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Texture Vertex Buffer");
         _textureIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Texture Index Buffer");
+
+        // Allocate persistent direct hatch storage buffers
+        _hatchRecordsBuffer = new GpuBuffer(
+            _context,
+            8192 * (uint)Marshal.SizeOf<GpuHatchRecord>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Hatch Records Storage Buffer"
+        );
+        _hatchSegmentsBuffer = new GpuBuffer(
+            _context,
+            65536 * (uint)Marshal.SizeOf<GpuHatchSegment>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Hatch Segments Storage Buffer"
+        );
+
+        _acisRecordsBuffer = new GpuBuffer(
+            _context,
+            8192 * (uint)Marshal.SizeOf<GpuAcisRecord>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "ACIS Records Storage Buffer"
+        );
+        _acisEdgesBuffer = new GpuBuffer(
+            _context,
+            65536 * (uint)Marshal.SizeOf<GpuAcisEdge>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "ACIS Edges Storage Buffer"
+        );
 
         InitializePipelinesAndBindGroups();
     }
@@ -402,14 +497,50 @@ public unsafe class Compositor : IDisposable
             Size = _brushesStorageBuffer.Size
         };
 
-        var vectorEntries = stackalloc BindGroupEntry[2];
+        var hatchRecordsEntry = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = _hatchRecordsBuffer.BufferPtr,
+            Offset = 0,
+            Size = _hatchRecordsBuffer.Size
+        };
+
+        var hatchSegmentsEntry = new BindGroupEntry
+        {
+            Binding = 3,
+            Buffer = _hatchSegmentsBuffer.BufferPtr,
+            Offset = 0,
+            Size = _hatchSegmentsBuffer.Size
+        };
+
+        var acisRecordsEntry = new BindGroupEntry
+        {
+            Binding = 4,
+            Buffer = _acisRecordsBuffer.BufferPtr,
+            Offset = 0,
+            Size = _acisRecordsBuffer.Size
+        };
+
+        var acisEdgesEntry = new BindGroupEntry
+        {
+            Binding = 5,
+            Buffer = _acisEdgesBuffer.BufferPtr,
+            Offset = 0,
+            Size = _acisEdgesBuffer.Size
+        };
+
+        var vectorEntries = stackalloc BindGroupEntry[6];
         vectorEntries[0] = uBufferEntryVector;
         vectorEntries[1] = brushesEntry;
+        vectorEntries[2] = hatchRecordsEntry;
+        vectorEntries[3] = hatchSegmentsEntry;
+        vectorEntries[4] = acisRecordsEntry;
+        vectorEntries[5] = acisEdgesEntry;
 
         var uDescVector = new BindGroupDescriptor
         {
             Layout = _vectorUniformBindGroupLayout,
-            EntryCount = 2,
+            EntryCount = 6,
             Entries = vectorEntries
         };
         _vectorUniformBindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVector);
@@ -417,7 +548,7 @@ public unsafe class Compositor : IDisposable
         var uDescVectorOffscreen = new BindGroupDescriptor
         {
             Layout = _vectorUniformBindGroupLayoutOffscreen,
-            EntryCount = 2,
+            EntryCount = 6,
             Entries = vectorEntries
         };
         _vectorUniformBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVectorOffscreen);
@@ -523,6 +654,8 @@ public unsafe class Compositor : IDisposable
     public void RenderScene(Visual root, uint width, uint height, TextureView* targetView)
     {
         if (_isDisposed) return;
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        var compileSw = System.Diagnostics.Stopwatch.StartNew();
         _pathAtlas.CleanupFrame();
 
         if (_atlas.IsAlmostFull)
@@ -551,6 +684,10 @@ public unsafe class Compositor : IDisposable
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
         _drawCalls.Clear();
+        _hatchRecordsList.Clear();
+        _hatchSegmentsList.Clear();
+        _acisRecordsList.Clear();
+        _acisEdgesList.Clear();
 
         if (_layoutCache.Count > 1000)
         {
@@ -621,6 +758,9 @@ public unsafe class Compositor : IDisposable
             CommitPendingDrawCalls();
         }
 
+        compileSw.Stop();
+        var uploadSw = System.Diagnostics.Stopwatch.StartNew();
+
         // Dynamic buffer writing will happen after uploads to keep logic clear
 
         // Upload CPU batches to dynamic GPU buffers
@@ -671,8 +811,52 @@ public unsafe class Compositor : IDisposable
             _brushesStorageBuffer.Write(CollectionsMarshal.AsSpan(_activeBrushes));
         }
 
+        // Upload direct hatch records and segments to storage buffers
+        if (_hatchRecordsList.Count > 0)
+        {
+            _hatchRecordsBuffer.Write(CollectionsMarshal.AsSpan(_hatchRecordsList));
+        }
+        else
+        {
+            var dummy = new GpuHatchRecord();
+            _hatchRecordsBuffer.Write(new ReadOnlySpan<GpuHatchRecord>(ref dummy));
+        }
+
+        if (_hatchSegmentsList.Count > 0)
+        {
+            _hatchSegmentsBuffer.Write(CollectionsMarshal.AsSpan(_hatchSegmentsList));
+        }
+        else
+        {
+            var dummy = new GpuHatchSegment();
+            _hatchSegmentsBuffer.Write(new ReadOnlySpan<GpuHatchSegment>(ref dummy));
+        }
+
+        if (_acisRecordsList.Count > 0)
+        {
+            _acisRecordsBuffer.Write(CollectionsMarshal.AsSpan(_acisRecordsList));
+        }
+        else
+        {
+            var dummy = new GpuAcisRecord();
+            _acisRecordsBuffer.Write(new ReadOnlySpan<GpuAcisRecord>(ref dummy));
+        }
+
+        if (_acisEdgesList.Count > 0)
+        {
+            _acisEdgesBuffer.Write(CollectionsMarshal.AsSpan(_acisEdgesList));
+        }
+        else
+        {
+            var dummy = new GpuAcisEdge();
+            _acisEdgesBuffer.Write(new ReadOnlySpan<GpuAcisEdge>(ref dummy));
+        }
+
         // Rasterize all pending paths before starting the render pass
         _pathAtlas.RasterizePendingPaths();
+
+        uploadSw.Stop();
+        var passSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Determine physical render target size for MSAA matching the physical FramebufferSize.
         uint renderWidth = width;
@@ -815,6 +999,21 @@ public unsafe class Compositor : IDisposable
         _frameNumber++;
         EvictUnusedBindGroups();
         SweepUnusedEffectTextures(root, externalLayers, activeToolTip);
+
+        passSw.Stop();
+        totalSw.Stop();
+
+        Metrics = new CompositorMetrics
+        {
+            FrameTimeMs = totalSw.Elapsed.TotalMilliseconds,
+            VisualTreeCompileTimeMs = compileSw.Elapsed.TotalMilliseconds,
+            GpuUploadTimeMs = uploadSw.Elapsed.TotalMilliseconds,
+            RenderPassTimeMs = passSw.Elapsed.TotalMilliseconds,
+            DrawCallsCount = _drawCalls.Count,
+            VectorVerticesCount = _vectorVerticesList.Count,
+            TextVerticesCount = _textVerticesList.Count,
+            PathAtlasCachedCount = _pathAtlas.CachedPathCount
+        };
     }
 
     private void EvictUnusedBindGroups()
@@ -943,6 +1142,29 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    [ThreadStatic]
+    private static List<DrawingContext>? _contextPool;
+    
+    [ThreadStatic]
+    private static int _poolIndex;
+
+    private static DrawingContext GetDrawingContext()
+    {
+        _contextPool ??= new List<DrawingContext>();
+        if (_poolIndex >= _contextPool.Count)
+        {
+            _contextPool.Add(new DrawingContext());
+        }
+        var ctx = _contextPool[_poolIndex++];
+        ctx.Commands.Clear();
+        return ctx;
+    }
+
+    private static void ReleaseDrawingContext()
+    {
+        _poolIndex--;
+    }
+
     private void CompileVisualTree(Visual node, Matrix4x4 parentTransform)
     {
         if (node.Opacity <= 0.0001f || _activeOpacity <= 0.0001f)
@@ -982,7 +1204,7 @@ public unsafe class Compositor : IDisposable
         }
 
         // 2. Playback recorded commands
-        var ctx = new DrawingContext();
+        var ctx = GetDrawingContext();
         node.OnRender(ctx);
 
         foreach (var cmd in ctx.Commands)
@@ -994,6 +1216,12 @@ public unsafe class Compositor : IDisposable
                     break;
                 case RenderCommandType.DrawPath:
                     CompilePathCommand(cmd, globalTransform);
+                    break;
+                case RenderCommandType.DrawHatch:
+                    CompileHatchCommand(cmd, globalTransform);
+                    break;
+                case RenderCommandType.DrawAcisSolid:
+                    CompileAcisCommand(cmd, globalTransform);
                     break;
                 case RenderCommandType.DrawText:
                     CompileTextCommand(cmd, node as ITextLayoutProvider, globalTransform);
@@ -1049,12 +1277,15 @@ public unsafe class Compositor : IDisposable
             }
         }
 
-        // 3. Process children recursively
+        ReleaseDrawingContext();
+
         if (node is ContainerVisual container)
         {
-            foreach (var child in container.Children)
+            var children = container.Children;
+            int count = children.Count;
+            for (int i = 0; i < count; i++)
             {
-                CompileVisualTree(child, globalTransform);
+                CompileVisualTree(children[i], globalTransform);
             }
         }
 
@@ -1477,6 +1708,208 @@ public unsafe class Compositor : IDisposable
                     v.Position = ClampToClip(v.Position);
                     vertices[i] = v;
                 }
+            }
+        }
+    }
+
+    private void CompileHatchCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Path == null) return;
+        int startIndex = _vectorVerticesList.Count;
+
+        if (cmd.Brush != null)
+        {
+            float bIdx = RegisterBrush(cmd.Brush);
+
+            uint startSegment = (uint)_hatchSegmentsList.Count;
+            float minX = float.MaxValue;
+            float minY = float.MaxValue;
+            float maxX = float.MinValue;
+            float maxY = float.MinValue;
+
+            void UpdateBounds(Vector2 p)
+            {
+                minX = Math.Min(minX, p.X);
+                minY = Math.Min(minY, p.Y);
+                maxX = Math.Max(maxX, p.X);
+                maxY = Math.Max(maxY, p.Y);
+            }
+
+            foreach (var figure in cmd.Path.Figures)
+            {
+                if (figure.Segments.Count == 0) continue;
+
+                Vector2 currentPoint = figure.StartPoint;
+                UpdateBounds(currentPoint);
+
+                foreach (var segment in figure.Segments)
+                {
+                    if (segment is LineSegment line)
+                    {
+                        _hatchSegmentsList.Add(new GpuHatchSegment
+                        {
+                            P0 = currentPoint,
+                            P1 = line.Point,
+                            SegmentType = 0
+                        });
+                        UpdateBounds(line.Point);
+                        currentPoint = line.Point;
+                    }
+                    else if (segment is QuadraticBezierSegment quad)
+                    {
+                        _hatchSegmentsList.Add(new GpuHatchSegment
+                        {
+                            P0 = currentPoint,
+                            P1 = quad.ControlPoint,
+                            P2 = quad.Point,
+                            SegmentType = 1
+                        });
+                        UpdateBounds(quad.ControlPoint);
+                        UpdateBounds(quad.Point);
+                        currentPoint = quad.Point;
+                    }
+                    else if (segment is CubicBezierSegment cubic)
+                    {
+                        _hatchSegmentsList.Add(new GpuHatchSegment
+                        {
+                            P0 = currentPoint,
+                            P1 = cubic.ControlPoint1,
+                            P2 = cubic.ControlPoint2,
+                            P3 = cubic.Point,
+                            SegmentType = 2
+                        });
+                        UpdateBounds(cubic.ControlPoint1);
+                        UpdateBounds(cubic.ControlPoint2);
+                        UpdateBounds(cubic.Point);
+                        currentPoint = cubic.Point;
+                    }
+                }
+
+                if (figure.IsClosed && currentPoint != figure.StartPoint)
+                {
+                    _hatchSegmentsList.Add(new GpuHatchSegment
+                    {
+                        P0 = currentPoint,
+                        P1 = figure.StartPoint,
+                        SegmentType = 0
+                    });
+                    UpdateBounds(figure.StartPoint);
+                }
+            }
+
+            uint segmentCount = (uint)_hatchSegmentsList.Count - startSegment;
+            if (segmentCount == 0) return;
+
+            uint hatchRecordIndex = (uint)_hatchRecordsList.Count;
+            _hatchRecordsList.Add(new GpuHatchRecord
+            {
+                StartSegment = startSegment,
+                SegmentCount = segmentCount,
+                MinX = minX,
+                MinY = minY,
+                MaxX = maxX,
+                MaxY = maxY
+            });
+
+            var v0 = Vector2.Transform(new Vector2(minX, minY), transform);
+            var v1 = Vector2.Transform(new Vector2(maxX, minY), transform);
+            var v2 = Vector2.Transform(new Vector2(maxX, maxY), transform);
+            var v3 = Vector2.Transform(new Vector2(minX, maxY), transform);
+
+            var c0 = new Vector4(minX, minY, hatchRecordIndex, 0f);
+            var c1 = new Vector4(maxX, minY, hatchRecordIndex, 0f);
+            var c2 = new Vector4(maxX, maxY, hatchRecordIndex, 0f);
+            var c3 = new Vector4(minX, maxY, hatchRecordIndex, 0f);
+
+            int originalVertexCount = _vectorVerticesList.Count;
+            CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
+            var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
+
+            vertexSpan[0] = new VectorVertex(v0, c0, new Vector2(0f, 0f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+            vertexSpan[1] = new VectorVertex(v1, c1, new Vector2(1f, 0f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+            vertexSpan[2] = new VectorVertex(v2, c2, new Vector2(1f, 1f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+            vertexSpan[3] = new VectorVertex(v3, c3, new Vector2(0f, 1f), bIdx, shapeSize: new Vector2(maxX - minX, maxY - minY), shapeType: 9f);
+
+            int originalIndexCount = _vectorIndicesList.Count;
+            CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
+            var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
+
+            indexSpan[0] = (uint)startIndex;
+            indexSpan[1] = (uint)(startIndex + 1);
+            indexSpan[2] = (uint)(startIndex + 2);
+            indexSpan[3] = (uint)startIndex;
+            indexSpan[4] = (uint)(startIndex + 2);
+            indexSpan[5] = (uint)(startIndex + 3);
+        }
+    }
+
+    private void CompileAcisCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Edges3D == null || cmd.Pen == null) return;
+
+        float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
+        var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
+        float thickness = cmd.Pen.Thickness;
+
+        uint startEdge = (uint)_acisEdgesList.Count;
+        uint edgeCount = (uint)cmd.Edges3D.Count;
+
+        foreach (var edge in cmd.Edges3D)
+        {
+            _acisEdgesList.Add(new GpuAcisEdge
+            {
+                P0 = new Vector4(edge.Start, 0f),
+                P1 = new Vector4(edge.End, 0f)
+            });
+        }
+
+        uint acisRecordIndex = (uint)_acisRecordsList.Count;
+        _acisRecordsList.Add(new GpuAcisRecord
+        {
+            Transform = cmd.Transform * transform,
+            Color = penSolidColor,
+            StartEdge = startEdge,
+            EdgeCount = edgeCount,
+            PenThickness = thickness,
+            Opacity = cmd.Pen.Brush.Opacity * _activeOpacity
+        });
+
+        int originalVertexCount = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + (int)edgeCount * 4);
+        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, (int)edgeCount * 4);
+
+        int originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + (int)edgeCount * 6);
+        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, (int)edgeCount * 6);
+
+        for (int i = 0; i < (int)edgeCount; i++)
+        {
+            uint edgeIdx = startEdge + (uint)i;
+            int vOffset = i * 4;
+            int iOffset = i * 6;
+            uint vStart = (uint)originalVertexCount + (uint)vOffset;
+
+            vertexSpan[vOffset + 0] = new VectorVertex(new Vector2(edgeIdx, 0f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+            vertexSpan[vOffset + 1] = new VectorVertex(new Vector2(edgeIdx, 1f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+            vertexSpan[vOffset + 2] = new VectorVertex(new Vector2(edgeIdx, 2f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+            vertexSpan[vOffset + 3] = new VectorVertex(new Vector2(edgeIdx, 3f), penSolidColor, new Vector2(0f, 0f), penBrushIdx, shapeSize: new Vector2(acisRecordIndex, 0f), shapeType: 10f);
+
+            indexSpan[iOffset + 0] = vStart;
+            indexSpan[iOffset + 1] = vStart + 1;
+            indexSpan[iOffset + 2] = vStart + 2;
+            indexSpan[iOffset + 3] = vStart + 1;
+            indexSpan[iOffset + 4] = vStart + 3;
+            indexSpan[iOffset + 5] = vStart + 2;
+        }
+
+        if (_activeClipRect.HasValue)
+        {
+            var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+            for (int i = originalVertexCount; i < vertices.Length; i++)
+            {
+                var v = vertices[i];
+                v.Position = ClampToClip(v.Position);
+                vertices[i] = v;
             }
         }
     }
@@ -2751,6 +3184,10 @@ public unsafe class Compositor : IDisposable
 
         _uniformBuffer.Dispose();
         _brushesStorageBuffer.Dispose();
+        _hatchRecordsBuffer.Dispose();
+        _hatchSegmentsBuffer.Dispose();
+        _acisRecordsBuffer.Dispose();
+        _acisEdgesBuffer.Dispose();
         _vectorVertexBuffer.Dispose();
         _vectorIndexBuffer.Dispose();
         _textVertexBuffer.Dispose();

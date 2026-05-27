@@ -26,7 +26,21 @@ public enum RenderCommandType
     DrawSpline,
     FillTriangle,
     FillQuad,
-    DrawLine3D
+    DrawLine3D,
+    DrawHatch,
+    DrawAcisSolid
+}
+
+public struct Line3D
+{
+    public Vector3 Start;
+    public Vector3 End;
+
+    public Line3D(Vector3 start, Vector3 end)
+    {
+        Start = start;
+        End = end;
+    }
 }
 
 public struct Rect
@@ -126,6 +140,10 @@ public struct RenderCommand
     // 3D properties
     public Vector3 Position3D1;
     public Vector3 Position3D2;
+
+    // ACIS Solid properties
+    public List<Line3D>? Edges3D;
+    public Matrix4x4 Transform;
 }
 
 public class DrawingContext
@@ -227,6 +245,27 @@ public class DrawingContext
             Pen = pen,
             Position3D1 = p1,
             Position3D2 = p2
+        });
+    }
+
+    public void DrawHatch(Brush brush, PathGeometry boundaries)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawHatch,
+            Brush = brush,
+            Path = boundaries
+        });
+    }
+
+    public void DrawAcisSolid(Pen pen, List<Line3D> edges, Matrix4x4 modelTransform)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawAcisSolid,
+            Pen = pen,
+            Edges3D = edges,
+            Transform = modelTransform
         });
     }
 
