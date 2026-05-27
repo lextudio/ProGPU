@@ -31,6 +31,25 @@ public class DxfCanvasControl : FrameworkElement
     private bool _isPanning;
     private bool _firstLayout = true;
 
+    private DxfStaticBuffer? _staticBuffer;
+    private bool _needsRecompile = true;
+    private string? _lastFilePath;
+    private string? _lastActiveLayout;
+    private int _lastActiveLayersHash;
+    private List<RenderCommand>? _cachedCommands;
+    private float _lastZoom;
+    private Vector2 _lastPan;
+
+    private int GetActiveLayersHash()
+    {
+        int hash = 17;
+        foreach (var l in Context.ActiveLayers)
+        {
+            hash = hash * 31 + l.GetHashCode();
+        }
+        return hash;
+    }
+
     public DxfCanvasControl()
     {
         HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -51,6 +70,8 @@ public class DxfCanvasControl : FrameworkElement
     {
         Document = doc;
         _firstLayout = true;
+        _cachedCommands = null;
+        _needsRecompile = true;
 
         // Initialize visible layer mappings and default colors
         Context.ActiveLayers.Clear();
@@ -135,21 +156,92 @@ public class DxfCanvasControl : FrameworkElement
 
         // Sync context's screen viewport parameters
         Context.ScreenCenter = Size * 0.5f;
+        Context.EnableGpuTransforms = AppState.EnableGpuTransforms;
 
-        // Perform GPU-first vector rendering
-        Context.DrawingContext.Clear();
-        DxfDocumentRenderer.Render(Document, Context);
+        int layersHash = GetActiveLayersHash();
+        
+        bool invalidateCache = _cachedCommands == null 
+            || Context.FilePath != _lastFilePath 
+            || Document.ActiveLayout != _lastActiveLayout 
+            || layersHash != _lastActiveLayersHash;
 
-        // Push Clip region to the Canvas boundaries to prevent bleeding
-        context.PushClip(new Rect(0f, 0f, Size.X, Size.Y));
-
-        // Batch commands to screen compositor
-        foreach (var cmd in Context.DrawingContext.Commands)
+        if (!AppState.EnableGpuTransforms)
         {
-            context.Commands.Add(cmd);
+            if (Context.Zoom != _lastZoom || Context.Pan != _lastPan)
+            {
+                invalidateCache = true;
+            }
         }
 
-        context.PopClip();
+        if (!AppState.EnableCommandCaching)
+        {
+            invalidateCache = true;
+        }
+
+        if (invalidateCache || _needsRecompile || _staticBuffer == null)
+        {
+            _needsRecompile = false;
+            _lastFilePath = Context.FilePath;
+            _lastActiveLayout = Document.ActiveLayout;
+            _lastActiveLayersHash = layersHash;
+            _lastZoom = Context.Zoom;
+            _lastPan = Context.Pan;
+
+            _cachedCommands = null;
+            _staticBuffer?.Dispose();
+            _staticBuffer = null;
+
+            if (AppState._screenCompositor != null)
+            {
+                float savedZoom = Context.Zoom;
+                Vector2 savedPan = Context.Pan;
+                Vector2 savedCenter = Context.Center;
+                Vector2 savedScreenCenter = Context.ScreenCenter;
+
+                if (AppState.EnableGpuTransforms)
+                {
+                    Context.Zoom = 1.0f;
+                    Context.Pan = Vector2.Zero;
+                    Context.Center = Vector2.Zero;
+                    Context.ScreenCenter = Vector2.Zero;
+                }
+
+                Context.DrawingContext.Clear();
+                DxfDocumentRenderer.Render(Document, Context);
+
+                if (AppState.EnableCommandCaching)
+                {
+                    _cachedCommands = new List<RenderCommand>(Context.DrawingContext.Commands);
+                }
+
+                var commandsToCompile = _cachedCommands ?? Context.DrawingContext.Commands;
+                _staticBuffer = AppState._screenCompositor.CompileStaticDxf(commandsToCompile);
+
+                if (AppState.EnableGpuTransforms)
+                {
+                    Context.Zoom = savedZoom;
+                    Context.Pan = savedPan;
+                    Context.Center = savedCenter;
+                    Context.ScreenCenter = savedScreenCenter;
+                }
+            }
+        }
+
+        if (_staticBuffer != null && Size.X > 0 && Size.Y > 0)
+        {
+            var projection = new Matrix4x4(
+                2.0f / Size.X, 0f, 0f, 0f,
+                0f, -2.0f / Size.Y, 0f, 0f,
+                0f, 0f, 1f, 0f,
+                -1.0f, 1.0f, 0f, 1.0f
+            );
+
+            _staticBuffer.UpdateViewport(projection, Context.Zoom, Context.Pan, Context.Center, Context.ScreenCenter);
+
+            context.PushClip(new Rect(0f, 0f, Size.X, Size.Y));
+            context.DrawStaticDxf(_staticBuffer);
+            context.PopClip();
+        }
     }
 
     private void OnPointerPressed(object? sender, PointerRoutedEventArgs e)

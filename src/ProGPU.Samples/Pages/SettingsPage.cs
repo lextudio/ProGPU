@@ -106,6 +106,41 @@ public static class SettingsPage
         diagGroup.AddChild(diagnosticsToggle);
         stack.AddChild(diagGroup);
 
+        // 4. CAD Vector Graphics Optimizations Header
+        var cadHeader = new RichTextBlock { Font = AppState._font, FontSize = 14f, Margin = new Thickness(0, 15, 0, 10) };
+        cadHeader.Inlines.Add(new Bold(new Run("CAD DXF Viewer Rendering Optimizations")));
+        stack.AddChild(cadHeader);
+
+        // Option A: GPU-Side Camera Viewport Transforms
+        var optAGroup = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 15) };
+        var toggleA = new ToggleSwitch { IsOn = AppState.EnableGpuTransforms };
+        var labelA = new RichTextBlock { Font = AppState._font, FontSize = 12f };
+        labelA.Inlines.Add(new Run("Option A: GPU-Side Camera Viewport Transforms (mvp matrix)"));
+        toggleA.Content = labelA;
+        toggleA.Toggled += (s, e) => { AppState.EnableGpuTransforms = toggleA.IsOn; };
+        optAGroup.AddChild(toggleA);
+        stack.AddChild(optAGroup);
+
+        // Option B: Retained-Mode Static WebGPU Vertex/Index Buffers
+        var optBGroup = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 15) };
+        var toggleB = new ToggleSwitch { IsOn = AppState.EnableStaticGpuBuffers };
+        var labelB = new RichTextBlock { Font = AppState._font, FontSize = 12f };
+        labelB.Inlines.Add(new Run("Option B: Retained-Mode Static WebGPU Vertex/Index Buffers"));
+        toggleB.Content = labelB;
+        toggleB.Toggled += (s, e) => { AppState.EnableStaticGpuBuffers = toggleB.IsOn; };
+        optBGroup.AddChild(toggleB);
+        stack.AddChild(optBGroup);
+
+        // Option C: Drawing Command List Caching
+        var optCGroup = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 15) };
+        var toggleC = new ToggleSwitch { IsOn = AppState.EnableCommandCaching };
+        var labelC = new RichTextBlock { Font = AppState._font, FontSize = 12f };
+        labelC.Inlines.Add(new Run("Option C: Drawing Command List Caching (Viewport-Static CPU reuse)"));
+        toggleC.Content = labelC;
+        toggleC.Toggled += (s, e) => { AppState.EnableCommandCaching = toggleC.IsOn; };
+        optCGroup.AddChild(toggleC);
+        stack.AddChild(optCGroup);
+
         return stack;
     }
 }

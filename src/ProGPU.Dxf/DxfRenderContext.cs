@@ -38,6 +38,10 @@ public class DxfRenderContext
     // Level of Detail rendering optimization flag
     public bool EnableLod { get; set; } = false;
 
+    // GPU camera transform optimization flag
+    public bool EnableGpuTransforms { get; set; } = false;
+
+
     // Entity flattening optimization flag
     public bool EnableFlattening { get; set; } = true;
     
@@ -67,6 +71,11 @@ public class DxfRenderContext
     /// </summary>
     public Vector2 TransformToScreen(Vector2 worldPoint)
     {
+        if (EnableGpuTransforms)
+        {
+            return worldPoint;
+        }
+
         // 1. Center the world coordinate (relative to the DXF model's center)
         float localX = worldPoint.X - Center.X;
         float localY = worldPoint.Y - Center.Y;
@@ -118,6 +127,11 @@ public class DxfRenderContext
     public Vector3 TransformToScreen3D(Vector3 worldPoint, Matrix4x4 modelMatrix)
     {
         var v3Transformed = Vector3.Transform(worldPoint, modelMatrix);
+        if (EnableGpuTransforms)
+        {
+            return v3Transformed;
+        }
+
         float localX = v3Transformed.X - Center.X;
         float localY = v3Transformed.Y - Center.Y;
         
@@ -134,6 +148,22 @@ public class DxfRenderContext
     /// </summary>
     public bool IsOffScreen(Vector2 minScreen, Vector2 maxScreen)
     {
+        if (EnableGpuTransforms)
+        {
+            // If GPU transforms are active, minScreen and maxScreen are raw WCS coords.
+            // Temporarily project them just for the culling check to avoid rendering culled geometry.
+            Vector2 sMin = new Vector2(
+                (minScreen.X - Center.X) * Zoom + ScreenCenter.X + Pan.X,
+                -(maxScreen.Y - Center.Y) * Zoom + ScreenCenter.Y + Pan.Y
+            );
+            Vector2 sMax = new Vector2(
+                (maxScreen.X - Center.X) * Zoom + ScreenCenter.X + Pan.X,
+                -(minScreen.Y - Center.Y) * Zoom + ScreenCenter.Y + Pan.Y
+            );
+            minScreen = Vector2.Min(sMin, sMax);
+            maxScreen = Vector2.Max(sMin, sMax);
+        }
+
         float w = ScreenCenter.X * 2f;
         float h = ScreenCenter.Y * 2f;
         if (w <= 0f || h <= 0f) return false; // Viewport not yet sized, do not cull
@@ -142,6 +172,7 @@ public class DxfRenderContext
         return maxScreen.X < -padding || minScreen.X > w + padding || 
                maxScreen.Y < -padding || minScreen.Y > h + padding;
     }
+
 
     // Dxf-specific brush and pen caches to prevent high-frequency GC allocations
     private readonly Dictionary<(string Layer, float R, float G, float B, float A), Brush> _brushCache = new();
