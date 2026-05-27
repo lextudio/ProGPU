@@ -14,10 +14,12 @@ public unsafe class DxfStaticBuffer : IDisposable
     public GpuBuffer? VertexBuffer { get; private set; }
     public GpuBuffer? IndexBuffer { get; private set; }
     public uint IndexCount { get; private set; }
+    public VectorVertex[] VectorVertices { get; }
     
     public GpuBuffer? TextVertexBuffer { get; private set; }
     public GpuBuffer? TextIndexBuffer { get; private set; }
     public uint TextIndexCount { get; private set; }
+    public VectorVertex[] TextVertices { get; }
     
     public GpuBuffer? BrushesBuffer { get; private set; }
     public GpuBuffer? HatchRecordsBuffer { get; private set; }
@@ -50,6 +52,8 @@ public unsafe class DxfStaticBuffer : IDisposable
         GpuAcisEdge[] acisEdges)
     {
         _context = context;
+        VectorVertices = vertices;
+        TextVertices = textVertices;
         
         // 1. Create and upload Vector Buffers
         if (vertices.Length > 0 && indices.Length > 0)

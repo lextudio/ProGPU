@@ -31,12 +31,12 @@ public struct GpuBrush
     [FieldOffset(112)] public Vector4 Offsets;
 }
 
-[StructLayout(LayoutKind.Sequential, Pack = 16)]
+[StructLayout(LayoutKind.Explicit, Size = 192)]
 public struct GpuUniforms
 {
-    public Matrix4x4 Projection;
-    public Matrix4x4 Mvp;
-    public Matrix4x4 View;
+    [FieldOffset(0)] public Matrix4x4 Projection;
+    [FieldOffset(64)] public Matrix4x4 Mvp;
+    [FieldOffset(128)] public Matrix4x4 View;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -139,6 +139,8 @@ public unsafe class Compositor : IDisposable
     private BindGroupLayout* _textureUniformBindGroupLayoutOffscreen;
     private bool _useGpuTransformsActive;
     private Matrix4x4 _cameraViewMatrix;
+    private bool _hasGpuTransformsInFrame;
+    private Matrix4x4 _gpuTransformsCameraView;
 
     // Sampler & Texture Bind Group for Typography
     private Sampler* _atlasSampler;
@@ -256,6 +258,7 @@ public unsafe class Compositor : IDisposable
     public static bool IsCacheAsLayerEnabled { get; set; } = true;
 
     public int VectorVertexCount => _vectorVerticesList.Count;
+    public IReadOnlyList<VectorVertex> VectorVertices => _vectorVerticesList;
     public int VectorIndexCount => _vectorIndicesList.Count;
     public int TextVertexCount => _textVerticesList.Count;
     public int TextIndexCount => _textIndicesList.Count;
@@ -673,6 +676,8 @@ public unsafe class Compositor : IDisposable
 
         _useGpuTransformsActive = false;
         _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
 
         // 1. Calculate orthographic projection matrix for modern 2D rendering
         // Maps X in [0, width] to [-1, 1], and Y in [0, height] to [1, -1]
@@ -809,8 +814,8 @@ public unsafe class Compositor : IDisposable
         var uniformsData = new GpuUniforms
         {
             Projection = projection,
-            Mvp = _useGpuTransformsActive ? Matrix4x4.Identity : projection,
-            View = _useGpuTransformsActive ? _cameraViewMatrix : Matrix4x4.Identity
+            Mvp = _hasGpuTransformsInFrame ? Matrix4x4.Identity : projection,
+            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity
         };
         _uniformBuffer.WriteSingle(uniformsData);
 
@@ -1225,26 +1230,38 @@ public unsafe class Compositor : IDisposable
         {
             int vectorStart = _vectorVerticesList.Count;
             int textStart = _textVerticesList.Count;
+            var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
+
+            bool savedUseGpuTransformsActive = _useGpuTransformsActive;
+            Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
+
+            if (cmd.UseGpuTransforms)
+            {
+                _useGpuTransformsActive = true;
+                _cameraViewMatrix = cmd.CameraView * globalTransform;
+                _hasGpuTransformsInFrame = true;
+                _gpuTransformsCameraView = cmd.CameraView * globalTransform;
+            }
 
             switch (cmd.Type)
             {
                 case RenderCommandType.DrawRect:
-                    CompileRectCommand(cmd, globalTransform);
+                    CompileRectCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPath:
-                    CompilePathCommand(cmd, globalTransform);
+                    CompilePathCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawHatch:
-                    CompileHatchCommand(cmd, globalTransform);
+                    CompileHatchCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawAcisSolid:
-                    CompileAcisCommand(cmd, globalTransform);
+                    CompileAcisCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawText:
-                    CompileTextCommand(cmd, node as ITextLayoutProvider, globalTransform);
+                    CompileTextCommand(cmd, node as ITextLayoutProvider, activeTransform);
                     break;
                 case RenderCommandType.DrawTexture:
-                    CompileTextureCommand(cmd, globalTransform);
+                    CompileTextureCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.PushClip:
                     PushClipRect(cmd.Rect, globalTransform);
@@ -1259,37 +1276,37 @@ public unsafe class Compositor : IDisposable
                     PopOpacityValue();
                     break;
                 case RenderCommandType.DrawLine:
-                    CompileLineCommand(cmd, globalTransform);
+                    CompileLineCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawLine3D:
-                    CompileLine3DCommand(cmd, globalTransform);
+                    CompileLine3DCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawEllipse:
-                    CompileEllipseCommand(cmd, globalTransform);
+                    CompileEllipseCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawCircle:
-                    CompileCircleCommand(cmd, globalTransform);
+                    CompileCircleCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawRoundedRect:
-                    CompileRoundedRectCommand(cmd, globalTransform);
+                    CompileRoundedRectCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawBezier:
-                    CompileBezierCommand(cmd, globalTransform);
+                    CompileBezierCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawCubicBezier:
-                    CompileCubicBezierCommand(cmd, globalTransform);
+                    CompileCubicBezierCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPolyline:
-                    CompilePolylineCommand(cmd, globalTransform);
+                    CompilePolylineCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawSpline:
-                    CompileSplineCommand(cmd, globalTransform);
+                    CompileSplineCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.FillTriangle:
-                    CompileFillTriangleCommand(cmd, globalTransform);
+                    CompileFillTriangleCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.FillQuad:
-                    CompileFillQuadCommand(cmd, globalTransform);
+                    CompileFillQuadCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawStaticDxf:
                     CommitPendingDrawCalls();
@@ -1305,9 +1322,6 @@ public unsafe class Compositor : IDisposable
 
             if (cmd.UseGpuTransforms)
             {
-                _useGpuTransformsActive = true;
-                _cameraViewMatrix = cmd.CameraView;
-
                 for (int i = vectorStart; i < _vectorVerticesList.Count; i++)
                 {
                     var v = _vectorVerticesList[i];
@@ -1321,6 +1335,9 @@ public unsafe class Compositor : IDisposable
                     _textVerticesList[i] = v;
                 }
             }
+
+            _useGpuTransformsActive = savedUseGpuTransformsActive;
+            _cameraViewMatrix = savedCameraViewMatrix;
         }
 
         ReleaseDrawingContext();
@@ -1477,7 +1494,7 @@ public unsafe class Compositor : IDisposable
                 var cp2 = new Vector2(unscaledMinX + unscaledWidth, unscaledMinY + unscaledHeight);
                 var cp3 = new Vector2(unscaledMinX, unscaledMinY + unscaledHeight);
 
-                if (_activeClipRect.HasValue)
+                if (_activeClipRect.HasValue && !_useGpuTransformsActive)
                 {
                     float rx1 = v0.X;
                     float ry1 = v0.Y;
@@ -3006,7 +3023,7 @@ public unsafe class Compositor : IDisposable
                 var uv2 = new Vector2(info.TexCoordMax.X, info.TexCoordMax.Y);
                 var uv3 = new Vector2(info.TexCoordMin.X, info.TexCoordMax.Y);
 
-                if (_activeClipRect.HasValue)
+                if (_activeClipRect.HasValue && !_useGpuTransformsActive)
                 {
                     if (isRotated)
                     {
@@ -3114,7 +3131,7 @@ public unsafe class Compositor : IDisposable
                          MathF.Abs(transform.M21) > 0.0001f ||
                          transform.M11 < 0.0f ||
                          transform.M22 < 0.0f;
-        if (_activeClipRect.HasValue)
+        if (_activeClipRect.HasValue && !_useGpuTransformsActive)
         {
             if (isRotated)
             {
@@ -3362,7 +3379,7 @@ public unsafe class Compositor : IDisposable
 
     private Vector2 ClampToClip(Vector2 p)
     {
-        if (!_activeClipRect.HasValue) return p;
+        if (!_activeClipRect.HasValue || _useGpuTransformsActive) return p;
         var r = _activeClipRect.Value;
         float x = Math.Max(r.X, Math.Min(r.X + r.Width, p.X));
         float y = Math.Max(r.Y, Math.Min(r.Y + r.Height, p.Y));
@@ -3549,6 +3566,16 @@ public unsafe class Compositor : IDisposable
         var savedPendingVectorStart = _pendingVectorStart;
         var savedPendingTextStart = _pendingTextStart;
 
+        var savedUseGpuTransformsActive = _useGpuTransformsActive;
+        var savedCameraViewMatrix = _cameraViewMatrix;
+        var savedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
+        var savedGpuTransformsCameraView = _gpuTransformsCameraView;
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
+
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
@@ -3612,8 +3639,8 @@ public unsafe class Compositor : IDisposable
         var uniformsData = new GpuUniforms
         {
             Projection = projection,
-            Mvp = _useGpuTransformsActive ? Matrix4x4.Identity : projection,
-            View = _useGpuTransformsActive ? _cameraViewMatrix : Matrix4x4.Identity
+            Mvp = _hasGpuTransformsInFrame ? Matrix4x4.Identity : projection,
+            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity
         };
         _uniformBuffer.WriteSingle(uniformsData);
         if (_activeBrushes.Count > 0)
@@ -3769,6 +3796,11 @@ public unsafe class Compositor : IDisposable
         _activeOpacity = savedActiveOpacity;
         _pendingVectorStart = savedPendingVectorStart;
         _pendingTextStart = savedPendingTextStart;
+
+        _useGpuTransformsActive = savedUseGpuTransformsActive;
+        _cameraViewMatrix = savedCameraViewMatrix;
+        _hasGpuTransformsInFrame = savedHasGpuTransformsInFrame;
+        _gpuTransformsCameraView = savedGpuTransformsCameraView;
     }
 
     public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands)
@@ -3797,6 +3829,12 @@ public unsafe class Compositor : IDisposable
         
         foreach (var cmd in commands)
         {
+            bool savedUseGpuTransformsActive = _useGpuTransformsActive;
+            if (cmd.UseGpuTransforms)
+            {
+                _useGpuTransformsActive = true;
+            }
+
             switch (cmd.Type)
             {
                 case RenderCommandType.DrawRect:
@@ -3851,6 +3889,8 @@ public unsafe class Compositor : IDisposable
                     CompileFillQuadCommand(cmd, Matrix4x4.Identity);
                     break;
             }
+
+            _useGpuTransformsActive = savedUseGpuTransformsActive;
         }
         for (int i = 0; i < _vectorVerticesList.Count; i++)
         {
