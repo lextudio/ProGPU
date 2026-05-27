@@ -107,13 +107,13 @@ public static class DesignerSerializer
         var margin = element.Margin;
         if (margin.Left != 0 || margin.Top != 0 || margin.Right != 0 || margin.Bottom != 0)
         {
-            sb.AppendLine($"{indent}    Margin = new Thickness({margin.Left}f, {margin.Top}f, {margin.Right}f, {margin.Bottom}f),");
+            sb.AppendLine($"{indent}    Margin = new Microsoft.UI.Xaml.Thickness({margin.Left}f, {margin.Top}f, {margin.Right}f, {margin.Bottom}f),");
         }
 
         var padding = element.Padding;
         if (padding.Left != 0 || padding.Top != 0 || padding.Right != 0 || padding.Bottom != 0)
         {
-            sb.AppendLine($"{indent}    Padding = new Thickness({padding.Left}f, {padding.Top}f, {padding.Right}f, {padding.Bottom}f),");
+            sb.AppendLine($"{indent}    Padding = new Microsoft.UI.Xaml.Thickness({padding.Left}f, {padding.Top}f, {padding.Right}f, {padding.Bottom}f),");
         }
 
         // Background / BorderBrush / CornerRadius etc. via Reflection
@@ -165,7 +165,7 @@ public static class DesignerSerializer
             var bt = borderThicknessProp.GetValue(element);
             if (bt is Thickness t && (t.Left != 0 || t.Top != 0 || t.Right != 0 || t.Bottom != 0))
             {
-                sb.AppendLine($"{indent}    BorderThickness = new Thickness({t.Left}f, {t.Top}f, {t.Right}f, {t.Bottom}f),");
+                sb.AppendLine($"{indent}    BorderThickness = new Microsoft.UI.Xaml.Thickness({t.Left}f, {t.Top}f, {t.Right}f, {t.Bottom}f),");
             }
         }
 
