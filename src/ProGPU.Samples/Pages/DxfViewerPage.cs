@@ -41,6 +41,7 @@ public class DxfCanvasControl : FrameworkElement
     private Vector2 _lastPan;
     private bool _lastEnableGpuTransforms;
     private bool _lastEnableStaticGpuBuffers;
+    private Vector2 _lastSize;
 
     private int GetActiveLayersHash()
     {
@@ -171,7 +172,8 @@ public class DxfCanvasControl : FrameworkElement
                 || Document.ActiveLayout != _lastActiveLayout 
                 || layersHash != _lastActiveLayersHash
                 || AppState.EnableGpuTransforms != _lastEnableGpuTransforms
-                || AppState.EnableStaticGpuBuffers != _lastEnableStaticGpuBuffers;
+                || AppState.EnableStaticGpuBuffers != _lastEnableStaticGpuBuffers
+                || Size != _lastSize;
 
             if (invalidateCache || _needsRecompile || _staticBuffer == null)
             {
@@ -183,6 +185,7 @@ public class DxfCanvasControl : FrameworkElement
                 _lastPan = Context.Pan;
                 _lastEnableGpuTransforms = AppState.EnableGpuTransforms;
                 _lastEnableStaticGpuBuffers = AppState.EnableStaticGpuBuffers;
+                _lastSize = Size;
 
                 _cachedCommands = null;
                 _staticBuffer?.Dispose();
@@ -253,7 +256,8 @@ public class DxfCanvasControl : FrameworkElement
                 || Document.ActiveLayout != _lastActiveLayout 
                 || layersHash != _lastActiveLayersHash
                 || AppState.EnableGpuTransforms != _lastEnableGpuTransforms
-                || AppState.EnableStaticGpuBuffers != _lastEnableStaticGpuBuffers;
+                || AppState.EnableStaticGpuBuffers != _lastEnableStaticGpuBuffers
+                || Size != _lastSize;
 
             if (!AppState.EnableGpuTransforms)
             {
@@ -277,6 +281,7 @@ public class DxfCanvasControl : FrameworkElement
                 _lastPan = Context.Pan;
                 _lastEnableGpuTransforms = AppState.EnableGpuTransforms;
                 _lastEnableStaticGpuBuffers = AppState.EnableStaticGpuBuffers;
+                _lastSize = Size;
 
                 Context.DrawingContext.Clear();
                 DxfDocumentRenderer.Render(Document, Context);
