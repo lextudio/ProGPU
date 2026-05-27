@@ -39,7 +39,11 @@ public class DesignerHost : Grid
 
     public TtfFont? DesignerFont { get; set; }
     public TtfFont? DesignerFontCourier { get; set; }
-    public Func<float>? GetDpiScale { get; set; }
+    public Func<float>? GetDpiScale
+    {
+        get => _designerCanvas.GetDpiScale;
+        set => _designerCanvas.GetDpiScale = value;
+    }
 
     public DesignerHost()
     {
