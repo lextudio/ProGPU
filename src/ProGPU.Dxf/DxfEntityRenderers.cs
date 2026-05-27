@@ -65,13 +65,14 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
 
         if (entity is Circle circle)
         {
+            var combined = DxfDocumentRenderer.GetOcsMatrix(circle.Normal) * transform;
             float cx = (float)circle.Center.X;
             float cy = (float)circle.Center.Y;
             float r = (float)circle.Radius;
 
             // Calculate screen-space center and radius
-            var screenCenter = context.Transform(new Vector2(cx, cy), transform);
-            var screenPoint = context.Transform(new Vector2(cx + r, cy), transform);
+            var screenCenter = context.Transform(new Vector2(cx, cy), combined);
+            var screenPoint = context.Transform(new Vector2(cx + r, cy), combined);
             float screenR = Vector2.Distance(screenCenter, screenPoint);
 
             // Viewport culling using circle bounding box
@@ -80,8 +81,8 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
             if (screenR < 1f) return; // Too small to render
 
             // Detect uniform scaling in the transformation matrix to use native DrawCircle
-            var col1 = new Vector3(transform.M11, transform.M12, transform.M13);
-            var col2 = new Vector3(transform.M21, transform.M22, transform.M23);
+            var col1 = new Vector3(combined.M11, combined.M12, combined.M13);
+            var col2 = new Vector3(combined.M21, combined.M22, combined.M23);
             float scaleX = col1.Length();
             float scaleY = col2.Length();
             bool isUniform = Math.Abs(scaleX - scaleY) < 1e-4f;
@@ -106,7 +107,7 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
                 for (int i = 0; i <= numSegments; i++)
                 {
                     float angle = i * 2f * MathF.PI / numSegments;
-                    points[i] = context.Transform(new Vector2(cx + MathF.Cos(angle) * r, cy + MathF.Sin(angle) * r), transform);
+                    points[i] = context.Transform(new Vector2(cx + MathF.Cos(angle) * r, cy + MathF.Sin(angle) * r), combined);
                 }
 
                 for (int i = 0; i < numSegments; i++)
@@ -117,13 +118,14 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
         }
         else if (entity is Arc arc)
         {
+            var combined = DxfDocumentRenderer.GetOcsMatrix(arc.Normal) * transform;
             float cx = (float)arc.Center.X;
             float cy = (float)arc.Center.Y;
             float r = (float)arc.Radius;
 
             // Calculate screen-space center and radius
-            var screenCenter = context.Transform(new Vector2(cx, cy), transform);
-            var screenPoint = context.Transform(new Vector2(cx + r, cy), transform);
+            var screenCenter = context.Transform(new Vector2(cx, cy), combined);
+            var screenPoint = context.Transform(new Vector2(cx + r, cy), combined);
             float screenR = Vector2.Distance(screenCenter, screenPoint);
 
             // Viewport culling
@@ -149,7 +151,7 @@ public class DxfArcCircleRenderer : IDxfEntityRenderer
             {
                 float t = (float)i / numSegments;
                 float angle = startRad + t * (endRad - startRad);
-                points[i] = context.Transform(new Vector2(cx + MathF.Cos(angle) * r, cy + MathF.Sin(angle) * r), transform);
+                points[i] = context.Transform(new Vector2(cx + MathF.Cos(angle) * r, cy + MathF.Sin(angle) * r), combined);
             }
 
             for (int i = 0; i < numSegments; i++)
@@ -166,14 +168,16 @@ public class DxfEllipseRenderer : IDxfEntityRenderer
     {
         if (entity is not Ellipse ellipse) return;
 
+        var combined = DxfDocumentRenderer.GetOcsMatrix(ellipse.Normal) * transform;
+
         var center = new Vector2((float)ellipse.Center.X, (float)ellipse.Center.Y);
         float rx = (float)ellipse.MajorAxis;
         float ry = (float)ellipse.MinorAxis;
 
-        // Calculate screen-space parameters
-        var screenCenter = context.Transform(center, transform);
-        var screenPointX = context.Transform(center + new Vector2(rx, 0f), transform);
-        var screenPointY = context.Transform(center + new Vector2(0f, ry), transform);
+        // Calculate screen-space parameters using combined OCS matrix
+        var screenCenter = context.Transform(center, combined);
+        var screenPointX = context.Transform(center + new Vector2(rx, 0f), combined);
+        var screenPointY = context.Transform(center + new Vector2(0f, ry), combined);
         float screenRx = Vector2.Distance(screenCenter, screenPointX);
         float screenRy = Vector2.Distance(screenCenter, screenPointY);
         float maxScreenR = Math.Max(screenRx, screenRy);
@@ -211,7 +215,7 @@ public class DxfEllipseRenderer : IDxfEntityRenderer
             float rotY = x * MathF.Sin(rotationRad) + y * MathF.Cos(rotationRad);
 
             var pt = center + new Vector2(rotX, rotY);
-            points[i] = context.Transform(pt, transform);
+            points[i] = context.Transform(pt, combined);
         }
 
         var pen = context.GetCachedPen(ellipse, 1.2f);
@@ -227,7 +231,17 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
 {
     public void Render(EntityObject entity, DxfRenderContext context, Matrix4x4 transform)
     {
-        // Viewport culling at the entire polyline level
+        Matrix4x4 combined = transform;
+        if (entity is LwPolyline lw)
+        {
+            combined = DxfDocumentRenderer.GetOcsMatrix(lw.Normal) * transform;
+        }
+        else if (entity is Polyline poly)
+        {
+            combined = DxfDocumentRenderer.GetOcsMatrix(poly.Normal) * transform;
+        }
+
+        // Viewport culling at the entire polyline level using combined matrix
         float minX = float.MaxValue, minY = float.MaxValue;
         float maxX = float.MinValue, maxY = float.MinValue;
         bool hasVertices = false;
@@ -236,7 +250,7 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
         {
             foreach (var v in lwPolyline.Vertexes)
             {
-                var sp = context.Transform(new Vector2((float)v.Position.X, (float)v.Position.Y), transform);
+                var sp = context.Transform(new Vector2((float)v.Position.X, (float)v.Position.Y), combined);
                 minX = Math.Min(minX, sp.X);
                 minY = Math.Min(minY, sp.Y);
                 maxX = Math.Max(maxX, sp.X);
@@ -248,7 +262,7 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
         {
             foreach (var v in polyline.Vertexes)
             {
-                var sp = context.Transform(new Vector2((float)v.Position.X, (float)v.Position.Y), transform);
+                var sp = context.Transform(new Vector2((float)v.Position.X, (float)v.Position.Y), combined);
                 minX = Math.Min(minX, sp.X);
                 minY = Math.Min(minY, sp.Y);
                 maxX = Math.Max(maxX, sp.X);
@@ -266,11 +280,11 @@ public class DxfPolylineRenderer : IDxfEntityRenderer
 
         if (entity is LwPolyline lwPoly)
         {
-            RenderLwPolyline(lwPoly, context, transform, pen);
+            RenderLwPolyline(lwPoly, context, combined, pen);
         }
-        else if (entity is Polyline poly)
+        else if (entity is Polyline polyObj)
         {
-            RenderPolyline(poly, context, transform, pen);
+            RenderPolyline(polyObj, context, combined, pen);
         }
     }
 
@@ -456,7 +470,7 @@ public class DxfSplineRenderer : IDxfEntityRenderer
 
 public class DxfTextRenderer : IDxfEntityRenderer
 {
-    public static void RenderAttribute(netDxf.Entities.Attribute attr, DxfRenderContext context, Matrix4x4 transform)
+    public static void RenderAttribute(netDxf.Entities.Attribute attr, DxfRenderContext context, Matrix4x4 transform, float scaleY)
     {
         string valStr = attr.Value?.ToString() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(valStr)) return;
@@ -475,7 +489,7 @@ public class DxfTextRenderer : IDxfEntityRenderer
         var u = baselineVec / screenScale;
         var v = new Vector2(-u.Y, u.X);
 
-        float screenFontSize = (float)attr.Height * screenScale;
+        float screenFontSize = (float)attr.Height * MathF.Abs(scaleY) * screenScale;
         if (screenFontSize < 4f) return;
 
         float horizontalShiftMultiplier = 0f;
@@ -803,11 +817,13 @@ public class DxfInsertRenderer : IDxfEntityRenderer
         float radAngle = (float)(insert.Rotation * Math.PI / 180.0);
         var origin = insert.Block.Origin;
 
+        // Correct AutoCAD standard local block transform mapping:
+        // Translate by pos (insertion point) in OCS *before* applying the parent extrusion normal OCS-to-WCS rotation!
         var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
                        Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                        Matrix4x4.CreateRotationZ(radAngle) *
-                       DxfDocumentRenderer.GetOcsMatrix(insert.Normal) *
-                       Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
+                       Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z) *
+                       DxfDocumentRenderer.GetOcsMatrix(insert.Normal);
 
         context.PushTransform(localMat);
 
@@ -818,10 +834,10 @@ public class DxfInsertRenderer : IDxfEntityRenderer
             DxfDocumentRenderer.RenderEntity(childEntity, context, activeMatrix);
         }
 
-        // Render block insert attributes (tags, labels, etc.) using the insert's local matrix
+        // Render block insert attributes (tags, labels, etc.) using the insert's parent transform but scaling the height by insert Y scale
         foreach (var attr in insert.Attributes)
         {
-            DxfTextRenderer.RenderAttribute(attr, context, activeMatrix);
+            DxfTextRenderer.RenderAttribute(attr, context, transform, (float)insert.Scale.Y);
         }
 
         context.PopTransform();
@@ -899,10 +915,12 @@ public class DxfSolidRenderer : IDxfEntityRenderer
     {
         if (entity is not netDxf.Entities.Solid solid) return;
 
-        var p1 = context.Transform(new Vector2((float)solid.FirstVertex.X, (float)solid.FirstVertex.Y), transform);
-        var p2 = context.Transform(new Vector2((float)solid.SecondVertex.X, (float)solid.SecondVertex.Y), transform);
-        var p3 = context.Transform(new Vector2((float)solid.ThirdVertex.X, (float)solid.ThirdVertex.Y), transform);
-        var p4 = context.Transform(new Vector2((float)solid.FourthVertex.X, (float)solid.FourthVertex.Y), transform);
+        var combined = DxfDocumentRenderer.GetOcsMatrix(solid.Normal) * transform;
+
+        var p1 = context.Transform(new Vector2((float)solid.FirstVertex.X, (float)solid.FirstVertex.Y), combined);
+        var p2 = context.Transform(new Vector2((float)solid.SecondVertex.X, (float)solid.SecondVertex.Y), combined);
+        var p3 = context.Transform(new Vector2((float)solid.ThirdVertex.X, (float)solid.ThirdVertex.Y), combined);
+        var p4 = context.Transform(new Vector2((float)solid.FourthVertex.X, (float)solid.FourthVertex.Y), combined);
 
         // Viewport culling (bounding box of all 4 points)
         float minX = Math.Min(p1.X, Math.Min(p2.X, Math.Min(p3.X, p4.X)));
@@ -927,6 +945,8 @@ public class DxfImageRenderer : IDxfEntityRenderer
     {
         if (entity is not Image dxfImage) return;
 
+        var combined = DxfDocumentRenderer.GetOcsMatrix(dxfImage.Normal) * transform;
+
         // Bottom-left in model space
         var bl = new Vector2((float)dxfImage.Position.X, (float)dxfImage.Position.Y);
         // Top-left in model space (Y grows upwards in CAD)
@@ -935,8 +955,8 @@ public class DxfImageRenderer : IDxfEntityRenderer
         var br = new Vector2((float)(dxfImage.Position.X + dxfImage.Width), (float)dxfImage.Position.Y);
 
         // Projected to screen coordinates
-        var screenTl = context.Transform(tl, transform);
-        var screenBr = context.Transform(br, transform);
+        var screenTl = context.Transform(tl, combined);
+        var screenBr = context.Transform(br, combined);
 
         float screenW = screenBr.X - screenTl.X;
         float screenH = screenBr.Y - screenTl.Y;

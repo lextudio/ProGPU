@@ -260,39 +260,44 @@ public static class DxfDocumentRenderer
         }
         else if (entity is Circle circle)
         {
+            var combined = GetOcsMatrix(circle.Normal) * transform;
             var center = new Vector2((float)circle.Center.X, (float)circle.Center.Y);
             float r = (float)circle.Radius;
-            UpdateBounds(center + new Vector2(-r, -r), transform, ref min, ref max, ref hasData);
-            UpdateBounds(center + new Vector2(r, r), transform, ref min, ref max, ref hasData);
+            UpdateBounds(center + new Vector2(-r, -r), combined, ref min, ref max, ref hasData);
+            UpdateBounds(center + new Vector2(r, r), combined, ref min, ref max, ref hasData);
         }
         else if (entity is Arc arc)
         {
+            var combined = GetOcsMatrix(arc.Normal) * transform;
             var center = new Vector2((float)arc.Center.X, (float)arc.Center.Y);
             float r = (float)arc.Radius;
-            UpdateBounds(center + new Vector2(-r, -r), transform, ref min, ref max, ref hasData);
-            UpdateBounds(center + new Vector2(r, r), transform, ref min, ref max, ref hasData);
+            UpdateBounds(center + new Vector2(-r, -r), combined, ref min, ref max, ref hasData);
+            UpdateBounds(center + new Vector2(r, r), combined, ref min, ref max, ref hasData);
         }
         else if (entity is Ellipse ellipse)
         {
+            var combined = GetOcsMatrix(ellipse.Normal) * transform;
             var center = new Vector2((float)ellipse.Center.X, (float)ellipse.Center.Y);
             float rx = (float)ellipse.MajorAxis;
             float ry = (float)ellipse.MinorAxis;
             float r = Math.Max(rx, ry);
-            UpdateBounds(center + new Vector2(-r, -r), transform, ref min, ref max, ref hasData);
-            UpdateBounds(center + new Vector2(r, r), transform, ref min, ref max, ref hasData);
+            UpdateBounds(center + new Vector2(-r, -r), combined, ref min, ref max, ref hasData);
+            UpdateBounds(center + new Vector2(r, r), combined, ref min, ref max, ref hasData);
         }
         else if (entity is LwPolyline lwPolyline)
         {
+            var combined = GetOcsMatrix(lwPolyline.Normal) * transform;
             foreach (var v in lwPolyline.Vertexes)
             {
-                UpdateBounds(new Vector2((float)v.Position.X, (float)v.Position.Y), transform, ref min, ref max, ref hasData);
+                UpdateBounds(new Vector2((float)v.Position.X, (float)v.Position.Y), combined, ref min, ref max, ref hasData);
             }
         }
         else if (entity is Polyline polyline)
         {
+            var combined = GetOcsMatrix(polyline.Normal) * transform;
             foreach (var v in polyline.Vertexes)
             {
-                UpdateBounds(new Vector2((float)v.Position.X, (float)v.Position.Y), transform, ref min, ref max, ref hasData);
+                UpdateBounds(new Vector2((float)v.Position.X, (float)v.Position.Y), combined, ref min, ref max, ref hasData);
             }
         }
         else if (entity is Spline spline)
@@ -304,11 +309,13 @@ public static class DxfDocumentRenderer
         }
         else if (entity is netDxf.Entities.Text text)
         {
-            UpdateBounds(new Vector2((float)text.Position.X, (float)text.Position.Y), transform, ref min, ref max, ref hasData);
+            var combined = GetOcsMatrix(text.Normal) * transform;
+            UpdateBounds(new Vector2((float)text.Position.X, (float)text.Position.Y), combined, ref min, ref max, ref hasData);
         }
         else if (entity is MText mtext)
         {
-            UpdateBounds(new Vector2((float)mtext.Position.X, (float)mtext.Position.Y), transform, ref min, ref max, ref hasData);
+            var combined = GetOcsMatrix(mtext.Normal) * transform;
+            UpdateBounds(new Vector2((float)mtext.Position.X, (float)mtext.Position.Y), combined, ref min, ref max, ref hasData);
         }
         else if (entity is Insert insert)
         {
@@ -317,11 +324,13 @@ public static class DxfDocumentRenderer
             float radAngle = (float)(insert.Rotation * Math.PI / 180.0);
             var origin = insert.Block.Origin;
 
+            // Correct AutoCAD standard local block transform mapping:
+            // Translate by pos (insertion point) in OCS *before* applying the parent extrusion normal OCS-to-WCS rotation!
             var localMat = Matrix4x4.CreateTranslation(-(float)origin.X, -(float)origin.Y, -(float)origin.Z) *
                            Matrix4x4.CreateScale((float)scale.X, (float)scale.Y, (float)scale.Z) *
                            Matrix4x4.CreateRotationZ(radAngle) *
-                           GetOcsMatrix(insert.Normal) *
-                           Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
+                           Matrix4x4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z) *
+                           GetOcsMatrix(insert.Normal);
 
             var combinedMat = localMat * transform;
 
@@ -331,15 +340,16 @@ public static class DxfDocumentRenderer
             }
             foreach (var attr in insert.Attributes)
             {
-                AccumulateAttributeBounds(attr, combinedMat, ref min, ref max, ref hasData);
+                AccumulateAttributeBounds(attr, transform, ref min, ref max, ref hasData);
             }
         }
         else if (entity is netDxf.Entities.Solid solid)
         {
-            UpdateBounds(new Vector2((float)solid.FirstVertex.X, (float)solid.FirstVertex.Y), transform, ref min, ref max, ref hasData);
-            UpdateBounds(new Vector2((float)solid.SecondVertex.X, (float)solid.SecondVertex.Y), transform, ref min, ref max, ref hasData);
-            UpdateBounds(new Vector2((float)solid.ThirdVertex.X, (float)solid.ThirdVertex.Y), transform, ref min, ref max, ref hasData);
-            UpdateBounds(new Vector2((float)solid.FourthVertex.X, (float)solid.FourthVertex.Y), transform, ref min, ref max, ref hasData);
+            var combined = GetOcsMatrix(solid.Normal) * transform;
+            UpdateBounds(new Vector2((float)solid.FirstVertex.X, (float)solid.FirstVertex.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)solid.SecondVertex.X, (float)solid.SecondVertex.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)solid.ThirdVertex.X, (float)solid.ThirdVertex.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)solid.FourthVertex.X, (float)solid.FourthVertex.Y), combined, ref min, ref max, ref hasData);
         }
         else if (entity is Dimension dimension)
         {
@@ -374,8 +384,9 @@ public static class DxfDocumentRenderer
         }
         else if (entity is Image image)
         {
-            UpdateBounds(new Vector2((float)image.Position.X, (float)image.Position.Y), transform, ref min, ref max, ref hasData);
-            UpdateBounds(new Vector2((float)(image.Position.X + image.Width), (float)(image.Position.Y + image.Height)), transform, ref min, ref max, ref hasData);
+            var combined = GetOcsMatrix(image.Normal) * transform;
+            UpdateBounds(new Vector2((float)image.Position.X, (float)image.Position.Y), combined, ref min, ref max, ref hasData);
+            UpdateBounds(new Vector2((float)(image.Position.X + image.Width), (float)(image.Position.Y + image.Height)), combined, ref min, ref max, ref hasData);
         }
         else if (entity is netDxf.Entities.Viewport vp)
         {
