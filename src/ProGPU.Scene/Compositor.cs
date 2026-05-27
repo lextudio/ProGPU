@@ -3815,6 +3815,12 @@ public unsafe class Compositor : IDisposable
         var savedHatchSegments = _hatchSegmentsList.ToArray();
         var savedAcisRecords = _acisRecordsList.ToArray();
         var savedAcisEdges = _acisEdgesList.ToArray();
+
+        var savedActiveClipRect = _activeClipRect;
+        var savedClipStack = _clipStack.ToArray();
+
+        _activeClipRect = null;
+        _clipStack.Clear();
         
         // Clear for compilation
         _vectorVerticesList.Clear();
@@ -3854,6 +3860,12 @@ public unsafe class Compositor : IDisposable
                     break;
                 case RenderCommandType.DrawTexture:
                     CompileTextureCommand(cmd, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.PushClip:
+                    PushClipRect(cmd.Rect, Matrix4x4.Identity);
+                    break;
+                case RenderCommandType.PopClip:
+                    PopClipRect();
                     break;
                 case RenderCommandType.DrawLine:
                     CompileLineCommand(cmd, Matrix4x4.Identity);
@@ -3935,6 +3947,13 @@ public unsafe class Compositor : IDisposable
         _hatchSegmentsList.Clear(); _hatchSegmentsList.AddRange(savedHatchSegments);
         _acisRecordsList.Clear(); _acisRecordsList.AddRange(savedAcisRecords);
         _acisEdgesList.Clear(); _acisEdgesList.AddRange(savedAcisEdges);
+        
+        _activeClipRect = savedActiveClipRect;
+        _clipStack.Clear();
+        for (int i = savedClipStack.Length - 1; i >= 0; i--)
+        {
+            _clipStack.Push(savedClipStack[i]);
+        }
         
         return staticBuffer;
     }
