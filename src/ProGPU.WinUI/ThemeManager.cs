@@ -669,6 +669,7 @@ public static class ThemeManager
             new Setter(nameof(Control.Template), new ControlTemplate(typeof(CheckBox), (parent) =>
             {
                 var grid = new Grid();
+                grid.RowDefinitions.Add(GridLength.Auto);
                 grid.ColumnDefinitions.Add(new GridLength(26f, GridUnitType.Absolute));
                 grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
 
@@ -705,6 +706,7 @@ public static class ThemeManager
             new Setter(nameof(Control.Template), new ControlTemplate(typeof(RadioButton), (parent) =>
             {
                 var grid = new Grid();
+                grid.RowDefinitions.Add(GridLength.Auto);
                 grid.ColumnDefinitions.Add(new GridLength(26f, GridUnitType.Absolute));
                 grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
 
@@ -740,6 +742,7 @@ public static class ThemeManager
             new Setter(nameof(Control.Template), new ControlTemplate(typeof(ToggleSwitch), (parent) =>
             {
                 var grid = new Grid();
+                grid.RowDefinitions.Add(GridLength.Auto);
                 float trackColWidth = family == VisualThemeFamily.macOS ? 40f : 48f;
                 grid.ColumnDefinitions.Add(new GridLength(trackColWidth, GridUnitType.Absolute));
                 grid.ColumnDefinitions.Add(new GridLength(1f, GridUnitType.Star));
