@@ -159,44 +159,85 @@ public class TabViewItem : ContentControl
 
     public override void OnRender(DrawingContext context)
     {
+        var activeFamily = ActualThemeFamily;
+        var activeTheme = ActualTheme;
+
         // 1. Draw Tab Header Background Card matching browser tabs styling
         Brush bg;
         Pen? borderPen = null;
+        bool isMacOS = activeFamily == VisualThemeFamily.macOS;
 
-        if (IsSelected)
+        if (isMacOS)
         {
-            // Selected active tab: deeper dark or distinct grey, matching open tab
-            bg = Background ?? ThemeManager.GetBrush("CardBackground");
-            // Subtle top/left/right border for tabs
-            borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorder"), 1f);
-        }
-        else if (IsPointerOver)
-        {
-            // Hover tab: slightly translucent white overlay
-            bg = Background ?? ThemeManager.GetBrush("ControlBackgroundHover");
+            if (IsSelected)
+            {
+                bg = Background ?? ThemeManager.GetBrush("CardBackground", activeTheme, activeFamily);
+            }
+            else
+            {
+                if (IsPointerOver)
+                {
+                    bg = activeTheme == ElementTheme.Light
+                        ? new SolidColorBrush(new Vector4(0.92f, 0.92f, 0.92f, 1f)) // #EAEAEA
+                        : new SolidColorBrush(new Vector4(0.18f, 0.18f, 0.18f, 1f)); // #2E2E2E
+                }
+                else
+                {
+                    bg = activeTheme == ElementTheme.Light
+                        ? new SolidColorBrush(new Vector4(0.898f, 0.898f, 0.898f, 1f)) // #E5E5E5
+                        : new SolidColorBrush(new Vector4(0.145f, 0.145f, 0.145f, 1f)); // #252525
+                }
+            }
         }
         else
         {
-            // Inactive idle tab: translucent background
-            bg = Background ?? ThemeManager.GetBrush("ControlBackground");
+            if (IsSelected)
+            {
+                bg = Background ?? ThemeManager.GetBrush("CardBackground", activeTheme, activeFamily);
+                borderPen = new Pen(BorderBrush ?? ThemeManager.GetBrush("ControlBorder", activeTheme, activeFamily), 1f);
+            }
+            else if (IsPointerOver)
+            {
+                bg = Background ?? ThemeManager.GetBrush("ControlBackgroundHover", activeTheme, activeFamily);
+            }
+            else
+            {
+                bg = Background ?? ThemeManager.GetBrush("ControlBackground", activeTheme, activeFamily);
+            }
         }
 
         // Draw header background (only round top corners)
         var tabRect = new Rect(0, 0, Size.X, Size.Y);
-        if (CornerRadius <= 0f)
+        if (isMacOS)
         {
-            context.DrawRectangle(bg, borderPen, tabRect);
+            context.DrawRectangle(bg, null, tabRect);
+
+            // Draw a subtle vertical separator on the right side of the tab if it's not selected
+            if (!IsSelected)
+            {
+                var sepColor = activeTheme == ElementTheme.Light
+                    ? new SolidColorBrush(new Vector4(0.8f, 0.8f, 0.8f, 1f))
+                    : new SolidColorBrush(new Vector4(0.25f, 0.25f, 0.25f, 1f));
+                context.DrawRectangle(sepColor, null, new Rect(Size.X - 1f, 0f, 1f, Size.Y));
+            }
         }
         else
         {
-            var path = CreateTabShapePath(tabRect, CornerRadius);
-            context.DrawPath(bg, borderPen, path);
+            if (CornerRadius <= 0f)
+            {
+                context.DrawRectangle(bg, borderPen, tabRect);
+            }
+            else
+            {
+                var path = CreateTabShapePath(tabRect, CornerRadius);
+                context.DrawPath(bg, borderPen, path);
+            }
         }
 
         // 2. Draw Active Segoe Blue Bottom accent indicator line
-        if (IsSelected && IsEnabled)
+        if (!isMacOS && IsSelected && IsEnabled)
         {
-            var activeAccent = ThemeManager.GetBrush("SystemAccentColor"); // Segoe Blue accent
+            var activeAccent = ThemeManager.GetBrush("SystemAccentColor", activeTheme, activeFamily);
             context.DrawRectangle(activeAccent, null, new Rect(4f, Size.Y - 2f, Size.X - 8f, 2f));
         }
 

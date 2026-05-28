@@ -297,6 +297,7 @@ public class NavigationViewItem : Control
     {
         var nav = FindParentNavigationView();
         bool isPaneOpen = nav?.IsPaneOpen ?? false;
+        var activeFamily = nav?.ActualThemeFamily ?? VisualThemeFamily.WinUI;
         
         var activeTheme = this.ActualTheme;
         var textPrimary = ThemeManager.GetBrush("TextPrimary", activeTheme);
@@ -324,17 +325,46 @@ public class NavigationViewItem : Control
         var OrangeBrush = _orangeBrush!;
         var RedPen = _redPen!;
 
-        // 1. Draw modern backgrounds depending on active selection or hover
-        var bg = GetCurrentBackground();
-        if (bg != null)
+        if (activeFamily == VisualThemeFamily.macOS && IsSelected)
         {
-            context.DrawRectangle(bg, null, new Rect(0f, 0f, Size.X, Size.Y));
+            textPrimary = ThemeManager.GetBrush("AccentButtonForeground", activeTheme);
+            textSecondary = ThemeManager.GetBrush("AccentButtonForeground", activeTheme);
+            translucentBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.25f));
+            translucentHeavyBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.6f));
+            primaryPen = new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.8f)), 1f);
+            secondaryPen = new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.8f)), 1f);
+            translucentPen = new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.4f)), 1f);
         }
 
-        // 2. Draw 3px left accent stripe indicator
-        if (IsSelected)
+        // 1. Draw modern backgrounds depending on active selection or hover
+        if (activeFamily == VisualThemeFamily.macOS)
         {
-            context.DrawRectangle(accentBrush, null, new Rect(3f, 6f, 3f, Size.Y - 12f));
+            if (IsSelected)
+            {
+                var macOSSelectedBg = ThemeManager.GetBrush("SystemAccentColor", activeTheme);
+                context.DrawRoundedRectangle(macOSSelectedBg, null, new Rect(6f, 2f, Size.X - 12f, Size.Y - 4f), 5f);
+            }
+            else if (IsPointerOver)
+            {
+                var macOSHoverBg = activeTheme == ElementTheme.Light
+                    ? new SolidColorBrush(new Vector4(0f, 0f, 0f, 0.05f))
+                    : new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.05f));
+                context.DrawRoundedRectangle(macOSHoverBg, null, new Rect(6f, 2f, Size.X - 12f, Size.Y - 4f), 5f);
+            }
+        }
+        else
+        {
+            var bg = GetCurrentBackground();
+            if (bg != null)
+            {
+                context.DrawRectangle(bg, null, new Rect(0f, 0f, Size.X, Size.Y));
+            }
+
+            // 2. Draw 3px left accent stripe indicator
+            if (IsSelected)
+            {
+                context.DrawRectangle(accentBrush, null, new Rect(3f, 6f, 3f, Size.Y - 12f));
+            }
         }
 
         var font = nav?.GetActiveFont();
