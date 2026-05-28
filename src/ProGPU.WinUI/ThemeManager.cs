@@ -1585,6 +1585,7 @@ public class SliderChrome : FrameworkElement
 
 
 
+    private Visual? _thumbVisual;
     private LiquidGlassEffect? _glassEffect;
 
     private void EnsureLiquidGlassEffect()
@@ -1593,30 +1594,38 @@ public class SliderChrome : FrameworkElement
         {
             if (_glassEffect == null)
             {
-                _glassEffect = new LiquidGlassEffect(0.5f);
-                this.Effect = _glassEffect;
+                // macOS 26 Tahoe slider thumb uses Liquid Glass as a clear 3D glass sphere
+                // We set progress to 0.0f so it is clear solid glass with beveled specular refraction
+                _glassEffect = new LiquidGlassEffect(0.0f);
+                _glassEffect.Refraction = 0.6f;
+                _glassEffect.Shininess = 64f;
             }
-            
-            float pct = 0f;
-            if (Maximum > Minimum)
-            {
-                pct = (Value - Minimum) / (Maximum - Minimum);
-            }
-            _glassEffect.Progress = pct;
-            
-            _glassEffect.GlassColor = ActualTheme == ElementTheme.Light
-                ? new Vector4(1f, 1f, 1f, 0.2f)
-                : new Vector4(0.2f, 0.2f, 0.2f, 0.3f);
 
-            _glassEffect.FluidColor = ActualTheme == ElementTheme.Light
-                ? new Vector4(0.0f, 0.478f, 1.0f, 1.0f)
-                : new Vector4(0.04f, 0.52f, 1.0f, 1.0f);
+            if (_thumbVisual == null)
+            {
+                _thumbVisual = new SliderThumbVisual();
+                _thumbVisual.Effect = _glassEffect;
+                AddChild(_thumbVisual);
+            }
+            
+            // Update colors based on the actual theme (Light/Dark)
+            _glassEffect.GlassColor = ActualTheme == ElementTheme.Light
+                ? new Vector4(1f, 1f, 1f, 0.15f)
+                : new Vector4(0.2f, 0.2f, 0.2f, 0.25f);
+            
+            _glassEffect.FluidColor = new Vector4(0f, 0f, 0f, 0f); // Clear glass marble, no fluid sloshing inside
+            
+            this.Effect = null; // No effect on the parent track container
         }
         else
         {
+            if (_thumbVisual != null)
+            {
+                RemoveChild(_thumbVisual);
+                _thumbVisual = null;
+            }
             if (_glassEffect != null)
             {
-                this.Effect = null;
                 _glassEffect = null;
             }
         }
@@ -1657,11 +1666,31 @@ public class SliderChrome : FrameworkElement
         
         if (activeFamily == VisualThemeFamily.macOS)
         {
-            var silhouetteBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f));
-            context.DrawRoundedRectangle(silhouetteBrush, null, trackRect, trackHeight / 2f);
+            // 1. Draw macOS Track Background (Inactive part)
+            Brush inactiveBg = ThemeManager.GetBrush(IsEnabled ? "SliderTrackFill" : "SliderTrackFillDisabled", activeTheme, activeFamily);
+            context.DrawRoundedRectangle(inactiveBg, null, trackRect, trackHeight / 2f);
 
-            Rect thumbRect = new Rect(thumbX - drawThumbRadius, yCenter - drawThumbRadius, drawThumbRadius * 2f, drawThumbRadius * 2f);
-            context.DrawRoundedRectangle(silhouetteBrush, null, thumbRect, drawThumbRadius);
+            // 2. Draw macOS Track Progress (Active part)
+            if (thumbX > baseThumbRadius)
+            {
+                Rect activeRect = new Rect(baseThumbRadius, yCenter - trackHeight / 2f, thumbX - baseThumbRadius, trackHeight);
+                Brush activeBg = ThemeManager.GetBrush(IsEnabled
+                    ? (IsPointerPressed ? "SliderTrackValueFillPressed" : IsPointerOver ? "SliderTrackValueFillPointerOver" : "SliderTrackValueFill")
+                    : "SliderTrackValueFillDisabled", activeTheme, activeFamily);
+                context.DrawRoundedRectangle(activeBg, null, activeRect, trackHeight / 2f);
+            }
+
+            // 3. Update position and size of the liquid glass 3D thumb child visual
+            if (_thumbVisual != null)
+            {
+                _thumbVisual.Offset = new Vector2(thumbX - drawThumbRadius, yCenter - drawThumbRadius);
+                _thumbVisual.Size = new Vector2(drawThumbRadius * 2f, drawThumbRadius * 2f);
+                if (_thumbVisual is SliderThumbVisual thumbVisual)
+                {
+                    thumbVisual.Radius = drawThumbRadius;
+                }
+                _thumbVisual.Invalidate();
+            }
         }
         else
         {
@@ -1713,5 +1742,17 @@ public class SliderChrome : FrameworkElement
                 context.DrawRoundedRectangle(null, focusPen, focusRect, drawThumbRadius + 2.5f);
             }
         }
+    }
+}
+
+public class SliderThumbVisual : Visual
+{
+    public float Radius { get; set; } = 10f;
+
+    public override void OnRender(DrawingContext context)
+    {
+        var silhouetteBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f));
+        var r = new Rect(0, 0, Size.X, Size.Y);
+        context.DrawRoundedRectangle(silhouetteBrush, null, r, Radius);
     }
 }
