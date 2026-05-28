@@ -14,6 +14,18 @@ using ProGPU.Scene;
 
 public static class DesignerSerializer
 {
+    private static readonly HashSet<string> Keywords = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const",
+        "continue", "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit",
+        "extern", "false", "finally", "fixed", "float", "for", "foreach", "goto", "if", "implicit", "in",
+        "int", "interface", "internal", "is", "lock", "long", "namespace", "new", "null", "object", "operator",
+        "out", "override", "params", "private", "protected", "public", "readonly", "ref", "return", "sbyte",
+        "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw",
+        "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void",
+        "volatile", "while"
+    };
+
     public static string SerializeToCSharp(Canvas canvas)
     {
         if (canvas == null) return "";
@@ -69,10 +81,43 @@ public static class DesignerSerializer
         var typeName = element.GetType().Name;
         
         // Clean and unique variable name
-        string rawName = string.IsNullOrEmpty(element.Name) ? typeName.ToLower() : element.Name.Replace(".", "_").Replace(" ", "_");
-        if (char.IsDigit(rawName[0])) rawName = "var_" + rawName;
+        string rawName;
+        if (string.IsNullOrEmpty(element.Name))
+        {
+            rawName = typeName.ToLower();
+        }
+        else
+        {
+            var sbClean = new StringBuilder();
+            foreach (char c in element.Name)
+            {
+                if (char.IsLetterOrDigit(c) || c == '_')
+                {
+                    sbClean.Append(c);
+                }
+                else
+                {
+                    sbClean.Append('_');
+                }
+            }
+            rawName = sbClean.ToString();
+        }
+
+        if (string.IsNullOrEmpty(rawName))
+        {
+            rawName = typeName.ToLower();
+        }
+        else if (char.IsDigit(rawName[0]))
+        {
+            rawName = "var_" + rawName;
+        }
+
+        if (Keywords.Contains(rawName))
+        {
+            rawName = "var_" + rawName;
+        }
+
         string varName = rawName;
-        
         int suffix = 1;
         while (declaredNames.Contains(varName))
         {

@@ -271,6 +271,18 @@ public static class InputSystem
             Vector2 localPoint = new Vector2(localPt3.X, localPt3.Y);
 
             Rect localBounds = new Rect(Vector2.Zero, visual.Size);
+            if (visual.GetType().Name == "SelectionAdorner")
+            {
+                float zoomScale = 1.0f;
+                var zoomProp = visual.GetType().GetProperty("ZoomScale");
+                if (zoomProp != null)
+                {
+                    zoomScale = (float)(zoomProp.GetValue(visual) ?? 1.0f);
+                }
+                float expandY = 32f / zoomScale;
+                float expandX = 12f / zoomScale;
+                localBounds = new Rect(-expandX, -expandY, visual.Size.X + 2f * expandX, visual.Size.Y + expandY + expandX);
+            }
             if (!localBounds.Contains(localPoint))
                 return null;
 
