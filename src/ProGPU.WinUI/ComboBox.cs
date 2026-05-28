@@ -369,6 +369,24 @@ public class ComboBox : Control
 
             if (activeFamily == VisualThemeFamily.macOS)
             {
+                float capW = 22f;
+                float capH = headerH - 4f;
+                Rect capRect = new Rect(Size.X - capW - 2f, 2f, capW, capH);
+                
+                // Draw capsule background using solid macOS gray values
+                Brush capBg = activeTheme == ElementTheme.Light 
+                    ? new SolidColorBrush(new Vector4(0.894f, 0.894f, 0.902f, 1.0f))
+                    : new SolidColorBrush(new Vector4(0.227f, 0.227f, 0.235f, 1.0f));
+                
+                context.FillRoundedRectangle(capBg, capRect, 4f);
+                
+                // Draw capsule border
+                Vector4 borderCol = activeTheme == ElementTheme.Light
+                    ? new Vector4(0f, 0f, 0f, 0.15f)
+                    : new Vector4(1f, 1f, 1f, 0.12f);
+                Pen capPen = new Pen(new SolidColorBrush(borderCol), 0.5f);
+                context.DrawRoundedRectangle(null, capPen, capRect, 4f);
+
                 Brush arrowBrush;
                 if (IsPointerOver || IsDropDownOpen)
                 {
@@ -379,7 +397,7 @@ public class ComboBox : Control
                     arrowBrush = new SolidColorBrush(new Vector4(0.55f, 0.55f, 0.57f, 1f));
                 }
 
-                context.DrawText("▼", activeFont, FontSize - 2f, arrowBrush, new Vector2(Size.X - 18f, textY + 1f));
+                context.DrawText("▼", activeFont, FontSize - 4f, arrowBrush, new Vector2(Size.X - capW / 2f - 6f, textY + 1.5f));
             }
             else
             {

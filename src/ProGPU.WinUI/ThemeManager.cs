@@ -140,9 +140,9 @@ public static class ThemeManager
     {
         { "PageBackground", new Vector4(0.118f, 0.118f, 0.118f, 1f) }, // Dark Cocoa Titlebar Gray: #1E1E1E
         { "CardBackground", new Vector4(0.176f, 0.176f, 0.176f, 1f) }, // Slightly lighter charcoal: #2D2D2D
-        { "ControlBackground", new Vector4(1f, 1f, 1f, 0.06f) }, // Dark translucent glassmorphism
-        { "ControlBackgroundHover", new Vector4(1f, 1f, 1f, 0.12f) }, // Lighter hover
-        { "ControlBackgroundPressed", new Vector4(1f, 1f, 1f, 0.18f) }, // Even lighter pressed
+        { "ControlBackground", new Vector4(0.227f, 0.227f, 0.235f, 1.0f) }, // Dark solid charcoal: #3A3A3C
+        { "ControlBackgroundHover", new Vector4(0.282f, 0.282f, 0.29f, 1.0f) }, // #48484A
+        { "ControlBackgroundPressed", new Vector4(0.329f, 0.329f, 0.337f, 1.0f) }, // #545456
         { "ControlBorder", new Vector4(1f, 1f, 1f, 0.12f) }, // Sleek dark border
         { "ControlBorderHover", new Vector4(1f, 1f, 1f, 0.25f) },
         { "TextPrimary", new Vector4(0.9f, 0.9f, 0.9f, 1.0f) }, // Crisp Cocoa White
@@ -168,9 +168,9 @@ public static class ThemeManager
     {
         { "PageBackground", new Vector4(0.965f, 0.965f, 0.965f, 1f) }, // Classic Cocoa Window Gray: #ECECEC
         { "CardBackground", new Vector4(1.0f, 1.0f, 1.0f, 1.0f) }, // Solid White
-        { "ControlBackground", new Vector4(0f, 0f, 0f, 0.03f) }, // Very light gray backdrop
-        { "ControlBackgroundHover", new Vector4(0f, 0f, 0f, 0.06f) },
-        { "ControlBackgroundPressed", new Vector4(0f, 0f, 0f, 0.12f) },
+        { "ControlBackground", new Vector4(0.894f, 0.894f, 0.902f, 1.0f) }, // Light solid gray: #E4E4E6
+        { "ControlBackgroundHover", new Vector4(0.82f, 0.82f, 0.839f, 1.0f) }, // #D1D1D6
+        { "ControlBackgroundPressed", new Vector4(0.78f, 0.78f, 0.80f, 1.0f) }, // #C7C7CC
         { "ControlBorder", new Vector4(0f, 0f, 0f, 0.15f) }, // Sleek Cocoa Border: #C3C3C3
         { "ControlBorderHover", new Vector4(0f, 0f, 0f, 0.28f) },
         { "TextPrimary", new Vector4(0.16f, 0.16f, 0.16f, 1.0f) }, // Deep Cocoa charcoal
@@ -392,9 +392,30 @@ public static class ThemeManager
         { "SystemControlHighlightAccentBrush", "SystemAccentColor" }
     };
 
-    private static string ResolveAlias(string key)
+    private static string ResolveAlias(string key, VisualThemeFamily family)
     {
         if (string.IsNullOrEmpty(key)) return key;
+
+        if (family == VisualThemeFamily.macOS)
+        {
+            if (key.Equals("TextControlBackground", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("TextControlBackgroundPointerOver", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("TextControlBackgroundPressed", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("TextBoxBackground", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("TextBoxBackgroundPointerOver", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("TextBoxBackgroundPressed", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("PasswordBoxBackground", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("ComboBoxBackground", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("ComboBoxBackgroundPointerOver", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("CheckBoxBackgroundUnchecked", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("CheckBoxBackgroundUncheckedPointerOver", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("RadioButtonBackground", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("RadioButtonBackgroundPointerOver", StringComparison.OrdinalIgnoreCase))
+            {
+                return "CardBackground";
+            }
+        }
+
         int depth = 0;
         while (ResourceAliases.TryGetValue(key, out var alias) && depth < 20)
         {
@@ -421,6 +442,8 @@ public static class ThemeManager
     {
         if (string.IsNullOrEmpty(key)) return null;
 
+        var actualFamily = themeFamily == VisualThemeFamily.Default ? CurrentThemeFamily : themeFamily;
+
         if (key.Equals("AccentButtonStyle", StringComparison.OrdinalIgnoreCase))
         {
             var accentStyle = new Style(typeof(Button));
@@ -428,10 +451,9 @@ public static class ThemeManager
             return accentStyle;
         }
 
-        key = ResolveAlias(key);
+        key = ResolveAlias(key, actualFamily);
 
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
-        var actualFamily = themeFamily == VisualThemeFamily.Default ? CurrentThemeFamily : themeFamily;
 
         if (actualFamily == VisualThemeFamily.macOS && !IsWindowActive)
         {
@@ -480,7 +502,7 @@ public static class ThemeManager
         var actualFamily = themeFamily == VisualThemeFamily.Default ? CurrentThemeFamily : themeFamily;
         var cache = (actualTheme == ElementTheme.Light) ? LightBrushCache : DarkBrushCache;
 
-        key = ResolveAlias(key);
+        key = ResolveAlias(key, actualFamily);
 
         if (actualFamily == VisualThemeFamily.macOS && !IsWindowActive)
         {
@@ -514,7 +536,7 @@ public static class ThemeManager
     {
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var actualFamily = themeFamily == VisualThemeFamily.Default ? CurrentThemeFamily : themeFamily;
-        key = ResolveAlias(key);
+        key = ResolveAlias(key, actualFamily);
 
         var cacheKey = (key, thickness, actualTheme, actualFamily);
         if (PenCache.TryGetValue(cacheKey, out var cachedPen))
@@ -534,10 +556,10 @@ public static class ThemeManager
 
     public static Vector4 GetColor(string key, ElementTheme theme, VisualThemeFamily themeFamily)
     {
-        key = ResolveAlias(key);
+        var actualFamily = themeFamily == VisualThemeFamily.Default ? CurrentThemeFamily : themeFamily;
+        key = ResolveAlias(key, actualFamily);
 
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
-        var actualFamily = themeFamily == VisualThemeFamily.Default ? CurrentThemeFamily : themeFamily;
 
         if (actualFamily == VisualThemeFamily.macOS && !IsWindowActive)
         {
@@ -1026,7 +1048,7 @@ public class CheckboxChrome : FrameworkElement
                 Vector4 disabledBorder = activeTheme == ElementTheme.Light
                     ? new Vector4(0.85f, 0.85f, 0.85f, 1f)
                     : new Vector4(0.15f, 0.15f, 0.15f, 1f);
-                pen = new Pen(new SolidColorBrush(disabledBorder), 1f);
+                pen = new Pen(new SolidColorBrush(disabledBorder), 0.5f);
             }
             else if (IsChecked)
             {
@@ -1038,7 +1060,7 @@ public class CheckboxChrome : FrameworkElement
                 });
                 
                 Vector4 borderCol = activeTheme == ElementTheme.Light ? new Vector4(0f, 0.39f, 0.84f, 1f) : new Vector4(0f, 0.43f, 0.88f, 1f);
-                pen = new Pen(new SolidColorBrush(borderCol), 1f);
+                pen = new Pen(new SolidColorBrush(borderCol), 0.5f);
             }
             else
             {
@@ -1050,7 +1072,7 @@ public class CheckboxChrome : FrameworkElement
                 });
                 
                 Vector4 borderCol = activeTheme == ElementTheme.Light ? new Vector4(0.76f, 0.76f, 0.76f, 1f) : new Vector4(0.33f, 0.33f, 0.33f, 1f);
-                pen = new Pen(new SolidColorBrush(borderCol), 1f);
+                pen = new Pen(new SolidColorBrush(borderCol), 0.5f);
             }
         }
         else
@@ -1183,7 +1205,7 @@ public class RadioButtonChrome : FrameworkElement
                 Vector4 disabledBorder = activeTheme == ElementTheme.Light
                     ? new Vector4(0.85f, 0.85f, 0.85f, 1f)
                     : new Vector4(0.15f, 0.15f, 0.15f, 1f);
-                pen = new Pen(new SolidColorBrush(disabledBorder), 1f);
+                pen = new Pen(new SolidColorBrush(disabledBorder), 0.5f);
             }
             else if (IsChecked)
             {
@@ -1195,7 +1217,7 @@ public class RadioButtonChrome : FrameworkElement
                 });
                 
                 Vector4 borderCol = activeTheme == ElementTheme.Light ? new Vector4(0f, 0.39f, 0.84f, 1f) : new Vector4(0f, 0.43f, 0.88f, 1f);
-                pen = new Pen(new SolidColorBrush(borderCol), 1f);
+                pen = new Pen(new SolidColorBrush(borderCol), 0.5f);
             }
             else
             {
@@ -1207,7 +1229,7 @@ public class RadioButtonChrome : FrameworkElement
                 });
                 
                 Vector4 borderCol = activeTheme == ElementTheme.Light ? new Vector4(0.76f, 0.76f, 0.76f, 1f) : new Vector4(0.33f, 0.33f, 0.33f, 1f);
-                pen = new Pen(new SolidColorBrush(borderCol), 1f);
+                pen = new Pen(new SolidColorBrush(borderCol), 0.5f);
             }
         }
         else

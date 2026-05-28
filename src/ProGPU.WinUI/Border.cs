@@ -238,36 +238,36 @@ public class Border : FrameworkElement
                 {
                     if (isPressed)
                     {
-                        topColor = new Vector4(0.88f, 0.88f, 0.88f, 0.95f);
-                        bottomColor = new Vector4(0.84f, 0.84f, 0.84f, 0.95f);
+                        topColor = new Vector4(0.79f, 0.79f, 0.81f, 1.0f);
+                        bottomColor = new Vector4(0.77f, 0.77f, 0.79f, 1.0f);
                     }
                     else if (isHovered)
                     {
-                        topColor = new Vector4(0.98f, 0.98f, 0.98f, 0.95f);
-                        bottomColor = new Vector4(0.94f, 0.94f, 0.94f, 0.95f);
+                        topColor = new Vector4(0.83f, 0.83f, 0.85f, 1.0f);
+                        bottomColor = new Vector4(0.81f, 0.81f, 0.83f, 1.0f);
                     }
                     else
                     {
-                        topColor = new Vector4(1.0f, 1.0f, 1.0f, 0.9f);
-                        bottomColor = new Vector4(0.96f, 0.96f, 0.96f, 0.9f);
+                        topColor = new Vector4(0.92f, 0.92f, 0.93f, 1.0f);
+                        bottomColor = new Vector4(0.89f, 0.89f, 0.90f, 1.0f);
                     }
                 }
                 else
                 {
                     if (isPressed)
                     {
-                        topColor = new Vector4(0.18f, 0.18f, 0.18f, 0.9f);
-                        bottomColor = new Vector4(0.16f, 0.16f, 0.16f, 0.9f);
+                        topColor = new Vector4(0.34f, 0.34f, 0.35f, 1.0f);
+                        bottomColor = new Vector4(0.32f, 0.32f, 0.33f, 1.0f);
                     }
                     else if (isHovered)
                     {
-                        topColor = new Vector4(0.32f, 0.32f, 0.32f, 0.9f);
-                        bottomColor = new Vector4(0.28f, 0.28f, 0.28f, 0.9f);
+                        topColor = new Vector4(0.29f, 0.29f, 0.30f, 1.0f);
+                        bottomColor = new Vector4(0.27f, 0.27f, 0.28f, 1.0f);
                     }
                     else
                     {
-                        topColor = new Vector4(0.26f, 0.26f, 0.26f, 0.85f);
-                        bottomColor = new Vector4(0.22f, 0.22f, 0.22f, 0.85f);
+                        topColor = new Vector4(0.24f, 0.24f, 0.25f, 1.0f);
+                        bottomColor = new Vector4(0.21f, 0.21f, 0.22f, 1.0f);
                     }
                 }
                 
