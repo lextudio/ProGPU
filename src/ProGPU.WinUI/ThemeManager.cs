@@ -43,7 +43,7 @@ public static class ThemeManager
     private static readonly Dictionary<string, Vector4> DarkPalette = new()
     {
         { "PageBackground", new Vector4(0.08f, 0.08f, 0.12f, 1.0f) }, // Dark Mica: #14141F
-        { "CardBackground", new Vector4(0.12f, 0.12f, 0.16f, 0.98f) }, // #1F1F28
+        { "CardBackground", new Vector4(0.12f, 0.12f, 0.16f, 1.0f) }, // #1F1F28
         { "ControlBackground", new Vector4(1f, 1f, 1f, 0.05f) }, // White 5%
         { "ControlBackgroundHover", new Vector4(1f, 1f, 1f, 0.09f) }, // White 9%
         { "ControlBackgroundPressed", new Vector4(0f, 0f, 0f, 0.15f) }, // Black 15%
@@ -57,7 +57,13 @@ public static class ThemeManager
         { "SelectionHighlight", new Vector4(0.0f, 0.47f, 0.83f, 0.25f) }, // Translucent Segoe Blue
         { "HeaderBackground", new Vector4(0.05f, 0.05f, 0.07f, 1.0f) }, // Deep Dark
         { "ScrollbarThumb", new Vector4(1f, 1f, 1f, 0.25f) }, // White 25%
-        { "ScrollbarThumbHover", new Vector4(1f, 1f, 1f, 0.45f) } // White 45%
+        { "ScrollbarThumbHover", new Vector4(1f, 1f, 1f, 0.45f) }, // White 45%
+        { "ButtonAmbientShadow", new Vector4(0f, 0f, 0f, 0.04f) },
+        { "ButtonPenumbraShadow", new Vector4(0f, 0f, 0f, 0.08f) },
+        { "NavigationViewItemBackgroundSelected", new Vector4(1f, 1f, 1f, 0.07f) },
+        { "NavigationViewItemBackgroundPointerOver", new Vector4(1f, 1f, 1f, 0.05f) },
+        { "TabViewItemCloseHover", new Vector4(1.0f, 0.33f, 0.33f, 1.0f) },
+        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) }
     };
 
     private static readonly Dictionary<string, Vector4> LightPalette = new()
@@ -77,7 +83,13 @@ public static class ThemeManager
         { "SelectionHighlight", new Vector4(0.0f, 0.47f, 0.83f, 0.25f) }, // Translucent Segoe Blue
         { "HeaderBackground", new Vector4(0.92f, 0.92f, 0.94f, 1.0f) }, // Lighter header
         { "ScrollbarThumb", new Vector4(0f, 0f, 0f, 0.18f) }, // Black 18%
-        { "ScrollbarThumbHover", new Vector4(0f, 0f, 0f, 0.35f) } // Black 35%
+        { "ScrollbarThumbHover", new Vector4(0f, 0f, 0f, 0.35f) }, // Black 35%
+        { "ButtonAmbientShadow", new Vector4(0f, 0f, 0f, 0.04f) },
+        { "ButtonPenumbraShadow", new Vector4(0f, 0f, 0f, 0.08f) },
+        { "NavigationViewItemBackgroundSelected", new Vector4(0f, 0f, 0f, 0.08f) },
+        { "NavigationViewItemBackgroundPointerOver", new Vector4(0f, 0f, 0f, 0.05f) },
+        { "TabViewItemCloseHover", new Vector4(1.0f, 0.33f, 0.33f, 1.0f) },
+        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) }
     };
 
     private static readonly Dictionary<string, string> ResourceAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -85,6 +97,7 @@ public static class ThemeManager
         { "ButtonBackground", "ControlBackground" },
         { "ButtonBackgroundPointerOver", "ControlBackgroundHover" },
         { "ButtonBackgroundPressed", "ControlBackgroundPressed" },
+        { "ButtonBackgroundFocused", "ControlBackground" },
         { "ButtonBackgroundDisabled", "ControlBackground" },
         { "ButtonForeground", "TextPrimary" },
         { "ButtonForegroundPointerOver", "TextPrimary" },
@@ -93,14 +106,34 @@ public static class ThemeManager
         { "ButtonBorderBrush", "ControlBorder" },
         { "ButtonBorderBrushPointerOver", "ControlBorderHover" },
         { "ButtonBorderBrushPressed", "ControlBorder" },
+        { "ButtonBorderBrushFocused", "ControlBorderHover" },
         { "ButtonBorderBrushDisabled", "ControlBorder" },
 
+        { "AccentButtonBackground", "SystemAccentColor" },
+        { "AccentButtonBackgroundPointerOver", "SystemAccentColorLight1" },
+        { "AccentButtonBackgroundPressed", "SystemAccentColorDark1" },
+        { "AccentButtonBackgroundFocused", "SystemAccentColor" },
+        { "AccentButtonBackgroundDisabled", "ControlBackground" },
+        { "AccentButtonForeground", "TextOnAccent" },
+        { "AccentButtonForegroundPointerOver", "TextOnAccent" },
+        { "AccentButtonForegroundPressed", "TextOnAccent" },
+        { "AccentButtonForegroundDisabled", "TextSecondary" },
+        { "AccentButtonBorderBrush", "SystemAccentColor" },
+        { "AccentButtonBorderBrushPointerOver", "SystemAccentColorLight1" },
+        { "AccentButtonBorderBrushPressed", "SystemAccentColorDark1" },
+        { "AccentButtonBorderBrushFocused", "SystemAccentColor" },
+        { "AccentButtonBorderBrushDisabled", "ControlBorder" },
+
         { "RepeatButtonBackground", "ControlBackground" },
+        { "RepeatButtonBackgroundFocused", "ControlBackground" },
         { "RepeatButtonForeground", "TextPrimary" },
         { "RepeatButtonBorderBrush", "ControlBorder" },
+        { "RepeatButtonBorderBrushFocused", "ControlBorderHover" },
         { "HyperlinkButtonBackground", "ControlBackground" },
+        { "HyperlinkButtonBackgroundFocused", "ControlBackground" },
         { "HyperlinkButtonForeground", "SystemAccentColor" },
         { "HyperlinkButtonBorderBrush", "SystemAccentColor" },
+        { "HyperlinkButtonBorderBrushFocused", "SystemAccentColor" },
 
         { "CheckBoxBackgroundUnchecked", "ControlBackground" },
         { "CheckBoxBackgroundUncheckedPointerOver", "ControlBackgroundHover" },
@@ -111,15 +144,54 @@ public static class ThemeManager
         { "CheckBoxCheckBackgroundFillChecked", "SystemAccentColor" },
         { "CheckBoxCheckBackgroundFillCheckedPointerOver", "SystemAccentColorLight1" },
         { "CheckBoxCheckBackgroundFillCheckedPressed", "SystemAccentColorDark1" },
-        { "CheckBoxCheckGlyphForegroundChecked", "TextPrimary" },
+        { "CheckBoxCheckGlyphForegroundChecked", "TextOnAccent" },
+
+        { "CheckBoxBackground", "ControlBackground" },
+        { "CheckBoxBackgroundPointerOver", "ControlBackgroundHover" },
+        { "CheckBoxBackgroundPressed", "ControlBackgroundPressed" },
+        { "CheckBoxBackgroundFocused", "ControlBackground" },
+        { "CheckBoxBackgroundDisabled", "ControlBackground" },
+        { "CheckBoxForeground", "TextPrimary" },
+        { "CheckBoxForegroundPointerOver", "TextPrimary" },
+        { "CheckBoxForegroundPressed", "TextPrimary" },
+        { "CheckBoxForegroundDisabled", "TextSecondary" },
+        { "CheckBoxBorderBrush", "ControlBorder" },
+        { "CheckBoxBorderBrushPointerOver", "ControlBorderHover" },
+        { "CheckBoxBorderBrushPressed", "ControlBorder" },
+        { "CheckBoxBorderBrushFocused", "ControlBorderHover" },
+        { "CheckBoxBorderBrushDisabled", "ControlBorder" },
+
+        { "RadioButtonBackground", "ControlBackground" },
+        { "RadioButtonBackgroundPointerOver", "ControlBackgroundHover" },
+        { "RadioButtonBackgroundPressed", "ControlBackgroundPressed" },
+        { "RadioButtonBackgroundFocused", "ControlBackground" },
+        { "RadioButtonBackgroundDisabled", "ControlBackground" },
+        { "RadioButtonForeground", "TextPrimary" },
+        { "RadioButtonForegroundPointerOver", "TextPrimary" },
+        { "RadioButtonForegroundPressed", "TextPrimary" },
+        { "RadioButtonForegroundDisabled", "TextSecondary" },
+        { "RadioButtonBorderBrush", "ControlBorder" },
+        { "RadioButtonBorderBrushPointerOver", "ControlBorderHover" },
+        { "RadioButtonBorderBrushPressed", "ControlBorder" },
+        { "RadioButtonBorderBrushFocused", "ControlBorderHover" },
+        { "RadioButtonBorderBrushDisabled", "ControlBorder" },
+        { "RadioButtonCheckBackgroundFillChecked", "SystemAccentColor" },
+        { "RadioButtonCheckBackgroundFillCheckedPointerOver", "SystemAccentColorLight1" },
+        { "RadioButtonCheckBackgroundFillCheckedPressed", "SystemAccentColorDark1" },
+        { "RadioButtonCheckGlyphForegroundChecked", "TextOnAccent" },
 
         { "ComboBoxBackground", "ControlBackground" },
         { "ComboBoxBackgroundPointerOver", "ControlBackgroundHover" },
         { "ComboBoxBackgroundPressed", "ControlBackgroundPressed" },
+        { "ComboBoxBackgroundDisabled", "ControlBackground" },
         { "ComboBoxForeground", "TextPrimary" },
         { "ComboBoxForegroundPointerOver", "TextPrimary" },
+        { "ComboBoxForegroundPressed", "TextPrimary" },
+        { "ComboBoxForegroundDisabled", "TextSecondary" },
         { "ComboBoxBorderBrush", "ControlBorder" },
         { "ComboBoxBorderBrushPointerOver", "ControlBorderHover" },
+        { "ComboBoxBorderBrushPressed", "ControlBorder" },
+        { "ComboBoxBorderBrushDisabled", "ControlBorder" },
         { "ComboBoxItemBackgroundSelected", "SelectionHighlight" },
         { "ComboBoxItemBackgroundPointerOver", "ControlBackgroundHover" },
         { "ComboBoxItemForeground", "TextPrimary" },
@@ -133,6 +205,34 @@ public static class ThemeManager
         { "TextControlBorderBrushPointerOver", "ControlBorderHover" },
         { "TextControlBorderBrushFocused", "SystemAccentColor" },
         { "TextControlPlaceholderForeground", "TextSecondary" },
+
+        { "TextBoxBackground", "TextControlBackground" },
+        { "TextBoxBackgroundPointerOver", "TextControlBackgroundPointerOver" },
+        { "TextBoxBackgroundPressed", "TextControlBackground" },
+        { "TextBoxBackgroundFocused", "TextControlBackgroundFocused" },
+        { "TextBoxBackgroundDisabled", "TextControlBackground" },
+        { "TextBoxForeground", "TextControlForeground" },
+        { "TextBoxForegroundPointerOver", "TextControlForegroundPointerOver" },
+        { "TextBoxForegroundFocused", "TextControlForeground" },
+        { "TextBoxForegroundDisabled", "TextControlPlaceholderForeground" },
+        { "TextBoxBorderBrush", "TextControlBorderBrush" },
+        { "TextBoxBorderBrushPointerOver", "TextControlBorderBrushPointerOver" },
+        { "TextBoxBorderBrushFocused", "TextControlBorderBrushFocused" },
+        { "TextBoxBorderBrushDisabled", "TextControlBorderBrush" },
+
+        { "PasswordBoxBackground", "TextControlBackground" },
+        { "PasswordBoxBackgroundPointerOver", "TextControlBackgroundPointerOver" },
+        { "PasswordBoxBackgroundPressed", "TextControlBackground" },
+        { "PasswordBoxBackgroundFocused", "TextControlBackgroundFocused" },
+        { "PasswordBoxBackgroundDisabled", "TextControlBackground" },
+        { "PasswordBoxForeground", "TextControlForeground" },
+        { "PasswordBoxForegroundPointerOver", "TextControlForegroundPointerOver" },
+        { "PasswordBoxForegroundFocused", "TextControlForeground" },
+        { "PasswordBoxForegroundDisabled", "TextControlPlaceholderForeground" },
+        { "PasswordBoxBorderBrush", "TextControlBorderBrush" },
+        { "PasswordBoxBorderBrushPointerOver", "TextControlBorderBrushPointerOver" },
+        { "PasswordBoxBorderBrushFocused", "TextControlBorderBrushFocused" },
+        { "PasswordBoxBorderBrushDisabled", "TextControlBorderBrush" },
 
         { "SliderTrackFill", "ControlBorder" },
         { "SliderTrackValueFill", "SystemAccentColor" },
@@ -154,9 +254,32 @@ public static class ThemeManager
         { "ToggleSwitchKnobFillOff", "TextSecondary" },
         { "ToggleSwitchKnobFillOn", "TextPrimary" },
 
+        { "GridSplitterBackground", "ControlBorder" },
+        { "GridSplitterBackgroundPointerOver", "ControlBorderHover" },
+        { "GridSplitterBackgroundPressed", "ControlBorderHover" },
+        { "GridSplitterBackgroundFocused", "ControlBorder" },
+        { "GridSplitterBackgroundDisabled", "ControlBorder" },
+        { "GridSplitterForeground", "TextPrimary" },
+        { "GridSplitterBorderBrush", "ControlBorder" },
+
         { "ProgressBarBackground", "ControlBorder" },
         { "ProgressBarForeground", "SystemAccentColor" },
         { "ProgressRingForeground", "SystemAccentColor" },
+        { "ComboBoxBackgroundFocused", "ControlBackground" },
+        { "ComboBoxBorderBrushFocused", "SystemAccentColor" },
+        { "DatePickerBackground", "TextControlBackground" },
+        { "DatePickerBackgroundPointerOver", "TextControlBackgroundPointerOver" },
+        { "DatePickerBackgroundPressed", "TextControlBackground" },
+        { "DatePickerBackgroundFocused", "TextControlBackgroundFocused" },
+        { "DatePickerBackgroundDisabled", "TextControlBackground" },
+        { "DatePickerForeground", "TextControlForeground" },
+        { "DatePickerForegroundPointerOver", "TextControlForegroundPointerOver" },
+        { "DatePickerForegroundPressed", "TextControlForeground" },
+        { "DatePickerForegroundDisabled", "TextControlPlaceholderForeground" },
+        { "DatePickerBorderBrush", "TextControlBorderBrush" },
+        { "DatePickerBorderBrushPointerOver", "TextControlBorderBrushPointerOver" },
+        { "DatePickerBorderBrushFocused", "TextControlBorderBrushFocused" },
+        { "DatePickerBorderBrushDisabled", "TextControlBorderBrush" },
         { "ToolTipBackground", "CardBackground" },
         { "ToolTipForeground", "TextPrimary" },
         { "ToolTipBorderBrush", "ControlBorder" },
@@ -168,6 +291,18 @@ public static class ThemeManager
         { "SystemControlBackgroundBaseLowBrush", "ControlBackground" },
         { "SystemControlHighlightAccentBrush", "SystemAccentColor" }
     };
+
+    private static string ResolveAlias(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return key;
+        int depth = 0;
+        while (ResourceAliases.TryGetValue(key, out var alias) && depth < 20)
+        {
+            key = alias;
+            depth++;
+        }
+        return key;
+    }
 
     private static object? ResolveValue(object? value)
     {
@@ -187,14 +322,11 @@ public static class ThemeManager
         if (key.Equals("AccentButtonStyle", StringComparison.OrdinalIgnoreCase))
         {
             var accentStyle = new Style(typeof(Button));
-            AddControlChrome(accentStyle, "SystemAccentColor", "TextPrimary", "SystemAccentColor", new Thickness(1f), 6f, new Thickness(12f, 6f, 12f, 6f));
+            AddControlChrome(accentStyle, "AccentButtonBackground", "AccentButtonForeground", "AccentButtonBorderBrush", new Thickness(1f), 6f, new Thickness(12f, 6f, 12f, 6f));
             return accentStyle;
         }
 
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var dict = (actualTheme == ElementTheme.Light) ? LightPalette : DarkPalette;
@@ -220,10 +352,7 @@ public static class ThemeManager
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var cache = (actualTheme == ElementTheme.Light) ? LightBrushCache : DarkBrushCache;
 
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         if (cache.TryGetValue(key, out var cachedBrush))
         {
@@ -241,10 +370,7 @@ public static class ThemeManager
     public static Pen GetPen(string key, float thickness, ElementTheme theme)
     {
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         var cacheKey = (key, thickness, actualTheme);
         if (PenCache.TryGetValue(cacheKey, out var cachedPen))
@@ -262,10 +388,7 @@ public static class ThemeManager
 
     public static Vector4 GetColor(string key, ElementTheme theme)
     {
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var dict = (actualTheme == ElementTheme.Light) ? LightPalette : DarkPalette;
@@ -334,13 +457,13 @@ public static class ThemeManager
 
         if (typeof(CheckBox).IsAssignableFrom(controlType))
         {
-            AddControlChrome(style, "CheckBoxBackgroundUnchecked", "CheckBoxForegroundUnchecked", "CheckBoxBorderBrushUnchecked", new Thickness(1f), 4f, new Thickness(8f, 4f, 8f, 4f));
+            AddControlChrome(style, "CheckBoxBackground", "CheckBoxForeground", "CheckBoxBorderBrush", new Thickness(1f), 4f, new Thickness(8f, 4f, 8f, 4f));
             return style;
         }
 
         if (typeof(RadioButton).IsAssignableFrom(controlType))
         {
-            AddControlChrome(style, "CheckBoxBackgroundUnchecked", "CheckBoxForegroundUnchecked", "CheckBoxBorderBrushUnchecked", new Thickness(1f), 9f, new Thickness(8f, 4f, 8f, 4f));
+            AddControlChrome(style, "RadioButtonBackground", "RadioButtonForeground", "RadioButtonBorderBrush", new Thickness(1f), 9f, new Thickness(8f, 4f, 8f, 4f));
             return style;
         }
 
@@ -375,13 +498,13 @@ public static class ThemeManager
 
         if (typeof(ComboBox).IsAssignableFrom(controlType) || typeof(DatePicker).IsAssignableFrom(controlType) || typeof(TextBox).IsAssignableFrom(controlType) || typeof(RichEditBox).IsAssignableFrom(controlType))
         {
-            AddControlChrome(style, "TextControlBackground", "TextControlForeground", "TextControlBorderBrush", new Thickness(1f), 4f, new Thickness(10f, 6f));
+            AddControlChrome(style, "TextBoxBackground", "TextBoxForeground", "TextBoxBorderBrush", new Thickness(1f), 4f, new Thickness(10f, 6f));
             return style;
         }
 
         if (typeof(PasswordBox).IsAssignableFrom(controlType))
         {
-            AddControlChrome(style, "TextControlBackground", "TextControlForeground", "TextControlBorderBrush", new Thickness(1f), 4f, new Thickness(10f, 6f, 36f, 6f));
+            AddControlChrome(style, "PasswordBoxBackground", "PasswordBoxForeground", "PasswordBoxBorderBrush", new Thickness(1f), 4f, new Thickness(10f, 6f, 36f, 6f));
             return style;
         }
 

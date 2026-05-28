@@ -19,6 +19,8 @@ public class RepeatButton : Button
     private int _interval = 50;
     private CancellationTokenSource? _cts;
 
+    protected override string GetThemePrefix() => "Button";
+
     public int Delay
     {
         get => _delay;

@@ -50,6 +50,8 @@ public class SpatialButton : Button
         }
     }
 
+    protected override string GetThemePrefix() => "Button";
+
     public override void OnKeyDown(KeyRoutedEventArgs e)
     {
         int nextRow = Row;

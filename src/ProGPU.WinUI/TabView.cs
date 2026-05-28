@@ -39,6 +39,8 @@ public class TabView : FrameworkElement
             };
             Padding = new Thickness(0);
         }
+
+        protected override string GetThemePrefix() => "Button";
     }
 
     private readonly AddTabButton _addButton;
