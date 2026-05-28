@@ -1338,23 +1338,7 @@ public class DesignerCanvas : Panel
 
     private bool IsValidDropContainer(FrameworkElement fe)
     {
-        if (fe is Panel) return true;
-        if (fe is Border) return true;
-        if (fe is ContentControl) return true;
-        
-        var type = fe.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            return true;
-        }
-
-        if (type.GetProperty("Child") != null || type.GetProperty("Content") != null)
-        {
-            return true;
-        }
-
-        return false;
+        return fe is Panel;
     }
 
     private void FindAllContainers(FrameworkElement parent, List<FrameworkElement> results, FrameworkElement? excludeElement)

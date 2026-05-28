@@ -395,8 +395,9 @@ public static class DesignerSerializer
                     var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel);
                     sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
                 }
-                else if (contentVal is string s && !string.IsNullOrEmpty(s))
+                else if (contentVal != null)
                 {
+                    string s = contentVal.ToString() ?? "";
                     sb.AppendLine($"{indent}{varName}.Content = \"{EscapeStringLiteral(s)}\";");
                 }
             }
