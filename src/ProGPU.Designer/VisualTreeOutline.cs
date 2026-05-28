@@ -199,7 +199,11 @@ public class VisualTreeOutlineItem : Border
             string? toolName = toolData as string;
             if (!string.IsNullOrEmpty(toolName))
             {
-                CreateAndAddTool(toolName, _element);
+                // Restrict toolbox drops strictly to the root canvas to prevent nesting layout coordinates issues
+                if (_parentOutline.RootElement != null)
+                {
+                    CreateAndAddTool(toolName, _parentOutline.RootElement);
+                }
                 e.Handled = true;
             }
         }

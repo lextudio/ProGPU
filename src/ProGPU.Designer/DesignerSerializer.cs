@@ -51,8 +51,8 @@ public static class DesignerSerializer
         
         float rootWidth = float.IsNaN(canvas.Width) ? (canvas.Size.X > 0 ? canvas.Size.X : 800f) : canvas.Width;
         float rootHeight = float.IsNaN(canvas.Height) ? (canvas.Size.Y > 0 ? canvas.Size.Y : 600f) : canvas.Height;
-        sb.AppendLine($"            Width = {rootWidth}f,");
-        sb.AppendLine($"            Height = {rootHeight}f");
+        sb.AppendLine($"            Width = {FormatFloat(rootWidth)}f,");
+        sb.AppendLine($"            Height = {FormatFloat(rootHeight)}f");
         sb.AppendLine("        };");
         sb.AppendLine();
 
@@ -140,35 +140,35 @@ public static class DesignerSerializer
         if (width <= 0) width = 120f;
         if (height <= 0) height = 36f;
 
-        sb.AppendLine($"{indent}    Width = {width}f,");
-        sb.AppendLine($"{indent}    Height = {height}f,");
+        sb.AppendLine($"{indent}    Width = {FormatFloat(width)}f,");
+        sb.AppendLine($"{indent}    Height = {FormatFloat(height)}f,");
 
         if (element.Opacity != 1.0f)
         {
-            sb.AppendLine($"{indent}    Opacity = {element.Opacity}f,");
+            sb.AppendLine($"{indent}    Opacity = {FormatFloat(element.Opacity)}f,");
         }
 
         if (element.Rotation != 0f)
         {
-            sb.AppendLine($"{indent}    Rotation = {element.Rotation}f,");
+            sb.AppendLine($"{indent}    Rotation = {FormatFloat(element.Rotation)}f,");
         }
 
         if (element.RenderTransformOrigin != new System.Numerics.Vector2(0.5f, 0.5f))
         {
-            sb.AppendLine($"{indent}    RenderTransformOrigin = new System.Numerics.Vector2({element.RenderTransformOrigin.X}f, {element.RenderTransformOrigin.Y}f),");
+            sb.AppendLine($"{indent}    RenderTransformOrigin = new System.Numerics.Vector2({FormatFloat(element.RenderTransformOrigin.X)}f, {FormatFloat(element.RenderTransformOrigin.Y)}f),");
         }
 
         // Margin & Padding
         var margin = element.Margin;
         if (margin.Left != 0 || margin.Top != 0 || margin.Right != 0 || margin.Bottom != 0)
         {
-            sb.AppendLine($"{indent}    Margin = new Microsoft.UI.Xaml.Thickness({margin.Left}f, {margin.Top}f, {margin.Right}f, {margin.Bottom}f),");
+            sb.AppendLine($"{indent}    Margin = new Microsoft.UI.Xaml.Thickness({FormatFloat(margin.Left)}f, {FormatFloat(margin.Top)}f, {FormatFloat(margin.Right)}f, {FormatFloat(margin.Bottom)}f),");
         }
 
         var padding = element.Padding;
         if (padding.Left != 0 || padding.Top != 0 || padding.Right != 0 || padding.Bottom != 0)
         {
-            sb.AppendLine($"{indent}    Padding = new Microsoft.UI.Xaml.Thickness({padding.Left}f, {padding.Top}f, {padding.Right}f, {padding.Bottom}f),");
+            sb.AppendLine($"{indent}    Padding = new Microsoft.UI.Xaml.Thickness({FormatFloat(padding.Left)}f, {FormatFloat(padding.Top)}f, {FormatFloat(padding.Right)}f, {FormatFloat(padding.Bottom)}f),");
         }
 
         // Background / BorderBrush / CornerRadius etc. via Reflection
@@ -180,7 +180,7 @@ public static class DesignerSerializer
             var cr = cornerRadiusProp.GetValue(element);
             if (cr is float fcr && fcr != 0f)
             {
-                sb.AppendLine($"{indent}    CornerRadius = {fcr}f,");
+                sb.AppendLine($"{indent}    CornerRadius = {FormatFloat(fcr)}f,");
             }
         }
 
@@ -195,7 +195,7 @@ public static class DesignerSerializer
             else if (bg is SolidColorBrush scb)
             {
                 var c = scb.Color;
-                sb.AppendLine($"{indent}    Background = new SolidColorBrush(new Vector4({c.X}f, {c.Y}f, {c.Z}f, {c.W}f)),");
+                sb.AppendLine($"{indent}    Background = new SolidColorBrush(new Vector4({FormatFloat(c.X)}f, {FormatFloat(c.Y)}f, {FormatFloat(c.Z)}f, {FormatFloat(c.W)}f)),");
             }
         }
 
@@ -210,7 +210,7 @@ public static class DesignerSerializer
             else if (bb is SolidColorBrush scb)
             {
                 var c = scb.Color;
-                sb.AppendLine($"{indent}    BorderBrush = new SolidColorBrush(new Vector4({c.X}f, {c.Y}f, {c.Z}f, {c.W}f)),");
+                sb.AppendLine($"{indent}    BorderBrush = new SolidColorBrush(new Vector4({FormatFloat(c.X)}f, {FormatFloat(c.Y)}f, {FormatFloat(c.Z)}f, {FormatFloat(c.W)}f)),");
             }
         }
 
@@ -220,7 +220,7 @@ public static class DesignerSerializer
             var bt = borderThicknessProp.GetValue(element);
             if (bt is Thickness t && (t.Left != 0 || t.Top != 0 || t.Right != 0 || t.Bottom != 0))
             {
-                sb.AppendLine($"{indent}    BorderThickness = new Microsoft.UI.Xaml.Thickness({t.Left}f, {t.Top}f, {t.Right}f, {t.Bottom}f),");
+                sb.AppendLine($"{indent}    BorderThickness = new Microsoft.UI.Xaml.Thickness({FormatFloat(t.Left)}f, {FormatFloat(t.Top)}f, {FormatFloat(t.Right)}f, {FormatFloat(t.Bottom)}f),");
             }
         }
 
@@ -249,19 +249,19 @@ public static class DesignerSerializer
         var valProp = type.GetProperty("Value");
         if (valProp != null && valProp.PropertyType == typeof(float))
         {
-            sb.AppendLine($"{indent}    Value = {(float)valProp.GetValue(element)}f,");
+            sb.AppendLine($"{indent}    Value = {FormatFloat((float)valProp.GetValue(element))}f,");
         }
 
         var minProp = type.GetProperty("Minimum");
         if (minProp != null && minProp.PropertyType == typeof(float))
         {
-            sb.AppendLine($"{indent}    Minimum = {(float)minProp.GetValue(element)}f,");
+            sb.AppendLine($"{indent}    Minimum = {FormatFloat((float)minProp.GetValue(element))}f,");
         }
 
         var maxProp = type.GetProperty("Maximum");
         if (maxProp != null && maxProp.PropertyType == typeof(float))
         {
-            sb.AppendLine($"{indent}    Maximum = {(float)maxProp.GetValue(element)}f,");
+            sb.AppendLine($"{indent}    Maximum = {FormatFloat((float)maxProp.GetValue(element))}f,");
         }
 
         var checkedProp = type.GetProperty("IsChecked");
@@ -309,7 +309,7 @@ public static class DesignerSerializer
         var fontSizeProp = type.GetProperty("FontSize");
         if (fontSizeProp != null && fontSizeProp.PropertyType == typeof(float))
         {
-            sb.AppendLine($"{indent}    FontSize = {(float)fontSizeProp.GetValue(element)}f,");
+            sb.AppendLine($"{indent}    FontSize = {FormatFloat((float)fontSizeProp.GetValue(element))}f,");
         }
 
         // Panel orientation
@@ -327,11 +327,11 @@ public static class DesignerSerializer
         float top = Canvas.GetTop(element);
         if (left != 0)
         {
-            sb.AppendLine($"{indent}Canvas.SetLeft({varName}, {left}f);");
+            sb.AppendLine($"{indent}Canvas.SetLeft({varName}, {FormatFloat(left)}f);");
         }
         if (top != 0)
         {
-            sb.AppendLine($"{indent}Canvas.SetTop({varName}, {top}f);");
+            sb.AppendLine($"{indent}Canvas.SetTop({varName}, {FormatFloat(top)}f);");
         }
 
         int row = Microsoft.UI.Xaml.Controls.Grid.GetRow(element);
@@ -438,6 +438,11 @@ public static class DesignerSerializer
                 .Replace("\r", "\\r")
                 .Replace("\n", "\\n")
                 .Replace("\t", "\\t");
+    }
+
+    private static string FormatFloat(float value)
+    {
+        return value.ToString("G", System.Globalization.CultureInfo.InvariantCulture);
     }
 }
 

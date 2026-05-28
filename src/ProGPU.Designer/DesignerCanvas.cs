@@ -669,13 +669,8 @@ public class DesignerCanvas : Panel
                         }
                         newInstance.Name = candidateName;
 
-                        // Find drop container under logicalPos
+                        // Restrict toolbox drops strictly to the root DesignSurface canvas
                         FrameworkElement dropTarget = DesignSurface;
-                        var hitContainer = FindContainerAtPosition(DesignSurface, args.Position);
-                        if (hitContainer != null)
-                        {
-                            dropTarget = hitContainer;
-                        }
 
                         if (dropTarget is Canvas canvasTarget)
                         {
