@@ -277,6 +277,18 @@ public static class ThemeManager
         { "SystemControlHighlightAccentBrush", "SystemAccentColor" }
     };
 
+    private static string ResolveAlias(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return key;
+        int depth = 0;
+        while (ResourceAliases.TryGetValue(key, out var alias) && depth < 20)
+        {
+            key = alias;
+            depth++;
+        }
+        return key;
+    }
+
     private static object? ResolveValue(object? value)
     {
         if (value is StaticResourceRef r)
@@ -299,10 +311,7 @@ public static class ThemeManager
             return accentStyle;
         }
 
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var dict = (actualTheme == ElementTheme.Light) ? LightPalette : DarkPalette;
@@ -328,10 +337,7 @@ public static class ThemeManager
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var cache = (actualTheme == ElementTheme.Light) ? LightBrushCache : DarkBrushCache;
 
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         if (cache.TryGetValue(key, out var cachedBrush))
         {
@@ -349,10 +355,7 @@ public static class ThemeManager
     public static Pen GetPen(string key, float thickness, ElementTheme theme)
     {
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         var cacheKey = (key, thickness, actualTheme);
         if (PenCache.TryGetValue(cacheKey, out var cachedPen))
@@ -370,10 +373,7 @@ public static class ThemeManager
 
     public static Vector4 GetColor(string key, ElementTheme theme)
     {
-        if (ResourceAliases.TryGetValue(key, out var alias))
-        {
-            key = alias;
-        }
+        key = ResolveAlias(key);
 
         var actualTheme = theme == ElementTheme.Default ? CurrentTheme : theme;
         var dict = (actualTheme == ElementTheme.Light) ? LightPalette : DarkPalette;
