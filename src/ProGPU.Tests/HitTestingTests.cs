@@ -122,5 +122,54 @@ namespace ProGPU.Tests
             Assert.Equal(20f, originToParent.X);
             Assert.Equal(30f, originToParent.Y);
         }
+
+        [Fact]
+        public void Test_Visual_CenteredRotation_RenderTransformOrigin()
+        {
+            // Create a Visual of size 100x100 at offset (10, 20)
+            var visual = new Visual
+            {
+                Size = new Vector2(100f, 100f),
+                Offset = new Vector2(10f, 20f),
+                RenderTransformOrigin = new Vector2(0.5f, 0.5f), // Default is 0.5, 0.5
+                Rotation = MathF.PI // 180 degrees
+            };
+
+            var localTransform = visual.GetLocalTransform();
+
+            // Transform center point (50, 50) of visual
+            var centerLocal = new Vector4(50f, 50f, 0f, 1f);
+            var centerTransformed = Vector4.Transform(centerLocal, localTransform);
+
+            // Center of 100x100 visual at (10, 20) is (60, 70)
+            // It should be invariant under centered rotation (except for translation to offset)
+            Assert.True(MathF.Abs(centerTransformed.X - 60f) < 0.01f);
+            Assert.True(MathF.Abs(centerTransformed.Y - 70f) < 0.01f);
+
+            // Transform top-left point (0, 0)
+            var topLeftLocal = new Vector4(0f, 0f, 0f, 1f);
+            var topLeftTransformed = Vector4.Transform(topLeftLocal, localTransform);
+
+            // (0,0) rotated 180 degrees around (50,50) is (100,100), plus offset (10,20) = (110,120)
+            Assert.True(MathF.Abs(topLeftTransformed.X - 110f) < 0.01f);
+            Assert.True(MathF.Abs(topLeftTransformed.Y - 120f) < 0.01f);
+
+            // Now test custom CenterPoint override to maintain backward compatibility
+            var visualCustom = new Visual
+            {
+                Size = new Vector2(100f, 100f),
+                Offset = new Vector2(10f, 20f),
+                CenterPoint = new Vector3(10f, 10f, 0f), // Custom center point
+                Rotation = MathF.PI
+            };
+
+            var localTransformCustom = visualCustom.GetLocalTransform();
+
+            // Custom center point (10, 10) should be invariant (except for offset) -> (10 + 10, 10 + 20) = (20, 30)
+            var customCenterLocal = new Vector4(10f, 10f, 0f, 1f);
+            var customCenterTransformed = Vector4.Transform(customCenterLocal, localTransformCustom);
+            Assert.True(MathF.Abs(customCenterTransformed.X - 20f) < 0.01f);
+            Assert.True(MathF.Abs(customCenterTransformed.Y - 30f) < 0.01f);
+        }
     }
 }

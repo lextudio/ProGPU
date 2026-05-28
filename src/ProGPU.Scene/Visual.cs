@@ -18,6 +18,7 @@ public class Visual
     private Vector3 _scale = Vector3.One;
     private float _rotation = 0f;
     private Vector3 _centerPoint = Vector3.Zero;
+    private Vector2 _renderTransformOrigin = new Vector2(0.5f, 0.5f);
     private readonly Dictionary<string, CompositionAnimation> _activeAnimations = new();
 
     private EffectBase? _effect;
@@ -170,6 +171,19 @@ public class Visual
         }
     }
 
+    public Vector2 RenderTransformOrigin
+    {
+        get => _renderTransformOrigin;
+        set
+        {
+            if (_renderTransformOrigin != value)
+            {
+                _renderTransformOrigin = value;
+                Invalidate();
+            }
+        }
+    }
+
     // Composition layer texture view
     public GpuTexture? LayerTexture { get; internal set; }
 
@@ -187,10 +201,16 @@ public class Visual
 
     public Matrix4x4 GetLocalTransform()
     {
-        var translationToOrigin = Matrix4x4.CreateTranslation(-CenterPoint.X, -CenterPoint.Y, -CenterPoint.Z);
+        Vector3 anchor = new Vector3(Size.X * RenderTransformOrigin.X, Size.Y * RenderTransformOrigin.Y, 0f);
+        if (CenterPoint != Vector3.Zero)
+        {
+            anchor = CenterPoint;
+        }
+
+        var translationToOrigin = Matrix4x4.CreateTranslation(-anchor.X, -anchor.Y, -anchor.Z);
         var scaleMatrix = Matrix4x4.CreateScale(Scale);
         var rotationMatrix = Matrix4x4.CreateRotationZ(Rotation);
-        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(Offset.X + CenterPoint.X, Offset.Y + CenterPoint.Y, CenterPoint.Z);
+        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(Offset.X + anchor.X, Offset.Y + anchor.Y, anchor.Z);
 
         var modelMatrix = translationToOrigin * scaleMatrix * rotationMatrix * translationToOffsetAndRestoreCenter;
         return Transform * modelMatrix;

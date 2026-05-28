@@ -32,6 +32,9 @@ public class DesignerHost : Grid
     private readonly RichTextBlock _csharpCodeBlock;
     
     private readonly DesignerCanvas _designerCanvas;
+    private RichTextBlock? _zoomValText;
+    private RichTextBlock? _zoomOutText;
+    private RichTextBlock? _zoomInText;
     
     private bool _isBottomExpanded = false;
 
@@ -47,6 +50,7 @@ public class DesignerHost : Grid
 
     public DesignerHost()
     {
+        _designerCanvas = new DesignerCanvas();
         RowDefinitions.Add(GridLength.Star(1f));
         RowDefinitions.Add(GridLength.Auto);
         
@@ -121,7 +125,7 @@ public class DesignerHost : Grid
         };
         actionBar.AddChild(snapCheck);
 
-        var clearBtn = new Button { Width = 100f, Height = 28f, Margin = new Thickness(16, 0, 0, 0) };
+        var clearBtn = new Button { Width = 130f, Height = 32f, Margin = new Thickness(16, 0, 0, 0) };
         var clearBtnText = new RichTextBlock { FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
         clearBtnText.Inlines.Add(new Run("Clear Workspace"));
         clearBtn.Content = clearBtnText;
@@ -134,10 +138,45 @@ public class DesignerHost : Grid
         };
         actionBar.AddChild(clearBtn);
 
+        // Zoom Controls
+        var zoomOutBtn = new Button { Width = 32f, Height = 32f, Margin = new Thickness(24, 0, 0, 0) };
+        _zoomOutText = new RichTextBlock { FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        _zoomOutText.Inlines.Add(new Run("-"));
+        zoomOutBtn.Content = _zoomOutText;
+
+        _zoomValText = new RichTextBlock { FontSize = 11f, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+        _zoomValText.Inlines.Add(new Run("100%"));
+
+        var zoomInBtn = new Button { Width = 32f, Height = 32f, Margin = new Thickness(0, 0, 0, 0) };
+        _zoomInText = new RichTextBlock { FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        _zoomInText.Inlines.Add(new Run("+"));
+        zoomInBtn.Content = _zoomInText;
+
+        zoomOutBtn.Click += (s, e) => {
+            float oldZoom = _designerCanvas.ZoomScale;
+            float newZoom = Math.Clamp(oldZoom - 0.1f, 0.15f, 4.0f);
+            _designerCanvas.ZoomScale = newZoom;
+            _designerCanvas.ApplyTransforms();
+            _designerCanvas.Invalidate();
+            UpdateZoomLabel();
+        };
+
+        zoomInBtn.Click += (s, e) => {
+            float oldZoom = _designerCanvas.ZoomScale;
+            float newZoom = Math.Clamp(oldZoom + 0.1f, 0.15f, 4.0f);
+            _designerCanvas.ZoomScale = newZoom;
+            _designerCanvas.ApplyTransforms();
+            _designerCanvas.Invalidate();
+            UpdateZoomLabel();
+        };
+
+        actionBar.AddChild(zoomOutBtn);
+        actionBar.AddChild(_zoomValText);
+        actionBar.AddChild(zoomInBtn);
+
         Grid.SetRow(actionBar, 0);
         _workspaceCenter.AddChild(actionBar);
 
-        _designerCanvas = new DesignerCanvas();
         _designerCanvas.SelectionChanged += () => {
             _propertyGrid.SelectedElement = _designerCanvas.SelectedElement;
             UpdateOutline();
@@ -235,6 +274,9 @@ public class DesignerHost : Grid
         gridLinesLabel.Font = primaryFont;
         snapLabel.Font = primaryFont;
         clearBtnText.Font = primaryFont;
+        if (_zoomOutText != null) _zoomOutText.Font = primaryFont;
+        if (_zoomValText != null) _zoomValText.Font = primaryFont;
+        if (_zoomInText != null) _zoomInText.Font = primaryFont;
         bottomTitle.Font = primaryFont;
         toggleText.Font = primaryFont;
         _csharpCodeBlock.Font = courierFont;
@@ -256,6 +298,9 @@ public class DesignerHost : Grid
             ApplyFontToVisualTree(child, primaryFont, courierFont);
         }
         
+        if (_zoomOutText != null) _zoomOutText.Font = primaryFont;
+        if (_zoomValText != null) _zoomValText.Font = primaryFont;
+        if (_zoomInText != null) _zoomInText.Font = primaryFont;
         _csharpCodeBlock.Font = courierFont;
         _visualTreeOutline.Font = primaryFont;
         
@@ -369,6 +414,8 @@ public class DesignerHost : Grid
 
     private void OnCanvasModified()
     {
+        UpdateZoomLabel();
+
         if (!_isBottomExpanded)
         {
             _csharpCodeBlock.Inlines.Clear();
@@ -394,6 +441,15 @@ public class DesignerHost : Grid
             _csharpCodeBlock.Inlines.Add(run);
         }
         _csharpCodeBlock.Invalidate();
+    }
+
+    private void UpdateZoomLabel()
+    {
+        if (_zoomValText != null && _designerCanvas != null)
+        {
+            _zoomValText.Inlines.Clear();
+            _zoomValText.Inlines.Add(new Run($"{(int)Math.Round(_designerCanvas.ZoomScale * 100f)}%"));
+        }
     }
 
     private void UpdateOutline()

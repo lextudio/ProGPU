@@ -345,6 +345,7 @@ public class DesignerCanvas : Panel
                 
                 ApplyTransforms();
                 Invalidate();
+                CanvasModified?.Invoke();
             }
             e.Handled = true;
             return;
@@ -412,7 +413,7 @@ public class DesignerCanvas : Panel
         float gridSnappedX = GridSnappingEnabled ? SnapToGrid(x, spacing) : x;
         float gridSnappedY = GridSnappingEnabled ? SnapToGrid(y, spacing) : y;
 
-        float snapThreshold = 8f / ZoomScale;
+        float snapThreshold = MathF.Min(5f, 5f / ZoomScale);
         float? snapX = null;
         float? snapY = null;
         
@@ -486,7 +487,7 @@ public class DesignerCanvas : Panel
 
     public float? GetSnapX(FrameworkElement element, float targetX)
     {
-        float snapThreshold = 8f / ZoomScale;
+        float snapThreshold = MathF.Min(5f, 5f / ZoomScale);
         float? snapVal = null;
         foreach (var child in DesignSurface.Children)
         {
@@ -517,7 +518,7 @@ public class DesignerCanvas : Panel
 
     public float? GetSnapY(FrameworkElement element, float targetY)
     {
-        float snapThreshold = 8f / ZoomScale;
+        float snapThreshold = MathF.Min(5f, 5f / ZoomScale);
         float? snapVal = null;
         foreach (var child in DesignSurface.Children)
         {
