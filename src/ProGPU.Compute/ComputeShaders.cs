@@ -181,6 +181,28 @@ fn noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+fn getSmoothedAlpha(pos: vec2<i32>, size: vec2<i32>) -> f32 {
+    var sum: f32 = 0.0;
+    var weightSum: f32 = 0.0;
+    
+    let minDimension = min(size.x, size.y);
+    let r = clamp(minDimension / 10, 2, 8);
+    
+    for (var dy = -r; dy <= r; dy++) {
+        for (var dx = -r; dx <= r; dx++) {
+            let samplePos = vec2<i32>(
+                clamp(pos.x + dx, 0, size.x - 1),
+                clamp(pos.y + dy, 0, size.y - 1)
+            );
+            let dist = length(vec2<f32>(f32(dx), f32(dy)));
+            let w = exp(-dist * dist / (2.0 * f32(r)));
+            sum += textureLoad(inputTex, samplePos, 0).a * w;
+            weightSum += w;
+        }
+    }
+    return sum / weightSum;
+}
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(inputTex);
@@ -194,18 +216,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let currentPixel = textureLoad(inputTex, vec2<i32>(x, y), 0);
     let alpha = currentPixel.a;
 
-    if (alpha <= 0.01) {
+    if (alpha <= 0.001) {
         textureStore(outputTex, vec2<i32>(x, y), vec4<f32>(0.0));
         return;
     }
 
-    let w = i32(size.x);
-    let h = i32(size.y);
-    
-    let aLeft   = textureLoad(inputTex, vec2<i32>(clamp(x - 1, 0, w - 1), y), 0).a;
-    let aRight  = textureLoad(inputTex, vec2<i32>(clamp(x + 1, 0, w - 1), y), 0).a;
-    let aTop    = textureLoad(inputTex, vec2<i32>(x, clamp(y - 1, 0, h - 1)), 0).a;
-    let aBottom = textureLoad(inputTex, vec2<i32>(x, clamp(y + 1, 0, h - 1)), 0).a;
+    let w = size.x;
+    let h = size.y;
+    let sizeI32 = vec2<i32>(i32(w), i32(h));
+
+    let aLeft   = getSmoothedAlpha(vec2<i32>(x - 3, y), sizeI32);
+    let aRight  = getSmoothedAlpha(vec2<i32>(x + 3, y), sizeI32);
+    let aTop    = getSmoothedAlpha(vec2<i32>(x, y - 3), sizeI32);
+    let aBottom = getSmoothedAlpha(vec2<i32>(x, y + 3), sizeI32);
 
     let nx = (aLeft - aRight) * 2.0;
     let ny = (aTop - aBottom) * 2.0;
@@ -214,44 +237,76 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let uv = vec2<f32>(f32(x) / f32(w), f32(y) / f32(h));
     
-    let t = params.time * 2.0;
-    let wave1 = sin(uv.x * 12.0 + t) * 0.03;
-    let wave2 = cos(uv.x * 24.0 - t * 1.5) * 0.015;
-    let noiseVal = noise(uv * 8.0 + vec2<f32>(t * 0.1, -t * 0.2)) * 0.02;
-    let wave = wave1 + wave2 + noiseVal;
+    let t = params.time * 2.5;
+    let isHorizontal = params.width > params.height * 4.0;
+    var isFluid = false;
+    var wave: f32 = 0.0;
 
-    let isFluid = uv.x < (params.progress + wave);
-    
-    var baseColor = params.glassColor;
+    if (isHorizontal) {
+        let wave1 = sin(uv.x * 12.0 + t) * 0.025;
+        let wave2 = cos(uv.x * 24.0 - t * 1.5) * 0.012;
+        wave = wave1 + wave2;
+        isFluid = uv.x < (params.progress + wave);
+    } else {
+        let wave1 = sin(uv.x * 8.0 + t) * 0.035;
+        let wave2 = cos(uv.x * 16.0 - t * 1.7) * 0.015;
+        wave = wave1 + wave2;
+        isFluid = uv.y > (1.0 - params.progress + wave);
+    }
+
+    let refractOffset = normal.xy * params.refraction * 15.0;
+    let sampleCoord = vec2<i32>(
+        clamp(x + i32(refractOffset.x), 0, i32(w) - 1),
+        clamp(y + i32(refractOffset.y), 0, i32(h) - 1)
+    );
+    let originalPixel = textureLoad(inputTex, sampleCoord, 0);
+
+    let edgeAlpha = smoothstep(0.01, 0.15, alpha);
+
+    var baseColor: vec4<f32>;
     if (isFluid) {
-        let depthHighlight = smoothstep(0.0, 1.0, uv.y) * 0.25;
-        let flowAnim = sin(uv.x * 30.0 + t * 4.0) * 0.05;
-        baseColor = vec4<f32>(params.fluidColor.rgb + vec3<f32>(depthHighlight + flowAnim), params.fluidColor.a);
+        let depthHighlight = smoothstep(0.0, 1.0, uv.y) * 0.2;
+        let flowAnim = sin(uv.x * 20.0 + t * 3.0) * 0.03;
+        let liquidColor = vec4<f32>(params.fluidColor.rgb + vec3<f32>(depthHighlight + flowAnim), params.fluidColor.a);
+        
+        let blendAlpha = mix(originalPixel.a, 1.0, params.fluidColor.a);
+        baseColor = vec4<f32>(mix(originalPixel.rgb, liquidColor.rgb, params.fluidColor.a), blendAlpha * edgeAlpha);
+    } else {
+        let blendAlpha = mix(originalPixel.a, 1.0, params.glassColor.a);
+        baseColor = vec4<f32>(mix(originalPixel.rgb, params.glassColor.rgb, params.glassColor.a), blendAlpha * edgeAlpha);
     }
 
     let lightDir = normalize(vec3<f32>(-0.8, 0.8, 1.2));
     let viewDir = vec3<f32>(0.0, 0.0, 1.0);
-    
     let halfDir = normalize(lightDir + viewDir);
+    
     let specIntensity = pow(max(dot(normal, halfDir), 0.0), params.shininess);
-    let specularColor = vec3<f32>(1.0, 1.0, 1.0) * specIntensity * 0.7;
+    let specularColor = vec3<f32>(1.0, 1.0, 1.0) * specIntensity * 0.75;
 
     let rimIntensity = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
-    let rimColor = vec3<f32>(1.0, 1.0, 1.0) * rimIntensity * 0.45;
+    let rimColor = vec3<f32>(1.0, 1.0, 1.0) * rimIntensity * 0.5;
 
     var waveSpec: f32 = 0.0;
-    let borderDist = abs(uv.x - (params.progress + wave));
-    if (isFluid && borderDist < 0.02) {
-        let waveNormal = normalize(vec3<f32>(cos(uv.x * 12.0 + t), -1.0, 0.5));
-        waveSpec = pow(max(dot(waveNormal, halfDir), 0.0), 16.0) * 0.6 * (1.0 - borderDist / 0.02);
+    if (isHorizontal) {
+        let borderDist = abs(uv.x - (params.progress + wave));
+        if (isFluid && borderDist < 0.02) {
+            let waveNormal = normalize(vec3<f32>(cos(uv.x * 12.0 + t), -1.0, 0.5));
+            waveSpec = pow(max(dot(waveNormal, halfDir), 0.0), 16.0) * 0.55 * (1.0 - borderDist / 0.02);
+        }
+    } else {
+        let borderDist = abs(uv.y - (1.0 - params.progress + wave));
+        if (isFluid && borderDist < 0.03) {
+            let waveNormal = normalize(vec3<f32>(cos(uv.x * 8.0 + t), -1.0, 0.5));
+            waveSpec = pow(max(dot(waveNormal, halfDir), 0.0), 16.0) * 0.55 * (1.0 - borderDist / 0.03);
+        }
     }
 
-    var finalColor = vec4<f32>(baseColor.rgb + specularColor + rimColor + vec3<f32>(waveSpec), baseColor.a * alpha);
+    var finalColor = vec4<f32>(baseColor.rgb + specularColor + rimColor + vec3<f32>(waveSpec), baseColor.a);
     
     let distFromEdge = 1.0 - alpha;
-    finalColor.r = finalColor.r + distFromEdge * 0.1;
-    finalColor.g = finalColor.g + distFromEdge * 0.15;
-    finalColor.b = finalColor.b + distFromEdge * 0.2;
+    finalColor.r += distFromEdge * 0.08;
+    finalColor.g += distFromEdge * 0.12;
+    finalColor.b += distFromEdge * 0.15;
 
     textureStore(outputTex, vec2<i32>(x, y), finalColor);
 }
