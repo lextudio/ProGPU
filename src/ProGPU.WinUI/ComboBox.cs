@@ -98,7 +98,7 @@ public class ComboBox : Control
         var defaultStyle = ThemeManager.GetDefaultStyle(GetType());
         if (defaultStyle != null)
         {
-            Style = defaultStyle;
+            SetDefaultStyle(defaultStyle);
         }
     }
 
@@ -336,16 +336,24 @@ public class ComboBox : Control
 
     public override void OnRender(DrawingContext context)
     {
+        base.OnRender(context); // Draw template background child first
+
+        var activeFamily = ActualThemeFamily;
+        var activeTheme = ActualTheme;
+
         float headerH = HeightConstraint ?? 32f;
         Rect headerRect = new Rect(0, 0, Size.X, headerH);
 
-        // ComboBox main button card
-        Brush? bg = GetCurrentBackground();
-        Brush? borderBrush = GetCurrentBorderBrush();
-        Pen pen = new Pen(borderBrush ?? ThemeManager.GetBrush("ControlBorder"), BorderThickness.Left > 0 ? BorderThickness.Left : 1f);
+        if (!HasTemplate)
+        {
+            // ComboBox main button card
+            Brush? bg = GetCurrentBackground();
+            Brush? borderBrush = GetCurrentBorderBrush();
+            Pen pen = new Pen(borderBrush ?? ThemeManager.GetBrush("ControlBorder"), BorderThickness.Left > 0 ? BorderThickness.Left : 1f);
 
-        // Draw header background shape
-        context.DrawRoundedRectangle(bg, pen, headerRect, CornerRadius);
+            // Draw header background shape
+            context.DrawRoundedRectangle(bg, pen, headerRect, CornerRadius);
+        }
 
         // Draw active Selected Text or Placeholder Text
         var activeFont = GetActiveFont();
@@ -359,8 +367,19 @@ public class ComboBox : Control
 
             context.DrawText(textToDraw, activeFont, FontSize, textBrush, new Vector2(Padding.Left, textY));
 
-            // Draw Down Arrow (▼) character
-            context.DrawText("▼", activeFont, FontSize - 2f, ThemeManager.GetBrush("TextSecondary"), new Vector2(Size.X - 22f, textY + 1f));
+            if (activeFamily == VisualThemeFamily.macOS)
+            {
+                var dividerPen = new Pen(activeTheme == ElementTheme.Light ? new SolidColorBrush(new Vector4(0f, 0f, 0f, 0.12f)) : new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.12f)), 1f);
+                context.DrawLine(dividerPen, new Vector2(Size.X - 26f, 5f), new Vector2(Size.X - 26f, headerH - 5f));
+
+                var arrowBrush = new SolidColorBrush(activeTheme == ElementTheme.Light ? new Vector4(0f, 0.478f, 1f, 1f) : new Vector4(0.04f, 0.52f, 1f, 1f));
+                context.DrawText("▲", activeFont, FontSize - 4f, arrowBrush, new Vector2(Size.X - 18f, textY - 3f));
+                context.DrawText("▼", activeFont, FontSize - 4f, arrowBrush, new Vector2(Size.X - 18f, textY + 5f));
+            }
+            else
+            {
+                context.DrawText("▼", activeFont, FontSize - 2f, ThemeManager.GetBrush("TextSecondary"), new Vector2(Size.X - 22f, textY + 1f));
+            }
         }
 
         base.OnRender(context);
