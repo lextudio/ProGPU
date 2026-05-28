@@ -152,18 +152,18 @@ public class GridSplitter : Thumb
                     parentGrid.ColumnDefinitions[rightIdx] = new GridLength((newRight / totalWidth) * totalWeight, GridUnitType.Star);
                 }
             }
-            else if (leftCol.UnitType == GridUnitType.Star && rightCol.UnitType == GridUnitType.Absolute)
+            else if (leftCol.UnitType == GridUnitType.Star && rightCol.UnitType != GridUnitType.Star)
             {
-                parentGrid.ColumnDefinitions[rightIdx] = new GridLength(Math.Max(10f, rightCol.Value - e.HorizontalChange), GridUnitType.Absolute);
+                parentGrid.ColumnDefinitions[rightIdx] = new GridLength(Math.Max(10f, rightActual - e.HorizontalChange), GridUnitType.Absolute);
             }
-            else if (leftCol.UnitType == GridUnitType.Absolute && rightCol.UnitType == GridUnitType.Star)
+            else if (leftCol.UnitType != GridUnitType.Star && rightCol.UnitType == GridUnitType.Star)
             {
-                parentGrid.ColumnDefinitions[leftIdx] = new GridLength(Math.Max(10f, leftCol.Value + e.HorizontalChange), GridUnitType.Absolute);
+                parentGrid.ColumnDefinitions[leftIdx] = new GridLength(Math.Max(10f, leftActual + e.HorizontalChange), GridUnitType.Absolute);
             }
-            else // Both are Absolute or others
+            else // Both are Absolute, Auto or others
             {
-                parentGrid.ColumnDefinitions[leftIdx] = new GridLength(Math.Max(10f, leftCol.Value + e.HorizontalChange), GridUnitType.Absolute);
-                parentGrid.ColumnDefinitions[rightIdx] = new GridLength(Math.Max(10f, rightCol.Value - e.HorizontalChange), GridUnitType.Absolute);
+                parentGrid.ColumnDefinitions[leftIdx] = new GridLength(Math.Max(10f, leftActual + e.HorizontalChange), GridUnitType.Absolute);
+                parentGrid.ColumnDefinitions[rightIdx] = new GridLength(Math.Max(10f, rightActual - e.HorizontalChange), GridUnitType.Absolute);
             }
 
             parentGrid.InvalidateMeasure();
@@ -237,18 +237,18 @@ public class GridSplitter : Thumb
                     parentGrid.RowDefinitions[bottomIdx] = new GridLength((newBottom / totalHeight) * totalWeight, GridUnitType.Star);
                 }
             }
-            else if (topRow.UnitType == GridUnitType.Star && bottomRow.UnitType == GridUnitType.Absolute)
+            else if (topRow.UnitType == GridUnitType.Star && bottomRow.UnitType != GridUnitType.Star)
             {
-                parentGrid.RowDefinitions[bottomIdx] = new GridLength(Math.Max(10f, bottomRow.Value - e.VerticalChange), GridUnitType.Absolute);
+                parentGrid.RowDefinitions[bottomIdx] = new GridLength(Math.Max(10f, bottomActual - e.VerticalChange), GridUnitType.Absolute);
             }
-            else if (topRow.UnitType == GridUnitType.Absolute && bottomRow.UnitType == GridUnitType.Star)
+            else if (topRow.UnitType != GridUnitType.Star && bottomRow.UnitType == GridUnitType.Star)
             {
-                parentGrid.RowDefinitions[topIdx] = new GridLength(Math.Max(10f, topRow.Value + e.VerticalChange), GridUnitType.Absolute);
+                parentGrid.RowDefinitions[topIdx] = new GridLength(Math.Max(10f, topActual + e.VerticalChange), GridUnitType.Absolute);
             }
-            else
+            else // Both are Absolute, Auto or others
             {
-                parentGrid.RowDefinitions[topIdx] = new GridLength(Math.Max(10f, topRow.Value + e.VerticalChange), GridUnitType.Absolute);
-                parentGrid.RowDefinitions[bottomIdx] = new GridLength(Math.Max(10f, bottomRow.Value - e.VerticalChange), GridUnitType.Absolute);
+                parentGrid.RowDefinitions[topIdx] = new GridLength(Math.Max(10f, topActual + e.VerticalChange), GridUnitType.Absolute);
+                parentGrid.RowDefinitions[bottomIdx] = new GridLength(Math.Max(10f, bottomActual - e.VerticalChange), GridUnitType.Absolute);
             }
 
             parentGrid.InvalidateMeasure();
