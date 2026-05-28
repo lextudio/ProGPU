@@ -322,7 +322,7 @@ public static class ThemeManager
         if (key.Equals("AccentButtonStyle", StringComparison.OrdinalIgnoreCase))
         {
             var accentStyle = new Style(typeof(Button));
-            AddControlChrome(accentStyle, "SystemAccentColor", "TextOnAccent", "SystemAccentColor", new Thickness(1f), 6f, new Thickness(12f, 6f, 12f, 6f));
+            AddControlChrome(accentStyle, "AccentButtonBackground", "AccentButtonForeground", "AccentButtonBorderBrush", new Thickness(1f), 6f, new Thickness(12f, 6f, 12f, 6f));
             return accentStyle;
         }
 

@@ -16,10 +16,12 @@ public class ProgressRing : Control
     private bool _isActive = true;
     private float _rotationOffset;
     private SolidColorBrush[]? _dotBrushes;
+    private Brush? _cachedForeground;
 
     public override void OnVisualStateChanged()
     {
         _dotBrushes = null; // invalidate cached brushes
+        _cachedForeground = null;
         base.OnVisualStateChanged();
     }
 
@@ -63,11 +65,12 @@ public class ProgressRing : Control
             float radius = (Size.X - 8f) / 2f; // Keep dot bounds inside control nicely
             float dotRadius = 3f;
 
-            if (_dotBrushes == null)
+            var currentForeground = Foreground ?? ThemeManager.GetBrush("ProgressRingForeground");
+            if (_dotBrushes == null || _cachedForeground != currentForeground)
             {
-                var brush = Foreground ?? ThemeManager.GetBrush("ProgressRingForeground");
+                _cachedForeground = currentForeground;
                 Vector4 colorVec = new Vector4(0.0f, 0.47f, 0.83f, 1.0f); // Default Accent Blue
-                if (brush is SolidColorBrush scb)
+                if (currentForeground is SolidColorBrush scb)
                 {
                     colorVec = scb.Color;
                 }
