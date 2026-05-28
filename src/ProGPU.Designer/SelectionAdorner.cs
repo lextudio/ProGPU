@@ -95,15 +95,16 @@ public class SelectionAdorner : Panel
 
     public void UpdatePositionAndSize()
     {
-        if (AssociatedElement == null) return;
+        if (AssociatedElement == null || ParentCanvas == null) return;
         
-        float left = Canvas.GetLeft(AssociatedElement);
-        float top = Canvas.GetTop(AssociatedElement);
+        var transform = AssociatedElement.TransformToVisual(ParentCanvas.DesignSurface);
+        Vector2 rootTopLeft = transform.TransformPoint(Vector2.Zero);
+        
         float width = float.IsNaN(AssociatedElement.Width) ? AssociatedElement.Size.X : AssociatedElement.Width;
         float height = float.IsNaN(AssociatedElement.Height) ? AssociatedElement.Size.Y : AssociatedElement.Height;
         
-        Canvas.SetLeft(this, left);
-        Canvas.SetTop(this, top);
+        Canvas.SetLeft(this, rootTopLeft.X);
+        Canvas.SetTop(this, rootTopLeft.Y);
         this.Width = width;
         this.Height = height;
         
@@ -345,6 +346,11 @@ public class SelectionAdorner : Panel
 
         // Render WPF-style margin guidelines and distance markers
         DrawMarginGuidelines(context, z);
+
+        // Render Figma-style spacing guides
+        float dpiScale = ParentCanvas.GetDpiScale?.Invoke() ?? 1.0f;
+        if (dpiScale <= 0f) dpiScale = 1.0f;
+        DrawFigmaSpacing(context, z, dpiScale);
     }
 
     private void HandleRotateDrag()
@@ -527,5 +533,148 @@ public class SelectionAdorner : Panel
             context.DrawLine(pen, new Vector2(x, y), new Vector2(nextX, y));
             x += dashLength + gapLength;
         }
+    }
+
+    private void DrawFigmaSpacing(DrawingContext context, float z, float dpiScale)
+    {
+        if (AssociatedElement == null || ParentCanvas == null || ParentCanvas.HoveredElement == null) return;
+
+        var selected = AssociatedElement;
+        var hovered = ParentCanvas.HoveredElement;
+        var font = PopupService.DefaultFont;
+        if (font == null) return;
+
+        float fontSize = 9f / z;
+
+        // Get bounds in DesignSurface space
+        var selTransform = selected.TransformToVisual(ParentCanvas.DesignSurface);
+        float selW = float.IsNaN(selected.Width) ? selected.Size.X : selected.Width;
+        float selH = float.IsNaN(selected.Height) ? selected.Size.Y : selected.Height;
+        Rect selRect = selTransform.TransformBounds(new Rect(0, 0, selW, selH));
+
+        var govTransform = hovered.TransformToVisual(ParentCanvas.DesignSurface);
+        float govW = float.IsNaN(hovered.Width) ? hovered.Size.X : hovered.Width;
+        float govH = float.IsNaN(hovered.Height) ? hovered.Size.Y : hovered.Height;
+        Rect govRect = govTransform.TransformBounds(new Rect(0, 0, govW, govH));
+
+        // Rect properties mapping (X, Y, Width, Height)
+        float selLeft = selRect.X;
+        float selTop = selRect.Y;
+        float selRight = selRect.X + selRect.Width;
+        float selBottom = selRect.Y + selRect.Height;
+
+        float govLeft = govRect.X;
+        float govTop = govRect.Y;
+        float govRight = govRect.X + govRect.Width;
+        float govBottom = govRect.Y + govRect.Height;
+
+        // Get transform to local adorner space
+        var toLocal = ParentCanvas.DesignSurface.TransformToVisual(this);
+
+        // Figma pink/magenta color
+        var pinkBrush = new SolidColorBrush(new Vector4(1f, 0f, 0.5f, 1f)); // Magenta
+        var pinkPen = new Pen(pinkBrush, 1f / z);
+
+        // Draw horizontal spacing if no horizontal overlap
+        if (selRight < govLeft)
+        {
+            float startX = selRight;
+            float endX = govLeft;
+            float y = Math.Max(selTop, govTop) + Math.Min(selH, govH) / 2f;
+
+            Vector2 p1 = toLocal.TransformPoint(new Vector2(startX, y));
+            Vector2 p2 = toLocal.TransformPoint(new Vector2(endX, y));
+            context.DrawLine(pinkPen, p1, p2);
+
+            // Draw small ticks at ends
+            context.DrawLine(pinkPen, p1 - new Vector2(0, 4f / z), p1 + new Vector2(0, 4f / z));
+            context.DrawLine(pinkPen, p2 - new Vector2(0, 4f / z), p2 + new Vector2(0, 4f / z));
+
+            float dist = endX - startX;
+            DrawSpacingPill(context, font, fontSize, $"{(int)MathF.Round(dist)}", (p1.X + p2.X) / 2f, (p1.Y + p2.Y) / 2f, z, dpiScale, pinkBrush);
+        }
+        else if (govRight < selLeft)
+        {
+            float startX = govRight;
+            float endX = selLeft;
+            float y = Math.Max(selTop, govTop) + Math.Min(selH, govH) / 2f;
+
+            Vector2 p1 = toLocal.TransformPoint(new Vector2(startX, y));
+            Vector2 p2 = toLocal.TransformPoint(new Vector2(endX, y));
+            context.DrawLine(pinkPen, p1, p2);
+
+            context.DrawLine(pinkPen, p1 - new Vector2(0, 4f / z), p1 + new Vector2(0, 4f / z));
+            context.DrawLine(pinkPen, p2 - new Vector2(0, 4f / z), p2 + new Vector2(0, 4f / z));
+
+            float dist = endX - startX;
+            DrawSpacingPill(context, font, fontSize, $"{(int)MathF.Round(dist)}", (p1.X + p2.X) / 2f, (p1.Y + p2.Y) / 2f, z, dpiScale, pinkBrush);
+        }
+
+        // Draw vertical spacing if no vertical overlap
+        if (selBottom < govTop)
+        {
+            float startY = selBottom;
+            float endY = govTop;
+            float x = Math.Max(selLeft, govLeft) + Math.Min(selW, govW) / 2f;
+
+            Vector2 p1 = toLocal.TransformPoint(new Vector2(x, startY));
+            Vector2 p2 = toLocal.TransformPoint(new Vector2(x, endY));
+            context.DrawLine(pinkPen, p1, p2);
+
+            context.DrawLine(pinkPen, p1 - new Vector2(4f / z, 0), p1 + new Vector2(4f / z, 0));
+            context.DrawLine(pinkPen, p2 - new Vector2(4f / z, 0), p2 + new Vector2(4f / z, 0));
+
+            float dist = endY - startY;
+            DrawSpacingPill(context, font, fontSize, $"{(int)MathF.Round(dist)}", (p1.X + p2.X) / 2f, (p1.Y + p2.Y) / 2f, z, dpiScale, pinkBrush);
+        }
+        else if (govBottom < selTop)
+        {
+            float startY = govBottom;
+            float endY = selTop;
+            float x = Math.Max(selLeft, govLeft) + Math.Min(selW, govW) / 2f;
+
+            Vector2 p1 = toLocal.TransformPoint(new Vector2(x, startY));
+            Vector2 p2 = toLocal.TransformPoint(new Vector2(x, endY));
+            context.DrawLine(pinkPen, p1, p2);
+
+            context.DrawLine(pinkPen, p1 - new Vector2(4f / z, 0), p1 + new Vector2(4f / z, 0));
+            context.DrawLine(pinkPen, p2 - new Vector2(4f / z, 0), p2 + new Vector2(4f / z, 0));
+
+            float dist = endY - startY;
+            DrawSpacingPill(context, font, fontSize, $"{(int)MathF.Round(dist)}", (p1.X + p2.X) / 2f, (p1.Y + p2.Y) / 2f, z, dpiScale, pinkBrush);
+        }
+    }
+
+    private void DrawSpacingPill(DrawingContext context, TtfFont font, float fontSize, string text, float cx, float cy, float z, float dpiScale, Brush bgBrush)
+    {
+        float Snap(float coord) => MathF.Round(coord * dpiScale * 4f) / 4f / dpiScale;
+
+        var textLayout = new TextLayout(text, font, fontSize, float.PositiveInfinity, TextAlignment.Left, null);
+        float textWidth = textLayout.MeasuredSize.X;
+        float textHeight = textLayout.MeasuredSize.Y;
+
+        float horizPadding = 6f / z;
+        float vertPadding = 3f / z;
+        float pillWidth = textWidth + horizPadding * 2f;
+        float pillHeight = textHeight + vertPadding * 2f;
+
+        float pillLeft = Snap(cx - pillWidth / 2f);
+        float pillTop = Snap(cy - pillHeight / 2f);
+        float pillRight = Snap(cx + pillWidth / 2f);
+        float pillBottom = Snap(cy + pillHeight / 2f);
+        
+        Rect pillRect = new Rect(pillLeft, pillTop, pillRight - pillLeft, pillBottom - pillTop);
+        float cornerRadius = pillRect.Height / 2f;
+
+        var textBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.95f));
+
+        context.DrawRoundedRectangle(bgBrush, null, pillRect, cornerRadius);
+
+        Vector2 textPos = new Vector2(
+            Snap(cx - textWidth / 2f),
+            Snap(cy - textHeight / 2f)
+        );
+
+        context.DrawText(text, font, fontSize, textBrush, textPos);
     }
 }

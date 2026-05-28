@@ -72,6 +72,8 @@ public class DesignerCanvas : Panel
     private Vector2 _dragStartOffset; // Logical offset
     private float _elementStartLeft;
     private float _elementStartTop;
+    private Vector2 _dragStartElementPosInRoot;
+    public FrameworkElement? HoveredElement { get; set; }
 
     // Panning state
     private bool _isPanning;
@@ -210,13 +212,7 @@ public class DesignerCanvas : Panel
         RebuildSpatialIndex();
         var candidates = _spatialIndex.Query(logicalPos);
         
-        // Sort candidates by their index in DesignSurface.Children descending to query topmost first
-        candidates.Sort((a, b) => {
-            int idxA = DesignSurface.Children.IndexOf(a);
-            int idxB = DesignSurface.Children.IndexOf(b);
-            return idxB.CompareTo(idxA);
-        });
-
+        List<FrameworkElement> hitElements = new List<FrameworkElement>();
         foreach (var child in candidates)
         {
             var transformToLocal = DesignSurface.TransformToVisual(child);
@@ -230,8 +226,35 @@ public class DesignerCanvas : Panel
             Rect localBounds = new Rect(0, 0, w, h);
             if (localBounds.Contains(localPoint))
             {
-                hitChild = child;
-                break;
+                hitElements.Add(child);
+            }
+        }
+
+        // Sort hitElements by visual depth ascending (shallowest/root-most first)
+        hitElements.Sort((a, b) => GetVisualDepth(a).CompareTo(GetVisualDepth(b)));
+
+        if (hitElements.Count > 0)
+        {
+            if (InputSystem.Current.IsControlPressed)
+            {
+                // Deep select: select the deepest leaf element under pointer
+                hitChild = hitElements[hitElements.Count - 1];
+            }
+            else
+            {
+                // Figma-style cycle selection:
+                // If the currently selected element is already in the hit list, select the next one down (wrap around to the shallowest)
+                int currentIndex = SelectedElement != null ? hitElements.IndexOf(SelectedElement) : -1;
+                if (currentIndex >= 0)
+                {
+                    int nextIndex = (currentIndex + 1) % hitElements.Count;
+                    hitChild = hitElements[nextIndex];
+                }
+                else
+                {
+                    // Select the topmost container (shallowest, i.e., index 0)
+                    hitChild = hitElements[0];
+                }
             }
         }
 
@@ -242,8 +265,14 @@ public class DesignerCanvas : Panel
             // Start dragging in logical space
             _isDraggingElement = true;
             _dragStartOffset = logicalPos;
+            
+            // Project initial absolute start position in DesignSurface coordinates
+            var startTransform = hitChild.TransformToVisual(DesignSurface);
+            _dragStartElementPosInRoot = startTransform.TransformPoint(Vector2.Zero);
+            
             _elementStartLeft = Canvas.GetLeft(hitChild);
             _elementStartTop = Canvas.GetTop(hitChild);
+            
             InputSystem.CapturePointer(this);
             e.Handled = true;
         }
@@ -260,6 +289,7 @@ public class DesignerCanvas : Panel
         // 1. Panning update
         if (_isPanning)
         {
+            HoveredElement = null;
             Vector2 delta = e.Position - _panStartMouse;
             PanOffset = _panStartOffset + delta;
             ApplyTransforms();
@@ -272,16 +302,31 @@ public class DesignerCanvas : Panel
         // 2. Dragging element update in logical space
         if (_isDraggingElement && SelectedElement != null)
         {
+            HoveredElement = null;
             Vector2 logicalPos = (e.Position - PanOffset) / ZoomScale;
             Vector2 delta = logicalPos - _dragStartOffset;
-            float candidateLeft = _elementStartLeft + delta.X;
-            float candidateTop = _elementStartTop + delta.Y;
-
-            // Snaps coordinates if close
-            Vector2 snapped = SnapPosition(SelectedElement, new Vector2(candidateLeft, candidateTop));
-
-            Canvas.SetLeft(SelectedElement, snapped.X);
-            Canvas.SetTop(SelectedElement, snapped.Y);
+            
+            // Calculate absolute target position in root DesignSurface coordinates
+            Vector2 candidatePosInRoot = _dragStartElementPosInRoot + delta;
+            
+            // Snap position in DesignSurface coordinates
+            Vector2 snappedInRoot = SnapPosition(SelectedElement, candidatePosInRoot);
+            
+            // Convert snappedInRoot to parent container coordinates
+            var parentFe = SelectedElement.Parent as FrameworkElement;
+            if (parentFe != null && parentFe != DesignSurface)
+            {
+                var toParent = DesignSurface.TransformToVisual(parentFe);
+                Vector2 parentLocalPos = toParent.TransformPoint(snappedInRoot);
+                
+                Canvas.SetLeft(SelectedElement, parentLocalPos.X);
+                Canvas.SetTop(SelectedElement, parentLocalPos.Y);
+            }
+            else
+            {
+                Canvas.SetLeft(SelectedElement, snappedInRoot.X);
+                Canvas.SetTop(SelectedElement, snappedInRoot.Y);
+            }
 
             _selectionAdorner?.UpdatePositionAndSize();
             
@@ -293,6 +338,49 @@ public class DesignerCanvas : Panel
             InvalidateArrange();
             Invalidate();
             e.Handled = true;
+        }
+        
+        // 3. Hovered element tracking for spacing guide rendering
+        if (!_isPanning && !_isDraggingElement)
+        {
+            Vector2 logicalPos = (e.Position - PanOffset) / ZoomScale;
+            FrameworkElement? hoverChild = null;
+
+            RebuildSpatialIndex();
+            var hoverCandidates = _spatialIndex.Query(logicalPos);
+
+            hoverCandidates.Sort((a, b) => {
+                int depthA = GetVisualDepth(a);
+                int depthB = GetVisualDepth(b);
+                return depthB.CompareTo(depthA); // Query deepest leaf node first
+            });
+
+            foreach (var child in hoverCandidates)
+            {
+                if (child == SelectedElement) continue;
+
+                var transformToLocal = DesignSurface.TransformToVisual(child);
+                Vector2 localPoint = transformToLocal.TransformPoint(logicalPos);
+
+                float w = float.IsNaN(child.Width) ? child.Size.X : child.Width;
+                float h = float.IsNaN(child.Height) ? child.Size.Y : child.Height;
+                if (w <= 0) w = 120f;
+                if (h <= 0) h = 36f;
+
+                Rect localBounds = new Rect(0, 0, w, h);
+                if (localBounds.Contains(localPoint))
+                {
+                    hoverChild = child;
+                    break;
+                }
+            }
+
+            if (HoveredElement != hoverChild)
+            {
+                HoveredElement = hoverChild;
+                Invalidate();
+                _selectionAdorner?.Invalidate();
+            }
         }
         
         base.OnPointerMoved(e);
@@ -319,6 +407,35 @@ public class DesignerCanvas : Panel
             // Clear guidelines
             ActiveVerticalSnapX = null;
             ActiveHorizontalSnapY = null;
+            
+            // Figma-style element container reparenting
+            if (SelectedElement != null)
+            {
+                Vector2 logicalPos = (e.Position - PanOffset) / ZoomScale;
+                FrameworkElement? targetContainer = FindContainerAtPosition(DesignSurface, logicalPos, SelectedElement);
+                
+                if (targetContainer != null && targetContainer != SelectedElement.Parent)
+                {
+                    // Get current root-absolute coordinates of SelectedElement
+                    var currentTransform = SelectedElement.TransformToVisual(DesignSurface);
+                    Vector2 currentRootPos = currentTransform.TransformPoint(Vector2.Zero);
+                    
+                    // Remove from old parent container
+                    RemoveChildFromParent(SelectedElement);
+                    
+                    // Add to new parent container
+                    AddChildToContainer(targetContainer, SelectedElement);
+                    
+                    // Project root position to the new parent's coordinate space to preserve position
+                    var toParent = DesignSurface.TransformToVisual(targetContainer);
+                    Vector2 parentLocalPos = toParent.TransformPoint(currentRootPos);
+                    
+                    Canvas.SetLeft(SelectedElement, parentLocalPos.X);
+                    Canvas.SetTop(SelectedElement, parentLocalPos.Y);
+                    
+                    _selectionAdorner?.UpdatePositionAndSize();
+                }
+            }
             
             CanvasModified?.Invoke();
             Invalidate();
@@ -366,37 +483,46 @@ public class DesignerCanvas : Panel
 
     public Rect GetElementRect(FrameworkElement element)
     {
-        float left = Canvas.GetLeft(element);
-        float top = Canvas.GetTop(element);
+        var transform = element.TransformToVisual(DesignSurface);
         float width = float.IsNaN(element.Width) ? element.Size.X : element.Width;
         float height = float.IsNaN(element.Height) ? element.Size.Y : element.Height;
         
         if (width <= 0) width = 120f;
         if (height <= 0) height = 36f;
         
-        return new Rect(left, top, width, height);
+        return transform.TransformBounds(new Rect(0, 0, width, height));
     }
 
     private void RebuildSpatialIndex()
     {
         var entries = new List<RTreeEntry<FrameworkElement>>();
-        foreach (var child in DesignSurface.Children)
+        AddToSpatialIndexRecursive(DesignSurface, entries);
+        _spatialIndex.Rebuild(entries);
+    }
+
+    private void AddToSpatialIndexRecursive(FrameworkElement parent, List<RTreeEntry<FrameworkElement>> entries)
+    {
+        if (parent is ContainerVisual container)
         {
-            if (child is FrameworkElement fe)
+            foreach (var child in container.Children)
             {
-                float w = float.IsNaN(fe.Width) ? fe.Size.X : fe.Width;
-                float h = float.IsNaN(fe.Height) ? fe.Size.Y : fe.Height;
-                if (w <= 0) w = 120f;
-                if (h <= 0) h = 36f;
-                Rect localBounds = new Rect(0, 0, w, h);
+                if (child is FrameworkElement fe)
+                {
+                    float w = float.IsNaN(fe.Width) ? fe.Size.X : fe.Width;
+                    float h = float.IsNaN(fe.Height) ? fe.Size.Y : fe.Height;
+                    if (w <= 0) w = 120f;
+                    if (h <= 0) h = 36f;
+                    Rect localBounds = new Rect(0, 0, w, h);
 
-                var transform = fe.TransformToVisual(DesignSurface);
-                Rect transformedBounds = transform.TransformBounds(localBounds);
+                    var transform = fe.TransformToVisual(DesignSurface);
+                    Rect transformedBounds = transform.TransformBounds(localBounds);
 
-                entries.Add(new RTreeEntry<FrameworkElement>(transformedBounds, fe));
+                    entries.Add(new RTreeEntry<FrameworkElement>(transformedBounds, fe));
+
+                    AddToSpatialIndexRecursive(fe, entries);
+                }
             }
         }
-        _spatialIndex.Rebuild(entries);
     }
 
     public Vector2 SnapPosition(FrameworkElement element, Vector2 newPos)
@@ -420,9 +546,12 @@ public class DesignerCanvas : Panel
         float snappedLeft = gridSnappedX;
         float snappedTop = gridSnappedY;
 
-        foreach (var child in DesignSurface.Children)
+        var allElements = new List<FrameworkElement>();
+        GetAllElementsRecursive(DesignSurface, allElements);
+
+        foreach (var other in allElements)
         {
-            if (child == element || child is not FrameworkElement other)
+            if (other == element)
                 continue;
 
             Rect otherRect = GetElementRect(other);
@@ -485,13 +614,31 @@ public class DesignerCanvas : Panel
         return new Vector2(snappedLeft, snappedTop);
     }
 
+    private void GetAllElementsRecursive(FrameworkElement parent, List<FrameworkElement> results)
+    {
+        if (parent is ContainerVisual container)
+        {
+            foreach (var child in container.Children)
+            {
+                if (child is FrameworkElement fe)
+                {
+                    results.Add(fe);
+                    GetAllElementsRecursive(fe, results);
+                }
+            }
+        }
+    }
+
     public float? GetSnapX(FrameworkElement element, float targetX)
     {
         float snapThreshold = MathF.Min(5f, 5f / ZoomScale);
         float? snapVal = null;
-        foreach (var child in DesignSurface.Children)
+        var allElements = new List<FrameworkElement>();
+        GetAllElementsRecursive(DesignSurface, allElements);
+
+        foreach (var other in allElements)
         {
-            if (child == element || child is not FrameworkElement other)
+            if (other == element)
                 continue;
 
             Rect otherRect = GetElementRect(other);
@@ -520,9 +667,12 @@ public class DesignerCanvas : Panel
     {
         float snapThreshold = MathF.Min(5f, 5f / ZoomScale);
         float? snapVal = null;
-        foreach (var child in DesignSurface.Children)
+        var allElements = new List<FrameworkElement>();
+        GetAllElementsRecursive(DesignSurface, allElements);
+
+        foreach (var other in allElements)
         {
-            if (child == element || child is not FrameworkElement other)
+            if (other == element)
                 continue;
 
             Rect otherRect = GetElementRect(other);
@@ -669,8 +819,13 @@ public class DesignerCanvas : Panel
                         }
                         newInstance.Name = candidateName;
 
-                        // Restrict toolbox drops strictly to the root DesignSurface canvas
+                        // Find drop container under logicalPos
                         FrameworkElement dropTarget = DesignSurface;
+                        var hitContainer = FindContainerAtPosition(DesignSurface, args.Position, null);
+                        if (hitContainer != null)
+                        {
+                            dropTarget = hitContainer;
+                        }
 
                         if (dropTarget is Canvas canvasTarget)
                         {
@@ -824,45 +979,56 @@ public class DesignerCanvas : Panel
         }
     }
 
-    private FrameworkElement? FindContainerAtPosition(Visual parent, Vector2 parentPos)
+    private FrameworkElement? FindContainerAtPosition(FrameworkElement parent, Vector2 logicalPos, FrameworkElement? excludeElement)
     {
-        if (parent is not FrameworkElement fe) return null;
-
-        Vector2 localPos = parentPos - fe.Offset;
-
-        Rect localBounds = new Rect(Vector2.Zero, fe.Size);
-        if (!localBounds.Contains(localPos))
+        if (parent == excludeElement || (excludeElement != null && IsAncestorOf(excludeElement, parent)))
         {
             return null;
         }
 
-        if (fe is ContainerVisual container)
+        FrameworkElement? hit = null;
+
+        if (IsValidDropContainer(parent))
+        {
+            var transformToLocal = DesignSurface.TransformToVisual(parent);
+            Vector2 localPoint = transformToLocal.TransformPoint(logicalPos);
+
+            float w = float.IsNaN(parent.Width) ? parent.Size.X : parent.Width;
+            float h = float.IsNaN(parent.Height) ? parent.Size.Y : parent.Height;
+            if (w <= 0) w = 120f;
+            if (h <= 0) h = 36f;
+
+            Rect localBounds = new Rect(0, 0, w, h);
+            if (localBounds.Contains(localPoint))
+            {
+                hit = parent;
+            }
+        }
+
+        if (parent is ContainerVisual container)
         {
             for (int i = container.Children.Count - 1; i >= 0; i--)
             {
-                var child = container.Children[i];
-                if (child is FrameworkElement childFe)
+                var child = container.Children[i] as FrameworkElement;
+                if (child != null)
                 {
-                    var hit = FindContainerAtPosition(childFe, localPos);
-                    if (hit != null)
+                    var childHit = FindContainerAtPosition(child, logicalPos, excludeElement);
+                    if (childHit != null)
                     {
-                        return hit;
+                        return childHit;
                     }
                 }
             }
         }
 
-        if (IsValidDropContainer(fe))
-        {
-            return fe;
-        }
-
-        return null;
+        return hit;
     }
 
     private bool IsValidDropContainer(FrameworkElement fe)
     {
         if (fe is Panel) return true;
+        if (fe is Border) return true;
+        if (fe is ContentControl) return true;
         
         var type = fe.GetType();
         var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
@@ -919,6 +1085,53 @@ public class DesignerCanvas : Panel
         {
             container.AddChild(newChild);
         }
+    }
+
+    private void AddChildToContainer(FrameworkElement target, FrameworkElement newChild)
+    {
+        AddChildToTarget(target, newChild);
+    }
+
+    private void RemoveChildFromParent(FrameworkElement child)
+    {
+        var parent = child.Parent as ContainerVisual;
+        if (parent == null) return;
+
+        if (parent is Border borderParent && borderParent.Child == child)
+        {
+            borderParent.Child = null;
+        }
+        else if (parent is ContentControl contentControlParent && contentControlParent.Content == child)
+        {
+            contentControlParent.Content = null;
+        }
+        else
+        {
+            parent.RemoveChild(child);
+        }
+    }
+
+    private static bool IsAncestorOf(FrameworkElement possibleAncestor, FrameworkElement child)
+    {
+        var current = child.Parent as FrameworkElement;
+        while (current != null)
+        {
+            if (current == possibleAncestor) return true;
+            current = current.Parent as FrameworkElement;
+        }
+        return false;
+    }
+
+    private int GetVisualDepth(FrameworkElement fe)
+    {
+        int depth = 0;
+        var current = fe.Parent;
+        while (current != null)
+        {
+            depth++;
+            current = current.Parent;
+        }
+        return depth;
     }
 
     private void FindNamesInVisualTree(Visual? root, HashSet<string> names)
