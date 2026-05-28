@@ -171,6 +171,12 @@ public class DesignerCanvas : Panel
 
         if (_selectedElement != null)
         {
+            // Force a measure & arrange layout pass on DesignSurface so the element's actual position is fully computed
+            float surfaceW = !float.IsFinite(Size.X) ? 2000f : Size.X;
+            float surfaceH = !float.IsFinite(Size.Y) ? 2000f : Size.Y;
+            DesignSurface.Measure(new Vector2(surfaceW, surfaceH));
+            DesignSurface.Arrange(new Rect(Vector2.Zero, new Vector2(surfaceW, surfaceH)));
+
             _selectionAdorner = new SelectionAdorner(_selectedElement, this);
             AdornerSurface.Children.Add(_selectionAdorner);
             _selectionAdorner.UpdatePositionAndSize();
@@ -1063,12 +1069,6 @@ public class DesignerCanvas : Panel
                             // Add child to the non-canvas container (Panel, Border, ContentControl)
                             AddChildToTarget(dropTarget, newInstance);
                         }
-
-                        // Force a measure & arrange layout pass on the DesignSurface so child bounds are fully computed
-                        float surfaceW = !float.IsFinite(Size.X) ? 2000f : Size.X;
-                        float surfaceH = !float.IsFinite(Size.Y) ? 2000f : Size.Y;
-                        DesignSurface.Measure(new Vector2(surfaceW, surfaceH));
-                        DesignSurface.Arrange(new Rect(Vector2.Zero, new Vector2(surfaceW, surfaceH)));
 
                         SelectElement(newInstance);
 
