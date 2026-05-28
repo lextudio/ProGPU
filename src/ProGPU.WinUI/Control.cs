@@ -337,6 +337,8 @@ public class Control : FrameworkElement, ITemplatedControl
 
     public virtual Brush? GetCurrentBackground()
     {
+        if (IsPropertySetLocally(BackgroundProperty)) return Background;
+
         string prefix = GetThemePrefix();
         if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BackgroundDisabled") ?? Background;
         if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BackgroundPressed") ?? Background;
@@ -347,6 +349,8 @@ public class Control : FrameworkElement, ITemplatedControl
 
     public virtual Brush? GetCurrentForeground()
     {
+        if (IsPropertySetLocally(ForegroundProperty)) return Foreground;
+
         string prefix = GetThemePrefix();
         if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}ForegroundDisabled") ?? Foreground;
         if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}ForegroundPressed") ?? Foreground;
@@ -357,6 +361,8 @@ public class Control : FrameworkElement, ITemplatedControl
 
     public virtual Brush? GetCurrentBorderBrush()
     {
+        if (IsPropertySetLocally(BorderBrushProperty)) return BorderBrush;
+
         string prefix = GetThemePrefix();
         if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BorderBrushDisabled") ?? BorderBrush;
         if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BorderBrushPressed") ?? BorderBrush;
