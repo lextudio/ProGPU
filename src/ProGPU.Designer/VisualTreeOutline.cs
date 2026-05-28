@@ -388,6 +388,28 @@ public class VisualTreeOutlineItem : Border
                     {
                         textBlock.Text = toolName;
                     }
+                    else if (newInstance is CheckBox checkBox)
+                    {
+                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(toolName));
+                        checkBox.Content = richText;
+                    }
+                    else if (newInstance is RadioButton radioButton)
+                    {
+                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(toolName));
+                        radioButton.Content = richText;
+                    }
+                    else if (newInstance is ToggleSwitch toggleSwitch)
+                    {
+                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(toolName));
+                        toggleSwitch.Content = richText;
+                    }
+                    else if (newInstance is ComboBox comboBox)
+                    {
+                        comboBox.PlaceholderText = toolName;
+                    }
 
                     int suffix = 1;
                     string baseName = $"{toolName}";

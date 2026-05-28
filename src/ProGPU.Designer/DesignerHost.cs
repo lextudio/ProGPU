@@ -330,6 +330,28 @@ public class DesignerHost : Grid
                     {
                         textBlock.Text = controlType;
                     }
+                    else if (newInstance is CheckBox checkBox)
+                    {
+                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(controlType));
+                        checkBox.Content = richText;
+                    }
+                    else if (newInstance is RadioButton radioButton)
+                    {
+                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(controlType));
+                        radioButton.Content = richText;
+                    }
+                    else if (newInstance is ToggleSwitch toggleSwitch)
+                    {
+                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
+                        richText.Inlines.Add(new Run(controlType));
+                        toggleSwitch.Content = richText;
+                    }
+                    else if (newInstance is ComboBox comboBox)
+                    {
+                        comboBox.PlaceholderText = controlType;
+                    }
 
                     _designerCanvas.DesignSurface.Children.Add(newInstance);
                     _designerCanvas.SelectElement(newInstance);

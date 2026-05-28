@@ -137,6 +137,22 @@ public class ToolboxItem : Border
                     richText.Inlines.Add(new Run(_controlName));
                     checkBox.Content = richText;
                 }
+                else if (dragVisual is RadioButton radioButton)
+                {
+                    var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
+                    richText.Inlines.Add(new Run(_controlName));
+                    radioButton.Content = richText;
+                }
+                else if (dragVisual is ToggleSwitch toggleSwitch)
+                {
+                    var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
+                    richText.Inlines.Add(new Run(_controlName));
+                    toggleSwitch.Content = richText;
+                }
+                else if (dragVisual is ComboBox comboBox)
+                {
+                    comboBox.PlaceholderText = _controlName;
+                }
             }
             else
             {
