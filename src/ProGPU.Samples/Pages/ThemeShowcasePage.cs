@@ -211,7 +211,8 @@ public static class ThemeShowcasePage
             Padding = new Thickness(16f),
             Margin = new Thickness(0, 0, 0, 16),
             BorderThickness = new Thickness(1f),
-            BorderBrush = new ThemeResourceBrush("ControlBorder")
+            BorderBrush = new ThemeResourceBrush("ControlBorder"),
+            Background = new SolidColorBrush(new Vector4(1f, 1f, 1f, 0.02f))
         };
         
         var cardText = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
