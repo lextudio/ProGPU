@@ -218,8 +218,8 @@ public class DesignerCanvasTests
         var listPanel = scrollViewer.Content as Microsoft.UI.Xaml.Controls.StackPanel;
         Assert.NotNull(listPanel);
 
-        // Check initially all 22 items are present
-        Assert.Equal(22, listPanel.Children.Count);
+        // Check initially all 26 items are present
+        Assert.Equal(26, listPanel.Children.Count);
 
         // Type "StackPanel" in search box
         searchBox.Text = "StackPanel";
@@ -232,7 +232,7 @@ public class DesignerCanvasTests
 
         // Clear search
         searchBox.Text = "";
-        Assert.Equal(22, listPanel.Children.Count);
+        Assert.Equal(26, listPanel.Children.Count);
     }
 
     [Fact]
