@@ -779,14 +779,52 @@ public class DrawingContext : IRenderDataProvider
 
     public void Append(DrawingContext other)
     {
+        Append(other, Vector2.Zero);
+    }
+
+    public void Append(DrawingContext other, Vector2 translation)
+    {
         int pointOffset = PointBuffer.Count;
         int doubleOffset = DoubleBuffer.Count;
         int line3dOffset = Line3DBuffer.Count;
         int floatOffset = FloatBuffer.Count;
 
-        PointBuffer.AddRange(other.PointBuffer);
+        if (translation == Vector2.Zero)
+        {
+            PointBuffer.AddRange(other.PointBuffer);
+        }
+        else
+        {
+            int required = PointBuffer.Count + other.PointBuffer.Count;
+            if (PointBuffer.Capacity < required)
+                PointBuffer.Capacity = Math.Max(required, PointBuffer.Capacity * 2);
+            for (int i = 0; i < other.PointBuffer.Count; i++)
+            {
+                PointBuffer.Add(other.PointBuffer[i] + translation);
+            }
+        }
+
         DoubleBuffer.AddRange(other.DoubleBuffer);
-        Line3DBuffer.AddRange(other.Line3DBuffer);
+
+        if (translation == Vector2.Zero)
+        {
+            Line3DBuffer.AddRange(other.Line3DBuffer);
+        }
+        else
+        {
+            var trans3D = new Vector3(translation.X, translation.Y, 0f);
+            int required = Line3DBuffer.Count + other.Line3DBuffer.Count;
+            if (Line3DBuffer.Capacity < required)
+                Line3DBuffer.Capacity = Math.Max(required, Line3DBuffer.Capacity * 2);
+            for (int i = 0; i < other.Line3DBuffer.Count; i++)
+            {
+                var l = other.Line3DBuffer[i];
+                l.Start += trans3D;
+                l.End += trans3D;
+                Line3DBuffer.Add(l);
+            }
+        }
+
         FloatBuffer.AddRange(other.FloatBuffer);
 
         foreach (var cmd in other.Commands)
@@ -802,6 +840,33 @@ public class DrawingContext : IRenderDataProvider
                 adjustedCmd.FloatBufferOffset += floatOffset;
             if (adjustedCmd.WeightBufferCount > 0)
                 adjustedCmd.WeightBufferOffset += doubleOffset;
+
+            if (translation != Vector2.Zero)
+            {
+                if (adjustedCmd.Type == RenderCommandType.DrawRect || 
+                    adjustedCmd.Type == RenderCommandType.DrawTexture || 
+                    adjustedCmd.Type == RenderCommandType.DrawRoundedRect)
+                {
+                    adjustedCmd.Rect = new Rect(adjustedCmd.Rect.Position + translation, adjustedCmd.Rect.Size);
+                }
+                else
+                {
+                    adjustedCmd.Position += translation;
+                    adjustedCmd.Position2 += translation;
+                    adjustedCmd.Position3 += translation;
+                    adjustedCmd.Position4 += translation;
+
+                    if (adjustedCmd.PolylinePoints != null)
+                    {
+                        var newPoints = new Vector2[adjustedCmd.PolylinePoints.Length];
+                        for (int i = 0; i < adjustedCmd.PolylinePoints.Length; i++)
+                        {
+                            newPoints[i] = adjustedCmd.PolylinePoints[i] + translation;
+                        }
+                        adjustedCmd.PolylinePoints = newPoints;
+                    }
+                }
+            }
 
             Commands.Add(adjustedCmd);
         }
