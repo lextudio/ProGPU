@@ -14,7 +14,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
-    <ProjectReference Include="..\ProGPU.Designer\ProGPU.Designer.csproj" />
+    <ProjectReference Include="..\ProGPU.WinUI.Charts\ProGPU.WinUI.Charts.csproj" />
+    <ProjectReference Include="..\ProGPU.WinUI.Designer\ProGPU.WinUI.Designer.csproj" />
     <ProjectReference Include="..\ProGPU.Samples\ProGPU.Samples.csproj" />
   </ItemGroup>
 </Project>
