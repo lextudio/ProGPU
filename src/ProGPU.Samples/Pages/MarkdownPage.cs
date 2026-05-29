@@ -467,6 +467,11 @@ namespace ProGPU.Samples
             _editorControl.Inlines.Clear();
             _editorControl.Inlines.Add(new Run(resultText));
             
+            if (_previewControl != null)
+            {
+                _previewControl.Markdown = resultText;
+            }
+            
             _editorControl.CaretIndex = insertPos + syntax.Length;
             _editorControl.Invalidate();
         }
