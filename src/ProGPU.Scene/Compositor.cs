@@ -761,7 +761,7 @@ public unsafe class Compositor : IDisposable
         _currentWidth = width;
         _currentHeight = height;
         _currentDpiScale = 1.0f;
-        if (_context.Window != null)
+        if (_context.Window != null && width == (uint)_context.Window.Size.X && height == (uint)_context.Window.Size.Y)
         {
             _currentDpiScale = (float)_context.Window.FramebufferSize.X / _context.Window.Size.X;
         }
@@ -931,7 +931,8 @@ public unsafe class Compositor : IDisposable
                         _drawCalls.Add(new CompositorDrawCall
                         {
                             Type = DrawCallType.StaticDxf,
-                            StaticBuffer = cmd.StaticBuffer
+                            StaticBuffer = cmd.StaticBuffer,
+                            ClipRect = _activeClipRect
                         });
                         _pendingVectorStart = (uint)_vectorIndicesList.Count;
                         _pendingTextStart = (uint)_textIndicesList.Count;
@@ -1087,6 +1088,7 @@ public unsafe class Compositor : IDisposable
 
         foreach (var dc in _drawCalls)
         {
+            ApplyDrawCallScissor(pass, dc);
             if (dc.Type == DrawCallType.Vector)
             {
                 if (currentType != DrawCallType.Vector)
@@ -1289,6 +1291,7 @@ public unsafe class Compositor : IDisposable
 
     private void PushClipRect(Rect localClip, Matrix4x4 transform)
     {
+        CommitPendingDrawCalls();
         var vTopLeft = Vector2.Transform(new Vector2(localClip.X, localClip.Y), transform);
         var vBottomRight = Vector2.Transform(new Vector2(localClip.X + localClip.Width, localClip.Y + localClip.Height), transform);
         
@@ -1316,6 +1319,7 @@ public unsafe class Compositor : IDisposable
 
     private void PopClipRect()
     {
+        CommitPendingDrawCalls();
         if (_clipStack.Count > 0)
         {
             _clipStack.Pop();
@@ -1494,7 +1498,8 @@ public unsafe class Compositor : IDisposable
                     _drawCalls.Add(new CompositorDrawCall
                     {
                         Type = DrawCallType.StaticDxf,
-                        StaticBuffer = cmd.StaticBuffer
+                        StaticBuffer = cmd.StaticBuffer,
+                        ClipRect = _activeClipRect
                     });
                     _pendingVectorStart = (uint)_vectorIndicesList.Count;
                     _pendingTextStart = (uint)_textIndicesList.Count;
@@ -3243,12 +3248,8 @@ public unsafe class Compositor : IDisposable
             float baseCursorX = runGlyph.Position.X - runGlyph.Glyph.BearX;
             float baseCursorY = runGlyph.Position.Y - runGlyph.Glyph.BearY;
 
-            // Compute high-DPI scaling factor dynamically from the window context
-            float dpiScale = 1.0f;
-            if (_context.Window != null)
-            {
-                dpiScale = (float)_context.Window.FramebufferSize.X / _context.Window.Size.X;
-            }
+            // Compute high-DPI scaling factor dynamically from the compositor target context
+            float dpiScale = _currentDpiScale;
 
             float physicalFontSize = cmd.FontSize * dpiScale;
             bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
@@ -3542,7 +3543,8 @@ public unsafe class Compositor : IDisposable
             Type = DrawCallType.Texture,
             IndexStart = (uint)(_textureIndicesList.Count - 6),
             IndexCount = 6,
-            Texture = cmd.Texture
+            Texture = cmd.Texture,
+            ClipRect = _activeClipRect
         });
     }
 
@@ -3551,14 +3553,26 @@ public unsafe class Compositor : IDisposable
         uint vecCount = (uint)_vectorIndicesList.Count - _pendingVectorStart;
         if (vecCount > 0)
         {
-            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Vector, IndexStart = _pendingVectorStart, IndexCount = vecCount });
+            _drawCalls.Add(new CompositorDrawCall 
+            { 
+                Type = DrawCallType.Vector, 
+                IndexStart = _pendingVectorStart, 
+                IndexCount = vecCount,
+                ClipRect = _activeClipRect
+            });
             _pendingVectorStart = (uint)_vectorIndicesList.Count;
         }
 
         uint textCount = (uint)_textIndicesList.Count - _pendingTextStart;
         if (textCount > 0)
         {
-            _drawCalls.Add(new CompositorDrawCall { Type = DrawCallType.Text, IndexStart = _pendingTextStart, IndexCount = textCount });
+            _drawCalls.Add(new CompositorDrawCall 
+            { 
+                Type = DrawCallType.Text, 
+                IndexStart = _pendingTextStart, 
+                IndexCount = textCount,
+                ClipRect = _activeClipRect
+            });
             _pendingTextStart = (uint)_textIndicesList.Count;
         }
     }
@@ -3721,11 +3735,45 @@ public unsafe class Compositor : IDisposable
 
     private Vector2 ClampToClip(Vector2 p)
     {
-        if (!_activeClipRect.HasValue || _useGpuTransformsActive) return p;
-        var r = _activeClipRect.Value;
-        float x = Math.Max(r.X, Math.Min(r.X + r.Width, p.X));
-        float y = Math.Max(r.Y, Math.Min(r.Y + r.Height, p.Y));
-        return new Vector2(x, y);
+        return p;
+    }
+
+    private unsafe void ApplyDrawCallScissor(RenderPassEncoder* pass, CompositorDrawCall dc)
+    {
+        uint targetWidth = (uint)Math.Round(_currentWidth * _currentDpiScale);
+        uint targetHeight = (uint)Math.Round(_currentHeight * _currentDpiScale);
+
+        if (dc.ClipRect.HasValue)
+        {
+            var rect = dc.ClipRect.Value;
+            float rx = Math.Max(0f, rect.X * _currentDpiScale);
+            float ry = Math.Max(0f, rect.Y * _currentDpiScale);
+            float rw = Math.Max(0f, rect.Width * _currentDpiScale);
+            float rh = Math.Max(0f, rect.Height * _currentDpiScale);
+
+            uint sx = (uint)Math.Round(rx);
+            uint sy = (uint)Math.Round(ry);
+            uint sw = (uint)Math.Round(rw);
+            uint sh = (uint)Math.Round(rh);
+
+            sw = Math.Max(1u, sw);
+            sh = Math.Max(1u, sh);
+
+            if (sx < targetWidth && sy < targetHeight)
+            {
+                sw = Math.Min(sw, targetWidth - sx);
+                sh = Math.Min(sh, targetHeight - sy);
+                _context.Wgpu.RenderPassEncoderSetScissorRect(pass, sx, sy, sw, sh);
+            }
+            else
+            {
+                _context.Wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, 1, 1);
+            }
+        }
+        else
+        {
+            _context.Wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, targetWidth, targetHeight);
+        }
     }
 
     ~Compositor()
@@ -3781,7 +3829,7 @@ public unsafe class Compositor : IDisposable
             try
             {
                 // 1. Render the subtree of fe offscreen centered into textures.Source (offset by padding)
-                RenderOffscreen(fe, w, h, textures.Source, padding);
+                RenderOffscreen(fe, w, h, textures.Source, padding, 1.0f);
             }
             finally
             {
@@ -3839,11 +3887,8 @@ public unsafe class Compositor : IDisposable
     {
         if (node.Size.X <= 0f || node.Size.Y <= 0f) return;
 
-        float dpiScale = 1.0f;
-        if (_context.Window != null)
-        {
-            dpiScale = (float)_context.Window.FramebufferSize.X / _context.Window.Size.X;
-        }
+        // Compute high-DPI scaling factor dynamically from the compositor target context
+        float dpiScale = _currentDpiScale;
 
         uint w = (uint)MathF.Max(1f, node.Size.X * dpiScale);
         uint h = (uint)MathF.Max(1f, node.Size.Y * dpiScale);
@@ -3867,7 +3912,7 @@ public unsafe class Compositor : IDisposable
             try
             {
                 // Render the subtree of node offscreen centered with 0 padding into node.LayerTexture
-                RenderOffscreen(node, (uint)node.Size.X, (uint)node.Size.Y, node.LayerTexture, 0f);
+                RenderOffscreen(node, (uint)node.Size.X, (uint)node.Size.Y, node.LayerTexture, 0f, dpiScale);
             }
             finally
             {
@@ -3893,12 +3938,14 @@ public unsafe class Compositor : IDisposable
         CompileTextureCommand(cmd, parentTransform);
     }
 
-    public void RenderOffscreen(Visual node, uint width, uint height, GpuTexture targetTexture, float padding)
+    public void RenderOffscreen(Visual node, uint width, uint height, GpuTexture targetTexture, float padding, float dpiScale)
     {
         var savedWidth = _currentWidth;
         var savedHeight = _currentHeight;
+        var savedDpiScale = _currentDpiScale;
         _currentWidth = width;
         _currentHeight = height;
+        _currentDpiScale = dpiScale;
 
         // 1. Calculate orthographic projection matrix for offscreen
         var projection = new Matrix4x4(
@@ -4041,6 +4088,7 @@ public unsafe class Compositor : IDisposable
 
         foreach (var dc in _drawCalls)
         {
+            ApplyDrawCallScissor(pass, dc);
             if (dc.Type == DrawCallType.Vector)
             {
                 if (currentType != DrawCallType.Vector)
@@ -4174,6 +4222,7 @@ public unsafe class Compositor : IDisposable
 
         _currentWidth = savedWidth;
         _currentHeight = savedHeight;
+        _currentDpiScale = savedDpiScale;
         _currentProjection = savedProjection;
     }
 
@@ -4889,35 +4938,8 @@ public unsafe class Compositor : IDisposable
         var lineBg = (BindGroup*)seriesBuffer.LineBindGroup;
         wgpu.RenderPassEncoderSetBindGroup(pass, 0, lineBg, 0, null);
 
-        if (dc.ClipRect.HasValue)
-        {
-            var rect = dc.ClipRect.Value;
-            float rx = Math.Max(0f, rect.X);
-            float ry = Math.Max(0f, rect.Y);
-            float rw = Math.Max(0f, rect.Width);
-            float rh = Math.Max(0f, rect.Height);
-
-            uint sx = (uint)Math.Round(rx);
-            uint sy = (uint)Math.Round(ry);
-            uint sw = (uint)Math.Round(rw);
-            uint sh = (uint)Math.Round(rh);
-
-            sw = Math.Max(1u, sw);
-            sh = Math.Max(1u, sh);
-
-            sw = Math.Min(sw, _currentWidth - sx);
-            sh = Math.Min(sh, _currentHeight - sy);
-
-            wgpu.RenderPassEncoderSetScissorRect(pass, sx, sy, sw, sh);
-        }
-
         uint instanceCount = (uint)(seriesBuffer.PointsCount - 1);
         wgpu.RenderPassEncoderDraw(pass, 6, instanceCount, 0, 0);
-
-        if (dc.ClipRect.HasValue)
-        {
-            wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, _currentWidth, _currentHeight);
-        }
     }
 
     private unsafe void RenderChartScatter(RenderPassEncoder* pass, CompositorDrawCall dc, bool isOffscreen)
@@ -4991,34 +5013,7 @@ public unsafe class Compositor : IDisposable
         var buffer = seriesBuffer.Buffer.BufferPtr;
         wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, seriesBuffer.Buffer.Size);
 
-        if (dc.ClipRect.HasValue)
-        {
-            var rect = dc.ClipRect.Value;
-            float rx = Math.Max(0f, rect.X);
-            float ry = Math.Max(0f, rect.Y);
-            float rw = Math.Max(0f, rect.Width);
-            float rh = Math.Max(0f, rect.Height);
-
-            uint sx = (uint)Math.Round(rx);
-            uint sy = (uint)Math.Round(ry);
-            uint sw = (uint)Math.Round(rw);
-            uint sh = (uint)Math.Round(rh);
-
-            sw = Math.Max(1u, sw);
-            sh = Math.Max(1u, sh);
-
-            sw = Math.Min(sw, _currentWidth - sx);
-            sh = Math.Min(sh, _currentHeight - sy);
-
-            wgpu.RenderPassEncoderSetScissorRect(pass, sx, sy, sw, sh);
-        }
-
         uint instanceCount = (uint)seriesBuffer.PointsCount;
         wgpu.RenderPassEncoderDraw(pass, 6, instanceCount, 0, 0);
-
-        if (dc.ClipRect.HasValue)
-        {
-            wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, _currentWidth, _currentHeight);
-        }
     }
 }
