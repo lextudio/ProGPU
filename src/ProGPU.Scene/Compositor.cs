@@ -4260,9 +4260,35 @@ public unsafe class Compositor : IDisposable
                 cachedBuffer = new GpuSeriesBuffer();
                 _dynamicGpuBufferCache.Add(cmd.GpuPoints, cachedBuffer);
             }
-            if (cachedBuffer.PointsCount != cmd.GpuPointsCount || cachedBuffer.Buffer == null)
+
+            int requiredLength = cmd.GpuPointsCount * 2;
+            bool needsUpload = cachedBuffer.PointsCount != cmd.GpuPointsCount || cachedBuffer.Buffer == null;
+
+            if (!needsUpload)
             {
-                cachedBuffer.Upload(cmd.GpuPoints, cmd.GpuPointsCount);
+                if (cachedBuffer.CachedInterleaved == null || cachedBuffer.CachedInterleaved.Length < requiredLength)
+                {
+                    needsUpload = true;
+                }
+                else
+                {
+                    var sourceSpan = new ReadOnlySpan<float>(cmd.GpuPoints, 0, requiredLength);
+                    var cachedSpan = new ReadOnlySpan<float>(cachedBuffer.CachedInterleaved, 0, requiredLength);
+                    if (!sourceSpan.SequenceEqual(cachedSpan))
+                    {
+                        needsUpload = true;
+                    }
+                }
+            }
+
+            if (needsUpload)
+            {
+                if (cachedBuffer.CachedInterleaved == null || cachedBuffer.CachedInterleaved.Length < requiredLength)
+                {
+                    cachedBuffer.CachedInterleaved = new float[requiredLength];
+                }
+                Array.Copy(cmd.GpuPoints, cachedBuffer.CachedInterleaved, requiredLength);
+                cachedBuffer.Upload(cachedBuffer.CachedInterleaved, cmd.GpuPointsCount);
             }
             staticBuffer = cachedBuffer;
         }
@@ -4292,9 +4318,75 @@ public unsafe class Compositor : IDisposable
                 cachedBuffer = new GpuSeriesBuffer();
                 _dynamicGpuBufferCache.Add(cmd.GpuPoints, cachedBuffer);
             }
-            if (cachedBuffer.PointsCount != cmd.GpuPointsCount || cachedBuffer.Buffer == null)
+
+            int requiredLength = cmd.GpuPointsCount * 3;
+            bool needsUpload = cachedBuffer.PointsCount != cmd.GpuPointsCount || cachedBuffer.Buffer == null;
+
+            if (!needsUpload)
             {
-                cachedBuffer.Upload(cmd.GpuPoints, cmd.GpuPointsCount);
+                if (cachedBuffer.CachedInterleaved == null || cachedBuffer.CachedInterleaved.Length < requiredLength)
+                {
+                    needsUpload = true;
+                }
+                else
+                {
+                    if (cmd.GpuPoints.Length == cmd.GpuPointsCount * 2)
+                    {
+                        float radiusVal = cmd.RadiusX;
+                        if (cachedBuffer.CachedInterleaved[2] != radiusVal)
+                        {
+                            needsUpload = true;
+                        }
+                        else
+                        {
+                            for (int i = 0; i < cmd.GpuPointsCount; i++)
+                            {
+                                if (cmd.GpuPoints[i * 2] != cachedBuffer.CachedInterleaved[i * 3] ||
+                                    cmd.GpuPoints[i * 2 + 1] != cachedBuffer.CachedInterleaved[i * 3 + 1])
+                                {
+                                    needsUpload = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var sourceSpan = new ReadOnlySpan<float>(cmd.GpuPoints, 0, requiredLength);
+                        var cachedSpan = new ReadOnlySpan<float>(cachedBuffer.CachedInterleaved, 0, requiredLength);
+                        if (!sourceSpan.SequenceEqual(cachedSpan))
+                        {
+                            needsUpload = true;
+                        }
+                    }
+                }
+            }
+
+            if (needsUpload)
+            {
+                if (cachedBuffer.CachedInterleaved == null || cachedBuffer.CachedInterleaved.Length < requiredLength)
+                {
+                    cachedBuffer.CachedInterleaved = new float[requiredLength];
+                }
+
+                if (cmd.GpuPoints.Length == cmd.GpuPointsCount * 2)
+                {
+                    float radiusVal = cmd.RadiusX;
+                    int srcIdx = 0;
+                    int destIdx = 0;
+                    for (int i = 0; i < cmd.GpuPointsCount; i++)
+                    {
+                        cachedBuffer.CachedInterleaved[destIdx++] = cmd.GpuPoints[srcIdx++];
+                        cachedBuffer.CachedInterleaved[destIdx++] = cmd.GpuPoints[srcIdx++];
+                        cachedBuffer.CachedInterleaved[destIdx++] = radiusVal;
+                    }
+                }
+                else
+                {
+                    Array.Copy(cmd.GpuPoints, cachedBuffer.CachedInterleaved, requiredLength);
+                }
+
+                cachedBuffer.Upload(cachedBuffer.CachedInterleaved, cmd.GpuPointsCount);
             }
             staticBuffer = cachedBuffer;
         }
