@@ -213,9 +213,40 @@ namespace Microsoft.UI.Xaml.Controls
             float w = WidthConstraint ?? availableSize.X;
             float h = HeightConstraint ?? availableSize.Y;
             if (float.IsInfinity(w)) w = 600f;
-            if (float.IsInfinity(h)) h = 600f;
 
             EnsureParsed();
+
+            if (float.IsInfinity(h))
+            {
+                // Measure total required height in single column first
+                float singleColHeight = TextLayoutEngine.LayoutSingleColumn(
+                    _blocks, 
+                    w, 
+                    Padding, 
+                    activeFont, 
+                    FontSize, 
+                    Foreground, 
+                    TextAlignment.Left, 
+                    this.ActualTheme, 
+                    new List<PositionedRichChar>(), 
+                    new List<TableVisualDecoration>(), 
+                    this, 
+                    (v) => {}, 
+                    (v) => {});
+
+                if (ColumnCount > 1)
+                {
+                    float contentHeight = Math.Max(0f, singleColHeight - Padding.Vertical);
+                    // Divide height across columns with a 15% safety factor + 40px padding to prevent layout overflow truncation
+                    float colH = (contentHeight / ColumnCount) * 1.15f + Padding.Vertical + 40f;
+                    h = Math.Max(200f, colH);
+                }
+                else
+                {
+                    h = singleColHeight;
+                }
+            }
+
             PerformEngineLayout(w, h);
 
             if (ColumnCount == 1)
