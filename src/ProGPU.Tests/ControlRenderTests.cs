@@ -403,4 +403,149 @@ public class ControlRenderTests
         }
         Assert.Equal(button, target);
     }
+
+    [Fact]
+    public void Test_PivotItem_TextBox_HitTesting()
+    {
+        var root = new Border { Width = 800f, Height = 600f };
+        
+        var pivot = new Pivot
+        {
+            Margin = new ProGPU.Layout.Thickness(20f, 4f, 20f, 20f)
+        };
+        root.Child = pivot;
+
+        var mainGrid = new Grid();
+        mainGrid.ColumnDefinitions.Add(new GridLength(280, GridUnitType.Absolute));
+        mainGrid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));
+
+        var sidebarBorder = new Border
+        {
+            Padding = new ProGPU.Layout.Thickness(16f),
+            Margin = new ProGPU.Layout.Thickness(0f, 0f, 16f, 0f),
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        var sidebarStack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Vertical };
+        
+        var ptLabel = new TextBlock { Text = "Point Count", FontSize = 10f, Margin = new ProGPU.Layout.Thickness(0f, 0f, 0f, 4f) };
+        var pointCountInput = new TextBox { Text = "1000000", Width = 230f, Margin = new ProGPU.Layout.Thickness(0f, 0f, 0f, 12f) };
+        
+        sidebarStack.AddChild(ptLabel);
+        sidebarStack.AddChild(pointCountInput);
+        sidebarBorder.Child = sidebarStack;
+        mainGrid.AddChild(sidebarBorder);
+        Grid.SetColumn(sidebarBorder, 0);
+
+        for (int i = 0; i < 15; i++)
+        {
+            pivot.Items.Add(new PivotItem($"Item {i}", new Border()));
+        }
+        var pivotItem = new PivotItem("Ultimate Benchmark", mainGrid);
+        pivot.Items.Add(pivotItem);
+        for (int i = 16; i < 18; i++)
+        {
+            pivot.Items.Add(new PivotItem($"Item {i}", new Border()));
+        }
+        pivot.SelectedIndex = 15;
+
+        // Measure and arrange
+        root.Measure(new Vector2(800f, 600f));
+        root.Arrange(new ProGPU.Scene.Rect(0f, 0f, 800f, 600f));
+
+        // Get global bounds/offset of pointCountInput to find where to click
+        var transform = pointCountInput.TransformToVisual(null);
+        var inputCenter = transform.TransformPoint(new Vector2(115f, 16f)); // Center of TextBox (230x32)
+
+        // Simulate hit test at center of TextBox
+        InputSystem.Current.Root = root;
+        var hit = InputSystem.HitTest(inputCenter);
+
+        Assert.NotNull(hit);
+        var target = hit;
+        while (target != null && target != pointCountInput)
+        {
+            target = target.Parent as FrameworkElement;
+        }
+        Assert.Equal(pointCountInput, target);
+    }
+
+    private FrameworkElement? FindElementByText(FrameworkElement root, string text)
+    {
+        if (root is TextBox tb && tb.Text == text) return tb;
+        foreach (var child in root.Children)
+        {
+            if (child is FrameworkElement fe)
+            {
+                var found = FindElementByText(fe, text);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private Pivot? FindPivot(FrameworkElement root)
+    {
+        if (root is Pivot p) return p;
+        foreach (var child in root.Children)
+        {
+            if (child is FrameworkElement fe)
+            {
+                var found = FindPivot(fe);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    [Fact]
+    public void Test_RealShowcasePage_TextBox_HitTesting()
+    {
+        // 1. Create the actual showcase page layout
+        var page = ProGPU.Samples.ChartShowcasePage.Create();
+        var root = new Border { Width = 1280f, Height = 800f, Child = page };
+
+        // 2. Locate the Pivot control and set selected index to 15 ("Ultimate Benchmark")
+        var pivot = FindPivot(page);
+        Assert.NotNull(pivot);
+        
+        // Find "Ultimate Benchmark" index
+        int targetIdx = -1;
+        for (int i = 0; i < pivot.Items.Count; i++)
+        {
+            if (pivot.Items[i].Header?.ToString() == "Ultimate Benchmark")
+            {
+                targetIdx = i;
+                break;
+            }
+        }
+        Assert.True(targetIdx >= 0);
+        
+        // Force selection and direct transition completion (DispatcherQueue is null in tests)
+        pivot.SelectedIndex = targetIdx;
+
+        // 3. Measure and arrange the whole window visual tree
+        root.Measure(new Vector2(1280f, 800f));
+        root.Arrange(new ProGPU.Scene.Rect(0f, 0f, 1280f, 800f));
+
+        // 4. Find the actual Point Count textbox
+        var pointCountInput = FindElementByText(page, "1000000");
+        Assert.NotNull(pointCountInput);
+
+        // 5. Check coordinates of pointCountInput
+        var transform = pointCountInput.TransformToVisual(null);
+        var inputCenter = transform.TransformPoint(new Vector2(115f, 16f)); // Center of TextBox (230x32)
+
+        // 6. Hit-test at the center of the TextBox
+        InputSystem.Current.Root = root;
+        var hit = InputSystem.HitTest(inputCenter);
+
+        Assert.NotNull(hit);
+        var target = hit;
+        while (target != null && target != pointCountInput)
+        {
+            target = target.Parent as FrameworkElement;
+        }
+        Assert.Equal(pointCountInput, target);
+    }
 }
+

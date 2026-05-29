@@ -330,6 +330,7 @@ public class PasswordBox : Control
             CaretIndex = index;
             _isDraggingSelection = true;
             InputSystem.CapturePointer(this);
+            e.Handled = true;
         }
     }
 
@@ -351,6 +352,7 @@ public class PasswordBox : Control
                 InputSystem.ReleasePointerCapture();
                 _isDraggingSelection = false;
             }
+            e.Handled = true;
         }
     }
 
@@ -395,6 +397,7 @@ public class PasswordBox : Control
                 SelectionLength = currentIdx - _selectionAnchor;
                 CaretIndex = currentIdx;
             }
+            e.Handled = true;
         }
     }
 

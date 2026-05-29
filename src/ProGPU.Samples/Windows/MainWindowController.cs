@@ -53,6 +53,9 @@ public static unsafe class MainWindowController
         AppState._wgpuContext = new WgpuContext();
         AppState._wgpuContext.Initialize(AppState._window);
 
+        // Register DispatcherQueue to handle async work on the main UI thread safely
+        Microsoft.UI.Xaml.Input.InputSystem.DispatcherQueue = UIThread.Post;
+
         AppState._screenCompositor = new Compositor(AppState._wgpuContext, AppState._wgpuContext.SwapChainFormat);
         AppState._screenCompositor.ClearColor = ThemeManager.GetColor("PageBackground");
         
@@ -291,6 +294,7 @@ public static unsafe class MainWindowController
 
         // Persistent page visual trees
         var basicInputItem = new NavigationViewItem("Basic Input", "🖱", BasicInputPage.Create());
+        var chartShowcaseItem = new NavigationViewItem("GPU Charting", "📊", ChartShowcasePage.Create());
         var panelsItem = new NavigationViewItem("Layout Panels", "🔲", LayoutPanelsPage.Create());
         var textItem = new NavigationViewItem("Text & Documents", "📄", TextDocumentsPage.Create());
         var markdownPlaygroundItem = new NavigationViewItem("Markdown Playground", "📝", MarkdownPage.Create());
@@ -324,6 +328,7 @@ public static unsafe class MainWindowController
         var colorPickerItem = new NavigationViewItem("Color Picker", "🎨", ColorPickerPage.Create());
 
         AppState._navigationView.MenuItems.Add(basicInputItem);
+        AppState._navigationView.MenuItems.Add(chartShowcaseItem);
         AppState._navigationView.MenuItems.Add(panelsItem);
         AppState._navigationView.MenuItems.Add(wrapPanelItem);
         AppState._navigationView.MenuItems.Add(dockPanelItem);

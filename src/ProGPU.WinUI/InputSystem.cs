@@ -43,6 +43,8 @@ public static class InputSystem
         set => _currentState = value;
     }
 
+    public static Action<Action>? DispatcherQueue { get; set; }
+
     private static FrameworkElement? _root { get => Current.Root; set => Current.Root = value; }
     private static FrameworkElement? _hoveredElement { get => Current.HoveredElement; set => Current.HoveredElement = value; }
     private static FrameworkElement? _focusedElement { get => Current.FocusedElement; set => Current.FocusedElement = value; }
@@ -473,6 +475,18 @@ public static class InputSystem
         if (button == MouseButton.Right) Current.IsRightButtonPressed = true;
 
         var hit = HitTest(_lastMousePos);
+        Console.WriteLine($"[InputSystem] MouseDown at {_lastMousePos}. Hit: {hit?.GetType().Name} (Name: {hit?.Name}, Size: {hit?.Size}, Offset: {hit?.Offset}, IsFocused: {(hit is Control ctrl ? ctrl.IsFocused.ToString() : "N/A")})");
+        if (hit != null)
+        {
+            var path = new List<string>();
+            var current = hit;
+            while (current != null)
+            {
+                path.Add($"{current.GetType().Name} (Name: {current.Name}, Size: {current.Size}, Offset: {current.Offset})");
+                current = current.Parent as FrameworkElement;
+            }
+            Console.WriteLine($"[InputSystem] Hit Path: {string.Join(" -> ", path)}");
+        }
 
         if (DevToolsService.IsInspectModeActive || (IsControlPressedDynamic() && IsShiftPressedDynamic()))
         {
