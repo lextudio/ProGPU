@@ -23,6 +23,12 @@ public class Pivot : FrameworkElement
     private int _hoveredHeaderIndex = -1;
     private readonly List<Rect> _headerRects = new();
 
+    private float _scrollOffset = 0f;
+    private bool _isDraggingHeaders = false;
+    private float _dragStartPos = 0f;
+    private float _dragStartOffset = 0f;
+    private bool _dragMoved = false;
+
     public ObservableCollection<PivotItem> Items { get; }
 
     public int SelectedIndex
@@ -40,6 +46,10 @@ public class Pivot : FrameworkElement
                 StartTransition();
                 
                 SelectionChanged?.Invoke(this, EventArgs.Empty);
+                
+                // Auto-scroll selected into view
+                ScrollSelectedIntoView();
+                
                 InvalidateArrange();
             }
         }
@@ -128,24 +138,76 @@ public class Pivot : FrameworkElement
         return null;
     }
 
-    private async void StartTransition()
+    private void StartTransition()
     {
         _transitionProgress = 0f;
         Invalidate();
         InvalidateArrange();
         
         int steps = 15;
-        for (int i = 1; i <= steps; i++)
+        var dispatch = Microsoft.UI.Xaml.Input.InputSystem.DispatcherQueue;
+        if (dispatch == null)
         {
-            await Task.Delay(16); // 60fps frame rate
-            _transitionProgress = (float)i / steps;
+            _transitionProgress = 1.0f;
             Invalidate();
             InvalidateArrange();
+            return;
+        }
+
+        int step = 0;
+        Action stepAction = null!;
+        stepAction = () =>
+        {
+            step++;
+            if (step <= steps)
+            {
+                _transitionProgress = (float)step / steps;
+                Invalidate();
+                InvalidateArrange();
+                System.Threading.Tasks.Task.Delay(16).ContinueWith(_ => dispatch(stepAction));
+            }
+            else
+            {
+                _transitionProgress = 1.0f;
+                Invalidate();
+                InvalidateArrange();
+            }
+        };
+        System.Threading.Tasks.Task.Delay(16).ContinueWith(_ => dispatch(stepAction));
+    }
+
+    private float GetTotalHeadersWidth()
+    {
+        if (_headerRects.Count == 0) return 0f;
+        var lastRect = _headerRects[_headerRects.Count - 1];
+        return lastRect.X + lastRect.Width + Padding.Right;
+    }
+
+    private void ClampScrollOffset()
+    {
+        float maxScroll = Math.Max(0f, GetTotalHeadersWidth() - Size.X);
+        _scrollOffset = Math.Clamp(_scrollOffset, 0f, maxScroll);
+    }
+
+    private void ScrollSelectedIntoView()
+    {
+        if (SelectedIndex < 0 || SelectedIndex >= _headerRects.Count) return;
+        var rect = _headerRects[SelectedIndex];
+        
+        float viewportLeft = Padding.Left + _scrollOffset;
+        float viewportRight = Size.X - Padding.Right + _scrollOffset;
+        
+        if (rect.X < viewportLeft)
+        {
+            _scrollOffset = rect.X - Padding.Left;
+        }
+        else if (rect.X + rect.Width > viewportRight)
+        {
+            _scrollOffset = rect.X + rect.Width - (Size.X - Padding.Right);
         }
         
-        _transitionProgress = 1.0f;
+        ClampScrollOffset();
         Invalidate();
-        InvalidateArrange();
     }
 
     private void UpdateHeaderLayout(Rect arrangeRect)
@@ -170,6 +232,8 @@ public class Pivot : FrameworkElement
             _headerRects.Add(rect);
             cursorX += itemW + 16f; // 16f header separation
         }
+        
+        ClampScrollOffset();
     }
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
@@ -216,6 +280,9 @@ public class Pivot : FrameworkElement
         ClipBounds = new Rect(0f, 0f, Size.X, Size.Y);
         
         UpdateHeaderLayout(arrangeRect);
+        
+        // Auto-scroll selected into view
+        ScrollSelectedIntoView();
 
         float contentY = arrangeRect.Y + headerHeight;
         float contentH = Math.Max(0f, arrangeRect.Height - headerHeight);
@@ -273,14 +340,13 @@ public class Pivot : FrameworkElement
             base.OnPointerPressed(e);
             
             var localPos = InputSystem.GetLocalPosition(this, e.ScreenPosition);
-            for (int i = 0; i < _headerRects.Count; i++)
+            if (localPos.Y < 44f) // Header area
             {
-                if (RectContains(_headerRects[i], localPos))
-                {
-                    SelectedIndex = i;
-                    e.Handled = true;
-                    break;
-                }
+                _isDraggingHeaders = true;
+                _dragStartPos = localPos.X;
+                _dragStartOffset = _scrollOffset;
+                _dragMoved = false;
+                e.Handled = true;
             }
         }
     }
@@ -289,13 +355,32 @@ public class Pivot : FrameworkElement
     {
         base.OnPointerMoved(e);
         var localPos = InputSystem.GetLocalPosition(this, e.ScreenPosition);
-        int hover = -1;
-        for (int i = 0; i < _headerRects.Count; i++)
+        
+        if (_isDraggingHeaders)
         {
-            if (RectContains(_headerRects[i], localPos))
+            float deltaX = localPos.X - _dragStartPos;
+            if (Math.Abs(deltaX) > 4f)
             {
-                hover = i;
-                break;
+                _dragMoved = true;
+            }
+            float maxScroll = Math.Max(0f, GetTotalHeadersWidth() - Size.X);
+            _scrollOffset = Math.Clamp(_dragStartOffset - deltaX, 0f, maxScroll);
+            Invalidate();
+            e.Handled = true;
+            return;
+        }
+
+        var logicalPos = new Vector2(localPos.X + _scrollOffset, localPos.Y);
+        int hover = -1;
+        if (localPos.Y < 44f)
+        {
+            for (int i = 0; i < _headerRects.Count; i++)
+            {
+                if (RectContains(_headerRects[i], logicalPos))
+                {
+                    hover = i;
+                    break;
+                }
             }
         }
         if (_hoveredHeaderIndex != hover)
@@ -305,14 +390,61 @@ public class Pivot : FrameworkElement
         }
     }
 
+    public override void OnPointerReleased(PointerRoutedEventArgs e)
+    {
+        if (IsEnabled)
+        {
+            base.OnPointerReleased(e);
+            
+            if (_isDraggingHeaders)
+            {
+                _isDraggingHeaders = false;
+                var localPos = InputSystem.GetLocalPosition(this, e.ScreenPosition);
+                
+                if (!_dragMoved && localPos.Y < 44f)
+                {
+                    var logicalPos = new Vector2(localPos.X + _scrollOffset, localPos.Y);
+                    for (int i = 0; i < _headerRects.Count; i++)
+                    {
+                        if (RectContains(_headerRects[i], logicalPos))
+                        {
+                            SelectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+                e.Handled = true;
+            }
+        }
+    }
+
     public override void OnPointerExited(PointerRoutedEventArgs e)
     {
         base.OnPointerExited(e);
+        _isDraggingHeaders = false;
         if (_hoveredHeaderIndex != -1)
         {
             _hoveredHeaderIndex = -1;
             Invalidate();
         }
+    }
+
+    public override void OnPointerWheelChanged(PointerRoutedEventArgs e)
+    {
+        var localPos = InputSystem.GetLocalPosition(this, e.ScreenPosition);
+        if (localPos.Y < 44f)
+        {
+            float maxScroll = Math.Max(0f, GetTotalHeadersWidth() - Size.X);
+            if (maxScroll > 0f)
+            {
+                float scrollDelta = -e.WheelDelta * 40f;
+                _scrollOffset = Math.Clamp(_scrollOffset + scrollDelta, 0f, maxScroll);
+                Invalidate();
+                e.Handled = true;
+                return;
+            }
+        }
+        base.OnPointerWheelChanged(e);
     }
 
     private static bool RectContains(Rect rect, Vector2 point)
@@ -336,19 +468,22 @@ public class Pivot : FrameworkElement
         context.DrawRectangle(sepBrush, null, new Rect(0f, sepY, Size.X, 1f));
 
         var font = GetActiveFont();
+        // 2. Clip headers rendering to available viewport (between padding margins)
+        context.PushClip(new Rect(Padding.Left, 0f, Size.X - Padding.Horizontal, sepY + 2f));
         
-        // 2. Draw horizontal headers
+        // Draw horizontal headers
         for (int i = 0; i < Items.Count; i++)
         {
             if (i >= _headerRects.Count) break;
             
             var rect = _headerRects[i];
+            var renderRect = new Rect(rect.X - _scrollOffset, rect.Y, rect.Width, rect.Height);
             
-            // Draw hover/active backgrounds
+            // Draw hover backgrounds
             if (i == _hoveredHeaderIndex)
             {
                 var hoverBrush = ThemeManager.GetBrush("ControlBackgroundHover", activeTheme);
-                context.DrawRoundedRectangle(hoverBrush, null, new Rect(rect.X, rect.Y, rect.Width, rect.Height - 2f), 4f);
+                context.DrawRoundedRectangle(hoverBrush, null, new Rect(renderRect.X, renderRect.Y, renderRect.Width, renderRect.Height - 2f), 4f);
             }
 
             // Draw header text
@@ -359,10 +494,9 @@ public class Pivot : FrameworkElement
                     ? ThemeManager.GetBrush("TextPrimary", activeTheme) 
                     : ThemeManager.GetBrush("TextSecondary", activeTheme);
                 
-                // Center text within header rect
                 var layout = new TextLayout(text, font, 15f, float.PositiveInfinity, TextAlignment.Left, null);
-                float textX = rect.X + (rect.Width - layout.MeasuredSize.X) / 2f;
-                float textY = rect.Y + (rect.Height - 15f) / 2f;
+                float textX = renderRect.X + (renderRect.Width - layout.MeasuredSize.X) / 2f;
+                float textY = renderRect.Y + (renderRect.Height - 15f) / 2f;
                 
                 context.DrawText(text, font, 15f, textBrush, new Vector2(textX, textY));
             }
@@ -374,7 +508,6 @@ public class Pivot : FrameworkElement
             float activeX, activeW;
             if (_transitionProgress < 1.0f && _previousIndex >= 0 && _previousIndex < _headerRects.Count)
             {
-                // Interpolate position during sliding transition
                 var prevRect = _headerRects[_previousIndex];
                 var selRect = _headerRects[_selectedIndex];
                 
@@ -388,11 +521,12 @@ public class Pivot : FrameworkElement
                 activeW = selRect.Width;
             }
 
-            // Accent bar centered below the text
-            Rect activeStripe = new Rect(activeX + 12f, sepY - 2f, activeW - 24f, 3f);
+            Rect activeStripe = new Rect(activeX - _scrollOffset + 12f, sepY - 2f, activeW - 24f, 3f);
             var accentBrush = ThemeManager.GetBrush("SystemAccentColor", activeTheme);
             context.DrawRectangle(accentBrush, null, activeStripe);
         }
+        
+        context.PopClip(); // End scroll clipping
 
         base.OnRender(context);
     }

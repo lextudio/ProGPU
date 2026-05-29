@@ -31,9 +31,10 @@ public class PivotItem : ContentControl
 
     public PivotItem()
     {
+        IsTabStop = false;
     }
 
-    public PivotItem(object header, object? content = null)
+    public PivotItem(object header, object? content = null) : this()
     {
         Header = header;
         Content = content;
