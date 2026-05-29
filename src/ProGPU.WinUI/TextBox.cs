@@ -276,6 +276,7 @@ public class TextBox : Control
             CaretIndex = index;
             _isDraggingSelection = true;
             InputSystem.CapturePointer(this);
+            e.Handled = true;
         }
     }
 
@@ -289,6 +290,7 @@ public class TextBox : Control
                 InputSystem.ReleasePointerCapture();
                 _isDraggingSelection = false;
             }
+            e.Handled = true;
         }
     }
 
@@ -324,6 +326,7 @@ public class TextBox : Control
                 SelectionLength = currentIdx - _selectionAnchor;
                 CaretIndex = currentIdx;
             }
+            e.Handled = true;
         }
     }
 

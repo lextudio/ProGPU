@@ -437,8 +437,8 @@ public class Control : FrameworkElement, ITemplatedControl
         if (IsEnabled)
         {
             IsPointerPressed = true;
-            // Also acquire focus if we are hit-test visible and enabled
-            if (IsHitTestVisible)
+            // Also acquire focus if we are hit-test visible, enabled, and IsTabStop
+            if (IsHitTestVisible && IsTabStop)
             {
                 InputSystem.SetFocus(this);
             }
