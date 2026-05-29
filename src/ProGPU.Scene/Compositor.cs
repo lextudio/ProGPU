@@ -1506,7 +1506,7 @@ public unsafe class Compositor : IDisposable
                     CompileGpuScatterSeriesCommand(ctx, cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPicture:
-                    CompilePicture(ctx, cmd.Picture, globalTransform);
+                    CompilePicture(ctx, cmd.Picture, activeTransform);
                     break;
             }
 
@@ -1645,7 +1645,7 @@ public unsafe class Compositor : IDisposable
                     CompileGpuScatterSeriesCommand(picture, cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPicture:
-                    CompilePicture(parentContext, cmd.Picture, globalTransform);
+                    CompilePicture(parentContext, cmd.Picture, activeTransform);
                     break;
             }
 
