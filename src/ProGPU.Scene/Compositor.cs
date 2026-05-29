@@ -182,7 +182,7 @@ public unsafe class Compositor : IDisposable
     private GpuBuffer _acisEdgesBuffer;
     private readonly List<GpuAcisRecord> _acisRecordsList = new();
     private readonly List<GpuAcisEdge> _acisEdgesList = new();
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<float[], GpuSeriesBuffer> _dynamicGpuBufferCache = new();
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, GpuSeriesBuffer> _dynamicGpuBufferCache = new();
 
     // Batch buffers (Dynamic GPU vertex & index buffers)
     private GpuBuffer _vectorVertexBuffer;
@@ -4550,22 +4550,30 @@ public unsafe class Compositor : IDisposable
         object? staticBuffer = cmd.StaticBuffer;
         if (staticBuffer == null)
         {
-            float[]? cacheKey = null;
+            object? cacheKey = null;
             ReadOnlySpan<float> floatsSpan = default;
             int pointsCount = cmd.GpuPointsCount;
+
+            if (cmd.SeriesCacheKey != null)
+            {
+                cacheKey = cmd.SeriesCacheKey;
+            }
+            else if (provider is GpuPicture picture)
+            {
+                cacheKey = picture.FloatBuffer;
+            }
+            else if (cmd.GpuPoints != null)
+            {
+                cacheKey = cmd.GpuPoints;
+            }
 
             if (provider != null)
             {
                 floatsSpan = provider.GetFloats(cmd.FloatBufferOffset, cmd.FloatBufferCount);
-                if (provider is GpuPicture picture)
-                {
-                    cacheKey = picture.FloatBuffer;
-                }
             }
             else if (cmd.GpuPoints != null)
             {
                 floatsSpan = cmd.GpuPoints;
-                cacheKey = cmd.GpuPoints;
             }
 
             if (cacheKey != null)
@@ -4638,22 +4646,30 @@ public unsafe class Compositor : IDisposable
         object? staticBuffer = cmd.StaticBuffer;
         if (staticBuffer == null)
         {
-            float[]? cacheKey = null;
+            object? cacheKey = null;
             ReadOnlySpan<float> floatsSpan = default;
             int pointsCount = cmd.GpuPointsCount;
+
+            if (cmd.SeriesCacheKey != null)
+            {
+                cacheKey = cmd.SeriesCacheKey;
+            }
+            else if (provider is GpuPicture picture)
+            {
+                cacheKey = picture.FloatBuffer;
+            }
+            else if (cmd.GpuPoints != null)
+            {
+                cacheKey = cmd.GpuPoints;
+            }
 
             if (provider != null)
             {
                 floatsSpan = provider.GetFloats(cmd.FloatBufferOffset, cmd.FloatBufferCount);
-                if (provider is GpuPicture picture)
-                {
-                    cacheKey = picture.FloatBuffer;
-                }
             }
             else if (cmd.GpuPoints != null)
             {
                 floatsSpan = cmd.GpuPoints;
-                cacheKey = cmd.GpuPoints;
             }
 
             if (cacheKey != null)

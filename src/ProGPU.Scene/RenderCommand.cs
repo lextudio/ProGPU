@@ -190,6 +190,9 @@ public struct RenderCommand
     public int FloatBufferOffset;
     public int FloatBufferCount;
 
+    // GPU series cache key
+    public object? SeriesCacheKey;
+
     // Picture property
     public GpuPicture? Picture;
 }
@@ -602,7 +605,8 @@ public class DrawingContext : IRenderDataProvider
             FloatBufferCount = count,
             GpuPointsCount = pointsCount,
             RadiusX = thickness,
-            Brush = brush
+            Brush = brush,
+            SeriesCacheKey = new object()
         });
     }
 
@@ -623,7 +627,8 @@ public class DrawingContext : IRenderDataProvider
             FloatBufferCount = count,
             GpuPointsCount = pointsCount,
             RadiusX = radius,
-            Brush = brush
+            Brush = brush,
+            SeriesCacheKey = new object()
         });
     }
 
@@ -654,11 +659,24 @@ public class DrawingContext : IRenderDataProvider
     public void DrawPolyline(Pen pen, Vector2[] points, bool isClosed = false)
     {
         DrawPolyline(pen, new ReadOnlySpan<Vector2>(points), isClosed);
+        if (Commands.Count > 0)
+        {
+            var cmd = Commands[Commands.Count - 1];
+            cmd.PolylinePoints = points;
+            Commands[Commands.Count - 1] = cmd;
+        }
     }
 
     public void DrawSpline(Pen pen, Vector2[] controlPoints, double[] knots, int degree)
     {
         DrawSpline(pen, new ReadOnlySpan<Vector2>(controlPoints), new ReadOnlySpan<double>(knots), degree);
+        if (Commands.Count > 0)
+        {
+            var cmd = Commands[Commands.Count - 1];
+            cmd.PolylinePoints = controlPoints;
+            cmd.SplineKnots = knots;
+            Commands[Commands.Count - 1] = cmd;
+        }
     }
 
     public void DrawSpline(Pen pen, Vector2[] controlPoints, double[] knots, double[]? weights, int degree, bool isClosed)
@@ -667,6 +685,8 @@ public class DrawingContext : IRenderDataProvider
         if (Commands.Count > 0)
         {
             var cmd = Commands[Commands.Count - 1];
+            cmd.PolylinePoints = controlPoints;
+            cmd.SplineKnots = knots;
             cmd.SplineWeights = weights;
             Commands[Commands.Count - 1] = cmd;
         }
