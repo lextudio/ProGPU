@@ -118,6 +118,11 @@ public class DesignerHost : Grid
             OnCanvasModified();
             _designerCanvas.Invalidate();
         };
+        _visualTreeOutline.ModeChanged += (isLogical) => {
+            _designerCanvas.IsLogicalMode = isLogical;
+            _designerCanvas.SelectElement(null);
+            _designerCanvas.Invalidate();
+        };
 
         Grid.SetRow(_visualTreeOutline, 1);
         _sidebarLeft.AddChild(_visualTreeOutline);
