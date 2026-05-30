@@ -64,6 +64,7 @@ public class DesignerCanvas : Panel
     
     public bool IsResizingElement { get; set; }
     public bool AlwaysShowPanelOutlines { get; set; } = false;
+    public bool IsLogicalMode { get; set; } = true;
 
     public event Action? SelectionChanged;
     public event Action? CanvasModified;
@@ -595,24 +596,48 @@ public class DesignerCanvas : Panel
 
     private void AddToSpatialIndexRecursive(FrameworkElement parent, List<RTreeEntry<FrameworkElement>> entries)
     {
-        if (parent is ContainerVisual container)
+        if (IsLogicalMode)
         {
-            foreach (var child in container.Children)
+            foreach (var child in VisualTreeOutline.GetLogicalChildren(parent))
             {
-                if (child is FrameworkElement fe && fe.IsVisible && !fe.IsCollapsed)
+                if (child.IsVisible && !child.IsCollapsed)
                 {
-                    float w = float.IsNaN(fe.Width) ? fe.Size.X : fe.Width;
-                    float h = float.IsNaN(fe.Height) ? fe.Size.Y : fe.Height;
+                    float w = float.IsNaN(child.Width) ? child.Size.X : child.Width;
+                    float h = float.IsNaN(child.Height) ? child.Size.Y : child.Height;
                     if (w <= 0) w = 120f;
                     if (h <= 0) h = 36f;
                     Rect localBounds = new Rect(0, 0, w, h);
 
-                    var transform = fe.TransformToVisual(DesignSurface);
+                    var transform = child.TransformToVisual(DesignSurface);
                     Rect transformedBounds = transform.TransformBounds(localBounds);
 
-                    entries.Add(new RTreeEntry<FrameworkElement>(transformedBounds, fe));
+                    entries.Add(new RTreeEntry<FrameworkElement>(transformedBounds, child));
 
-                    AddToSpatialIndexRecursive(fe, entries);
+                    AddToSpatialIndexRecursive(child, entries);
+                }
+            }
+        }
+        else
+        {
+            if (parent is ContainerVisual container)
+            {
+                foreach (var child in container.Children)
+                {
+                    if (child is FrameworkElement fe && fe.IsVisible && !fe.IsCollapsed)
+                    {
+                        float w = float.IsNaN(fe.Width) ? fe.Size.X : fe.Width;
+                        float h = float.IsNaN(fe.Height) ? fe.Size.Y : fe.Height;
+                        if (w <= 0) w = 120f;
+                        if (h <= 0) h = 36f;
+                        Rect localBounds = new Rect(0, 0, w, h);
+
+                        var transform = fe.TransformToVisual(DesignSurface);
+                        Rect transformedBounds = transform.TransformBounds(localBounds);
+
+                        entries.Add(new RTreeEntry<FrameworkElement>(transformedBounds, fe));
+
+                        AddToSpatialIndexRecursive(fe, entries);
+                    }
                 }
             }
         }
@@ -768,14 +793,25 @@ public class DesignerCanvas : Panel
 
     private void GetAllElementsRecursive(FrameworkElement parent, List<FrameworkElement> results)
     {
-        if (parent is ContainerVisual container)
+        if (IsLogicalMode)
         {
-            foreach (var child in container.Children)
+            foreach (var child in VisualTreeOutline.GetLogicalChildren(parent))
             {
-                if (child is FrameworkElement fe)
+                results.Add(child);
+                GetAllElementsRecursive(child, results);
+            }
+        }
+        else
+        {
+            if (parent is ContainerVisual container)
+            {
+                foreach (var child in container.Children)
                 {
-                    results.Add(fe);
-                    GetAllElementsRecursive(fe, results);
+                    if (child is FrameworkElement fe)
+                    {
+                        results.Add(fe);
+                        GetAllElementsRecursive(fe, results);
+                    }
                 }
             }
         }
@@ -1323,17 +1359,33 @@ public class DesignerCanvas : Panel
             }
         }
 
-        if (parent is ContainerVisual container)
+        if (IsLogicalMode)
         {
-            for (int i = container.Children.Count - 1; i >= 0; i--)
+            var logicalChildren = new List<FrameworkElement>(VisualTreeOutline.GetLogicalChildren(parent));
+            for (int i = logicalChildren.Count - 1; i >= 0; i--)
             {
-                var child = container.Children[i] as FrameworkElement;
-                if (child != null)
+                var child = logicalChildren[i];
+                var childHit = FindContainerAtPosition(child, logicalPos, excludeElement);
+                if (childHit != null)
                 {
-                    var childHit = FindContainerAtPosition(child, logicalPos, excludeElement);
-                    if (childHit != null)
+                    return childHit;
+                }
+            }
+        }
+        else
+        {
+            if (parent is ContainerVisual container)
+            {
+                for (int i = container.Children.Count - 1; i >= 0; i--)
+                {
+                    var child = container.Children[i] as FrameworkElement;
+                    if (child != null)
                     {
-                        return childHit;
+                        var childHit = FindContainerAtPosition(child, logicalPos, excludeElement);
+                        if (childHit != null)
+                        {
+                            return childHit;
+                        }
                     }
                 }
             }
@@ -1388,13 +1440,23 @@ public class DesignerCanvas : Panel
             results.Add(parent);
         }
 
-        if (parent is ContainerVisual container)
+        if (IsLogicalMode)
         {
-            for (int i = 0; i < container.Children.Count; i++)
+            foreach (var child in VisualTreeOutline.GetLogicalChildren(parent))
             {
-                if (container.Children[i] is FrameworkElement child)
+                FindAllContainers(child, results, excludeElement);
+            }
+        }
+        else
+        {
+            if (parent is ContainerVisual container)
+            {
+                for (int i = 0; i < container.Children.Count; i++)
                 {
-                    FindAllContainers(child, results, excludeElement);
+                    if (container.Children[i] is FrameworkElement child)
+                    {
+                        FindAllContainers(child, results, excludeElement);
+                    }
                 }
             }
         }
