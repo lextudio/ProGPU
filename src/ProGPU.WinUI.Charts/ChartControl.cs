@@ -98,6 +98,15 @@ namespace Microsoft.UI.Xaml.Controls
         private Rect _sliderLeftHandle;
         private Rect _sliderRightHandle;
 
+        // Active Y bounds caching
+        private double _cachedActiveYMin = double.PositiveInfinity;
+        private double _cachedActiveYMax = double.NegativeInfinity;
+        private double _cachedActiveXMin = 0.0;
+        private double _cachedActiveXMax = 0.0;
+        private string? _cachedActiveYAxisId = null;
+        private int _cachedActiveVersionHash = -1;
+        private bool _hasCachedActiveBounds = false;
+
         public ChartControl()
         {
             HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -503,8 +512,9 @@ namespace Microsoft.UI.Xaml.Controls
             double currentXMax = xMin + (_zoomEnd / 100.0) * (xMax - xMin);
 
             // Y-Axes bounds mapping (Left vs Right)
-            double yMinLeft = GetActiveYBounds(currentXMin, currentXMax, "y1").YMin;
-            double yMaxLeft = GetActiveYBounds(currentXMin, currentXMax, "y1").YMax;
+            var yBoundsLeft = GetActiveYBounds(currentXMin, currentXMax, "y1");
+            double yMinLeft = yBoundsLeft.YMin;
+            double yMaxLeft = yBoundsLeft.YMax;
 
             double yMinRight = double.PositiveInfinity;
             double yMaxRight = double.NegativeInfinity;
@@ -701,14 +711,34 @@ namespace Microsoft.UI.Xaml.Controls
 
         private ChartBounds GetActiveYBounds(double currentXMin, double currentXMax, string? yAxisId)
         {
-            double yMin = double.PositiveInfinity;
-            double yMax = double.NegativeInfinity;
-
             if (Options?.Series == null || Options.Series.Count == 0)
             {
                 return new ChartBounds(0, 1, 0, 1);
             }
 
+            int versionHash = 0;
+            foreach (var s in Options.Series)
+            {
+                if (s.Visible)
+                {
+                    if (s is LineSeriesConfig ls && ls.Data != null) versionHash ^= ls.Data.Version;
+                    else if (s is ScatterSeriesConfig scs && scs.Data != null) versionHash ^= scs.Data.Version;
+                    else if (s is BarSeriesConfig bs && bs.Data != null) versionHash ^= bs.Data.Version;
+                    else if (s is AreaSeriesConfig aes && aes.Data != null) versionHash ^= aes.Data.Version;
+                }
+            }
+
+            if (_hasCachedActiveBounds && 
+                _cachedActiveXMin == currentXMin && 
+                _cachedActiveXMax == currentXMax && 
+                _cachedActiveYAxisId == yAxisId && 
+                _cachedActiveVersionHash == versionHash)
+            {
+                return new ChartBounds(0.0, 1.0, _cachedActiveYMin, _cachedActiveYMax);
+            }
+
+            double yMin = double.PositiveInfinity;
+            double yMax = double.NegativeInfinity;
             bool hasValidData = false;
 
             foreach (var s in Options.Series)
@@ -808,16 +838,23 @@ namespace Microsoft.UI.Xaml.Controls
 
             if (!hasValidData || yMin == double.PositiveInfinity)
             {
-                // Fallback range check
                 var selectedAxis = (yAxisId != null && yAxisId.Equals("y2", StringComparison.OrdinalIgnoreCase) && Options.YAxes != null && Options.YAxes.Count > 1) 
                     ? Options.YAxes[1] : Options.YAxis;
 
                 double fallbackMin = selectedAxis?.Min ?? 0.0;
                 double fallbackMax = selectedAxis?.Max ?? 100.0;
+                
+                _cachedActiveYMin = fallbackMin;
+                _cachedActiveYMax = fallbackMax;
+                _cachedActiveXMin = currentXMin;
+                _cachedActiveXMax = currentXMax;
+                _cachedActiveYAxisId = yAxisId;
+                _cachedActiveVersionHash = versionHash;
+                _hasCachedActiveBounds = true;
+
                 return new ChartBounds(0.0, 1.0, fallbackMin, fallbackMax);
             }
 
-            // Explicity user configurations override bounds
             var currentAxis = (yAxisId != null && yAxisId.Equals("y2", StringComparison.OrdinalIgnoreCase) && Options.YAxes != null && Options.YAxes.Count > 1) 
                 ? Options.YAxes[1] : Options.YAxis;
 
@@ -825,6 +862,15 @@ namespace Microsoft.UI.Xaml.Controls
             if (currentAxis?.Max.HasValue == true) yMax = currentAxis.Max.Value;
 
             if (yMin == yMax) yMax = yMin + 1.0;
+
+            _cachedActiveYMin = yMin;
+            _cachedActiveYMax = yMax;
+            _cachedActiveXMin = currentXMin;
+            _cachedActiveXMax = currentXMax;
+            _cachedActiveYAxisId = yAxisId;
+            _cachedActiveVersionHash = versionHash;
+            _hasCachedActiveBounds = true;
+
             return new ChartBounds(0.0, 1.0, yMin, yMax);
         }
 
