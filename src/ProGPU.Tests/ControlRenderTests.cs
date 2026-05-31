@@ -279,6 +279,46 @@ public class ControlRenderTests
     }
 
     [Fact]
+    public void ComboBox_DropdownScrollViewer_ScrollsWithoutDismissal()
+    {
+        var window = SharedWindow;
+        var combo = new ComboBox
+        {
+            Width = 200f,
+            Height = 32f,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        combo.Items.Add(new ComboBoxItem("Item 1"));
+        combo.Items.Add(new ComboBoxItem("Item 2"));
+        combo.Items.Add(new ComboBoxItem("Item 3"));
+        combo.Items.Add(new ComboBoxItem("Item 4"));
+        combo.Items.Add(new ComboBoxItem("Item 5"));
+
+        window.Content = combo;
+        window.Render();
+
+        // 1. Open dropdown
+        combo.IsDropDownOpen = true;
+        Assert.True(combo.IsDropDownOpen);
+        Assert.NotNull(combo.DropDownPopup);
+
+        // Get inner ScrollViewer
+        var border = combo.DropDownPopup;
+        var scrollViewer = border.Child as ScrollViewer;
+        Assert.NotNull(scrollViewer);
+
+        // 2. Change scroll offset of the popup's inner ScrollViewer
+        scrollViewer.VerticalOffset = 10f;
+
+        // 3. Dropdown must still be open!
+        Assert.True(combo.IsDropDownOpen);
+
+        // Cleanup
+        window.Content = null;
+    }
+
+    [Fact]
     public void ProgressBar_AllStates_RenderCorrectly()
     {
         var progress = new ProgressBar

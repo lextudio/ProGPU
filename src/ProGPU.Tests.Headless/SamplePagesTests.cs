@@ -106,6 +106,50 @@ public class SamplePagesTests
     }
 
     [Fact]
+    public void Test_FontIconAndPathIcon_Renders()
+    {
+        EnsureFontsAndStateLoaded();
+
+        var stack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Vertical };
+        
+        var fontIcon = new FontIcon
+        {
+            Font = AppState._font,
+            Glyph = "A",
+            FontSize = 40f
+        };
+        stack.AddChild(fontIcon);
+
+        var glyphIndexIcon = new FontIcon
+        {
+            Font = AppState._font,
+            GlyphIndex = 42,
+            FontSize = 48f
+        };
+        stack.AddChild(glyphIndexIcon);
+
+        var pathIcon = new PathIcon
+        {
+            Data = "M 0 0 L 20 0 L 20 20 L 0 20 Z"
+        };
+        stack.AddChild(pathIcon);
+
+        RunPageTest(stack, "Icons Test");
+    }
+
+    [Fact]
+    public void Test_FontGlyphBrowserPage_Renders()
+    {
+        RunPageTest(FontGlyphBrowserPage.Create(), "Font Glyph Browser");
+    }
+
+    [Fact]
+    public void Test_VirtualizationControlsPage_Renders()
+    {
+        RunPageTest(VirtualizationControlsPage.Create(), "Virtualization Controls");
+    }
+
+    [Fact]
     public void Test_LayoutPanelsPage_Renders()
     {
         RunPageTest(LayoutPanelsPage.Create(), "Layout Panels");
