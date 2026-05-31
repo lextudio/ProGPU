@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Backend;
+using ProGPU.Scene.Extensions;
 
 namespace ProGPU.Scene;
 
@@ -34,7 +35,8 @@ public enum RenderCommandType
     DrawStaticDxf,
     DrawGpuLineSeries,
     DrawGpuScatterSeries,
-    DrawPicture // New: Skia-like SKPicture command
+    DrawPicture, // New: Skia-like SKPicture command
+    DrawExtension
 }
 
 public struct Line3D
@@ -195,6 +197,12 @@ public struct RenderCommand
 
     // Picture property
     public GpuPicture? Picture;
+
+    // High performance custom drawing extension properties
+    public int ExtensionId;
+    public int IntParam;
+    public float FloatParam;
+    public object? DataParam;
 }
 
 public class GpuPicture : IRenderDataProvider
@@ -365,20 +373,23 @@ public class DrawingContext : IRenderDataProvider
 
     public void DrawLine3D(Pen pen, Vector3 p1, Vector3 p2)
     {
-        Commands.Add(new RenderCommand
-        {
-            Type = RenderCommandType.DrawLine3D,
-            Pen = pen,
-            Position3D1 = p1,
-            Position3D2 = p2
-        });
+        int floatOffset = FloatBuffer.Count;
+        FloatBuffer.Add(p1.X);
+        FloatBuffer.Add(p1.Y);
+        FloatBuffer.Add(p1.Z);
+        FloatBuffer.Add(p2.X);
+        FloatBuffer.Add(p2.Y);
+        FloatBuffer.Add(p2.Z);
+        
+        DrawExtension(CompositorBuiltInExtensions.Line3D, dataParam: pen, floatOffset: floatOffset, floatCount: 6);
     }
 
     public void DrawHatch(Brush brush, PathGeometry boundaries)
     {
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawHatch,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.Hatch,
             Brush = brush,
             Path = boundaries
         });
@@ -488,11 +499,7 @@ public class DrawingContext : IRenderDataProvider
 
     public void DrawStaticDxf(object staticBuffer)
     {
-        Commands.Add(new RenderCommand
-        {
-            Type = RenderCommandType.DrawStaticDxf,
-            StaticBuffer = staticBuffer
-        });
+        DrawExtension(CompositorBuiltInExtensions.StaticDxf, dataParam: staticBuffer);
     }
 
     // --- Modern Zero-Allocation Span-Based APIs ---
@@ -555,7 +562,8 @@ public class DrawingContext : IRenderDataProvider
 
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawSpline,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.Spline,
             Pen = pen,
             PointBufferOffset = ptOffset,
             PointBufferCount = ptCount,
@@ -580,7 +588,8 @@ public class DrawingContext : IRenderDataProvider
 
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawAcisSolid,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.AcisSolid,
             Pen = pen,
             Line3DBufferOffset = offset,
             Line3DBufferCount = count,
@@ -600,7 +609,8 @@ public class DrawingContext : IRenderDataProvider
 
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawGpuLineSeries,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.GpuLineSeries,
             FloatBufferOffset = offset,
             FloatBufferCount = count,
             GpuPointsCount = pointsCount,
@@ -622,7 +632,8 @@ public class DrawingContext : IRenderDataProvider
 
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawGpuScatterSeries,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.GpuScatterSeries,
             FloatBufferOffset = offset,
             FloatBufferCount = count,
             GpuPointsCount = pointsCount,
@@ -654,6 +665,30 @@ public class DrawingContext : IRenderDataProvider
         });
     }
 
+    public void DrawExtension(
+        int extensionId,
+        int intParam = 0,
+        float floatParam = 0f,
+        object? dataParam = null,
+        int pointOffset = 0,
+        int pointCount = 0,
+        int floatOffset = 0,
+        int floatCount = 0)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = extensionId,
+            IntParam = intParam,
+            FloatParam = floatParam,
+            DataParam = dataParam,
+            PointBufferOffset = pointOffset,
+            PointBufferCount = pointCount,
+            FloatBufferOffset = floatOffset,
+            FloatBufferCount = floatCount
+        });
+    }
+
     // --- Backward Compatible Overloads (Forward to Spans) ---
 
     public void DrawPolyline(Pen pen, Vector2[] points, bool isClosed = false)
@@ -670,67 +705,34 @@ public class DrawingContext : IRenderDataProvider
     public void DrawSpline(Pen pen, Vector2[] controlPoints, double[] knots, int degree)
     {
         DrawSpline(pen, new ReadOnlySpan<Vector2>(controlPoints), new ReadOnlySpan<double>(knots), degree);
-        if (Commands.Count > 0)
-        {
-            var cmd = Commands[Commands.Count - 1];
-            cmd.PolylinePoints = controlPoints;
-            cmd.SplineKnots = knots;
-            Commands[Commands.Count - 1] = cmd;
-        }
     }
 
     public void DrawSpline(Pen pen, Vector2[] controlPoints, double[] knots, double[]? weights, int degree, bool isClosed)
     {
         DrawSpline(pen, new ReadOnlySpan<Vector2>(controlPoints), new ReadOnlySpan<double>(knots), weights == null ? default : new ReadOnlySpan<double>(weights), degree, isClosed);
-        if (Commands.Count > 0)
-        {
-            var cmd = Commands[Commands.Count - 1];
-            cmd.PolylinePoints = controlPoints;
-            cmd.SplineKnots = knots;
-            cmd.SplineWeights = weights;
-            Commands[Commands.Count - 1] = cmd;
-        }
     }
 
     public void DrawAcisSolid(Pen pen, List<Line3D> edges, Matrix4x4 modelTransform)
     {
         DrawAcisSolid(pen, CollectionsMarshal.AsSpan(edges), modelTransform);
-        if (Commands.Count > 0)
-        {
-            var cmd = Commands[Commands.Count - 1];
-            cmd.Edges3D = edges;
-            Commands[Commands.Count - 1] = cmd;
-        }
     }
 
     public void DrawGpuLineSeries(float[] interleavedCoords, int pointsCount, float thickness, Brush brush)
     {
         DrawGpuLineSeries(new ReadOnlySpan<float>(interleavedCoords), pointsCount, thickness, brush);
-        if (Commands.Count > 0)
-        {
-            var cmd = Commands[Commands.Count - 1];
-            cmd.GpuPoints = interleavedCoords;
-            cmd.SeriesCacheKey = interleavedCoords;
-            Commands[Commands.Count - 1] = cmd;
-        }
     }
 
     public void DrawGpuLineSeries(object staticBuffer, float thickness, Brush brush)
     {
-        Commands.Add(new RenderCommand
-        {
-            Type = RenderCommandType.DrawGpuLineSeries,
-            StaticBuffer = staticBuffer,
-            RadiusX = thickness,
-            Brush = brush
-        });
+        DrawGpuLineSeries(staticBuffer, thickness, brush, Vector2.One, Vector2.Zero);
     }
 
     public void DrawGpuLineSeries(object staticBuffer, float thickness, Brush brush, Vector2 scale, Vector2 translate)
     {
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawGpuLineSeries,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.GpuLineSeries,
             StaticBuffer = staticBuffer,
             RadiusX = thickness,
             Brush = brush,
@@ -742,31 +744,19 @@ public class DrawingContext : IRenderDataProvider
     public void DrawGpuScatterSeries(float[] interleavedCoords, int pointsCount, float radius, Brush brush)
     {
         DrawGpuScatterSeries(new ReadOnlySpan<float>(interleavedCoords), pointsCount, radius, brush);
-        if (Commands.Count > 0)
-        {
-            var cmd = Commands[Commands.Count - 1];
-            cmd.GpuPoints = interleavedCoords;
-            cmd.SeriesCacheKey = interleavedCoords;
-            Commands[Commands.Count - 1] = cmd;
-        }
     }
 
     public void DrawGpuScatterSeries(object staticBuffer, float radius, Brush brush)
     {
-        Commands.Add(new RenderCommand
-        {
-            Type = RenderCommandType.DrawGpuScatterSeries,
-            StaticBuffer = staticBuffer,
-            RadiusX = radius,
-            Brush = brush
-        });
+        DrawGpuScatterSeries(staticBuffer, radius, brush, Vector2.One, Vector2.Zero);
     }
 
     public void DrawGpuScatterSeries(object staticBuffer, float radius, Brush brush, Vector2 scale, Vector2 translate)
     {
         Commands.Add(new RenderCommand
         {
-            Type = RenderCommandType.DrawGpuScatterSeries,
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.GpuScatterSeries,
             StaticBuffer = staticBuffer,
             RadiusX = radius,
             Brush = brush,
