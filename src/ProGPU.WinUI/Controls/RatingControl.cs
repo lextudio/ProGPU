@@ -19,7 +19,7 @@ public class RatingControl : Control
             "Value",
             typeof(double),
             typeof(RatingControl),
-            new PropertyMetadata(0.0, (d, e) => ((RatingControl)d).Invalidate()));
+            new PropertyMetadata(0.0) { AffectsRender = true });
 
     public static readonly DependencyProperty MaxRatingProperty =
         DependencyProperty.Register(
@@ -27,25 +27,22 @@ public class RatingControl : Control
             typeof(int),
             typeof(RatingControl),
             new PropertyMetadata(5, (d, e) => {
-                var rating = (RatingControl)d;
-                rating._starGeometries = null;
-                rating.InvalidateMeasure();
-                rating.Invalidate();
-            }));
+                ((RatingControl)d)._starGeometries = null;
+            }) { AffectsMeasure = true, AffectsRender = true });
 
     public static readonly DependencyProperty IsReadOnlyProperty =
         DependencyProperty.Register(
             "IsReadOnly",
             typeof(bool),
             typeof(RatingControl),
-            new PropertyMetadata(false, (d, e) => ((RatingControl)d).Invalidate()));
+            new PropertyMetadata(false) { AffectsRender = true });
 
     public static readonly DependencyProperty PlaceholderValueProperty =
         DependencyProperty.Register(
             "PlaceholderValue",
             typeof(double),
             typeof(RatingControl),
-            new PropertyMetadata(-1.0, (d, e) => ((RatingControl)d).Invalidate()));
+            new PropertyMetadata(-1.0) { AffectsRender = true });
 
     public double Value
     {

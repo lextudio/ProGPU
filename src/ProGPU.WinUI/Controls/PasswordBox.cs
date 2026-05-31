@@ -27,30 +27,29 @@ public class PasswordBox : Control
                 pb.CaretIndex = Math.Clamp(pb.CaretIndex, 0, pb.Password.Length);
                 pb.SelectionStart = Math.Clamp(pb.SelectionStart, 0, pb.Password.Length);
                 pb.SelectionLength = Math.Clamp(pb.SelectionLength, -pb.SelectionStart, pb.Password.Length - pb.SelectionStart);
-                pb.Invalidate();
                 pb.PasswordChanged?.Invoke(pb, EventArgs.Empty);
-            }));
+            }) { AffectsRender = true });
 
     public static readonly DependencyProperty PlaceholderTextProperty =
         DependencyProperty.Register(
             "PlaceholderText",
             typeof(string),
             typeof(PasswordBox),
-            new PropertyMetadata("Enter password...", (d, e) => ((PasswordBox)d).Invalidate()));
+            new PropertyMetadata("Enter password...") { AffectsRender = true });
 
     public static readonly DependencyProperty PasswordCharProperty =
         DependencyProperty.Register(
             "PasswordChar",
             typeof(char),
             typeof(PasswordBox),
-            new PropertyMetadata('●', (d, e) => ((PasswordBox)d).Invalidate()));
+            new PropertyMetadata('●') { AffectsRender = true });
 
     public static readonly DependencyProperty IsPasswordRevealButtonEnabledProperty =
         DependencyProperty.Register(
             "IsPasswordRevealButtonEnabled",
             typeof(bool),
             typeof(PasswordBox),
-            new PropertyMetadata(true, (d, e) => ((PasswordBox)d).Invalidate()));
+            new PropertyMetadata(true) { AffectsRender = true });
 
     public string Password
     {

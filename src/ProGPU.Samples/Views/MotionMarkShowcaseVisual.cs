@@ -91,7 +91,7 @@ public class MotionMarkShowcaseVisual : FrameworkElement
     public MotionMarkShowcaseVisual()
     {
         HeightConstraint = 620f;
-        HorizontalAlignment = ProGPU.Layout.HorizontalAlignment.Stretch;
+        HorizontalAlignment = HorizontalAlignment.Stretch;
     }
 
     private GridPoint GetRandomPoint(GridPoint last)

@@ -18,39 +18,35 @@ public class Control : FrameworkElement, ITemplatedControl
             "Background",
             typeof(Brush),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(null) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty ForegroundProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "Foreground",
             typeof(Brush),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(null) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty BorderBrushProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "BorderBrush",
             typeof(Brush),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(null) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty BorderThicknessProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "BorderThickness",
             typeof(Thickness),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(default(Thickness), (d, e) => {
-                var c = (Control)d;
-                c.Invalidate();
-                c.InvalidateMeasure();
-            }));
+            new Microsoft.UI.Xaml.PropertyMetadata(default(Thickness)) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty CornerRadiusProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "CornerRadius",
             typeof(float),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(0f, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(0f) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty TemplateProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
@@ -135,40 +131,6 @@ public class Control : FrameworkElement, ITemplatedControl
     {
         get => (VerticalAlignment)(GetValue(VerticalContentAlignmentProperty) ?? VerticalAlignment.Center);
         set => SetValue(VerticalContentAlignmentProperty, value);
-    }
-
-    public static readonly DependencyProperty IsPointerOverProperty =
-        DependencyProperty.Register(
-            "IsPointerOver",
-            typeof(bool),
-            typeof(Control),
-            new PropertyMetadata(false, (d, e) => {
-                var c = (Control)d;
-                c.OnVisualStateChanged();
-                c.OnPropertyChanged("IsPointerOver");
-            }));
-
-    public bool IsPointerOver
-    {
-        get => (bool)(GetValue(IsPointerOverProperty) ?? false);
-        protected set => SetValue(IsPointerOverProperty, value);
-    }
-
-    public static readonly DependencyProperty IsPointerPressedProperty =
-        DependencyProperty.Register(
-            "IsPointerPressed",
-            typeof(bool),
-            typeof(Control),
-            new PropertyMetadata(false, (d, e) => {
-                var c = (Control)d;
-                c.OnVisualStateChanged();
-                c.OnPropertyChanged("IsPointerPressed");
-            }));
-
-    public bool IsPointerPressed
-    {
-        get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
-        protected set => SetValue(IsPointerPressedProperty, value);
     }
 
     public static readonly DependencyProperty IsFocusedProperty =
@@ -352,7 +314,6 @@ public class Control : FrameworkElement, ITemplatedControl
 
     protected virtual string GetThemePrefix()
     {
-        string className = GetType().Name;
         if (this is Button && Style != null)
         {
             foreach (var setter in Style.Setters)
@@ -363,7 +324,25 @@ public class Control : FrameworkElement, ITemplatedControl
                 }
             }
         }
-        return className;
+
+        Type? type = GetType();
+        while (type != null && type != typeof(Control) && type != typeof(FrameworkElement))
+        {
+            string name = type.Name;
+            if (name == "TextBox" || name == "PasswordBox" || name == "Button" || 
+                name == "ComboBox" || name == "ComboBoxItem" || name == "ListBox" || 
+                name == "ListBoxItem" || name == "CheckBox" || 
+                name == "RadioButton" || name == "ToggleSwitch" || name == "Slider" || 
+                name == "ProgressBar" || name == "ProgressRing" || name == "RatingControl" || 
+                name == "CalendarView" || name == "ContentDialog" || name == "TextBlock" || 
+                name == "RichTextBlock")
+            {
+                return name;
+            }
+            type = type.BaseType;
+        }
+
+        return GetType().Name;
     }
 
     public virtual Brush? GetCurrentBackground()
@@ -413,30 +392,10 @@ public class Control : FrameworkElement, ITemplatedControl
         Invalidate();
     }
 
-    public override void OnPointerEntered(PointerRoutedEventArgs e)
-    {
-        if (IsEnabled)
-        {
-            IsPointerOver = true;
-        }
-        base.OnPointerEntered(e);
-    }
-
-    public override void OnPointerExited(PointerRoutedEventArgs e)
-    {
-        if (IsEnabled)
-        {
-            IsPointerOver = false;
-            IsPointerPressed = false;
-        }
-        base.OnPointerExited(e);
-    }
-
     public override void OnPointerPressed(PointerRoutedEventArgs e)
     {
         if (IsEnabled)
         {
-            IsPointerPressed = true;
             // Also acquire focus if we are hit-test visible, enabled, and IsTabStop
             if (IsHitTestVisible && IsTabStop)
             {
@@ -444,15 +403,6 @@ public class Control : FrameworkElement, ITemplatedControl
             }
         }
         base.OnPointerPressed(e);
-    }
-
-    public override void OnPointerReleased(PointerRoutedEventArgs e)
-    {
-        if (IsEnabled)
-        {
-            IsPointerPressed = false;
-        }
-        base.OnPointerReleased(e);
     }
 
     public override void OnRender(DrawingContext context)

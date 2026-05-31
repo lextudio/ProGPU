@@ -14,8 +14,8 @@ public class DrawingShowcaseVisual : FrameworkElement
 {
     public DrawingShowcaseVisual()
     {
-        HorizontalAlignment = ProGPU.Layout.HorizontalAlignment.Stretch;
-        VerticalAlignment = ProGPU.Layout.VerticalAlignment.Stretch;
+        HorizontalAlignment = HorizontalAlignment.Stretch;
+        VerticalAlignment = VerticalAlignment.Stretch;
         HeightConstraint = 350f;
     }
 

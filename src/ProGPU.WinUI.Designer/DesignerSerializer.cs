@@ -9,7 +9,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using ProGPU.Vector;
 using ProGPU.Layout;
-using Thickness = Microsoft.UI.Xaml.Thickness;
 using ProGPU.Scene;
 
 public static class DesignerSerializer
@@ -231,7 +230,7 @@ public static class DesignerSerializer
             var ha = horizAlignProp.GetValue(element);
             if (ha != null)
             {
-                sb.AppendLine($"{indent}    HorizontalAlignment = ProGPU.Layout.HorizontalAlignment.{ha},");
+                sb.AppendLine($"{indent}    HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.{ha},");
             }
         }
         
@@ -241,7 +240,7 @@ public static class DesignerSerializer
             var va = vertAlignProp.GetValue(element);
             if (va != null)
             {
-                sb.AppendLine($"{indent}    VerticalAlignment = ProGPU.Layout.VerticalAlignment.{va},");
+                sb.AppendLine($"{indent}    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.{va},");
             }
         }
 

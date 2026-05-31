@@ -55,7 +55,6 @@ public class RadioButton : ContentControl
 
     private void OnCheckedChanged()
     {
-        Invalidate();
         if (IsChecked)
         {
             UpdateSiblingRadioButtons();

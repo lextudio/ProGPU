@@ -22,8 +22,8 @@ public class GradientArtVisual : FrameworkElement, IAnimatedElement
         _starPath = PathGeometry.Parse("M 100 10 L 125 70 L 190 75 L 140 120 L 155 185 L 100 150 L 45 185 L 60 120 L 10 75 L 75 70 Z");
         _blobPath = PathGeometry.Parse("M 150 150 C 250 50 350 250 250 250 C 150 250 50 350 150 150 Z");
         
-        HorizontalAlignment = ProGPU.Layout.HorizontalAlignment.Stretch;
-        VerticalAlignment = ProGPU.Layout.VerticalAlignment.Stretch;
+        HorizontalAlignment = HorizontalAlignment.Stretch;
+        VerticalAlignment = VerticalAlignment.Stretch;
         Height = 220f;
     }
 

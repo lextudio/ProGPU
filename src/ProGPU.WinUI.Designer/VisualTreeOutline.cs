@@ -9,12 +9,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Markup;
 using ProGPU.Vector;
-using ProGPU.Layout;
-using Thickness = Microsoft.UI.Xaml.Thickness;
-using HorizontalAlignment = ProGPU.Layout.HorizontalAlignment;
-using VerticalAlignment = ProGPU.Layout.VerticalAlignment;
-using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
-using Grid = Microsoft.UI.Xaml.Controls.Grid;
 using ProGPU.Scene;
 
 public class VisualTreeOutlineItem : Border

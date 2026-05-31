@@ -22,8 +22,8 @@ public class GpuTextureCanvas : FrameworkElement
         _source = source;
         _shadow = shadow;
         _blur = blur;
-        HorizontalAlignment = ProGPU.Layout.HorizontalAlignment.Stretch;
-        VerticalAlignment = ProGPU.Layout.VerticalAlignment.Stretch;
+        HorizontalAlignment = HorizontalAlignment.Stretch;
+        VerticalAlignment = VerticalAlignment.Stretch;
     }
 
     public override void OnRender(DrawingContext context)

@@ -8,16 +8,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
-using Thickness = Microsoft.UI.Xaml.Thickness;
-using HorizontalAlignment = ProGPU.Layout.HorizontalAlignment;
-using VerticalAlignment = ProGPU.Layout.VerticalAlignment;
 using System.Numerics;
 using ProGPU.Vector;
-using ProGPU.Layout;
 using ProGPU.Scene;
-
-using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
-using Grid = Microsoft.UI.Xaml.Controls.Grid;
 
 public class StylePanel : Border
 {

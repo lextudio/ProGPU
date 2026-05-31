@@ -19,7 +19,7 @@ public class Border : FrameworkElement
             "Background",
             typeof(Brush),
             typeof(Border),
-            new PropertyMetadata(null, (d, e) => ((Border)d).Invalidate()));
+            new PropertyMetadata(null) { AffectsRender = true });
 
     public Brush? Background
     {
@@ -32,7 +32,7 @@ public class Border : FrameworkElement
             "BorderBrush",
             typeof(Brush),
             typeof(Border),
-            new PropertyMetadata(null, (d, e) => ((Border)d).Invalidate()));
+            new PropertyMetadata(null) { AffectsRender = true });
 
     public Brush? BorderBrush
     {
@@ -45,11 +45,7 @@ public class Border : FrameworkElement
             "BorderThickness",
             typeof(Thickness),
             typeof(Border),
-            new PropertyMetadata(default(Thickness), (d, e) => {
-                var b = (Border)d;
-                b.Invalidate();
-                b.InvalidateMeasure();
-            }));
+            new PropertyMetadata(default(Thickness)) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public Thickness BorderThickness
     {
@@ -62,7 +58,7 @@ public class Border : FrameworkElement
             "CornerRadius",
             typeof(float),
             typeof(Border),
-            new PropertyMetadata(0f, (d, e) => ((Border)d).Invalidate()));
+            new PropertyMetadata(0f) { AffectsRender = true });
 
     public float CornerRadius
     {
@@ -87,8 +83,6 @@ public class Border : FrameworkElement
     {
         if (oldValue != null) RemoveChild(oldValue);
         if (newValue != null) AddChild(newValue);
-        Invalidate();
-        InvalidateMeasure();
     }
 
     protected override Vector2 MeasureOverride(Vector2 availableSize)
@@ -288,16 +282,16 @@ public class Border : FrameworkElement
 
             context.DrawRoundedRectangle(bg, pen, new Rect(Vector2.Zero, Size), CornerRadius);
         }
-        else if (parentButton != null)
+        else if (Parent is Control control)
         {
-            if (IsEnabled)
+            if (IsEnabled && control is Button)
             {
                 context.FillRoundedRectangle(ThemeManager.GetBrush("ButtonAmbientShadow", activeTheme, activeFamily), new Rect(0, 2, Size.X, Size.Y), CornerRadius);
                 context.FillRoundedRectangle(ThemeManager.GetBrush("ButtonPenumbraShadow", activeTheme, activeFamily), new Rect(0, 1, Size.X, Size.Y), CornerRadius);
             }
 
-            Brush? bg = parentButton.GetCurrentBackground() ?? Background;
-            var borderBrush = parentButton.GetCurrentBorderBrush() ?? BorderBrush;
+            Brush? bg = control.GetCurrentBackground() ?? Background;
+            var borderBrush = control.GetCurrentBorderBrush() ?? BorderBrush;
             Pen? pen = borderBrush != null && BorderThickness.Left > 0 ? new Pen(borderBrush, BorderThickness.Left) : null;
             context.DrawRoundedRectangle(bg, pen, new Rect(Vector2.Zero, Size), CornerRadius);
         }

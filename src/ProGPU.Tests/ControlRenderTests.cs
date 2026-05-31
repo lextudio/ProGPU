@@ -422,7 +422,7 @@ public class ControlRenderTests
         {
             Width = 600f,
             Height = 400f,
-            Margin = new ProGPU.Layout.Thickness(100f, 100f, 0f, 0f),
+            Margin = new Thickness(100f, 100f, 0f, 0f),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top
         };
@@ -459,7 +459,7 @@ public class ControlRenderTests
         
         var pivot = new Pivot
         {
-            Margin = new ProGPU.Layout.Thickness(20f, 4f, 20f, 20f)
+            Margin = new Thickness(20f, 4f, 20f, 20f)
         };
         root.Child = pivot;
 
@@ -469,14 +469,14 @@ public class ControlRenderTests
 
         var sidebarBorder = new Border
         {
-            Padding = new ProGPU.Layout.Thickness(16f),
-            Margin = new ProGPU.Layout.Thickness(0f, 0f, 16f, 0f),
+            Padding = new Thickness(16f),
+            Margin = new Thickness(0f, 0f, 16f, 0f),
             VerticalAlignment = VerticalAlignment.Stretch
         };
         var sidebarStack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Vertical };
         
-        var ptLabel = new TextBlock { Text = "Point Count", FontSize = 10f, Margin = new ProGPU.Layout.Thickness(0f, 0f, 0f, 4f) };
-        var pointCountInput = new TextBox { Text = "1000000", Width = 230f, Margin = new ProGPU.Layout.Thickness(0f, 0f, 0f, 12f) };
+        var ptLabel = new TextBlock { Text = "Point Count", FontSize = 10f, Margin = new Thickness(0f, 0f, 0f, 4f) };
+        var pointCountInput = new TextBox { Text = "1000000", Width = 230f, Margin = new Thickness(0f, 0f, 0f, 12f) };
         
         sidebarStack.AddChild(ptLabel);
         sidebarStack.AddChild(pointCountInput);

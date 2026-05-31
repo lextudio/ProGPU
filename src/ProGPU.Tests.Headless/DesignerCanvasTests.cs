@@ -389,7 +389,7 @@ public class DesignerCanvasTests
         Assert.Single(canvas.DesignSurface.Children);
         var panel = canvas.DesignSurface.Children[0] as Microsoft.UI.Xaml.Controls.StackPanel;
         Assert.NotNull(panel);
-        Assert.Equal(ProGPU.Layout.HorizontalAlignment.Stretch, panel.HorizontalAlignment);
+        Assert.Equal(HorizontalAlignment.Stretch, panel.HorizontalAlignment);
         Assert.True(float.IsNaN(panel.Width));
         Assert.Equal(100f, panel.Height); // placeholder height
     }

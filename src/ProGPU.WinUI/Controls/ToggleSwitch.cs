@@ -40,7 +40,6 @@ public class ToggleSwitch : ContentControl
 
     private void OnIsOnChanged(bool isOn)
     {
-        Invalidate();
         Toggled?.Invoke(this, EventArgs.Empty);
         OnPropertyChanged(nameof(IsOn));
     }
