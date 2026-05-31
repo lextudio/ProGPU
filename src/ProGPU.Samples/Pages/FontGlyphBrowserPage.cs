@@ -456,6 +456,12 @@ public static class FontGlyphBrowserPage
             border.PointerPressed -= OnItemClick;
             border.PointerPressed += OnItemClick;
 
+            // Wire hover highlights
+            border.PointerEntered -= OnItemHover;
+            border.PointerEntered += OnItemHover;
+            border.PointerExited -= OnItemLeave;
+            border.PointerExited += OnItemLeave;
+
             // Highlight border if active selection
             if (idx == _selectedGlyphIndex)
             {
@@ -493,6 +499,30 @@ public static class FontGlyphBrowserPage
         UpdateSelectedGlyph(_selectedGlyphIndex);
 
         return mainGrid;
+    }
+
+    private static void OnItemHover(object? sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Border border && border.Tag is int idx)
+        {
+            if (idx != _selectedGlyphIndex)
+            {
+                border.Background = new ThemeResourceBrush("ControlBackgroundHover");
+                border.BorderBrush = new ThemeResourceBrush("ControlBorderHover");
+            }
+        }
+    }
+
+    private static void OnItemLeave(object? sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Border border && border.Tag is int idx)
+        {
+            if (idx != _selectedGlyphIndex)
+            {
+                border.Background = new ThemeResourceBrush("PageBackground");
+                border.BorderBrush = new ThemeResourceBrush("ControlBorder");
+            }
+        }
     }
 
     private static void OnItemClick(object? sender, PointerRoutedEventArgs e)
