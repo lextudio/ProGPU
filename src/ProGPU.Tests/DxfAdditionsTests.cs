@@ -4,6 +4,7 @@ using System.IO;
 using System.Numerics;
 using ProGPU.Dxf;
 using ProGPU.Vector;
+using ProGPU.Scene;
 using Xunit;
 
 namespace ProGPU.Tests;
@@ -219,9 +220,9 @@ End of ACIS Solid";
 
         Assert.Single(drawingContext.Commands);
         var cmd = drawingContext.Commands[0];
-        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawSpline, cmd.Type);
-        Assert.NotNull(cmd.SplineWeights);
-        Assert.Equal(2.0, cmd.SplineWeights[1]);
+        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawExtension, cmd.Type);
+        Assert.Equal(CompositorBuiltInExtensions.Spline, cmd.ExtensionId);
+        Assert.Equal(2.0, drawingContext.DoubleBuffer[cmd.WeightBufferOffset + 1]);
     }
 
     [Fact]
@@ -236,11 +237,17 @@ End of ACIS Solid";
 
         Assert.Single(drawingContext.Commands);
         var cmd = drawingContext.Commands[0];
-        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawLine3D, cmd.Type);
-        Assert.Equal(p1, cmd.Position3D1);
-        Assert.Equal(p2, cmd.Position3D2);
-        Assert.NotNull(cmd.Pen);
-        Assert.Equal(1.5f, cmd.Pen.Thickness);
+        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawExtension, cmd.Type);
+        Assert.Equal(CompositorBuiltInExtensions.Line3D, cmd.ExtensionId);
+        Assert.Equal(p1.X, drawingContext.FloatBuffer[cmd.FloatBufferOffset]);
+        Assert.Equal(p1.Y, drawingContext.FloatBuffer[cmd.FloatBufferOffset + 1]);
+        Assert.Equal(p1.Z, drawingContext.FloatBuffer[cmd.FloatBufferOffset + 2]);
+        Assert.Equal(p2.X, drawingContext.FloatBuffer[cmd.FloatBufferOffset + 3]);
+        Assert.Equal(p2.Y, drawingContext.FloatBuffer[cmd.FloatBufferOffset + 4]);
+        Assert.Equal(p2.Z, drawingContext.FloatBuffer[cmd.FloatBufferOffset + 5]);
+        var penData = cmd.DataParam as Pen;
+        Assert.NotNull(penData);
+        Assert.Equal(1.5f, penData.Thickness);
     }
 
     [Fact]
@@ -539,7 +546,8 @@ EOF";
 
         Assert.Single(drawingContext.Commands);
         var cmd = drawingContext.Commands[0];
-        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawHatch, cmd.Type);
+        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawExtension, cmd.Type);
+        Assert.Equal(CompositorBuiltInExtensions.Hatch, cmd.ExtensionId);
         Assert.Equal(brush, cmd.Brush);
         Assert.Equal(boundaries, cmd.Path);
     }
@@ -561,9 +569,14 @@ EOF";
 
         Assert.Single(drawingContext.Commands);
         var cmd = drawingContext.Commands[0];
-        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawAcisSolid, cmd.Type);
+        Assert.Equal(ProGPU.Scene.RenderCommandType.DrawExtension, cmd.Type);
+        Assert.Equal(CompositorBuiltInExtensions.AcisSolid, cmd.ExtensionId);
         Assert.Equal(pen, cmd.Pen);
-        Assert.Equal(edges, cmd.Edges3D);
+        Assert.Equal(edges.Count, cmd.Line3DBufferCount);
+        Assert.Equal(edges[0].Start, drawingContext.Line3DBuffer[cmd.Line3DBufferOffset].Start);
+        Assert.Equal(edges[0].End, drawingContext.Line3DBuffer[cmd.Line3DBufferOffset].End);
+        Assert.Equal(edges[1].Start, drawingContext.Line3DBuffer[cmd.Line3DBufferOffset + 1].Start);
+        Assert.Equal(edges[1].End, drawingContext.Line3DBuffer[cmd.Line3DBufferOffset + 1].End);
         Assert.Equal(matrix, cmd.Transform);
     }
 
@@ -759,6 +772,32 @@ EOF";
         // Assert that the static line 3D projection is correctly implemented inside sType == 8u branch
         Assert.Contains("else if (isStatic) {", shaderText);
         Assert.Contains("pos3D = (uniforms.mvp * vec4<f32>(local3D, 1.0)).xyz;", shaderText);
+    }
+    [Fact]
+    public void Dxf_Render_UserFile_Diagnostic()
+    {
+        string path = "/Users/wieslawsoltes/Downloads/dwg/dxf/160074-M12102B.dxf";
+        if (!File.Exists(path)) return;
+
+        string fontPath = "/System/Library/Fonts/Supplemental/Arial.ttf";
+        if (!File.Exists(fontPath)) fontPath = "Arial.ttf";
+        var font = File.Exists(fontPath) ? new ProGPU.Text.TtfFont(fontPath) : null!;
+
+        var doc = netDxf.DxfDocument.Load(path);
+        var drawingContext = new ProGPU.Scene.DrawingContext();
+        var ctx = new DxfRenderContext(drawingContext, font);
+
+        ctx.ActiveLayers.Clear();
+        foreach (var l in doc.Layers) ctx.ActiveLayers.Add(l.Name);
+
+        DxfDocumentRenderer.Render(doc, ctx);
+
+        Console.WriteLine($"[Diagnostic] Loaded {path}");
+        Console.WriteLine($"  FlatWcsEntities.Count: {ctx.FlatWcsEntities.Count}");
+        Console.WriteLine($"  DrawingContext commands count: {drawingContext.Commands.Count}");
+        
+        Assert.NotEmpty(ctx.FlatWcsEntities);
+        Assert.NotEmpty(drawingContext.Commands);
     }
 }
 
