@@ -98,6 +98,14 @@ public struct CompositorMetrics
 
 public unsafe class Compositor : IDisposable
 {
+    public struct StaticTextRecord
+    {
+        public RenderCommand Command;
+        public Matrix4x4 Transform;
+    }
+
+    private readonly List<StaticTextRecord> _compiledTextRecords = new();
+
     public CompositorMetrics Metrics { get; private set; }
 
     private readonly List<ICompositorExtension> _registeredExtensions = new();
@@ -2887,6 +2895,11 @@ public unsafe class Compositor : IDisposable
 
     private void CompileTextCommand(RenderCommand cmd, ITextLayoutProvider? textNode, Matrix4x4 transform)
     {
+        if (ActiveCompilationContext != null && !ActiveCompilationContext.IsRecompiling)
+        {
+            _compiledTextRecords.Add(new StaticTextRecord { Command = cmd, Transform = transform });
+        }
+
         var activeTransform = transform;
         if (MathF.Abs(cmd.Rotation) > 0.0001f)
         {
@@ -3002,8 +3015,25 @@ public unsafe class Compositor : IDisposable
 
             // Compute high-DPI scaling factor dynamically from the compositor target context
             float dpiScale = _currentDpiScale;
+            if (ActiveCompilationContext != null && ActiveCompilationContext.StaticZoom > 0.0001f)
+            {
+                dpiScale *= ActiveCompilationContext.StaticZoom;
+            }
 
             float physicalFontSize = cmd.FontSize * dpiScale;
+
+            // Cap the physical font size rasterized into the atlas to prevent blowout on huge zoom levels.
+            // Snap to discrete font sizes (0.5px steps below 24px, 2px steps above 24px) for perfect cache hit ratios.
+            float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 64f);
+            if (rasterFontSize <= 24f)
+            {
+                rasterFontSize = MathF.Round(rasterFontSize * 2f) / 2f;
+            }
+            else
+            {
+                rasterFontSize = MathF.Round(rasterFontSize / 2f) * 2f;
+            }
+
             bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                              MathF.Abs(activeTransform.M21) > 0.0001f ||
                              activeTransform.M11 < 0.0f ||
@@ -3020,7 +3050,7 @@ public unsafe class Compositor : IDisposable
             float ipartX = 0f;
             float snappedY = 0f;
 
-            if (!isRotated)
+            if (!isRotated && rasterFontSize <= 24f) // Only use subpixel positioning for small text to avoid atlas bloating
             {
                 float screenX = transPosPhysical.X;
                 float screenY = transPosPhysical.Y;
@@ -3037,10 +3067,12 @@ public unsafe class Compositor : IDisposable
                 ipartX = ipartX_temp;
                 snappedY = MathF.Round(screenY);
             }
+            else if (!isRotated)
+            {
+                ipartX = MathF.Round(transPosPhysical.X);
+                snappedY = MathF.Round(transPosPhysical.Y);
+            }
 
-            // Cap the physical font size rasterized into the atlas to prevent blowout on huge zoom levels.
-            // Scale the mapped UV quad coordinates proportionally for perfect high-DPI scaling.
-            float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 128f);
             float scaleRatio = physicalFontSize / rasterFontSize;
 
             var info = _atlas.GetOrCreateGlyph(glyphFont, runGlyph.CodePoint, rasterFontSize, subpixelX);
@@ -4022,7 +4054,7 @@ public unsafe class Compositor : IDisposable
         _currentProjection = savedProjection;
     }
 
-    public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands)
+    public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands, float staticZoom = 1.0f)
     {
         // Save current lists
         var savedVectorVertices = _vectorVerticesList.ToArray();
@@ -4043,8 +4075,9 @@ public unsafe class Compositor : IDisposable
         _textVerticesList.Clear();
         _textIndicesList.Clear();
         _activeBrushes.Clear();
+        _compiledTextRecords.Clear();
 
-        ActiveCompilationContext = new StaticCompilationContext();
+        ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom };
         lock (_registeredExtensions)
         {
             foreach (var ext in _registeredExtensions)
@@ -4055,6 +4088,7 @@ public unsafe class Compositor : IDisposable
 
         try
         {
+            _atlas.BeginBatch();
             var staticDrawCalls = new List<CompositorDrawCall>();
             uint pendingVectorStart = 0;
             uint pendingTextStart = 0;
@@ -4300,6 +4334,8 @@ public unsafe class Compositor : IDisposable
                 staticDrawCalls.ToArray()
             );
 
+            staticBuffer.TextRecords = _compiledTextRecords.ToArray();
+
             lock (_registeredExtensions)
             {
                 foreach (var ext in _registeredExtensions)
@@ -4319,6 +4355,7 @@ public unsafe class Compositor : IDisposable
         }
         finally
         {
+            _atlas.EndBatch();
             ActiveCompilationContext = null;
 
             // Restore dynamic lists
@@ -4337,7 +4374,7 @@ public unsafe class Compositor : IDisposable
         }
     }
 
-    public DxfStaticBuffer CompileStaticDxf(DrawingContext context)
+    public DxfStaticBuffer CompileStaticDxf(DrawingContext context, float staticZoom = 1.0f)
     {
         // Save current lists
         var savedVectorVertices = _vectorVerticesList.ToArray();
@@ -4358,8 +4395,9 @@ public unsafe class Compositor : IDisposable
         _textVerticesList.Clear();
         _textIndicesList.Clear();
         _activeBrushes.Clear();
+        _compiledTextRecords.Clear();
 
-        ActiveCompilationContext = new StaticCompilationContext();
+        ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom };
         lock (_registeredExtensions)
         {
             foreach (var ext in _registeredExtensions)
@@ -4370,6 +4408,7 @@ public unsafe class Compositor : IDisposable
 
         try
         {
+            _atlas.BeginBatch();
             var staticDrawCalls = new List<CompositorDrawCall>();
             uint pendingVectorStart = 0;
             uint pendingTextStart = 0;
@@ -4684,6 +4723,8 @@ public unsafe class Compositor : IDisposable
                 staticDrawCalls.ToArray()
             );
 
+            staticBuffer.TextRecords = _compiledTextRecords.ToArray();
+
             lock (_registeredExtensions)
             {
                 foreach (var ext in _registeredExtensions)
@@ -4703,6 +4744,7 @@ public unsafe class Compositor : IDisposable
         }
         finally
         {
+            _atlas.EndBatch();
             ActiveCompilationContext = null;
 
             // Restore dynamic lists
@@ -4718,6 +4760,45 @@ public unsafe class Compositor : IDisposable
             {
                 _clipStack.Push(savedClipStack[i]);
             }
+        }
+    }
+    
+    public void RecompileStaticText(DxfStaticBuffer staticBuffer, float staticZoom)
+    {
+        var savedTextVertices = _textVerticesList.ToArray();
+        var savedTextIndices = _textIndicesList.ToArray();
+
+        _textVerticesList.Clear();
+        _textIndicesList.Clear();
+
+        ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom, IsRecompiling = true };
+
+        try
+        {
+            _atlas.BeginBatch();
+            foreach (var record in staticBuffer.TextRecords)
+            {
+                CompileTextCommand(record.Command, null, record.Transform);
+            }
+
+            for (int i = 0; i < _textVerticesList.Count; i++)
+            {
+                var v = _textVerticesList[i];
+                v.ShapeType += 200f; // Static buffers use 200+ shape type
+                _textVerticesList[i] = v;
+            }
+
+            staticBuffer.UpdateTextBuffer(_textVerticesList.ToArray(), _textIndicesList.ToArray());
+        }
+        finally
+        {
+            _atlas.EndBatch();
+            ActiveCompilationContext = null;
+
+            _textVerticesList.Clear();
+            _textVerticesList.AddRange(savedTextVertices);
+            _textIndicesList.Clear();
+            _textIndicesList.AddRange(savedTextIndices);
         }
     }
 
