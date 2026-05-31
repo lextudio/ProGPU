@@ -294,12 +294,20 @@ namespace ProGPU.WinUI.Charts
             }
         }
 
+        private ChartBounds? _cachedBounds;
+        private int _cachedBoundsVersion = -1;
+
         /// <summary>
         /// Computes the xMin, xMax, yMin, yMax boundaries.
         /// Ensures min != max by expanding max by +1 to guarantee clean scale derivatives.
         /// </summary>
         public ChartBounds? ComputeRawBounds()
         {
+            if (_cachedBounds.HasValue && _cachedBoundsVersion == Version)
+            {
+                return _cachedBounds;
+            }
+
             double xMin = double.PositiveInfinity;
             double xMax = double.NegativeInfinity;
             double yMin = double.PositiveInfinity;
@@ -331,8 +339,11 @@ namespace ProGPU.WinUI.Charts
             if (xMin == xMax) xMax = xMin + 1.0;
             if (yMin == yMax) yMax = yMin + 1.0;
 
-            return new ChartBounds(xMin, xMax, yMin, yMax);
+            _cachedBounds = new ChartBounds(xMin, xMax, yMin, yMax);
+            _cachedBoundsVersion = Version;
+            return _cachedBounds;
         }
+
 
         public bool HasNullGaps()
         {

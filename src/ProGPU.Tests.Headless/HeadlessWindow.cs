@@ -209,10 +209,15 @@ public unsafe class HeadlessWindow : IDisposable
         wgpu.BufferMapAsync(_readbackBuffer, MapMode.Read, 0, (nuint)_bufferSize, onMapped, null);
 
         // Poll the device to process events and fire the callback synchronously
+        var swTimeout = System.Diagnostics.Stopwatch.StartNew();
         while (!mapSignal.IsSet)
         {
             wgpuDevicePoll(_context.Device, false, null);
             System.Threading.Thread.Sleep(1);
+            if (swTimeout.ElapsedMilliseconds > 5000)
+            {
+                throw new TimeoutException("WebGPU BufferMapAsync timed out after 5 seconds during headless readback.");
+            }
         }
 
         if (mapStatus != BufferMapAsyncStatus.Success)

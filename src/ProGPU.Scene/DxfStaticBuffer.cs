@@ -21,11 +21,16 @@ public unsafe class DxfStaticBuffer : IDisposable
     public uint TextIndexCount { get; private set; }
     public VectorVertex[] TextVertices { get; }
     
+    private GpuBuffer? _textVertexBufferBack;
+    private GpuBuffer? _textIndexBufferBack;
+    private uint _textIndexCountBack;
+    
     public GpuBuffer? BrushesBuffer { get; private set; }
-    public GpuBuffer? HatchRecordsBuffer { get; private set; }
-    public GpuBuffer? HatchSegmentsBuffer { get; private set; }
-    public GpuBuffer? AcisRecordsBuffer { get; private set; }
-    public GpuBuffer? AcisEdgesBuffer { get; private set; }
+    
+    private readonly Dictionary<int, object> _extensionStates = new();
+    
+    public void SetExtensionState(int extensionId, object state) => _extensionStates[extensionId] = state;
+    public object? GetExtensionState(int extensionId) => _extensionStates.TryGetValue(extensionId, out var state) ? state : null;
     
     // Bind groups for drawing the static buffer
     public BindGroup* UniformBindGroup { get; private set; }
@@ -37,6 +42,10 @@ public unsafe class DxfStaticBuffer : IDisposable
     // The viewport Uniform buffer for this static buffer's custom MVP matrix
     public GpuBuffer? UniformBuffer { get; private set; }
     
+    public Compositor.CompositorDrawCall[] DrawCalls { get; }
+    
+    public Compositor.StaticTextRecord[] TextRecords { get; set; } = Array.Empty<Compositor.StaticTextRecord>();
+    
     private bool _isDisposed;
     
     public DxfStaticBuffer(
@@ -46,14 +55,12 @@ public unsafe class DxfStaticBuffer : IDisposable
         VectorVertex[] textVertices,
         uint[] textIndices,
         GpuBrush[] brushes,
-        GpuHatchRecord[] hatchRecords,
-        GpuHatchSegment[] hatchSegments,
-        GpuAcisRecord[] acisRecords,
-        GpuAcisEdge[] acisEdges)
+        Compositor.CompositorDrawCall[] drawCalls)
     {
         _context = context;
         VectorVertices = vertices;
         TextVertices = textVertices;
+        DrawCalls = drawCalls;
         
         // 1. Create and upload Vector Buffers
         if (vertices.Length > 0 && indices.Length > 0)
@@ -90,60 +97,56 @@ public unsafe class DxfStaticBuffer : IDisposable
             BrushesBuffer.WriteSingle(dummy);
         }
         
-        // 4. Hatch Records
-        uint hatchRecordsSize = (uint)Math.Max(1, hatchRecords.Length) * (uint)Marshal.SizeOf<GpuHatchRecord>();
-        HatchRecordsBuffer = new GpuBuffer(context, hatchRecordsSize, BufferUsage.Storage | BufferUsage.CopyDst, "Static DXF Hatch Records Buffer");
-        if (hatchRecords.Length > 0)
-        {
-            HatchRecordsBuffer.Write(new ReadOnlySpan<GpuHatchRecord>(hatchRecords));
-        }
-        else
-        {
-            var dummy = new GpuHatchRecord();
-            HatchRecordsBuffer.WriteSingle(dummy);
-        }
-        
-        // 5. Hatch Segments
-        uint hatchSegmentsSize = (uint)Math.Max(1, hatchSegments.Length) * (uint)Marshal.SizeOf<GpuHatchSegment>();
-        HatchSegmentsBuffer = new GpuBuffer(context, hatchSegmentsSize, BufferUsage.Storage | BufferUsage.CopyDst, "Static DXF Hatch Segments Buffer");
-        if (hatchSegments.Length > 0)
-        {
-            HatchSegmentsBuffer.Write(new ReadOnlySpan<GpuHatchSegment>(hatchSegments));
-        }
-        else
-        {
-            var dummy = new GpuHatchSegment();
-            HatchSegmentsBuffer.WriteSingle(dummy);
-        }
-        
-        // 6. ACIS Records
-        uint acisRecordsSize = (uint)Math.Max(1, acisRecords.Length) * (uint)Marshal.SizeOf<GpuAcisRecord>();
-        AcisRecordsBuffer = new GpuBuffer(context, acisRecordsSize, BufferUsage.Storage | BufferUsage.CopyDst, "Static DXF ACIS Records Buffer");
-        if (acisRecords.Length > 0)
-        {
-            AcisRecordsBuffer.Write(new ReadOnlySpan<GpuAcisRecord>(acisRecords));
-        }
-        else
-        {
-            var dummy = new GpuAcisRecord();
-            AcisRecordsBuffer.WriteSingle(dummy);
-        }
-        
-        // 7. ACIS Edges
-        uint acisEdgesSize = (uint)Math.Max(1, acisEdges.Length) * (uint)Marshal.SizeOf<GpuAcisEdge>();
-        AcisEdgesBuffer = new GpuBuffer(context, acisEdgesSize, BufferUsage.Storage | BufferUsage.CopyDst, "Static DXF ACIS Edges Buffer");
-        if (acisEdges.Length > 0)
-        {
-            AcisEdgesBuffer.Write(new ReadOnlySpan<GpuAcisEdge>(acisEdges));
-        }
-        else
-        {
-            var dummy = new GpuAcisEdge();
-            AcisEdgesBuffer.WriteSingle(dummy);
-        }
-        
-        // 8. Custom uniforms buffer (needs custom model-to-screen matrix)
+        // 4. Custom uniforms buffer (needs custom model-to-screen matrix)
         UniformBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<GpuUniforms>(), BufferUsage.Uniform | BufferUsage.CopyDst, "Static DXF Viewport Uniform Buffer");
+    }
+    
+    public void UpdateTextBuffer(VectorVertex[] textVertices, uint[] textIndices)
+    {
+        if (textVertices.Length > 0 && textIndices.Length > 0)
+        {
+            if (_textVertexBufferBack == null || _textVertexBufferBack.Size < textVertices.Length * Marshal.SizeOf<VectorVertex>())
+            {
+                _textVertexBufferBack?.Dispose();
+                _textVertexBufferBack = new GpuBuffer(_context, (uint)textVertices.Length * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex | BufferUsage.CopyDst, "Static DXF Text Vertex Back Buffer");
+            }
+            _textVertexBufferBack.Write(new ReadOnlySpan<VectorVertex>(textVertices));
+            
+            if (_textIndexBufferBack == null || _textIndexBufferBack.Size < textIndices.Length * 4)
+            {
+                _textIndexBufferBack?.Dispose();
+                _textIndexBufferBack = new GpuBuffer(_context, (uint)textIndices.Length * 4, BufferUsage.Index | BufferUsage.CopyDst, "Static DXF Text Index Back Buffer");
+            }
+            _textIndexBufferBack.Write(new ReadOnlySpan<uint>(textIndices));
+            _textIndexCountBack = (uint)textIndices.Length;
+
+            // Swap front and back buffer references
+            var tempVertexBuffer = TextVertexBuffer;
+            TextVertexBuffer = _textVertexBufferBack;
+            _textVertexBufferBack = tempVertexBuffer;
+
+            var tempIndexBuffer = TextIndexBuffer;
+            TextIndexBuffer = _textIndexBufferBack;
+            _textIndexBufferBack = tempIndexBuffer;
+
+            var tempIndexCount = TextIndexCount;
+            TextIndexCount = _textIndexCountBack;
+            _textIndexCountBack = tempIndexCount;
+        }
+        else
+        {
+            TextIndexCount = 0;
+        }
+        
+        for (int i = 0; i < DrawCalls.Length; i++)
+        {
+            if (DrawCalls[i].Type == Compositor.DrawCallType.Text)
+            {
+                var dc = DrawCalls[i];
+                dc.IndexCount = TextIndexCount;
+                DrawCalls[i] = dc;
+            }
+        }
     }
     
     public void InitializeBindGroups(BindGroupLayout* layout, BindGroupLayout* layoutOffscreen, BindGroupLayout* textLayout, BindGroupLayout* textLayoutOffscreen)
@@ -167,50 +170,14 @@ public unsafe class DxfStaticBuffer : IDisposable
             Size = BrushesBuffer.Size
         };
 
-        var hatchRecordsEntry = new BindGroupEntry
-        {
-            Binding = 2,
-            Buffer = HatchRecordsBuffer!.BufferPtr,
-            Offset = 0,
-            Size = HatchRecordsBuffer.Size
-        };
-
-        var hatchSegmentsEntry = new BindGroupEntry
-        {
-            Binding = 3,
-            Buffer = HatchSegmentsBuffer!.BufferPtr,
-            Offset = 0,
-            Size = HatchSegmentsBuffer.Size
-        };
-
-        var acisRecordsEntry = new BindGroupEntry
-        {
-            Binding = 4,
-            Buffer = AcisRecordsBuffer!.BufferPtr,
-            Offset = 0,
-            Size = AcisRecordsBuffer.Size
-        };
-
-        var acisEdgesEntry = new BindGroupEntry
-        {
-            Binding = 5,
-            Buffer = AcisEdgesBuffer!.BufferPtr,
-            Offset = 0,
-            Size = AcisEdgesBuffer.Size
-        };
-
-        var vectorEntries = stackalloc BindGroupEntry[6];
+        var vectorEntries = stackalloc BindGroupEntry[2];
         vectorEntries[0] = uBufferEntryVector;
         vectorEntries[1] = brushesEntry;
-        vectorEntries[2] = hatchRecordsEntry;
-        vectorEntries[3] = hatchSegmentsEntry;
-        vectorEntries[4] = acisRecordsEntry;
-        vectorEntries[5] = acisEdgesEntry;
 
         var uDescVector = new BindGroupDescriptor
         {
             Layout = layout,
-            EntryCount = 6,
+            EntryCount = 2,
             Entries = vectorEntries
         };
         UniformBindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVector);
@@ -218,7 +185,7 @@ public unsafe class DxfStaticBuffer : IDisposable
         var uDescVectorOffscreen = new BindGroupDescriptor
         {
             Layout = layoutOffscreen,
-            EntryCount = 6,
+            EntryCount = 2,
             Entries = vectorEntries
         };
         UniformBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVectorOffscreen);
@@ -278,12 +245,19 @@ public unsafe class DxfStaticBuffer : IDisposable
         IndexBuffer?.Dispose();
         TextVertexBuffer?.Dispose();
         TextIndexBuffer?.Dispose();
+        _textVertexBufferBack?.Dispose();
+        _textIndexBufferBack?.Dispose();
         BrushesBuffer?.Dispose();
-        HatchRecordsBuffer?.Dispose();
-        HatchSegmentsBuffer?.Dispose();
-        AcisRecordsBuffer?.Dispose();
-        AcisEdgesBuffer?.Dispose();
         UniformBuffer?.Dispose();
+        
+        foreach (var state in _extensionStates.Values)
+        {
+            if (state is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+        _extensionStates.Clear();
         
         if (UniformBindGroup != null) _context.Wgpu.BindGroupRelease(UniformBindGroup);
         if (UniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(UniformBindGroupOffscreen);

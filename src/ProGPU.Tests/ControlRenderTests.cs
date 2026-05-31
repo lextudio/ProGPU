@@ -28,6 +28,8 @@ public class ControlRenderTests
 
     private void VerifyControlStates<T>(T control, string namePrefix) where T : Control
     {
+        PopupService.Clear();
+        InputSystem.Current = new WindowInputState();
         var window = SharedWindow;
         window.Content = control;
 
@@ -81,6 +83,8 @@ public class ControlRenderTests
         // Cleanup shared state
         control.IsEnabled = true;
         window.Content = null;
+        PopupService.Clear();
+        InputSystem.Current = new WindowInputState();
     }
 
     [Fact]
@@ -411,6 +415,8 @@ public class ControlRenderTests
     [Fact]
     public void Test_HitTesting_Diagnostics()
     {
+        PopupService.Clear();
+        InputSystem.Current = new WindowInputState();
         var root = new Border { Width = 800f, Height = 600f };
         var canvas = new Canvas
         {
@@ -447,6 +453,8 @@ public class ControlRenderTests
     [Fact]
     public void Test_PivotItem_TextBox_HitTesting()
     {
+        PopupService.Clear();
+        InputSystem.Current = new WindowInputState();
         var root = new Border { Width = 800f, Height = 600f };
         
         var pivot = new Pivot
@@ -540,6 +548,8 @@ public class ControlRenderTests
     [Fact]
     public void Test_RealShowcasePage_TextBox_HitTesting()
     {
+        PopupService.Clear();
+        InputSystem.Current = new WindowInputState();
         // 1. Create the actual showcase page layout
         var page = ProGPU.Samples.ChartShowcasePage.Create();
         var root = new Border { Width = 1280f, Height = 800f, Child = page };

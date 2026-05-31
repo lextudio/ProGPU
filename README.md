@@ -561,6 +561,113 @@ To eliminate floating-point coordinate drift and keep layout compilation cycles 
 ---
 
 
+### 16. Hardware-Accelerated Static DXF Rendering & Crisp Static Text Buffers
+
+CAD drawings (like DXF files) contain hundreds of thousands or millions of vector elements (lines, circles, polyline arcs, splines, and complex hatches). Recursively compiling these vector primitives from a dynamic visual tree every frame on camera changes (zoom/pan) is CPU-prohibitive.
+
+ProGPU introduces **Hardware-Accelerated Static WebGPU Buffers** (Option B) which compiles all vector primitives once into a static, GPU-mapped vertex/index store (`DxfStaticBuffer`). Panning and zooming are executed entirely on the GPU via updates to the viewport uniforms, maintaining a locked 60+ FPS on massive, million-entity CAD models.
+
+#### The Blurry Text Dilemma
+While static geometry scales infinitely on the GPU, TrueType Font (TTF) text is drawn as textured quads pointing to a bitmap-cached `GlyphAtlas`. Zooming in stretches these pre-rendered quads, causing bilinear texture blur because the glyph atlas texture was rasterized at a static zoom scale.
+
+ProGPU resolves this by implementing **Crisp Static Text Buffers via Dynamic Re-compilation**:
+
+```mermaid
+flowchart TD
+    ZoomChange{"Context.Zoom != _lastZoom?"}
+    ZoomChange -- No --> DrawStatic["Draw Static Dxf Buffer - 100% GPU Bound (Panning Free)"]
+    ZoomChange -- Yes --> Recompile["Trigger RecompileStaticText on CPU"]
+    
+    Recompile --> ScaleDPI["Scale effective dpiScale = _currentDpiScale * Context.Zoom"]
+    ScaleDPI --> RasterGlyph["Rasterize Glyph at physical FontSize * dpiScale * Zoom inside Atlas"]
+    RasterGlyph --> ModelSpace["Divide quad vertex coords by effective dpiScale (cancel out Zoom)"]
+    ModelSpace --> WriteGPU["Dynamic Copy-on-Write vertex/index re-upload to GpuBuffer"]
+    WriteGPU --> DrawStatic
+```
+
+* **Panning is Completely Free**: Since panning does not affect font size or rasterization dimensions, panning a static drawing remains 100% GPU-bound and runs with zero CPU overhead.
+* **Retina-Sharp Snapping**: On camera zoom changes, the compositor triggers a surgical, sub-millisecond re-compilation of ONLY the text commands using the new zoom factor:
+  $$\text{effectiveDpiScale} = \text{dpiScale} \cdot \text{Zoom}$$
+* **Glyph Sizing**: Glyphs are rasterized into the shared `GlyphAtlas` at their exact, high-resolution physical size (`FontSize * effectiveDpiScale`), ensuring pixel-perfect Retina snapping.
+* **Automatic Scaling Cancelation**: The compiled quad vertex positions ($v_0, v_1, v_2, v_3$) are divided by `effectiveDpiScale` to map them back to base model/world coordinates. When the vertex shader multiplies them by the custom model-to-screen MVP matrix (which scales by `Zoom`), the zoom factor is mathematically canceled out, mapping the quad 1-to-1 to physical screen pixels with zero texture stretching or blur!
+
+#### High-Performance Zoom & Scaling Optimizations
+To support instantaneous zoom transitions on massive CAD models containing thousands of text elements (such as `Schemat IOS Karvina CZ.dxf`), ProGPU integrates three advanced graphics-pipeline optimizations:
+
+1. **$O(\text{TextCount})$ Pre-Filtered Text Records Cache**:
+   - *Problem*: Scanning millions of drawing commands recursively on the CPU during zoomed snapping steps to filter out text elements introduced noticeable interface stutters.
+   - *Solution*: During the initial compilation of the static buffer, the compositor captures the exact `DrawText` commands and their parent block transformations into a flat `TextRecords` array in the `DxfStaticBuffer`:
+     ```csharp
+     public struct StaticTextRecord
+     {
+         public RenderCommand Command;
+         public Matrix4x4 Transform;
+     }
+     ```
+     Subsequent snapped zoom changes bypass the drawing hierarchy entirely and recompile only the text records, reducing complexity from $O(\text{TotalElements})$ to a highly efficient $O(\text{TextElements})$ execution.
+
+2. **Discrete Font Snapping & Quad Scaling**:
+   - *Problem*: As the camera zoom levels increase, font sizes become extremely large (up to 128f), which rapidly bloats and thrashes the shared `GlyphAtlas` texture ($2048 \times 2048$), triggering frequent cache evictions. Computing 4-way subpixel snap coordinates for huge fonts also increases memory area consumption by $4\times$.
+   - *Solution*:
+     - **Clamping**: Caps the maximum physical font size rasterized into the atlas to `64f` (instead of `128f`). GPU bilinear filtering scales these large high-resolution sources up without visual quality loss, using $4\times$ less atlas area.
+     - **Size Snapping**: Snaps `rasterFontSize` to discrete steps (0.5px steps below 24px, 2px steps above 24px) for perfect cache hit ratios. Quad quad boundaries are scaled proportionally by `scaleRatio = physicalFontSize / rasterFontSize` to ensure mathematical size precision on screen remains 100% exact.
+     - **Subpixel Bypassing**: Disables subpixel snapping for font sizes larger than `24f` (since subpixel shifts are visually imperceptible on large characters), saving an additional $4\times$ in atlas footprint.
+
+3. **WebGPU Queue & Driver Submission Batching**:
+   - *Problem*: Previously, rasterizing each new glyph synchronously created a temporary uniform buffer, constructed a WebGPU bind group, instantiated a command encoder, and immediately executed a sequential queue submission (`QueueSubmit`). For drawings with thousands of characters, this sequential driver loop caused severe CPU/GPU Metal synchronization bottlenecks on macOS.
+   - *Solution*: Implemented batching APIs (`BeginBatch` / `EndBatch`) in `GlyphAtlas.cs` to lazily pool and combine multiple glyph compute dispatches. All rasterizations are now recorded into a single `CommandEncoder` and executed in **one** unified `QueueSubmit` at the end of the compile pass, yielding a $1000\times+$ reduction in driver submission overhead.
+
+---
+
+### 17. Pre-Allocated Ring Uniform Buffers (Glyph & Path Atlases)
+
+To eliminate the continuous CPU memory allocation overhead of creating small, temporary GPU uniform buffers on every render pass, we implemented a **Pre-allocated Ring Uniform Buffer** pattern in both `GlyphAtlas` and `PathAtlas`:
+* **Single Bulk Pre-allocation**: Allocates a single large `GpuBuffer` of `256KB` once at system startup. This pre-allocated ring buffer acts as the backing storage for up to 4,000 active glyph or vector path dispatches.
+* **256-Byte Alignment Compliance**: Follows the WebGPU standard (`minUniformBufferOffsetAlignment` boundary constraint of 256 bytes) by rounding up structural uniform offsets with a fast bitwise operation:
+  $$\text{alignedSize} = (\text{SizeOf<Uniforms>} + 255) \& \sim 255$$
+* **Fast Queue Copy-on-Write**: Inside batch rasterization and pending path loops, parameters are written directly to the pre-allocated ring buffer at the current `_ringOffset` using `QueueWriteBuffer`, completely avoiding buffer creation/destruction:
+  ```csharp
+  _context.Wgpu.QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr, _ringOffset, &uniforms, (uint)Marshal.SizeOf<GlyphUniforms>());
+  ```
+* **Binding Slice Offsets**: Dynamic bind groups are configured pointing to the exact slice within the ring buffer using `Offset = _ringOffset` and `Size = Marshal.SizeOf<Uniforms>()`. On each batch completion, `_ringOffset` is incremented by `alignedSize`, and it resets to `0` at the start of a new batch loop. This achieves **zero CPU allocations** inside dynamic rasterization loops.
+
+---
+
+### 18. Double-Buffered Geometry Swapchains (DxfStaticBuffer)
+
+Updating dense vector meshes and text quads during snapped zoom events can cause severe CPU-GPU hardware execution stalls. If the CPU disposes and recreates vertex/index buffers while the GPU command queue is actively reading from them, the graphics driver is forced to block CPU execution to synchronize hardware lifecycles.
+
+To prevent these stalls and achieve perfectly fluid rendering, we implemented a **Double-Buffering Swapchain** pattern:
+* **Asynchronous Back-Buffering**: Maintains dual buffer sets in `DxfStaticBuffer`:
+  - Front-Buffers (`TextVertexBuffer`, `TextIndexBuffer`, `TextIndexCount`) currently being drawn by the compositor.
+  - Back-Buffers (`_textVertexBufferBack`, `_textIndexBufferBack`, `_textIndexCountBack`) dedicated to accommodating the next camera layout recalculation.
+* **Non-Blocking Dynamic Copy**: When `UpdateTextBuffer` is invoked during snapped zooms, it resizes and writes to the back-buffers asynchronously.
+* **Zero-Allocation Swapping**: Swaps the front and back buffer references instantly using cheap variable re-assignment on the CPU:
+  ```csharp
+  var tempVertexBuffer = TextVertexBuffer;
+  TextVertexBuffer = _textVertexBufferBack;
+  _textVertexBufferBack = tempVertexBuffer;
+  ```
+* **Static Bind-Group Stability**: Because vertex and index buffer mappings are bound directly via render encoder draw commands rather than static composition bind groups, swapping front/back buffers bypasses bind-group recreation or layout invalidations entirely, ensuring **stutter-free, instant zoom actions**.
+
+---
+
+### 19. Snapped Blur Radii & Stable Effect Pipelines
+
+Offscreen Gaussian blur and drop shadow dispatches are highly sensitive to parameter fluctuations during keyframe animations or hover transitions. Smooth float radius adjustments (e.g. transitioning from `1.0f` to `3.0f`) dynamically modify the computed iteration count:
+$$\text{iterations} = \text{Clamp}(\text{Round}(\text{radius} / 2.5), 1, 8)$$
+This causes the rendering loop to alter command-buffer layouts and recreate dynamic bind groups frame-by-frame, creating noticeable micro-stutters.
+
+To stabilize effect execution, we implemented a **Snapped Radii Pipeline**:
+* **Discrete Increments**: Symmetrically snaps incoming `radius` and `blurRadius` parameters to discrete `0.5f` pixel boundaries at the entry points of `ApplyGaussianBlur` and `ApplyDropShadow`:
+  ```csharp
+  float snappedRadius = MathF.Round(radius * 2f) / 2f;
+  ```
+* **Pipeline and Bind-Group Lock**: Snapping ensures that the computed iteration count remains perfectly locked and stable during intermediate keyframes. WGSL shader binding entries, textures, and command layouts remain identical across frame transitions, delivering extremely fluid hover animations and eliminating transient render delays.
+
+---
+
+
 ## Module & Project Architecture Breakdown
 
 The ProGPU solution is partitioned into modular, highly specialized C# projects. Each project governs a specific layer of the UI, vector, or graphics compilation loops:

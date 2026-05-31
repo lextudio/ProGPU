@@ -114,6 +114,8 @@ public unsafe class PathAtlas : IDisposable
 
     private readonly RenderPipelineCache _pipelineCache;
     private readonly ComputePipeline* _computePipeline;
+    private readonly GpuBuffer _uniformRingBuffer;
+    private uint _ringOffset;
     private bool _isDisposed;
 
     public GpuTexture AtlasTexture => _atlasTexture;
@@ -139,6 +141,10 @@ public unsafe class PathAtlas : IDisposable
         _pipelineCache = new RenderPipelineCache(_context);
         var shaderModule = _pipelineCache.GetOrCreateShader("PathRasterizer", Shaders.PathRasterizerShader, "PathRasterizerShader");
         _computePipeline = _pipelineCache.GetOrCreateComputePipeline("PathRasterizer", shaderModule, "cs_main");
+
+        // Allocate a 256KB uniform ring buffer once at startup to eliminate CPU-to-GPU memory allocation overhead
+        _uniformRingBuffer = new GpuBuffer(_context, 256 * 1024, BufferUsage.Uniform | BufferUsage.CopyDst, "Path Atlas Uniform Ring Buffer");
+        _ringOffset = 0;
     }
 
     private static uint DivRoundUp(uint value, uint divisor) => (value + divisor - 1) / divisor;
@@ -521,6 +527,8 @@ public unsafe class PathAtlas : IDisposable
         if (_isDisposed) throw new ObjectDisposedException(nameof(PathAtlas));
         if (_pendingPaths.Count == 0) return;
 
+        _ringOffset = 0; // Reset offset on each batch pass
+
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Path Batch Rasterizer Encoder") };
         var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
@@ -579,18 +587,17 @@ public unsafe class PathAtlas : IDisposable
                 Height = info.Height
             };
 
-            var uniformsBuffer = new GpuBuffer(
-                _context,
-                (uint)Marshal.SizeOf<PathUniforms>(),
-                BufferUsage.Uniform | BufferUsage.CopyDst,
-                "Path Uniforms Buffer"
-            );
-            uniformsBuffer.WriteSingle(uniforms);
-            _tempBuffers.Add(uniformsBuffer);
+            uint alignedSize = (uint)((Marshal.SizeOf<PathUniforms>() + 255) & ~255);
+            if (_ringOffset + alignedSize > _uniformRingBuffer.Size)
+            {
+                _ringOffset = 0; // Wrap around if we exceed size
+            }
+
+            _context.Wgpu.QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr, _ringOffset, &uniforms, (uint)Marshal.SizeOf<PathUniforms>());
 
             var bindGroupLayout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_computePipeline, 0);
 
-            entries[0] = new BindGroupEntry { Binding = 0, Buffer = uniformsBuffer.BufferPtr, Offset = 0, Size = uniformsBuffer.Size };
+            entries[0] = new BindGroupEntry { Binding = 0, Buffer = _uniformRingBuffer.BufferPtr, Offset = _ringOffset, Size = (uint)Marshal.SizeOf<PathUniforms>() };
             entries[1] = new BindGroupEntry { Binding = 1, Buffer = recordsBuffer.BufferPtr, Offset = 0, Size = recordsBuffer.Size };
             entries[2] = new BindGroupEntry { Binding = 2, Buffer = segmentsBuffer.BufferPtr, Offset = 0, Size = segmentsBuffer.Size };
             entries[3] = new BindGroupEntry { Binding = 3, TextureView = _atlasTexture.ViewPtr };
@@ -611,6 +618,8 @@ public unsafe class PathAtlas : IDisposable
 
             bindGroupsToRelease.Add((nint)bg);
             layoutsToRelease.Add((nint)bindGroupLayout);
+
+            _ringOffset += alignedSize;
         }
 
         _context.Wgpu.ComputePassEncoderEnd(pass);
@@ -652,6 +661,7 @@ public unsafe class PathAtlas : IDisposable
         if (_isDisposed) return;
 
         CleanupFrame();
+        _uniformRingBuffer.Dispose();
         _pipelineCache.Dispose();
         _atlasTexture.Dispose();
         _paths.Clear();
