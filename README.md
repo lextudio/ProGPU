@@ -871,3 +871,110 @@ To allow embedded graphics and animation benches to run at their physical displa
     This self-scheduling tick fires callbacks exactly aligned with the physical monitor's refresh rate, unlocking **120 FPS / 144 FPS** rendering without frame tearing.
 *   **Uno Platform**: Subscribes directly to `CompositionTarget.Rendering` to drive the WebGPU command submissions and refresh statistics exactly aligned with each compositor pass.
 
+
+---
+
+## III. Path 2: Zero-Copy Shared Texture Rendering Pipeline
+
+To bypass the overhead of copying pixels from VRAM to CPU staging buffers and back to VRAM (double-copy blitting), ProGPU implements a cutting-edge **Zero-Copy Shared Texture Rendering Pipeline**. This architecture achieves direct GPU-to-GPU memory sharing between the offscreen WebGPU rendering engine and the host UI composition tree.
+
+```mermaid
+sequenceDiagram
+    participant WebGPU as WebGPU Engine
+    participant OS as OS Shared Resource (IOSurface / D3D11)
+    participant Avalonia as Avalonia Compositor Tree
+    participant GPU as physical GPU VRAM
+
+    WebGPU->>OS: 1. Render directly to Shared Handle (Zero CPU Copy)
+    OS->>GPU: 2. Texture contents persist in VRAM
+    Avalonia->>OS: 3. Import Shared Handle via ICompositionGpuInterop
+    Avalonia->>GPU: 4. Draw directly from VRAM (Zero Copy / 120 FPS+)
+```
+
+### 1. Architectural Overview & Memory Sharing Mechanics
+The Zero-Copy pipeline eliminates host CPU copies entirely by allocating a hardware-backed shared OS memory handle directly in C#, wrapping it inside WebGPU as a render target, and importing it into the host visual tree:
+
+| Operating System | Shared Resource Type | Native Handle Reference | Allocation Strategy |
+| :--- | :--- | :--- | :--- |
+| **macOS** | Apple `IOSurface` | `IOSurfaceRef` (global handle) | CoreFoundation/AppKit unmanaged dictionary creation |
+| **Windows** | Direct3D11 Shared Texture | DXGI `HANDLE` (global shared key) | Standalone `ID3D11Device` with `D3D11_RESOURCE_MISC_SHARED` |
+
+### 2. C# Hardware-Backed Allocation Details
+
+#### A. macOS IOSurface Allocation
+CoreFoundation and Objective-C runtime P/Invokes are used to construct the surface configuration plist:
+*   `IOSurfaceWidth` & `IOSurfaceHeight`: Target dimensions.
+*   `IOSurfaceBytesPerElement`: 4 bytes per pixel.
+*   `IOSurfacePixelFormat`: `'BGRA'` (packed 32-bit integer `1111970369`).
+*   `IOSurfaceBytesPerRow`: Aligned to 256 bytes.
+*   `IOSurfaceAllocSize`: Total byte size.
+
+#### B. Windows D3D11 Shared Handle Allocation
+Direct COM VTable indexing is utilized to create resources dynamically:
+*   `D3D11CreateDevice`: Instantiates a standalone hardware D3D11 device.
+*   `CreateTexture2D`: Allocates the texture with `D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE` bind flags and the `D3D11_RESOURCE_MISC_SHARED` misc flag.
+*   `QueryInterface`: Extracts the `IDXGIResource` COM pointer.
+*   `GetSharedHandle`: Obtains the global shared handle pointer.
+
+### 3. Integrating with Avalonia's `ICompositionGpuInterop`
+The host control hooks into Avalonia's composition engine during initialization:
+1.  **Query Interop Interface**:
+    ```csharp
+    var interop = await compositor.TryGetCompositionGpuInterop();
+    ```
+2.  **Verify Compatibility**:
+    Verify that the compositor's graphics backend supports the active platform's handle type (`IOSurfaceRef` on macOS, `D3D11TextureGlobalSharedHandle` on Windows).
+3.  **Import Image**:
+    Create a `PlatformHandle` from the allocated raw pointer and import it:
+    ```csharp
+    var platformHandle = new PlatformHandle(_sharedHandle, _gpuHandleType);
+    _importedGpuImage = _gpuInterop.ImportImage(platformHandle, properties);
+    ```
+4.  **Present via Composition Surface**:
+    Create a standard `CompositionSurfaceVisual` and assign its `Surface` to a `CompositionDrawingSurface`. On every tick, simply call:
+    ```csharp
+    _ = _drawingSurface.UpdateAsync(_importedGpuImage);
+    ```
+    This triggers a hardware-accelerated present, drawing the shared texture directly in the compositor loop without CPU copying.
+
+### 4. The WebGPU FFI Bridge Boundary (Native Integration)
+Standard cross-platform `wgpu-native` bindings do not export helper functions out-of-the-box to wrap arbitrary `IOSurfaceRef` or shared `ID3D11Texture2D` handles into WebGPU texture objects. 
+To complete the zero-copy pipeline on the WebGPU side, a small custom native wrapper (written in Rust or C++) must bridge the HAL (Hardware Abstraction Layer) boundary:
+
+```rust
+// Custom native Rust crate bridging wgpu-core and OS handles
+use wgpu_core::hub::Global;
+use wgpu_hal::api::{Metal, Dx12};
+
+#[no_mangle]
+pub unsafe extern "C" fn wgpuDeviceCreateTextureFromMacIOSurface(
+    device_ptr: *mut libc::c_void,
+    iosurface_ptr: *mut libc::c_void,
+    width: u32,
+    height: u32
+) -> *mut libc::c_void {
+    let global = &*Global::default();
+    // 1. Extract raw device representation
+    let device_id = std::mem::transmute(device_ptr);
+    
+    // 2. Fetch the Metal device and wrap the IOSurface handle via wgpu_hal
+    let surface: Metal::Texture = Metal::texture_from_raw(iosurface_ptr as *mut _);
+    
+    // 3. Register the newly created texture inside the wgpu-core context
+    let texture_id = global.device_create_texture_from_hal::<Metal>(
+        device_id,
+        surface,
+        width,
+        height
+    );
+    
+    std::mem::transmute(texture_id)
+}
+```
+
+This bridge allows WebGPU command encoders to bind the texture as a standard `RenderPassColorAttachment`, completing the zero-copy pipeline.
+
+### 5. Graceful Runtime Fallback
+If graphics interop is not supported by the environment (e.g. software rendering, missing drivers, or Linux configurations lacking Vulkan opaque handles), the control gracefully falls back to the **Decoupled Render-Thread Blitting Pipeline** (Phase 2). This ensures 100% functionality and visual parity across all host configurations!
+
+

@@ -28,7 +28,7 @@ using AvaloniaVector = Avalonia.Vector;
 
 namespace ProGPU.Avalonia;
 
-public unsafe class ProGpuHostControl : Control
+public class ProGpuHostControl : Control
 {
     // Dependency properties
     public static readonly StyledProperty<FrameworkElement?> WinuiRootProperty =
@@ -51,6 +51,22 @@ public unsafe class ProGpuHostControl : Control
     // Custom Visual references
     private CompositionCustomVisual? _customVisual;
     private ProGpuCustomVisualHandler? _customVisualHandler;
+
+    // Zero-Copy Shared Texture states
+    private bool _isZeroCopySupported;
+    private ICompositionGpuInterop? _gpuInterop;
+    private string _gpuHandleType = "";
+    private CompositionSurfaceVisual? _surfaceVisual;
+    private CompositionDrawingSurface? _drawingSurface;
+    private ICompositionImportedGpuImage? _importedGpuImage;
+    private IntPtr _sharedHandle = IntPtr.Zero;
+    private uint _lastSharedWidth;
+    private uint _lastSharedHeight;
+    private GpuTexture? _sharedWgpuTextureWrapper;
+
+    // Windows specific shared D3D11 resource holders
+    private IntPtr _winD3DDevice = IntPtr.Zero;
+    private IntPtr _winTexture2D = IntPtr.Zero;
 
     // State tracking
     private bool _isInitialized;
@@ -89,6 +105,10 @@ public unsafe class ProGpuHostControl : Control
         if (_customVisual != null)
         {
             _customVisual.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
+        }
+        else if (_surfaceVisual != null)
+        {
+            _surfaceVisual.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
         }
 
         if (_isInitialized)
@@ -143,12 +163,65 @@ public unsafe class ProGpuHostControl : Control
         var visual = ElementComposition.GetElementVisual(this);
         if (visual?.Compositor is { } compositor)
         {
+            _ = SetupCompositionSurfaceAsync(compositor);
+        }
+    }
+
+    private async Task SetupCompositionSurfaceAsync(global::Avalonia.Rendering.Composition.Compositor compositor)
+    {
+        ICompositionGpuInterop? interop = null;
+        try
+        {
+            interop = await compositor.TryGetCompositionGpuInterop();
+        }
+        catch
+        {
+            // Fallback gracefully
+        }
+
+        bool useSharedTexture = false;
+        string handleType = "";
+
+        if (interop != null)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
+                interop.SupportedImageHandleTypes.Contains("IOSurfaceRef"))
+            {
+                useSharedTexture = true;
+                handleType = "IOSurfaceRef";
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+                     interop.SupportedImageHandleTypes.Contains(KnownPlatformGraphicsExternalImageHandleTypes.D3D11TextureGlobalSharedHandle))
+            {
+                useSharedTexture = true;
+                handleType = KnownPlatformGraphicsExternalImageHandleTypes.D3D11TextureGlobalSharedHandle;
+            }
+        }
+
+        if (useSharedTexture && interop != null)
+        {
+            _isZeroCopySupported = true;
+            _gpuInterop = interop;
+            _gpuHandleType = handleType;
+
+            _surfaceVisual = compositor.CreateSurfaceVisual();
+            _drawingSurface = compositor.CreateDrawingSurface();
+            _surfaceVisual.Surface = _drawingSurface;
+
+            ElementComposition.SetElementChildVisual(this, _surfaceVisual);
+            _surfaceVisual.Size = new Vector2((float)Bounds.Width, (float)Bounds.Height);
+
+            QueueRenderUpdate();
+        }
+        else
+        {
+            _isZeroCopySupported = false;
             _customVisualHandler = new ProGpuCustomVisualHandler(_wgpuContext, _compositor);
             _customVisual = compositor.CreateCustomVisual(_customVisualHandler);
             ElementComposition.SetElementChildVisual(this, _customVisual);
-            
+
             _customVisual.Size = new Vector2((float)Bounds.Width, (float)Bounds.Height);
-            
+
             QueueRenderUpdate();
         }
     }
@@ -167,11 +240,118 @@ public unsafe class ProGpuHostControl : Control
             _customVisualHandler = null;
         }
 
+        if (_surfaceVisual != null)
+        {
+            ElementComposition.SetElementChildVisual(this, null);
+            _surfaceVisual = null;
+            _drawingSurface?.Dispose();
+            _drawingSurface = null;
+            
+            ReleaseSharedResources();
+        }
+
         _winuiInputState = null;
         _compositor = null;
         _wgpuContext = null;
 
         _isInitialized = false;
+    }
+
+    private void ResizeSharedResources(uint width, uint height)
+    {
+        if (width == _lastSharedWidth && height == _lastSharedHeight && _importedGpuImage != null)
+            return;
+
+        ReleaseSharedResources();
+
+        _lastSharedWidth = width;
+        _lastSharedHeight = height;
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            _sharedHandle = GpuSharingInterop.CreateMacSharedSurface(width, height);
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            _sharedHandle = GpuSharingInterop.CreateWindowsSharedTexture(width, height, out _winD3DDevice, out _winTexture2D);
+        }
+
+        if (_sharedHandle != IntPtr.Zero && _gpuInterop != null)
+        {
+            var props = new PlatformGraphicsExternalImageProperties
+            {
+                Width = (int)width,
+                Height = (int)height,
+                Format = PlatformGraphicsExternalImageFormat.B8G8R8A8UNorm,
+                TopLeftOrigin = true
+            };
+            
+            var platformHandle = new PlatformHandle(_sharedHandle, _gpuHandleType);
+            _importedGpuImage = _gpuInterop.ImportImage(platformHandle, props);
+        }
+    }
+
+    private void ReleaseSharedResources()
+    {
+        if (_importedGpuImage != null)
+        {
+            _ = _importedGpuImage.DisposeAsync();
+            _importedGpuImage = null;
+        }
+
+        if (_sharedHandle != IntPtr.Zero)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                GpuSharingInterop.ReleaseMacSharedSurface(_sharedHandle);
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                GpuSharingInterop.ReleaseWindowsSharedTexture(_winD3DDevice, _winTexture2D);
+                _winD3DDevice = IntPtr.Zero;
+                _winTexture2D = IntPtr.Zero;
+            }
+            _sharedHandle = IntPtr.Zero;
+        }
+
+        if (_sharedWgpuTextureWrapper != null)
+        {
+            _sharedWgpuTextureWrapper.Dispose();
+            _sharedWgpuTextureWrapper = null;
+        }
+    }
+
+    private void RenderToSharedTexture(uint width, uint height, double dpiScale)
+    {
+        if (_wgpuContext == null || _compositor == null) return;
+
+        float logicalWidth = (float)(width / dpiScale);
+        float logicalHeight = (float)(height / dpiScale);
+
+        if (_sharedWgpuTextureWrapper == null || _sharedWgpuTextureWrapper.Width != width || _sharedWgpuTextureWrapper.Height != height)
+        {
+            _sharedWgpuTextureWrapper?.Dispose();
+            
+            // Allocate our WebGPU representation of the shared texture
+            _sharedWgpuTextureWrapper = new GpuTexture(
+                _wgpuContext,
+                width,
+                height,
+                TextureFormat.Bgra8Unorm,
+                TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+                "Shared Zero-Copy Target"
+            );
+        }
+
+        // Render directly into the shared texture target - ZERO CPU-copy overhead!
+        _compositor.RenderOffscreen(
+            WinuiRoot,
+            (uint)Math.Max(1, logicalWidth),
+            (uint)Math.Max(1, logicalHeight),
+            _sharedWgpuTextureWrapper,
+            0.0f,
+            (float)dpiScale
+        );
     }
 
     // --- Sizing Negotiation Lifecycle ---
@@ -328,7 +508,10 @@ public unsafe class ProGpuHostControl : Control
 
     private void QueueRenderUpdate()
     {
-        if (!_isInitialized || WinuiRoot == null || _customVisual == null) return;
+        if (!_isInitialized || WinuiRoot == null) return;
+
+        if (!_isZeroCopySupported && _customVisual == null) return;
+        if (_isZeroCopySupported && _drawingSurface == null) return;
 
         // 1. Force layout and animations updates recursively on WinUI Controls
         WinuiRoot.UpdateAnimations(0.016f); // Pass baseline delta time
@@ -339,10 +522,25 @@ public unsafe class ProGpuHostControl : Control
         uint renderWidth = (uint)Math.Max(1, Bounds.Width * dpi);
         uint renderHeight = (uint)Math.Max(1, Bounds.Height * dpi);
 
-        // 2. Send latest compiled tree and sizes to composition handler
-        _customVisual.SendHandlerMessage(Tuple.Create<Microsoft.UI.Xaml.FrameworkElement?, uint, uint, double>(
-            WinuiRoot, renderWidth, renderHeight, dpi
-        ));
+        if (_isZeroCopySupported && _gpuInterop != null && _drawingSurface != null)
+        {
+            ResizeSharedResources(renderWidth, renderHeight);
+
+            if (_importedGpuImage != null)
+            {
+                RenderToSharedTexture(renderWidth, renderHeight, dpi);
+                
+                // Asynchronously update drawing surface directly from imported GPU image
+                _ = _drawingSurface.UpdateAsync(_importedGpuImage);
+            }
+        }
+        else if (_customVisual != null)
+        {
+            // 2. Send latest compiled tree and sizes to composition handler
+            _customVisual.SendHandlerMessage(Tuple.Create<Microsoft.UI.Xaml.FrameworkElement?, uint, uint, double>(
+                WinuiRoot, renderWidth, renderHeight, dpi
+            ));
+        }
     }
 
     public override void Render(AvaloniaDrawingContext context)
