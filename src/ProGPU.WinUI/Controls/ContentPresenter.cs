@@ -18,7 +18,7 @@ public class ContentPresenter : FrameworkElement
             "Background",
             typeof(Brush),
             typeof(ContentPresenter),
-            new PropertyMetadata(null, (d, e) => ((ContentPresenter)d).Invalidate()));
+            new PropertyMetadata(null) { AffectsRender = true });
 
     public Brush? Background
     {
@@ -31,7 +31,7 @@ public class ContentPresenter : FrameworkElement
             "BorderBrush",
             typeof(Brush),
             typeof(ContentPresenter),
-            new PropertyMetadata(null, (d, e) => ((ContentPresenter)d).Invalidate()));
+            new PropertyMetadata(null) { AffectsRender = true });
 
     public Brush? BorderBrush
     {
@@ -44,11 +44,7 @@ public class ContentPresenter : FrameworkElement
             "BorderThickness",
             typeof(Thickness),
             typeof(ContentPresenter),
-            new PropertyMetadata(default(Thickness), (d, e) => {
-                var cp = (ContentPresenter)d;
-                cp.Invalidate();
-                cp.InvalidateMeasure();
-            }));
+            new PropertyMetadata(default(Thickness)) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public Thickness BorderThickness
     {
@@ -61,7 +57,7 @@ public class ContentPresenter : FrameworkElement
             "CornerRadius",
             typeof(float),
             typeof(ContentPresenter),
-            new PropertyMetadata(0f, (d, e) => ((ContentPresenter)d).Invalidate()));
+            new PropertyMetadata(0f) { AffectsRender = true });
 
     public float CornerRadius
     {
@@ -109,9 +105,6 @@ public class ContentPresenter : FrameworkElement
                 AddChild(tb);
             }
         }
-
-        Invalidate();
-        InvalidateMeasure();
     }
 
     public static readonly DependencyProperty HorizontalContentAlignmentProperty =
@@ -119,11 +112,7 @@ public class ContentPresenter : FrameworkElement
             "HorizontalContentAlignment",
             typeof(HorizontalAlignment),
             typeof(ContentPresenter),
-            new PropertyMetadata(HorizontalAlignment.Stretch, (d, e) => {
-                var cp = (ContentPresenter)d;
-                cp.InvalidateMeasure();
-                cp.InvalidateArrange();
-            }));
+            new PropertyMetadata(HorizontalAlignment.Stretch) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public HorizontalAlignment HorizontalContentAlignment
     {
@@ -136,11 +125,7 @@ public class ContentPresenter : FrameworkElement
             "VerticalContentAlignment",
             typeof(VerticalAlignment),
             typeof(ContentPresenter),
-            new PropertyMetadata(VerticalAlignment.Stretch, (d, e) => {
-                var cp = (ContentPresenter)d;
-                cp.InvalidateMeasure();
-                cp.InvalidateArrange();
-            }));
+            new PropertyMetadata(VerticalAlignment.Stretch) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public VerticalAlignment VerticalContentAlignment
     {

@@ -21,59 +21,24 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
 using Button = Microsoft.UI.Xaml.Controls.Button;
 using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
+using Window = Microsoft.UI.Xaml.Window;
 
 namespace ProGPU.Samples;
 
 public static unsafe class MainWindowController
 {
-    public static void Start()
+    public static void Start(Window window)
     {
-        var options = WindowOptions.Default;
-        options.Size = new Vector2D<int>(1280, 800);
-        options.Title = "ProGPU Substrate - High-Performance WinUI Gallery Dashboard";
-        options.API = GraphicsAPI.None;
-        options.VSync = false;
-
-        AppState._window = Silk.NET.Windowing.Window.Create(options);
-
-        AppState._window.Load += OnWindowLoad;
-        AppState._window.Render += OnWindowRender;
-        AppState._window.Resize += OnWindowResize;
-
-        Console.WriteLine("[ProGPU.Samples] Starting GPU-first UI Infrastructure Controls Gallery...");
-        AppState._window.Run();
-        
-        Cleanup();
-    }
-
-    private static void OnWindowLoad()
-    {
-        if (AppState._window == null) return;
-
-        AppState._wgpuContext = new WgpuContext();
-        AppState._wgpuContext.Initialize(AppState._window);
-
-        // Register DispatcherQueue to handle async work on the main UI thread safely
-        Microsoft.UI.Xaml.Input.InputSystem.DispatcherQueue = UIThread.Post;
-
-        AppState._screenCompositor = new Compositor(AppState._wgpuContext, AppState._wgpuContext.SwapChainFormat);
-        AppState._screenCompositor.ClearColor = ThemeManager.GetColor("PageBackground");
-        
-        // Decoupled Screen Compositor Hooks Configuration
-        AppState._screenCompositor.PreRender += (w, h) => Microsoft.UI.Xaml.Controls.PopupService.MeasureAndArrangePopups(new Vector2(w, h));
-        AppState._screenCompositor.GetExternalLayers = () => Microsoft.UI.Xaml.Controls.PopupService.ActivePopups;
-        AppState._screenCompositor.GetTooltip = () => Microsoft.UI.Xaml.Input.InputSystem.ActiveToolTip;
-        AppState._screenCompositor.GetMousePosition = () => Microsoft.UI.Xaml.Input.InputSystem.LastMousePosition;
-        AppState._screenCompositor.RenderDiagnostics = (diagContext, w, h) =>
+        AppState._window = window.SilkWindow;
+        AppState._wgpuContext = window.WgpuContext;
+        AppState._screenCompositor = window.Compositor;
+        if (AppState._screenCompositor != null)
         {
-            if (Microsoft.UI.Xaml.Controls.DevToolsService.IsDevToolsActive)
-            {
-                Microsoft.UI.Xaml.Controls.AdornerLayer.Render(diagContext, w, h);
-            }
-            Microsoft.UI.Xaml.DragDropManager.RenderDragVisual(diagContext, w, h);
-        };
-        AppState._offscreenCompositor = new Compositor(AppState._wgpuContext, TextureFormat.Rgba8Unorm);
-        AppState._compute = new ComputeAccelerator(AppState._wgpuContext);
+            AppState._screenCompositor.ClearColor = ThemeManager.GetColor("PageBackground");
+        }
+
+        AppState._offscreenCompositor = new Compositor(AppState._wgpuContext!, TextureFormat.Rgba8Unorm);
+        AppState._compute = new ComputeAccelerator(AppState._wgpuContext!);
 
         string fontPath = "/System/Library/Fonts/Supplemental/Arial.ttf";
         if (!File.Exists(fontPath))
@@ -86,21 +51,12 @@ public static unsafe class MainWindowController
             Console.WriteLine($"[ProGPU.Samples] Loading System Font: {fontPath}");
             AppState._font = new TtfFont(fontPath);
             Microsoft.UI.Xaml.Controls.PopupService.DefaultFont = AppState._font;
-            ushort testIdx = AppState._font.GetGlyphIndex('A');
-            var testOutline = AppState._font.GetGlyphOutline(testIdx);
-            Console.WriteLine($"[ProGPU.Samples] Test Glyph 'A' Index: {testIdx}, Outline Figures: {testOutline?.Figures.Count ?? -1}");
-            if (testOutline != null && testOutline.Figures.Count > 0)
-            {
-                var fig = testOutline.Figures[0];
-                Console.WriteLine($"[ProGPU.Samples] Figure StartPoint: {fig.StartPoint}, Segments Count: {fig.Segments.Count}");
-            }
         }
         else
         {
-            throw new FileNotFoundException("Arial.ttf is required to execute typography. Ensure standard Arial TrueType font path is available.");
+            throw new FileNotFoundException("Arial.ttf is required to execute typography.");
         }
 
-        // Load other supplementary fonts safely with fallback to primary font
         string timesPath = "/System/Library/Fonts/Supplemental/Times New Roman.ttf";
         if (File.Exists(timesPath)) AppState._fontTimes = new TtfFont(timesPath);
         else AppState._fontTimes = AppState._font;
@@ -117,21 +73,30 @@ public static unsafe class MainWindowController
         if (File.Exists(comicPath)) AppState._fontComic = new TtfFont(comicPath);
         else AppState._fontComic = AppState._font;
 
-
-        AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext, 600, 600, TextureFormat.Rgba8Unorm, 
+        AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc);
-        AppState._canvasTempTexture = new GpuTexture(AppState._wgpuContext, 600, 600, TextureFormat.Rgba8Unorm, 
+        AppState._canvasTempTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.TextureBinding | TextureUsage.StorageBinding);
-        AppState._canvasBlurTexture = new GpuTexture(AppState._wgpuContext, 600, 600, TextureFormat.Rgba8Unorm, 
+        AppState._canvasBlurTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.TextureBinding | TextureUsage.StorageBinding);
-        AppState._canvasShadowTexture = new GpuTexture(AppState._wgpuContext, 600, 600, TextureFormat.Rgba8Unorm, 
+        AppState._canvasShadowTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.TextureBinding | TextureUsage.StorageBinding);
 
-        // Pre-populate virtualized grid dataset
         AppState.GenerateLogItems();
 
         BuildSceneGraph();
-        SetupInput();
+
+        if (AppState._topLevelGrid != null)
+        {
+            AppState._topLevelGrid.PointerMoved += (sender, args) =>
+            {
+                AppState._mousePos = args.Position;
+            };
+        }
+
+        window.Content = AppState._topLevelGrid;
+        window.Rendering += (s, delta) => OnWindowRender(delta);
+        window.Closed += (s, e) => Cleanup();
     }
 
     private static void BuildSceneGraph()
@@ -329,6 +294,7 @@ public static unsafe class MainWindowController
         var dockPanelItem = new NavigationViewItem("Dock Panel", "🪟", DockPanelPage.Create());
         var gridSplitterItem = new NavigationViewItem("Grid Splitter", "↔️", GridSplitterPage.Create());
         var colorPickerItem = new NavigationViewItem("Color Picker", "🎨", ColorPickerPage.Create());
+        var vectorShapesItem = new NavigationViewItem("Vector Shapes", "📐", VectorShapesPage.Create());
 
         AppState._navigationView.MenuItems.Add(basicInputItem);
         AppState._navigationView.MenuItems.Add(chartShowcaseItem);
@@ -337,6 +303,7 @@ public static unsafe class MainWindowController
         AppState._navigationView.MenuItems.Add(dockPanelItem);
         AppState._navigationView.MenuItems.Add(gridSplitterItem);
         AppState._navigationView.MenuItems.Add(colorPickerItem);
+        AppState._navigationView.MenuItems.Add(vectorShapesItem);
         AppState._navigationView.MenuItems.Add(fontGlyphBrowserItem);
         AppState._navigationView.MenuItems.Add(textItem);
         AppState._navigationView.MenuItems.Add(markdownPlaygroundItem);
@@ -460,22 +427,6 @@ public static unsafe class MainWindowController
         };
     }
 
-    private static void SetupInput()
-    {
-        if (AppState._window == null || AppState._topLevelGrid == null) return;
-
-        var input = AppState._window.CreateInput();
-        
-        // Initialize WinUI Input Routing System with top level container grid scene node
-        InputSystem.Initialize(input, AppState._topLevelGrid);
-
-        // Bubble-up PointerMoved coordinate tracking in top level container grid status
-        AppState._topLevelGrid.PointerMoved += (sender, args) =>
-        {
-            AppState._mousePos = args.Position;
-        };
-    }
-
     private static void OnWindowUpdate(double delta)
     {
         UIThread.RunPending();
@@ -527,10 +478,6 @@ public static unsafe class MainWindowController
 
         AppState._frameStopwatch.Restart();
 
-        // 1. Size negotiation: Measure & Arrange entire WinUI graph
-        AppState._topLevelGrid.Measure(new Vector2(AppState._window.Size.X, AppState._window.Size.Y));
-        AppState._topLevelGrid.Arrange(new Rect(0, 0, AppState._window.Size.X, AppState._window.Size.Y));
-
         // Update animated cogs if currently in Compute FX Showcase View
         if (AppState._activeCategory == "Compute FX" && AppState._gearCanvasVisual != null)
         {
@@ -563,38 +510,7 @@ public static unsafe class MainWindowController
             }
         }
 
-        // 2. Swapchain present
-        TextureView* targetView = null;
-        if (AppState._wgpuContext.Surface != null)
-        {
-            var surfaceTexture = new SurfaceTexture();
-            AppState._wgpuContext.Wgpu.SurfaceGetCurrentTexture(AppState._wgpuContext.Surface, &surfaceTexture);
-            
-            if (surfaceTexture.Status == SurfaceGetCurrentTextureStatus.Success)
-            {
-                var viewDesc = new TextureViewDescriptor
-                {
-                    Format = AppState._wgpuContext.SwapChainFormat,
-                    Dimension = TextureViewDimension.Dimension2D,
-                    BaseMipLevel = 0,
-                    MipLevelCount = 1,
-                    BaseArrayLayer = 0,
-                    ArrayLayerCount = 1,
-                    Aspect = TextureAspect.All
-                };
-                targetView = AppState._wgpuContext.Wgpu.TextureCreateView(surfaceTexture.Texture, &viewDesc);
-            }
-        }
-
-        if (targetView != null)
-        {
-            AppState._screenCompositor.RenderScene(AppState._topLevelGrid, (uint)AppState._window.Size.X, (uint)AppState._window.Size.Y, targetView);
-            
-            AppState._wgpuContext.Wgpu.SurfacePresent(AppState._wgpuContext.Surface);
-            AppState._wgpuContext.Wgpu.TextureViewRelease(targetView);
-        }
-
-        // 3. Metrics & stats overlay updates (now measuring full frame time)
+        // Metrics & stats overlay updates (now measuring full frame time)
         AppState._cpuFrameTimeMs = AppState._frameStopwatch.Elapsed.TotalMilliseconds;
         
         AppState._frameCount++;
@@ -640,13 +556,6 @@ public static unsafe class MainWindowController
         }
     }
 
-    private static void OnWindowResize(Vector2D<int> newSize)
-    {
-        if (AppState._wgpuContext == null || AppState._window == null) return;
-        AppState._wgpuContext.ConfigureSwapChain((uint)AppState._window.FramebufferSize.X, (uint)AppState._window.FramebufferSize.Y);
-        AppState._topLevelGrid?.Invalidate();
-    }
-
     private static void Cleanup()
     {
         AppState._canvasSourceTexture?.Dispose();
@@ -656,8 +565,6 @@ public static unsafe class MainWindowController
 
         AppState._compute?.Dispose();
         AppState._offscreenCompositor?.Dispose();
-        AppState._screenCompositor?.Dispose();
-        AppState._wgpuContext?.Dispose();
     }
 }
 

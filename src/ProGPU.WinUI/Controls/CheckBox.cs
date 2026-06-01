@@ -41,7 +41,6 @@ public class CheckBox : ContentControl
 
     private void OnCheckedChanged()
     {
-        Invalidate();
         CheckedChanged?.Invoke(this, EventArgs.Empty);
         if (IsChecked)
         {

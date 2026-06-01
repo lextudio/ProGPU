@@ -11,8 +11,8 @@ using Microsoft.UI.Xaml.Documents;
 using ProGPU.Vector;
 using ProGPU.Layout;
 using Thickness = Microsoft.UI.Xaml.Thickness;
-using HorizontalAlignment = ProGPU.Layout.HorizontalAlignment;
-using VerticalAlignment = ProGPU.Layout.VerticalAlignment;
+using HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
+using VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using System.Numerics;
 
 public class PropertyItem

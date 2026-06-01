@@ -144,6 +144,75 @@ public class SamplePagesTests
     }
 
     [Fact]
+    public void Test_FontGlyphBrowserPage_Hover_Diagnostics()
+    {
+        EnsureFontsAndStateLoaded();
+
+        var page = FontGlyphBrowserPage.Create();
+        var window = HeadlessWindow.Shared;
+        window.Resize(1280, 800);
+        window.Content = page;
+        window.Render();
+
+        var itemsControlField = typeof(FontGlyphBrowserPage).GetField("_itemsControl", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var itemsControl = (ItemsControl?)itemsControlField?.GetValue(null);
+        Assert.NotNull(itemsControl);
+
+        // Verify regression: ItemsControl background on pointer hover must be transparent, not solid white
+        Assert.False(itemsControl.IsPointerOver);
+        itemsControl.OnPointerEntered(new PointerRoutedEventArgs());
+        Assert.True(itemsControl.IsPointerOver);
+
+        var itemsControlBg = itemsControl.GetCurrentBackground();
+        Assert.NotNull(itemsControlBg);
+        var itemsControlSolidBg = itemsControlBg as SolidColorBrush;
+        Assert.NotNull(itemsControlSolidBg);
+        // Assert that the hover background is transparent (0, 0, 0, 0) and NOT solid white (1, 1, 1, 1)
+        Assert.Equal(new Vector4(0f, 0f, 0f, 0f), itemsControlSolidBg.Color);
+
+        // Reset hover state
+        itemsControl.OnPointerExited(new PointerRoutedEventArgs());
+        Assert.False(itemsControl.IsPointerOver);
+
+        var activeVisualsField = typeof(UniformVirtualizingGridPanel).GetField("_activeVisuals", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var activeVisuals = (System.Collections.IDictionary?)activeVisualsField?.GetValue(itemsControl.ItemsPanel);
+        Assert.NotNull(activeVisuals);
+        Assert.NotEmpty(activeVisuals);
+
+        // Get one active visual container (which is a Border representing a glyph card)
+        Border? glyphBorder = null;
+        foreach (var val in activeVisuals.Values)
+        {
+            if (val is Border b)
+            {
+                glyphBorder = b;
+                break;
+            }
+        }
+        Assert.NotNull(glyphBorder);
+
+        // Inspect ActualTheme and ActualThemeFamily of the border container
+        var theme = glyphBorder.ActualTheme;
+        var family = glyphBorder.ActualThemeFamily;
+        Console.WriteLine($"[DIAG_HOVER] Border ActualTheme={theme}, ActualThemeFamily={family}");
+
+        // Set to hover background and border brush, then inspect resolved colors
+        glyphBorder.Background = new ThemeResourceBrush("ControlBackgroundHover");
+        glyphBorder.BorderBrush = new ThemeResourceBrush("ControlBorderHover");
+
+        var bgBrush = glyphBorder.Background as SolidColorBrush;
+        var borderBrush = glyphBorder.BorderBrush as SolidColorBrush;
+
+        Assert.NotNull(bgBrush);
+        Assert.NotNull(borderBrush);
+
+        Console.WriteLine($"[DIAG_HOVER] Resolved Hover Background Color: {bgBrush.Color}");
+        Console.WriteLine($"[DIAG_HOVER] Resolved Hover Border Color: {borderBrush.Color}");
+
+        window.Content = null;
+    }
+
+    [Fact]
     public void Test_VirtualizationControlsPage_Renders()
     {
         RunPageTest(VirtualizationControlsPage.Create(), "Virtualization Controls");

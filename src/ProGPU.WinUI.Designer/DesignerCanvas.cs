@@ -1,4 +1,3 @@
-using Thickness = Microsoft.UI.Xaml.Thickness;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -1132,7 +1131,7 @@ public class DesignerCanvas : Panel
                             // Auto-stretch responsive containers and give default placeholder height
                             if (IsResponsiveContainer(newInstance))
                             {
-                                newInstance.HorizontalAlignment = ProGPU.Layout.HorizontalAlignment.Stretch;
+                                newInstance.HorizontalAlignment = HorizontalAlignment.Stretch;
                                 newInstance.Width = float.NaN;
                                 newInstance.Height = 100f; // placeholder height so empty panels are visible
                             }

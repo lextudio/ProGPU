@@ -68,20 +68,17 @@ public class Slider : Control
     private void OnMinimumChanged(float newMin)
     {
         Value = Math.Clamp(Value, newMin, Maximum);
-        Invalidate();
         OnPropertyChanged(nameof(Minimum));
     }
 
     private void OnMaximumChanged(float newMax)
     {
         Value = Math.Clamp(Value, Minimum, newMax);
-        Invalidate();
         OnPropertyChanged(nameof(Maximum));
     }
 
     private void OnValueChanged(float newValue)
     {
-        Invalidate();
         ValueChanged?.Invoke(this, EventArgs.Empty);
         OnPropertyChanged(nameof(Value));
     }

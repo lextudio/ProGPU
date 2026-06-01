@@ -88,9 +88,9 @@ public static class ThemeManager
     {
         { "PageBackground", new Vector4(0.08f, 0.08f, 0.12f, 1.0f) }, // Dark Mica: #14141F
         { "CardBackground", new Vector4(0.12f, 0.12f, 0.16f, 1.0f) }, // #1F1F28
-        { "ControlBackground", new Vector4(1f, 1f, 1f, 0.05f) }, // White 5%
-        { "ControlBackgroundHover", new Vector4(1f, 1f, 1f, 0.09f) }, // White 9%
-        { "ControlBackgroundPressed", new Vector4(0f, 0f, 0f, 0.15f) }, // Black 15%
+        { "ControlBackground", new Vector4(0.14f, 0.14f, 0.17f, 1.0f) }, // #24242B
+        { "ControlBackgroundHover", new Vector4(0.18f, 0.18f, 0.22f, 1.0f) }, // #2D2D37
+        { "ControlBackgroundPressed", new Vector4(0.09f, 0.09f, 0.11f, 1.0f) }, // #17171C
         { "ControlBorder", new Vector4(1f, 1f, 1f, 0.08f) }, // White 8%
         { "ControlBorderHover", new Vector4(1f, 1f, 1f, 0.15f) }, // White 15%
         { "TextPrimary", new Vector4(1f, 1f, 1f, 1.0f) }, // Solid White
@@ -107,16 +107,17 @@ public static class ThemeManager
         { "NavigationViewItemBackgroundSelected", new Vector4(1f, 1f, 1f, 0.07f) },
         { "NavigationViewItemBackgroundPointerOver", new Vector4(1f, 1f, 1f, 0.05f) },
         { "TabViewItemCloseHover", new Vector4(1.0f, 0.33f, 0.33f, 1.0f) },
-        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) }
+        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, Vector4> WinUILightPalette = new()
     {
         { "PageBackground", new Vector4(0.96f, 0.96f, 0.98f, 1.0f) }, // Light Acrylic: #F5F5F7
         { "CardBackground", new Vector4(1.0f, 1.0f, 1.0f, 1.0f) }, // Solid White
-        { "ControlBackground", new Vector4(0f, 0f, 0f, 0.04f) }, // Black 4%
-        { "ControlBackgroundHover", new Vector4(0f, 0f, 0f, 0.07f) }, // Black 7%
-        { "ControlBackgroundPressed", new Vector4(0f, 0f, 0f, 0.12f) }, // Black 12%
+        { "ControlBackground", new Vector4(0.91f, 0.91f, 0.93f, 1.0f) }, // #EAEAEC
+        { "ControlBackgroundHover", new Vector4(0.87f, 0.87f, 0.89f, 1.0f) }, // #DFDFE2
+        { "ControlBackgroundPressed", new Vector4(0.82f, 0.82f, 0.84f, 1.0f) }, // #D1D1D4
         { "ControlBorder", new Vector4(0f, 0f, 0f, 0.09f) }, // Black 9%
         { "ControlBorderHover", new Vector4(0f, 0f, 0f, 0.18f) }, // Black 18%
         { "TextPrimary", new Vector4(0.08f, 0.08f, 0.12f, 1.0f) }, // Solid Dark
@@ -133,7 +134,8 @@ public static class ThemeManager
         { "NavigationViewItemBackgroundSelected", new Vector4(0f, 0f, 0f, 0.08f) },
         { "NavigationViewItemBackgroundPointerOver", new Vector4(0f, 0f, 0f, 0.05f) },
         { "TabViewItemCloseHover", new Vector4(1.0f, 0.33f, 0.33f, 1.0f) },
-        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) }
+        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, Vector4> MacOsDarkPalette = new()
@@ -187,7 +189,8 @@ public static class ThemeManager
         { "CheckboxCheckedBorder", new Vector4(0f, 0.43f, 0.88f, 1f) },
         { "CheckboxUncheckedBackgroundTop", new Vector4(0.26f, 0.26f, 0.26f, 1f) },
         { "CheckboxUncheckedBackgroundBottom", new Vector4(0.2f, 0.2f, 0.2f, 1f) },
-        { "CheckboxUncheckedBorder", new Vector4(0.33f, 0.33f, 0.33f, 1f) }
+        { "CheckboxUncheckedBorder", new Vector4(0.33f, 0.33f, 0.33f, 1f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, Vector4> MacOsLightPalette = new()
@@ -241,11 +244,24 @@ public static class ThemeManager
         { "CheckboxCheckedBorder", new Vector4(0f, 0.39f, 0.84f, 1f) },
         { "CheckboxUncheckedBackgroundTop", new Vector4(1f, 1f, 1f, 1f) },
         { "CheckboxUncheckedBackgroundBottom", new Vector4(0.96f, 0.96f, 0.98f, 1f) },
-        { "CheckboxUncheckedBorder", new Vector4(0.76f, 0.76f, 0.76f, 1f) }
+        { "CheckboxUncheckedBorder", new Vector4(0.76f, 0.76f, 0.76f, 1f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, string> ResourceAliases = new(StringComparer.OrdinalIgnoreCase)
     {
+        { "ItemsControlBackground", "Transparent" },
+        { "ItemsControlBackgroundPointerOver", "Transparent" },
+        { "ItemsControlBackgroundPressed", "Transparent" },
+        { "ItemsControlBackgroundFocused", "Transparent" },
+        { "ItemsControlBackgroundDisabled", "Transparent" },
+
+        { "ListBoxBackground", "Transparent" },
+        { "ListBoxBackgroundPointerOver", "Transparent" },
+        { "ListBoxBackgroundPressed", "Transparent" },
+        { "ListBoxBackgroundFocused", "Transparent" },
+        { "ListBoxBackgroundDisabled", "Transparent" },
+
         { "ButtonBackground", "ControlBackground" },
         { "ButtonBackgroundPointerOver", "ControlBackgroundHover" },
         { "ButtonBackgroundPressed", "ControlBackgroundPressed" },

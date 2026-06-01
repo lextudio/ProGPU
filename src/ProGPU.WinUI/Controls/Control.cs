@@ -18,39 +18,35 @@ public class Control : FrameworkElement, ITemplatedControl
             "Background",
             typeof(Brush),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(null) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty ForegroundProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "Foreground",
             typeof(Brush),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(null) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty BorderBrushProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "BorderBrush",
             typeof(Brush),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(null, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(null) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty BorderThicknessProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "BorderThickness",
             typeof(Thickness),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(default(Thickness), (d, e) => {
-                var c = (Control)d;
-                c.Invalidate();
-                c.InvalidateMeasure();
-            }));
+            new Microsoft.UI.Xaml.PropertyMetadata(default(Thickness)) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty CornerRadiusProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
             "CornerRadius",
             typeof(float),
             typeof(Control),
-            new Microsoft.UI.Xaml.PropertyMetadata(0f, (d, e) => ((Control)d).Invalidate()));
+            new Microsoft.UI.Xaml.PropertyMetadata(0f) { AffectsRender = true });
 
     public static readonly Microsoft.UI.Xaml.DependencyProperty TemplateProperty =
         Microsoft.UI.Xaml.DependencyProperty.Register(
@@ -135,40 +131,6 @@ public class Control : FrameworkElement, ITemplatedControl
     {
         get => (VerticalAlignment)(GetValue(VerticalContentAlignmentProperty) ?? VerticalAlignment.Center);
         set => SetValue(VerticalContentAlignmentProperty, value);
-    }
-
-    public static readonly DependencyProperty IsPointerOverProperty =
-        DependencyProperty.Register(
-            "IsPointerOver",
-            typeof(bool),
-            typeof(Control),
-            new PropertyMetadata(false, (d, e) => {
-                var c = (Control)d;
-                c.OnVisualStateChanged();
-                c.OnPropertyChanged("IsPointerOver");
-            }));
-
-    public bool IsPointerOver
-    {
-        get => (bool)(GetValue(IsPointerOverProperty) ?? false);
-        protected set => SetValue(IsPointerOverProperty, value);
-    }
-
-    public static readonly DependencyProperty IsPointerPressedProperty =
-        DependencyProperty.Register(
-            "IsPointerPressed",
-            typeof(bool),
-            typeof(Control),
-            new PropertyMetadata(false, (d, e) => {
-                var c = (Control)d;
-                c.OnVisualStateChanged();
-                c.OnPropertyChanged("IsPointerPressed");
-            }));
-
-    public bool IsPointerPressed
-    {
-        get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
-        protected set => SetValue(IsPointerPressedProperty, value);
     }
 
     public static readonly DependencyProperty IsFocusedProperty =
@@ -352,7 +314,6 @@ public class Control : FrameworkElement, ITemplatedControl
 
     protected virtual string GetThemePrefix()
     {
-        string className = GetType().Name;
         if (this is Button && Style != null)
         {
             foreach (var setter in Style.Setters)
@@ -363,7 +324,25 @@ public class Control : FrameworkElement, ITemplatedControl
                 }
             }
         }
-        return className;
+
+        Type? type = GetType();
+        while (type != null && type != typeof(Control) && type != typeof(FrameworkElement))
+        {
+            string name = type.Name;
+            if (name == "TextBox" || name == "PasswordBox" || name == "Button" || 
+                name == "ComboBox" || name == "ComboBoxItem" || name == "ListBox" || 
+                name == "ListBoxItem" || name == "CheckBox" || 
+                name == "RadioButton" || name == "ToggleSwitch" || name == "Slider" || 
+                name == "ProgressBar" || name == "ProgressRing" || name == "RatingControl" || 
+                name == "CalendarView" || name == "ContentDialog" || name == "TextBlock" || 
+                name == "RichTextBlock")
+            {
+                return name;
+            }
+            type = type.BaseType;
+        }
+
+        return GetType().Name;
     }
 
     public virtual Brush? GetCurrentBackground()
@@ -372,10 +351,10 @@ public class Control : FrameworkElement, ITemplatedControl
 
         string prefix = GetThemePrefix();
         var theme = ActualTheme;
-        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BackgroundDisabled", theme) ?? Background;
-        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BackgroundPressed", theme) ?? Background;
-        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}BackgroundPointerOver", theme) ?? Background;
-        if (IsFocused) return ThemeManager.GetBrush($"{prefix}BackgroundFocused", theme) ?? ThemeManager.GetBrush($"{prefix}BackgroundPressed", theme) ?? Background;
+        if (!IsEnabled) return (ThemeManager.GetResource($"{prefix}BackgroundDisabled", theme) as Brush) ?? Background;
+        if (IsPointerPressed) return (ThemeManager.GetResource($"{prefix}BackgroundPressed", theme) as Brush) ?? Background;
+        if (IsPointerOver) return (ThemeManager.GetResource($"{prefix}BackgroundPointerOver", theme) as Brush) ?? Background;
+        if (IsFocused) return (ThemeManager.GetResource($"{prefix}BackgroundFocused", theme) as Brush) ?? (ThemeManager.GetResource($"{prefix}BackgroundPressed", theme) as Brush) ?? Background;
         return Background;
     }
 
@@ -385,10 +364,10 @@ public class Control : FrameworkElement, ITemplatedControl
 
         string prefix = GetThemePrefix();
         var theme = ActualTheme;
-        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}ForegroundDisabled", theme) ?? Foreground;
-        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}ForegroundPressed", theme) ?? Foreground;
-        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}ForegroundPointerOver", theme) ?? Foreground;
-        if (IsFocused) return ThemeManager.GetBrush($"{prefix}ForegroundFocused", theme) ?? Foreground;
+        if (!IsEnabled) return (ThemeManager.GetResource($"{prefix}ForegroundDisabled", theme) as Brush) ?? Foreground;
+        if (IsPointerPressed) return (ThemeManager.GetResource($"{prefix}ForegroundPressed", theme) as Brush) ?? Foreground;
+        if (IsPointerOver) return (ThemeManager.GetResource($"{prefix}ForegroundPointerOver", theme) as Brush) ?? Foreground;
+        if (IsFocused) return (ThemeManager.GetResource($"{prefix}ForegroundFocused", theme) as Brush) ?? Foreground;
         return Foreground;
     }
 
@@ -398,10 +377,10 @@ public class Control : FrameworkElement, ITemplatedControl
 
         string prefix = GetThemePrefix();
         var theme = ActualTheme;
-        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BorderBrushDisabled", theme) ?? BorderBrush;
-        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BorderBrushPressed", theme) ?? BorderBrush;
-        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}BorderBrushPointerOver", theme) ?? BorderBrush;
-        if (IsFocused) return ThemeManager.GetBrush($"{prefix}BorderBrushFocused", theme) ?? ThemeManager.GetBrush($"{prefix}BorderBrushPressed", theme) ?? BorderBrush;
+        if (!IsEnabled) return (ThemeManager.GetResource($"{prefix}BorderBrushDisabled", theme) as Brush) ?? BorderBrush;
+        if (IsPointerPressed) return (ThemeManager.GetResource($"{prefix}BorderBrushPressed", theme) as Brush) ?? BorderBrush;
+        if (IsPointerOver) return (ThemeManager.GetResource($"{prefix}BorderBrushPointerOver", theme) as Brush) ?? BorderBrush;
+        if (IsFocused) return (ThemeManager.GetResource($"{prefix}BorderBrushFocused", theme) as Brush) ?? (ThemeManager.GetResource($"{prefix}BorderBrushPressed", theme) as Brush) ?? BorderBrush;
         return BorderBrush;
     }
 
@@ -413,30 +392,10 @@ public class Control : FrameworkElement, ITemplatedControl
         Invalidate();
     }
 
-    public override void OnPointerEntered(PointerRoutedEventArgs e)
-    {
-        if (IsEnabled)
-        {
-            IsPointerOver = true;
-        }
-        base.OnPointerEntered(e);
-    }
-
-    public override void OnPointerExited(PointerRoutedEventArgs e)
-    {
-        if (IsEnabled)
-        {
-            IsPointerOver = false;
-            IsPointerPressed = false;
-        }
-        base.OnPointerExited(e);
-    }
-
     public override void OnPointerPressed(PointerRoutedEventArgs e)
     {
         if (IsEnabled)
         {
-            IsPointerPressed = true;
             // Also acquire focus if we are hit-test visible, enabled, and IsTabStop
             if (IsHitTestVisible && IsTabStop)
             {
@@ -444,15 +403,6 @@ public class Control : FrameworkElement, ITemplatedControl
             }
         }
         base.OnPointerPressed(e);
-    }
-
-    public override void OnPointerReleased(PointerRoutedEventArgs e)
-    {
-        if (IsEnabled)
-        {
-            IsPointerPressed = false;
-        }
-        base.OnPointerReleased(e);
     }
 
     public override void OnRender(DrawingContext context)

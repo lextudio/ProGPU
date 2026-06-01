@@ -19,7 +19,7 @@ public class ComboBoxItem : ContentControl
             "IsSelected",
             typeof(bool),
             typeof(ComboBoxItem),
-            new PropertyMetadata(false, (d, e) => ((ComboBoxItem)d).Invalidate()));
+            new PropertyMetadata(false) { AffectsRender = true });
 
     private string _text = string.Empty;
 
@@ -47,7 +47,6 @@ public class ComboBoxItem : ContentControl
                     };
                     Content = tv;
                 }
-                Invalidate();
             }
         }
     }

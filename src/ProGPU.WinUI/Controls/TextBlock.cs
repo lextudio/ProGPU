@@ -25,7 +25,5 @@ public class TextBlock : RichTextBlock
         var tb = (TextBlock)d;
         tb.Inlines.Clear();
         tb.Inlines.Add(new Run { Text = (string)(e.NewValue ?? string.Empty) });
-        tb.InvalidateLayout();
-        tb.Invalidate();
     }
 }
