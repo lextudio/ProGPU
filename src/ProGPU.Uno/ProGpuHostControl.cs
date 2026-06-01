@@ -94,7 +94,6 @@ public unsafe class ProGpuHostControl : ContentControl
     public ProGpuHostControl()
     {
         _bufferMapCallback = PfnBufferMapCallback.From(OnBufferMapped);
-        ProGpuThemeManager.ThemeChanged += OnThemeChanged;
         
         // Embed the child Image control which works on all Uno targets
         Content = _displayImage;
@@ -151,6 +150,8 @@ public unsafe class ProGpuHostControl : ContentControl
         _renderHeight = (uint)Math.Max(1, ActualHeight * dpi);
 
         ResizeResources(_renderWidth, _renderHeight);
+
+        ProGpuThemeManager.ThemeChanged += OnThemeChanged;
 
         _isInitialized = true;
     }
@@ -221,6 +222,24 @@ public unsafe class ProGpuHostControl : ContentControl
             _wgpuContext.Wgpu.BufferDestroy(_stagingBuffer);
             _wgpuContext.Wgpu.BufferRelease(_stagingBuffer);
             _stagingBuffer = null;
+        }
+
+        if (_winuiInputState != null)
+        {
+            _winuiInputState.Root = null;
+            _winuiInputState.HoveredElement = null;
+            _winuiInputState.FocusedElement = null;
+            _winuiInputState.CapturedElement = null;
+            _winuiInputState.HoveredElementForTimer = null;
+            _winuiInputState.ActiveToolTip = null;
+            _winuiInputState.HoverCancellation?.Cancel();
+            _winuiInputState.HoverCancellation = null;
+
+            if (ProGpuInputSystem.Current == _winuiInputState)
+            {
+                ProGpuInputSystem.Current = null!;
+            }
+            _winuiInputState = null;
         }
 
         _writeableBitmap = null;

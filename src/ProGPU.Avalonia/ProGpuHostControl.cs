@@ -217,7 +217,6 @@ public class ProGpuHostControl : Control
 
     public ProGpuHostControl()
     {
-        ThemeManager.ThemeChanged += OnThemeChanged;
     }
 
     private void OnThemeChanged()
@@ -289,6 +288,8 @@ public class ProGpuHostControl : Control
 
         // 5. Setup Composition Custom Visual
         SetupCompositionSurface();
+
+        ThemeManager.ThemeChanged += OnThemeChanged;
 
         _isInitialized = true;
     }
@@ -385,9 +386,29 @@ public class ProGpuHostControl : Control
             _drawingSurface = null;
             
             ReleaseSharedResources();
+
+            _compositor?.Dispose();
+            _wgpuContext?.Dispose();
         }
 
-        _winuiInputState = null;
+        if (_winuiInputState != null)
+        {
+            _winuiInputState.Root = null;
+            _winuiInputState.HoveredElement = null;
+            _winuiInputState.FocusedElement = null;
+            _winuiInputState.CapturedElement = null;
+            _winuiInputState.HoveredElementForTimer = null;
+            _winuiInputState.ActiveToolTip = null;
+            _winuiInputState.HoverCancellation?.Cancel();
+            _winuiInputState.HoverCancellation = null;
+
+            if (InputSystem.Current == _winuiInputState)
+            {
+                InputSystem.Current = null!;
+            }
+            _winuiInputState = null;
+        }
+
         _compositor = null;
         _wgpuContext = null;
 
@@ -723,6 +744,8 @@ public class ProGpuHostControl : Control
     protected override void OnPointerExited(PointerEventArgs e)
     {
         SyncInputState(e.GetPosition(this));
+        InputSystem.InjectMouseMove(new Vector2(-1f, -1f));
+        QueueRenderUpdate();
         base.OnPointerExited(e);
     }
 
