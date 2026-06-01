@@ -81,6 +81,8 @@ public unsafe class ProGpuHostControl : ContentControl
     private uint _bytesPerRow;
     private WriteableBitmap? _writeableBitmap;
     private bool _isMappingPending;
+    private PfnBufferMapCallback _bufferMapCallback;
+    private byte[]? _rowBuffer;
 
     // State tracking
     private bool _isInitialized;
@@ -91,6 +93,7 @@ public unsafe class ProGpuHostControl : ContentControl
 
     public ProGpuHostControl()
     {
+        _bufferMapCallback = PfnBufferMapCallback.From(OnBufferMapped);
         ProGpuThemeManager.ThemeChanged += OnThemeChanged;
         
         // Embed the child Image control which works on all Uno targets
@@ -99,6 +102,11 @@ public unsafe class ProGpuHostControl : ContentControl
 
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+    }
+
+    private void OnBufferMapped(BufferMapAsyncStatus status, void* userData)
+    {
+        _isMappingPending = false;
     }
 
     private void OnThemeChanged()
@@ -196,6 +204,13 @@ public unsafe class ProGpuHostControl : ContentControl
         // 4. Reallocate WriteableBitmap and attach to child XAML image source
         _writeableBitmap = new WriteableBitmap((int)width, (int)height);
         _displayImage.Source = _writeableBitmap;
+
+        // 5. Pre-allocate or resize row buffer to avoid GC allocations in the rendering hot path
+        uint rowBytes = width * bytesPerPixel;
+        if (_rowBuffer == null || _rowBuffer.Length < rowBytes)
+        {
+            _rowBuffer = new byte[rowBytes];
+        }
     }
 
     private void CleanupGraphics()
@@ -451,11 +466,7 @@ public unsafe class ProGpuHostControl : ContentControl
 
             // 4. Map staging buffer synchronously
             _isMappingPending = true;
-            var onMapCallback = PfnBufferMapCallback.From((status, userData) =>
-            {
-                _isMappingPending = false;
-            });
-            _wgpuContext.Wgpu.BufferMapAsync(_stagingBuffer, MapMode.Read, 0, (nuint)bufferSize, onMapCallback, null);
+            _wgpuContext.Wgpu.BufferMapAsync(_stagingBuffer, MapMode.Read, 0, (nuint)bufferSize, _bufferMapCallback, null);
             
             // Poll device until mapping completes
             while (_isMappingPending)
@@ -470,7 +481,11 @@ public unsafe class ProGpuHostControl : ContentControl
             {
                 byte* srcBytes = (byte*)mappedPtr;
                 uint rowBytes = _renderWidth * bytesPerPixel;
-                byte[] rowBuffer = new byte[rowBytes];
+                
+                if (_rowBuffer == null || _rowBuffer.Length < rowBytes)
+                {
+                    _rowBuffer = new byte[rowBytes];
+                }
 
                 using (var stream = _writeableBitmap.PixelBuffer.AsStream())
                 {
@@ -478,8 +493,8 @@ public unsafe class ProGpuHostControl : ContentControl
                     for (uint y = 0; y < _renderHeight; y++)
                     {
                         long srcOffset = y * _bytesPerRow;
-                        Marshal.Copy((nint)(srcBytes + srcOffset), rowBuffer, 0, (int)rowBytes);
-                        stream.Write(rowBuffer, 0, rowBuffer.Length);
+                        Marshal.Copy((nint)(srcBytes + srcOffset), _rowBuffer, 0, (int)rowBytes);
+                        stream.Write(_rowBuffer, 0, (int)rowBytes);
                     }
                 }
 
