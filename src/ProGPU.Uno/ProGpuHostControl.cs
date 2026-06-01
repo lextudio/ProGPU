@@ -215,7 +215,8 @@ public unsafe class ProGpuHostControl : ContentControl
 
     private void CleanupGraphics()
     {
-        if (_stagingBuffer != null)
+        ProGpuThemeManager.ThemeChanged -= OnThemeChanged;
+        if (_stagingBuffer != null && _wgpuContext != null)
         {
             _wgpuContext.Wgpu.BufferDestroy(_stagingBuffer);
             _wgpuContext.Wgpu.BufferRelease(_stagingBuffer);
@@ -370,6 +371,20 @@ public unsafe class ProGpuHostControl : ContentControl
 
         var key = UnoInputBridge.TranslateKey(e.Key);
         ProGpuInputSystem.InjectKeyUp(key);
+        
+        QueueInvalidate();
+        e.Handled = true;
+    }
+
+    protected override void OnCharacterReceived(CharacterReceivedRoutedEventArgs e)
+    {
+        if (_winuiInputState != null)
+        {
+            _winuiInputState.Root = WinuiRoot;
+            ProGpuInputSystem.Current = _winuiInputState;
+        }
+
+        ProGpuInputSystem.InjectKeyChar(e.Character);
         
         QueueInvalidate();
         e.Handled = true;

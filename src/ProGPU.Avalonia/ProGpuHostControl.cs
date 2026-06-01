@@ -157,6 +157,8 @@ public unsafe class ProGpuHostControl : Control
     {
         if (!_isInitialized) return;
 
+        ThemeManager.ThemeChanged -= OnThemeChanged;
+
         if (_customVisual != null)
         {
             _customVisual.SendHandlerMessage("DISPOSE");
@@ -602,5 +604,8 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
 
         _offscreenTexture?.Dispose();
         _offscreenTexture = null;
+
+        _compositor?.Dispose();
+        _wgpuContext?.Dispose();
     }
 }
