@@ -107,7 +107,8 @@ public static class ThemeManager
         { "NavigationViewItemBackgroundSelected", new Vector4(1f, 1f, 1f, 0.07f) },
         { "NavigationViewItemBackgroundPointerOver", new Vector4(1f, 1f, 1f, 0.05f) },
         { "TabViewItemCloseHover", new Vector4(1.0f, 0.33f, 0.33f, 1.0f) },
-        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) }
+        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, Vector4> WinUILightPalette = new()
@@ -133,7 +134,8 @@ public static class ThemeManager
         { "NavigationViewItemBackgroundSelected", new Vector4(0f, 0f, 0f, 0.08f) },
         { "NavigationViewItemBackgroundPointerOver", new Vector4(0f, 0f, 0f, 0.05f) },
         { "TabViewItemCloseHover", new Vector4(1.0f, 0.33f, 0.33f, 1.0f) },
-        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) }
+        { "TextOnAccent", new Vector4(1f, 1f, 1f, 1.0f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, Vector4> MacOsDarkPalette = new()
@@ -187,7 +189,8 @@ public static class ThemeManager
         { "CheckboxCheckedBorder", new Vector4(0f, 0.43f, 0.88f, 1f) },
         { "CheckboxUncheckedBackgroundTop", new Vector4(0.26f, 0.26f, 0.26f, 1f) },
         { "CheckboxUncheckedBackgroundBottom", new Vector4(0.2f, 0.2f, 0.2f, 1f) },
-        { "CheckboxUncheckedBorder", new Vector4(0.33f, 0.33f, 0.33f, 1f) }
+        { "CheckboxUncheckedBorder", new Vector4(0.33f, 0.33f, 0.33f, 1f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, Vector4> MacOsLightPalette = new()
@@ -241,11 +244,24 @@ public static class ThemeManager
         { "CheckboxCheckedBorder", new Vector4(0f, 0.39f, 0.84f, 1f) },
         { "CheckboxUncheckedBackgroundTop", new Vector4(1f, 1f, 1f, 1f) },
         { "CheckboxUncheckedBackgroundBottom", new Vector4(0.96f, 0.96f, 0.98f, 1f) },
-        { "CheckboxUncheckedBorder", new Vector4(0.76f, 0.76f, 0.76f, 1f) }
+        { "CheckboxUncheckedBorder", new Vector4(0.76f, 0.76f, 0.76f, 1f) },
+        { "Transparent", new Vector4(0f, 0f, 0f, 0f) }
     };
 
     private static readonly Dictionary<string, string> ResourceAliases = new(StringComparer.OrdinalIgnoreCase)
     {
+        { "ItemsControlBackground", "Transparent" },
+        { "ItemsControlBackgroundPointerOver", "Transparent" },
+        { "ItemsControlBackgroundPressed", "Transparent" },
+        { "ItemsControlBackgroundFocused", "Transparent" },
+        { "ItemsControlBackgroundDisabled", "Transparent" },
+
+        { "ListBoxBackground", "Transparent" },
+        { "ListBoxBackgroundPointerOver", "Transparent" },
+        { "ListBoxBackgroundPressed", "Transparent" },
+        { "ListBoxBackgroundFocused", "Transparent" },
+        { "ListBoxBackgroundDisabled", "Transparent" },
+
         { "ButtonBackground", "ControlBackground" },
         { "ButtonBackgroundPointerOver", "ControlBackgroundHover" },
         { "ButtonBackgroundPressed", "ControlBackgroundPressed" },

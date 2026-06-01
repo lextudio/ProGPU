@@ -351,10 +351,10 @@ public class Control : FrameworkElement, ITemplatedControl
 
         string prefix = GetThemePrefix();
         var theme = ActualTheme;
-        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BackgroundDisabled", theme) ?? Background;
-        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BackgroundPressed", theme) ?? Background;
-        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}BackgroundPointerOver", theme) ?? Background;
-        if (IsFocused) return ThemeManager.GetBrush($"{prefix}BackgroundFocused", theme) ?? ThemeManager.GetBrush($"{prefix}BackgroundPressed", theme) ?? Background;
+        if (!IsEnabled) return (ThemeManager.GetResource($"{prefix}BackgroundDisabled", theme) as Brush) ?? Background;
+        if (IsPointerPressed) return (ThemeManager.GetResource($"{prefix}BackgroundPressed", theme) as Brush) ?? Background;
+        if (IsPointerOver) return (ThemeManager.GetResource($"{prefix}BackgroundPointerOver", theme) as Brush) ?? Background;
+        if (IsFocused) return (ThemeManager.GetResource($"{prefix}BackgroundFocused", theme) as Brush) ?? (ThemeManager.GetResource($"{prefix}BackgroundPressed", theme) as Brush) ?? Background;
         return Background;
     }
 
@@ -364,10 +364,10 @@ public class Control : FrameworkElement, ITemplatedControl
 
         string prefix = GetThemePrefix();
         var theme = ActualTheme;
-        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}ForegroundDisabled", theme) ?? Foreground;
-        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}ForegroundPressed", theme) ?? Foreground;
-        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}ForegroundPointerOver", theme) ?? Foreground;
-        if (IsFocused) return ThemeManager.GetBrush($"{prefix}ForegroundFocused", theme) ?? Foreground;
+        if (!IsEnabled) return (ThemeManager.GetResource($"{prefix}ForegroundDisabled", theme) as Brush) ?? Foreground;
+        if (IsPointerPressed) return (ThemeManager.GetResource($"{prefix}ForegroundPressed", theme) as Brush) ?? Foreground;
+        if (IsPointerOver) return (ThemeManager.GetResource($"{prefix}ForegroundPointerOver", theme) as Brush) ?? Foreground;
+        if (IsFocused) return (ThemeManager.GetResource($"{prefix}ForegroundFocused", theme) as Brush) ?? Foreground;
         return Foreground;
     }
 
@@ -377,10 +377,10 @@ public class Control : FrameworkElement, ITemplatedControl
 
         string prefix = GetThemePrefix();
         var theme = ActualTheme;
-        if (!IsEnabled) return ThemeManager.GetBrush($"{prefix}BorderBrushDisabled", theme) ?? BorderBrush;
-        if (IsPointerPressed) return ThemeManager.GetBrush($"{prefix}BorderBrushPressed", theme) ?? BorderBrush;
-        if (IsPointerOver) return ThemeManager.GetBrush($"{prefix}BorderBrushPointerOver", theme) ?? BorderBrush;
-        if (IsFocused) return ThemeManager.GetBrush($"{prefix}BorderBrushFocused", theme) ?? ThemeManager.GetBrush($"{prefix}BorderBrushPressed", theme) ?? BorderBrush;
+        if (!IsEnabled) return (ThemeManager.GetResource($"{prefix}BorderBrushDisabled", theme) as Brush) ?? BorderBrush;
+        if (IsPointerPressed) return (ThemeManager.GetResource($"{prefix}BorderBrushPressed", theme) as Brush) ?? BorderBrush;
+        if (IsPointerOver) return (ThemeManager.GetResource($"{prefix}BorderBrushPointerOver", theme) as Brush) ?? BorderBrush;
+        if (IsFocused) return (ThemeManager.GetResource($"{prefix}BorderBrushFocused", theme) as Brush) ?? (ThemeManager.GetResource($"{prefix}BorderBrushPressed", theme) as Brush) ?? BorderBrush;
         return BorderBrush;
     }
 
