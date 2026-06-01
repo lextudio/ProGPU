@@ -6,6 +6,21 @@ namespace Microsoft.UI.Xaml.Media;
 
 public class TransformGroup : Transform
 {
+    private readonly HashSet<Transform> _subscribedChildren = new();
+
+    private void EnsureSubscribed(Transform child)
+    {
+        if (child != null && _subscribedChildren.Add(child))
+        {
+            child.Changed += OnSubObjectChanged;
+        }
+    }
+
+    private void OnSubObjectChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
+    {
+        OnPropertyChanged(ChildrenProperty, this, this);
+    }
+
     public static readonly DependencyProperty ChildrenProperty =
         DependencyProperty.Register(
             "Children",
@@ -36,6 +51,7 @@ public class TransformGroup : Transform
             {
                 if (child != null)
                 {
+                    EnsureSubscribed(child);
                     result *= child.Value;
                 }
             }

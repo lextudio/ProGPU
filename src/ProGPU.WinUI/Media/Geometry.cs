@@ -12,12 +12,30 @@ public abstract class Geometry : DependencyObject
             "Transform",
             typeof(Transform),
             typeof(Geometry),
-            new PropertyMetadata(null) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
+            new PropertyMetadata(null, OnTransformChanged) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public Transform? Transform
     {
         get => GetValue(TransformProperty) as Transform;
         set => SetValue(TransformProperty, value);
+    }
+
+    private static void OnTransformChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var geom = (Geometry)d;
+        if (e.OldValue is Transform oldT)
+        {
+            oldT.Changed -= geom.OnTransformSubChanged;
+        }
+        if (e.NewValue is Transform newT)
+        {
+            newT.Changed += geom.OnTransformSubChanged;
+        }
+    }
+
+    private void OnTransformSubChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
+    {
+        OnPropertyChanged(TransformProperty, this, this);
     }
 
     internal Matrix4x4? ParentTransformMatrix { get; set; }

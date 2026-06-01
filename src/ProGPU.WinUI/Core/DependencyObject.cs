@@ -137,6 +137,8 @@ public class DependencyProperty
 
 public class DependencyObject : ProGPU.Layout.LayoutNode
 {
+    public event Action<DependencyObject, DependencyPropertyChangedEventArgs>? Changed;
+
     public const byte SourceDefault = 0;
     public const byte SourceDefaultStyle = 1;
     public const byte SourceStyle = 2;
@@ -523,7 +525,8 @@ public class DependencyObject : ProGPU.Layout.LayoutNode
 
     protected virtual void OnPropertyChanged(DependencyProperty dp, object? oldValue, object? newValue)
     {
-        dp.Metadata?.PropertyChangedCallback?.Invoke(this, new DependencyPropertyChangedEventArgs(dp, oldValue, newValue));
+        var args = new DependencyPropertyChangedEventArgs(dp, oldValue, newValue);
+        dp.Metadata?.PropertyChangedCallback?.Invoke(this, args);
 
         if (this is FrameworkElement fe)
         {
@@ -541,9 +544,10 @@ public class DependencyObject : ProGPU.Layout.LayoutNode
             }
         }
 
+        Changed?.Invoke(this, args);
+
         if (_propertyChangedCallbacks != null && _propertyChangedCallbacks.TryGetValue(dp, out var callbacks))
         {
-            var args = new DependencyPropertyChangedEventArgs(dp, oldValue, newValue);
             for (int i = 0; i < callbacks.Count; i++)
             {
                 callbacks[i].Callback(this, args);

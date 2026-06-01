@@ -18,7 +18,7 @@ public class ContentPresenter : FrameworkElement
             "Background",
             typeof(Brush),
             typeof(ContentPresenter),
-            new PropertyMetadata(null));
+            new PropertyMetadata(null) { AffectsRender = true });
 
     public Brush? Background
     {
@@ -31,7 +31,7 @@ public class ContentPresenter : FrameworkElement
             "BorderBrush",
             typeof(Brush),
             typeof(ContentPresenter),
-            new PropertyMetadata(null));
+            new PropertyMetadata(null) { AffectsRender = true });
 
     public Brush? BorderBrush
     {
@@ -44,7 +44,7 @@ public class ContentPresenter : FrameworkElement
             "BorderThickness",
             typeof(Thickness),
             typeof(ContentPresenter),
-            new PropertyMetadata(default(Thickness)));
+            new PropertyMetadata(default(Thickness)) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
     public Thickness BorderThickness
     {
@@ -57,7 +57,7 @@ public class ContentPresenter : FrameworkElement
             "CornerRadius",
             typeof(float),
             typeof(ContentPresenter),
-            new PropertyMetadata(0f));
+            new PropertyMetadata(0f) { AffectsRender = true });
 
     public float CornerRadius
     {

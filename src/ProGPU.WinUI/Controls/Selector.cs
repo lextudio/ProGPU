@@ -33,6 +33,8 @@ public class Selector : ItemsControl
 
     public event EventHandler? SelectionChanged;
 
+    private bool _isSelectionUpdating;
+
     private static void OnSelectedItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         var selector = (Selector)d;
@@ -41,13 +43,22 @@ public class Selector : ItemsControl
 
     protected virtual void OnSelectedItemChanged(object? oldValue, object? newValue)
     {
-        int index = newValue != null ? Items.IndexOf(newValue) : -1;
-        if (SelectedIndex != index)
+        if (_isSelectionUpdating) return;
+        _isSelectionUpdating = true;
+        try
         {
-            SelectedIndex = index;
+            int index = newValue != null ? Items.IndexOf(newValue) : -1;
+            if (SelectedIndex != index)
+            {
+                SelectedIndex = index;
+            }
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+            Invalidate();
         }
-        SelectionChanged?.Invoke(this, EventArgs.Empty);
-        Invalidate();
+        finally
+        {
+            _isSelectionUpdating = false;
+        }
     }
 
     private static void OnSelectedIndexChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -58,12 +69,21 @@ public class Selector : ItemsControl
 
     protected virtual void OnSelectedIndexChanged(int oldValue, int newValue)
     {
-        object? item = (newValue >= 0 && newValue < Items.Count) ? Items[newValue] : null;
-        if (SelectedItem != item)
+        if (_isSelectionUpdating) return;
+        _isSelectionUpdating = true;
+        try
         {
-            SelectedItem = item;
+            object? item = (newValue >= 0 && newValue < Items.Count) ? Items[newValue] : null;
+            if (SelectedItem != item)
+            {
+                SelectedItem = item;
+            }
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+            Invalidate();
         }
-        SelectionChanged?.Invoke(this, EventArgs.Empty);
-        Invalidate();
+        finally
+        {
+            _isSelectionUpdating = false;
+        }
     }
 }

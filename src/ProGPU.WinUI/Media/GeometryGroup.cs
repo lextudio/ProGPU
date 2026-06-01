@@ -9,6 +9,21 @@ namespace Microsoft.UI.Xaml.Media;
 
 public class GeometryGroup : Geometry
 {
+    private readonly HashSet<Geometry> _subscribedChildren = new();
+
+    private void EnsureSubscribed(Geometry child)
+    {
+        if (child != null && _subscribedChildren.Add(child))
+        {
+            child.Changed += OnSubObjectChanged;
+        }
+    }
+
+    private void OnSubObjectChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
+    {
+        OnPropertyChanged(ChildrenProperty, this, this);
+    }
+
     public static readonly DependencyProperty ChildrenProperty =
         DependencyProperty.Register(
             "Children",
@@ -50,6 +65,7 @@ public class GeometryGroup : Geometry
         {
             if (child != null)
             {
+                EnsureSubscribed(child);
                 child.ParentTransformMatrix = groupTransform;
                 child.Draw(context, fill, pen);
                 child.ParentTransformMatrix = null;
@@ -71,6 +87,7 @@ public class GeometryGroup : Geometry
             {
                 if (child != null)
                 {
+                    EnsureSubscribed(child);
                     child.ParentTransformMatrix = groupTransform;
                     Rect b = child.Bounds;
                     child.ParentTransformMatrix = null;
