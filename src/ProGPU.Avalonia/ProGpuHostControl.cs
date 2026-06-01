@@ -345,6 +345,7 @@ public unsafe class ProGpuHostControl : Control
 
     public override void Render(AvaloniaDrawingContext context)
     {
+        context.DrawRectangle(Brushes.Transparent, null, new AvaloniaRect(0, 0, Bounds.Width, Bounds.Height));
         base.Render(context);
         QueueRenderUpdate();
     }
