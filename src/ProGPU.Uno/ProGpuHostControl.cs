@@ -298,6 +298,16 @@ public unsafe class ProGpuHostControl : ContentControl
         e.Handled = true;
     }
 
+    protected override void OnPointerExited(PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(this);
+        SyncInputState(point.Position);
+        
+        ProGpuInputSystem.InjectMouseMove(new Vector2(-1f, -1f));
+        QueueInvalidate();
+        e.Handled = true;
+    }
+
     protected override void OnPointerPressed(PointerRoutedEventArgs e)
     {
         var point = e.GetCurrentPoint(this);
