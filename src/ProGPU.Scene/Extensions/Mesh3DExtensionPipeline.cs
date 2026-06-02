@@ -117,20 +117,11 @@ fn DistributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
     return alpha2 / (3.1415926535 * denom * denom);
 }
 
-fn GeometrySchlickGGX(NdotX: f32, roughness: f32) -> f32 {
+fn VisibilitySchlickGGX(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
     let r = (roughness + 1.0);
     let k = (r * r) / 8.0;
-    let num = NdotX;
-    let denom = NdotX * (1.0 - k) + k;
-    return num / max(denom, 0.0001);
-}
-
-fn GeometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
-    let NdotV = max(dot(N, V), 0.0);
-    let NdotL = max(dot(N, L), 0.0);
-    let ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    let ggx1 = GeometrySchlickGGX(NdotL, roughness);
-    return ggx1 * ggx2;
+    let denom = (NdotV * (1.0 - k) + k) * (NdotL * (1.0 - k) + k) * 4.0;
+    return 1.0 / max(denom, 0.0001);
 }
 
 fn FresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
@@ -171,11 +162,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let NdotV = max(dot(N, V), 0.0);
         if (NdotL > 0.0) {
             let D = DistributionGGX(N, H, roughness);
-            let G = GeometrySmith(N, V, L, roughness);
+            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
             let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let nominator = D * G * F;
-            let denominator = 4.0 * NdotV * NdotL + 0.0001;
-            let spec = nominator / denominator;
+            let spec = D * V_joint * F;
             let kS = F;
             let kD = (vec3<f32>(1.0) - kS);
             diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * keyIntensity;
@@ -191,11 +180,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let NdotV = max(dot(N, V), 0.0);
         if (NdotL > 0.0) {
             let D = DistributionGGX(N, H, roughness);
-            let G = GeometrySmith(N, V, L, roughness);
+            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
             let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let nominator = D * G * F;
-            let denominator = 4.0 * NdotV * NdotL + 0.0001;
-            let spec = nominator / denominator;
+            let spec = D * V_joint * F;
             let kS = F;
             let kD = (vec3<f32>(1.0) - kS);
             diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * fillIntensity * fillCol;
@@ -211,11 +198,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let NdotV = max(dot(N, V), 0.0);
         if (NdotL > 0.0) {
             let D = DistributionGGX(N, H, roughness);
-            let G = GeometrySmith(N, V, L, roughness);
+            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
             let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let nominator = D * G * F;
-            let denominator = 4.0 * NdotV * NdotL + 0.0001;
-            let spec = nominator / denominator;
+            let spec = D * V_joint * F;
             let kS = F;
             let kD = (vec3<f32>(1.0) - kS);
             diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * backIntensity * backCol;
@@ -312,20 +297,11 @@ fn DistributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
     return alpha2 / (3.1415926535 * denom * denom);
 }
 
-fn GeometrySchlickGGX(NdotX: f32, roughness: f32) -> f32 {
+fn VisibilitySchlickGGX(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
     let r = (roughness + 1.0);
     let k = (r * r) / 8.0;
-    let num = NdotX;
-    let denom = NdotX * (1.0 - k) + k;
-    return num / max(denom, 0.0001);
-}
-
-fn GeometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
-    let NdotV = max(dot(N, V), 0.0);
-    let NdotL = max(dot(N, L), 0.0);
-    let ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    let ggx1 = GeometrySchlickGGX(NdotL, roughness);
-    return ggx1 * ggx2;
+    let denom = (NdotV * (1.0 - k) + k) * (NdotL * (1.0 - k) + k) * 4.0;
+    return 1.0 / max(denom, 0.0001);
 }
 
 fn FresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
@@ -367,11 +343,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let NdotV = max(dot(N, V), 0.0);
         if (NdotL > 0.0) {
             let D = DistributionGGX(N, H, roughness);
-            let G = GeometrySmith(N, V, L, roughness);
+            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
             let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let nominator = D * G * F;
-            let denominator = 4.0 * NdotV * NdotL + 0.0001;
-            let spec = nominator / denominator;
+            let spec = D * V_joint * F;
             let kS = F;
             let kD = (vec3<f32>(1.0) - kS);
             diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * keyIntensity;
@@ -387,11 +361,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let NdotV = max(dot(N, V), 0.0);
         if (NdotL > 0.0) {
             let D = DistributionGGX(N, H, roughness);
-            let G = GeometrySmith(N, V, L, roughness);
+            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
             let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let nominator = D * G * F;
-            let denominator = 4.0 * NdotV * NdotL + 0.0001;
-            let spec = nominator / denominator;
+            let spec = D * V_joint * F;
             let kS = F;
             let kD = (vec3<f32>(1.0) - kS);
             diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * fillIntensity * fillCol;
@@ -407,11 +379,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let NdotV = max(dot(N, V), 0.0);
         if (NdotL > 0.0) {
             let D = DistributionGGX(N, H, roughness);
-            let G = GeometrySmith(N, V, L, roughness);
+            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
             let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let nominator = D * G * F;
-            let denominator = 4.0 * NdotV * NdotL + 0.0001;
-            let spec = nominator / denominator;
+            let spec = D * V_joint * F;
             let kS = F;
             let kD = (vec3<f32>(1.0) - kS);
             diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * backIntensity * backCol;
@@ -629,9 +599,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     targetFormat: TextureFormat.Rgba8Unorm,
                     enableDepthStencil: true,
                     depthFormat: TextureFormat.Depth24PlusStencil8,
-                    sampleCount: 1u,
+                    sampleCount: 4u,
                     depthWriteEnabled: true,
-                    depthCompare: CompareFunction.Less,
+                    depthCompare: CompareFunction.LessEqual,
                     cullMode: CullMode.Back
                 );
 
@@ -666,7 +636,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     targetFormat: TextureFormat.Rgba8Unorm,
                     enableDepthStencil: true,
                     depthFormat: TextureFormat.Depth24PlusStencil8,
-                    sampleCount: 1u,
+                    sampleCount: 4u,
                     depthWriteEnabled: true,
                     depthCompare: CompareFunction.LessEqual,
                     cullMode: CullMode.None
@@ -733,10 +703,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
             var colorAttachment = new RenderPassColorAttachment
             {
-                View = payload.ColorTexture.ViewPtr,
-                ResolveTarget = null,
+                View = payload.MsaaColorTexture != null ? payload.MsaaColorTexture.ViewPtr : payload.ColorTexture.ViewPtr,
+                ResolveTarget = payload.MsaaColorTexture != null ? payload.ColorTexture.ViewPtr : null,
                 LoadOp = LoadOp.Clear,
-                StoreOp = StoreOp.Store,
+                StoreOp = payload.MsaaColorTexture != null ? StoreOp.Discard : StoreOp.Store,
                 ClearValue = new Silk.NET.WebGPU.Color { R = 0.05f, G = 0.05f, B = 0.06f, A = 1.0f } // Slate premium dark background
             };
 
@@ -891,6 +861,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         public List<MeshCompilationEntry> Meshes { get; } = new();
 
         public GpuTexture? ColorTexture { get; set; }
+        public GpuTexture? MsaaColorTexture { get; set; }
         public GpuTexture? DepthTexture { get; set; }
         
         public RenderMode3D RenderMode { get; set; } = RenderMode3D.Solid;
