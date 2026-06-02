@@ -37,7 +37,7 @@ namespace ProGPU.Scene.Extensions
         public Vector4 LightDirection;        // xyz = direction, w = intensity
         public Vector4 AmbientColor;          // rgb = color, w = intensity
         public float Opacity;
-        public float IsWireframe;             // 1.0f if wireframe, 0.0f otherwise
+        public float RenderMode;              // 0.0f = Solid, 1.0f = Wireframe, 2.0f = SolidWireframe
         private float _pad1;
         private float _pad2;
     }
@@ -63,7 +63,7 @@ struct GpuMesh3DRecord {
     lightDirection: vec4<f32>,
     ambientColor: vec4<f32>,
     opacity: f32,
-    isWireframe: f32,
+    renderMode: f32,
     _pad1: f32,
     _pad2: f32,
 };
@@ -79,80 +79,140 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) barycentric: vec3<f32>,
+    @location(2) renderMode: f32,
 };
 
 @vertex
-fn vs_main(input: VertexInput, @builtin(instance_index) instanceIdx: u32) -> VertexOutput {
+fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIdx: u32, @builtin(instance_index) instanceIdx: u32) -> VertexOutput {
     var output: VertexOutput;
     let record = meshRecords[instanceIdx];
 
-    // Transform position and normal to world space
-    var localPos = input.position;
-    if (record.isWireframe > 0.5) {
-        localPos += input.normal * 0.003; // Tiny normal offset to prevent z-fighting
-    }
-
-    let worldPos = record.modelTransform * vec4<f32>(localPos, 1.0);
+    let worldPos = record.modelTransform * vec4<f32>(input.position, 1.0);
     let worldNormal = normalize((record.modelTransform * vec4<f32>(input.normal, 0.0)).xyz);
 
-    // Dynamic 3D depth matrices transform
     output.position = uniforms.projection * uniforms.view * worldPos;
 
-    // Calculate Gouraud diffuse + ambient lighting
     let lightDir = normalize(record.lightDirection.xyz);
     let diffuse = max(dot(worldNormal, lightDir), 0.0) * record.lightDirection.w;
     
     let ambient = record.ambientColor.rgb * record.ambientColor.w;
-    var litColor = (ambient + diffuse * record.color.rgb) * record.opacity;
-
-    if (record.isWireframe > 0.5) {
-        litColor = litColor * 1.4 + vec3<f32>(0.05, 0.05, 0.05); // Boost wireframe overlay brightness
-    }
+    let litColor = (ambient + diffuse * record.color.rgb) * record.opacity;
 
     output.color = vec4<f32>(litColor, record.opacity);
+    output.renderMode = record.renderMode;
+
+    let triVertexIdx = vertexIdx % 3u;
+    if (triVertexIdx == 0u) {
+        output.barycentric = vec3<f32>(1.0, 0.0, 0.0);
+    } else if (triVertexIdx == 1u) {
+        output.barycentric = vec3<f32>(0.0, 1.0, 0.0);
+    } else {
+        output.barycentric = vec3<f32>(0.0, 0.0, 1.0);
+    }
+
     return output;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return input.color;
+    let mode = u32(input.renderMode + 0.5);
+
+    if (mode == 0u) {
+        return input.color;
+    }
+
+    let dFdx = dpdx(input.barycentric);
+    let dFdy = dpdy(input.barycentric);
+    let g = max(sqrt(dFdx * dFdx + dFdy * dFdy), vec3<f32>(0.00001));
+    let dist = input.barycentric / g;
+    let minDist = min(dist.x, min(dist.y, dist.z));
+
+    let lineWidth = 1.0; 
+    let edge = smoothstep(lineWidth - 0.5, lineWidth + 0.5, minDist);
+
+    let wireframeColor = vec4<f32>(0.85, 0.85, 0.9, input.color.a);
+
+    if (mode == 1u) {
+        let alpha = (1.0 - edge) * input.color.a;
+        if (alpha < 0.01) {
+            discard;
+        }
+        return vec4<f32>(wireframeColor.rgb, alpha);
+    }
+
+    let finalColor = mix(wireframeColor.rgb, input.color.rgb, edge);
+    return vec4<f32>(finalColor, input.color.a);
 }
 ";
 
         private struct CachedGeometry
         {
             public GpuBuffer VertexBuffer;
-            public GpuBuffer IndexBuffer;
-            public GpuBuffer? LineIndexBuffer;
-            public uint LineIndexCount;
+            public uint VertexCount;
+        }
+
+        private class ViewportResource
+        {
+            public GpuBuffer UniformsBuffer;
+            public GpuBuffer? DynamicRecordsBuffer;
+            public unsafe BindGroup* SolidBindGroup;
+            public unsafe BindGroup* WireframeBindGroup;
+            public int RecordGen = -1;
+
+            public ViewportResource(WgpuContext context, uint uniformsSize)
+            {
+                UniformsBuffer = new GpuBuffer(context, uniformsSize, BufferUsage.Uniform | BufferUsage.CopyDst, "Mesh3D Uniforms Buffer");
+            }
+            
+            public unsafe void Dispose(WgpuContext context)
+            {
+                UniformsBuffer.Dispose();
+                DynamicRecordsBuffer?.Dispose();
+                if (SolidBindGroup != null) context.Wgpu.BindGroupRelease(SolidBindGroup);
+                if (WireframeBindGroup != null) context.Wgpu.BindGroupRelease(WireframeBindGroup);
+            }
         }
 
         private readonly Dictionary<object, CachedGeometry> _geometryCache = new();
-        private GpuBuffer? _dynamicRecordsBuffer;
-        private GpuBuffer? _uniformsBuffer;
+        private readonly List<ViewportResource> _viewportResources = new();
+        private readonly List<nint> _pendingCommandBuffers = new();
+        private int _currentCompileIndex;
+        private WgpuContext? _context;
         
         private unsafe RenderPipeline* _cachedPipeline;
         private unsafe RenderPipeline* _cachedWireframePipeline;
-        private unsafe BindGroup* _cachedBindGroup;
-        private unsafe BindGroup* _cachedWireframeBindGroup;
-        private int _cachedRecordGen = -1;
 
-        public void BeginFrame(Compositor compositor)
+        public unsafe void BeginFrame(Compositor compositor)
         {
+            _currentCompileIndex = 0;
+            if (_pendingCommandBuffers.Count > 0)
+            {
+                var wgpu = compositor.Context.Wgpu;
+                for (int i = 0; i < _pendingCommandBuffers.Count; i++)
+                {
+                    wgpu.CommandBufferRelease((CommandBuffer*)_pendingCommandBuffers[i]);
+                }
+                _pendingCommandBuffers.Clear();
+            }
         }
 
-        public void Dispose()
+        public unsafe void Dispose()
         {
             foreach (var cache in _geometryCache.Values)
             {
                 cache.VertexBuffer.Dispose();
-                cache.IndexBuffer.Dispose();
-                cache.LineIndexBuffer?.Dispose();
             }
             _geometryCache.Clear();
 
-            _dynamicRecordsBuffer?.Dispose();
-            _uniformsBuffer?.Dispose();
+            if (_context != null)
+            {
+                foreach (var res in _viewportResources)
+                {
+                    res.Dispose(_context);
+                }
+            }
+            _viewportResources.Clear();
         }
 
         public unsafe void Compile(
@@ -164,28 +224,29 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             var payload = cmd.DataParam as Viewport3DCompilationPayload;
             if (payload == null || payload.Meshes.Count == 0 || payload.ColorTexture == null || payload.DepthTexture == null) return;
 
+            _context = compositor.Context;
             var wgpu = compositor.Context.Wgpu;
             var device = compositor.Context.Device;
             var queue = compositor.Context.Queue;
 
-            // 1. Create or update dynamic record buffer and uniforms buffer
-            int recordCount = payload.Meshes.Count;
-            if (payload.RenderMode == RenderMode3D.SolidWireframe)
+            uint uniformsSize = (uint)Marshal.SizeOf<GpuMesh3DUniforms>();
+
+            // Ensure pooled resource exists for current viewport compile index
+            while (_viewportResources.Count <= _currentCompileIndex)
             {
-                recordCount = payload.Meshes.Count * 2;
+                _viewportResources.Add(new ViewportResource(compositor.Context, uniformsSize));
             }
+            var res = _viewportResources[_currentCompileIndex];
+
+            // 1. Create or update dynamic record buffer
+            int recordCount = payload.Meshes.Count;
 
             uint reqRecordsSize = (uint)recordCount * (uint)Marshal.SizeOf<GpuMesh3DRecord>();
-            if (_dynamicRecordsBuffer == null || _dynamicRecordsBuffer.Size < reqRecordsSize)
+            if (res.DynamicRecordsBuffer == null || res.DynamicRecordsBuffer.Size < reqRecordsSize)
             {
-                _dynamicRecordsBuffer?.Dispose();
-                _dynamicRecordsBuffer = new GpuBuffer(compositor.Context, reqRecordsSize * 2, BufferUsage.Storage | BufferUsage.CopyDst, "Dynamic Mesh3D Records Buffer");
-            }
-
-            uint uniformsSize = (uint)Marshal.SizeOf<GpuMesh3DUniforms>();
-            if (_uniformsBuffer == null)
-            {
-                _uniformsBuffer = new GpuBuffer(compositor.Context, uniformsSize, BufferUsage.Uniform | BufferUsage.CopyDst, "Mesh3D Uniforms Buffer");
+                res.DynamicRecordsBuffer?.Dispose();
+                res.DynamicRecordsBuffer = new GpuBuffer(compositor.Context, reqRecordsSize * 2, BufferUsage.Storage | BufferUsage.CopyDst, "Dynamic Mesh3D Records Buffer");
+                res.RecordGen = -1; // Force bind group recreation
             }
 
             // 2. Upload records data
@@ -194,35 +255,27 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             for (int i = 0; i < n; i++)
             {
                 var mesh = payload.Meshes[i];
-                var solidRecord = new GpuMesh3DRecord
+                float rMode = 0.0f; // Solid
+                if (payload.RenderMode == RenderMode3D.Wireframe)
+                {
+                    rMode = 1.0f;
+                }
+                else if (payload.RenderMode == RenderMode3D.SolidWireframe)
+                {
+                    rMode = 2.0f;
+                }
+
+                cpuRecords[i] = new GpuMesh3DRecord
                 {
                     ModelTransform = mesh.ModelTransform,
                     Color = mesh.Color,
                     LightDirection = new Vector4(payload.LightDirection, payload.LightIntensity),
                     AmbientColor = new Vector4(payload.AmbientColor, payload.AmbientIntensity),
                     Opacity = mesh.Opacity * compositor.ActiveOpacity,
-                    IsWireframe = 0.0f
+                    RenderMode = rMode
                 };
-
-                if (payload.RenderMode == RenderMode3D.Solid)
-                {
-                    cpuRecords[i] = solidRecord;
-                }
-                else if (payload.RenderMode == RenderMode3D.Wireframe)
-                {
-                    solidRecord.IsWireframe = 1.0f;
-                    cpuRecords[i] = solidRecord;
-                }
-                else // SolidWireframe
-                {
-                    cpuRecords[i] = solidRecord;
-
-                    var wireRecord = solidRecord;
-                    wireRecord.IsWireframe = 1.0f;
-                    cpuRecords[n + i] = wireRecord;
-                }
             }
-            _dynamicRecordsBuffer.Write(cpuRecords);
+            res.DynamicRecordsBuffer.Write(cpuRecords);
 
             // 3. Upload uniforms data
             var cpuUniforms = new GpuMesh3DUniforms
@@ -230,7 +283,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 Projection = cmd.Transform, // Perspective projection matrix
                 View = cmd.CameraView       // View matrix
             };
-            _uniformsBuffer.WriteSingle(cpuUniforms);
+            res.UniformsBuffer.WriteSingle(cpuUniforms);
 
             // 4. Create solid pipeline if needed
             if (_cachedPipeline == null)
@@ -262,13 +315,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     depthFormat: TextureFormat.Depth24PlusStencil8,
                     sampleCount: 1u,
                     depthWriteEnabled: true,
-                    depthCompare: CompareFunction.Less
+                    depthCompare: CompareFunction.Less,
+                    cullMode: CullMode.Back
                 );
 
                 Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
             }
 
-            // Create wireframe pipeline if needed
+            // Create wireframe pipeline if needed (TriangleList with double sided rendering)
             if (_cachedWireframePipeline == null)
             {
                 var shaderModule = compositor.PipelineCache.GetOrCreateShader("Mesh3DShader_3D", Mesh3DShaderCode, "Mesh3D WGSL 3D Shader");
@@ -292,38 +346,39 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     "Mesh3DWireframePipeline_3D",
                     shaderModule,
                     vertexBufferLayouts: layouts,
-                    topology: PrimitiveTopology.LineList,
+                    topology: PrimitiveTopology.TriangleList,
                     targetFormat: TextureFormat.Rgba8Unorm,
                     enableDepthStencil: true,
                     depthFormat: TextureFormat.Depth24PlusStencil8,
                     sampleCount: 1u,
                     depthWriteEnabled: true,
-                    depthCompare: CompareFunction.LessEqual
+                    depthCompare: CompareFunction.LessEqual,
+                    cullMode: CullMode.None
                 );
 
                 Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
             }
 
             // 5. Create or get cached BindGroup
-            int currentGen = _dynamicRecordsBuffer.GetHashCode() ^ _uniformsBuffer.GetHashCode();
-            if (_cachedBindGroup == null || _cachedWireframeBindGroup == null || currentGen != _cachedRecordGen)
+            int currentGen = res.DynamicRecordsBuffer.GetHashCode() ^ res.UniformsBuffer.GetHashCode();
+            if (res.SolidBindGroup == null || res.WireframeBindGroup == null || currentGen != res.RecordGen)
             {
-                _cachedRecordGen = currentGen;
+                res.RecordGen = currentGen;
 
                 var bgEntries = stackalloc BindGroupEntry[2];
                 bgEntries[0] = new BindGroupEntry
                 {
                     Binding = 0,
-                    Buffer = _uniformsBuffer.BufferPtr,
+                    Buffer = res.UniformsBuffer.BufferPtr,
                     Offset = 0,
                     Size = uniformsSize
                 };
                 bgEntries[1] = new BindGroupEntry
                 {
                     Binding = 1,
-                    Buffer = _dynamicRecordsBuffer.BufferPtr,
+                    Buffer = res.DynamicRecordsBuffer.BufferPtr,
                     Offset = 0,
-                    Size = _dynamicRecordsBuffer.Size
+                    Size = res.DynamicRecordsBuffer.Size
                 };
 
                 // Bind group for Solid Pipeline
@@ -336,8 +391,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     Label = (byte*)SilkMarshal.StringToPtr("Mesh3D 3D BindGroup")
                 };
 
-                if (_cachedBindGroup != null) wgpu.BindGroupRelease(_cachedBindGroup);
-                _cachedBindGroup = wgpu.DeviceCreateBindGroup(device, &bgDesc);
+                if (res.SolidBindGroup != null) wgpu.BindGroupRelease(res.SolidBindGroup);
+                res.SolidBindGroup = wgpu.DeviceCreateBindGroup(device, &bgDesc);
                 SilkMarshal.Free((nint)bgDesc.Label);
 
                 // Bind group for Wireframe Pipeline
@@ -350,8 +405,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     Label = (byte*)SilkMarshal.StringToPtr("Mesh3D Wireframe BindGroup")
                 };
 
-                if (_cachedWireframeBindGroup != null) wgpu.BindGroupRelease(_cachedWireframeBindGroup);
-                _cachedWireframeBindGroup = wgpu.DeviceCreateBindGroup(device, &wireframeBgDesc);
+                if (res.WireframeBindGroup != null) wgpu.BindGroupRelease(res.WireframeBindGroup);
+                res.WireframeBindGroup = wgpu.DeviceCreateBindGroup(device, &wireframeBgDesc);
                 SilkMarshal.Free((nint)wireframeBgDesc.Label);
             }
 
@@ -399,59 +454,24 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
                 if (!_geometryCache.TryGetValue(entry.Geometry, out var cache))
                 {
-                    // Create Vertex Buffer
-                    var cpuVertices = new GpuVertex3D[entry.Positions.Length];
-                    for (int v = 0; v < cpuVertices.Length; v++)
+                    // Create De-indexed (non-indexed) Vertex Buffer
+                    var cpuVertices = new GpuVertex3D[entry.Indices.Length];
+                    for (int idx = 0; idx < entry.Indices.Length; idx++)
                     {
-                        var norm = v < entry.Normals.Length ? entry.Normals[v] : Vector3.UnitY;
-                        cpuVertices[v] = new GpuVertex3D(entry.Positions[v], norm);
+                        int vIdx = entry.Indices[idx];
+                        var pos = entry.Positions[vIdx];
+                        var norm = vIdx < entry.Normals.Length ? entry.Normals[vIdx] : Vector3.UnitY;
+                        cpuVertices[idx] = new GpuVertex3D(pos, norm);
                     }
 
                     uint vSize = (uint)cpuVertices.Length * (uint)Marshal.SizeOf<GpuVertex3D>();
                     var vBuffer = new GpuBuffer(compositor.Context, vSize, BufferUsage.Vertex | BufferUsage.CopyDst, "3D Mesh Vertex Buffer");
                     vBuffer.Write(cpuVertices);
 
-                    // Create Index Buffer
-                    var cpuIndices = new uint[entry.Indices.Length];
-                    for (int idx = 0; idx < cpuIndices.Length; idx++)
-                    {
-                        cpuIndices[idx] = (uint)entry.Indices[idx];
-                    }
-
-                    uint iSize = (uint)cpuIndices.Length * 4;
-                    var iBuffer = new GpuBuffer(compositor.Context, iSize, BufferUsage.Index | BufferUsage.CopyDst, "3D Mesh Index Buffer");
-                    iBuffer.Write(cpuIndices);
-
-                    // Create Line Index Buffer
-                    var cpuLineIndices = new uint[entry.Indices.Length * 2];
-                    int lineIdx = 0;
-                    for (int t = 0; t < entry.Indices.Length; t += 3)
-                    {
-                        if (t + 2 >= entry.Indices.Length) break;
-                        uint i0 = (uint)entry.Indices[t];
-                        uint i1 = (uint)entry.Indices[t + 1];
-                        uint i2 = (uint)entry.Indices[t + 2];
-
-                        cpuLineIndices[lineIdx++] = i0;
-                        cpuLineIndices[lineIdx++] = i1;
-
-                        cpuLineIndices[lineIdx++] = i1;
-                        cpuLineIndices[lineIdx++] = i2;
-
-                        cpuLineIndices[lineIdx++] = i2;
-                        cpuLineIndices[lineIdx++] = i0;
-                    }
-
-                    uint iSizeLine = (uint)lineIdx * 4;
-                    var iBufferLine = new GpuBuffer(compositor.Context, iSizeLine, BufferUsage.Index | BufferUsage.CopyDst, "3D Mesh Line Index Buffer");
-                    iBufferLine.Write(new ReadOnlySpan<uint>(cpuLineIndices, 0, lineIdx));
-
                     cache = new CachedGeometry
                     {
                         VertexBuffer = vBuffer,
-                        IndexBuffer = iBuffer,
-                        LineIndexBuffer = iBufferLine,
-                        LineIndexCount = (uint)lineIdx
+                        VertexCount = (uint)entry.Indices.Length
                     };
                     _geometryCache[entry.Geometry] = cache;
                 }
@@ -460,11 +480,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             // Draw Passes
             var mode = payload.RenderMode;
 
-            // Pass A: Draw Solid Shaded Triangles
+            // Pass A: Draw Solid Shaded Triangles or Solid + Wireframe
             if (mode == RenderMode3D.Solid || mode == RenderMode3D.SolidWireframe)
             {
                 wgpu.RenderPassEncoderSetPipeline(pass, _cachedPipeline);
-                wgpu.RenderPassEncoderSetBindGroup(pass, 0, _cachedBindGroup, 0, null);
+                wgpu.RenderPassEncoderSetBindGroup(pass, 0, res.SolidBindGroup, 0, null);
                 for (int i = 0; i < payload.Meshes.Count; i++)
                 {
                     var entry = payload.Meshes[i];
@@ -473,53 +493,69 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     var cache = _geometryCache[entry.Geometry];
 
                     wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, cache.VertexBuffer.BufferPtr, 0, cache.VertexBuffer.Size);
-                    wgpu.RenderPassEncoderSetIndexBuffer(pass, cache.IndexBuffer.BufferPtr, IndexFormat.Uint32, 0, cache.IndexBuffer.Size);
-                    wgpu.RenderPassEncoderDrawIndexed(pass, (uint)entry.Indices.Length, 1, 0, 0, (uint)i);
+                    wgpu.RenderPassEncoderDraw(pass, cache.VertexCount, 1, 0, (uint)i);
                 }
             }
 
-            // Pass B: Draw Wireframe Outlines
-            if (mode == RenderMode3D.Wireframe || mode == RenderMode3D.SolidWireframe)
+            // Pass B: Draw Wireframe Only
+            if (mode == RenderMode3D.Wireframe)
             {
                 wgpu.RenderPassEncoderSetPipeline(pass, _cachedWireframePipeline);
-                wgpu.RenderPassEncoderSetBindGroup(pass, 0, _cachedWireframeBindGroup, 0, null);
+                wgpu.RenderPassEncoderSetBindGroup(pass, 0, res.WireframeBindGroup, 0, null);
                 for (int i = 0; i < payload.Meshes.Count; i++)
                 {
                     var entry = payload.Meshes[i];
                     if (entry.Geometry == null) continue;
 
                     var cache = _geometryCache[entry.Geometry];
-                    if (cache.LineIndexBuffer == null || cache.LineIndexCount == 0) continue;
-
-                    uint instanceIdx = (uint)i;
-                    if (mode == RenderMode3D.SolidWireframe)
-                    {
-                        instanceIdx = (uint)(payload.Meshes.Count + i);
-                    }
 
                     wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, cache.VertexBuffer.BufferPtr, 0, cache.VertexBuffer.Size);
-                    wgpu.RenderPassEncoderSetIndexBuffer(pass, cache.LineIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, cache.LineIndexBuffer.Size);
-                    wgpu.RenderPassEncoderDrawIndexed(pass, cache.LineIndexCount, 1, 0, 0, instanceIdx);
+                    wgpu.RenderPassEncoderDraw(pass, cache.VertexCount, 1, 0, (uint)i);
                 }
             }
 
             wgpu.RenderPassEncoderEnd(pass);
             wgpu.RenderPassEncoderRelease(pass);
 
-            // 8. Submit offscreen command buffer to WebGPU queue immediately!
+            // 8. Add offscreen command buffer to the deferred submission queue
             var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Mesh3D Offscreen Command Buffer") };
             var cmdBuffer = wgpu.CommandEncoderFinish(encoder, &cmdDesc);
             SilkMarshal.Free((nint)cmdDesc.Label);
 
-            wgpu.QueueSubmit(queue, 1, &cmdBuffer);
+            _pendingCommandBuffers.Add((nint)cmdBuffer);
 
-            wgpu.CommandBufferRelease(cmdBuffer);
             wgpu.CommandEncoderRelease(encoder);
+
+            _currentCompileIndex++;
 
             // DrawExtension is now a no-op in the main compositor pass since the offscreen pass is fully complete and
             // the Viewport3D control appends a separate DrawTexture command!
             cmd.PointBufferOffset = 0;
             cmd.PointBufferCount = 0;
+        }
+
+        public unsafe void EndFrame(Compositor compositor)
+        {
+            if (_pendingCommandBuffers.Count > 0)
+            {
+                var wgpu = compositor.Context.Wgpu;
+                var queue = compositor.Context.Queue;
+
+                int count = _pendingCommandBuffers.Count;
+                var buffers = stackalloc CommandBuffer*[count];
+                for (int i = 0; i < count; i++)
+                {
+                    buffers[i] = (CommandBuffer*)_pendingCommandBuffers[i];
+                }
+
+                wgpu.QueueSubmit(queue, (uint)count, buffers);
+
+                for (int i = 0; i < count; i++)
+                {
+                    wgpu.CommandBufferRelease((CommandBuffer*)_pendingCommandBuffers[i]);
+                }
+                _pendingCommandBuffers.Clear();
+            }
         }
 
         public unsafe void Render(

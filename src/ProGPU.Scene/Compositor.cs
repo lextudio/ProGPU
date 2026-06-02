@@ -1199,6 +1199,14 @@ public unsafe class Compositor : IDisposable
         _context.Wgpu.RenderPassEncoderEnd(pass);
         _context.Wgpu.RenderPassEncoderRelease(pass);
 
+        lock (_registeredExtensions)
+        {
+            foreach (var ext in _registeredExtensions)
+            {
+                ext.EndFrame(this);
+            }
+        }
+
         // Submit to queue
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compositor Command Buffer") };
         var cmdBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
