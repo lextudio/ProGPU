@@ -34,6 +34,15 @@ namespace Microsoft.UI.Xaml.Media.Media3D
             HashCode.Combine(PositionIndex, TextureIndex, NormalIndex);
     }
 
+    public struct ObjMaterialInfo
+    {
+        public Vector4 DiffuseColor;
+        public Vector3 SpecularColor;
+        public float Shininess;
+        public Vector3 AmbientColor;
+        public float Opacity;
+    }
+
     public class LoadedObjModel
     {
         public List<ObjPart> Parts { get; } = new();
@@ -45,6 +54,9 @@ namespace Microsoft.UI.Xaml.Media.Media3D
         public string MaterialName { get; set; } = "Default";
         public MeshGeometry3D Geometry { get; set; } = new();
         public Vector4 Color { get; set; } = new Vector4(0.70f, 0.70f, 0.72f, 1.0f);
+        public Vector3 SpecularColor { get; set; } = new Vector3(0.2f, 0.2f, 0.2f);
+        public float Shininess { get; set; } = 32.0f;
+        public Vector3 AmbientColor { get; set; } = new Vector3(0.2f, 0.2f, 0.2f);
         public float Opacity { get; set; } = 1.0f;
     }
 
@@ -152,7 +164,7 @@ namespace Microsoft.UI.Xaml.Media.Media3D
             var tempTexCoords = new List<Vector2>(8192);
 
             var partBuilders = new Dictionary<string, PartBuilder>(StringComparer.OrdinalIgnoreCase);
-            var materials = new Dictionary<string, (Vector4 Color, float Opacity)>(StringComparer.OrdinalIgnoreCase);
+            var materials = new Dictionary<string, ObjMaterialInfo>(StringComparer.OrdinalIgnoreCase);
             string activeMaterial = "Default";
 
             int startOffset = 0;
@@ -284,11 +296,17 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                 if (builder.OutTexCoords.Count == builder.OutPositions.Count) mesh.TextureCoordinates = builder.OutTexCoords.ToArray();
 
                 Vector4 materialColor = new Vector4(0.70f, 0.70f, 0.72f, 1.0f);
+                Vector3 specularColor = new Vector3(0.2f, 0.2f, 0.2f);
+                float shininess = 32.0f;
+                Vector3 ambientColor = new Vector3(0.2f, 0.2f, 0.2f);
                 float opacity = 1.0f;
 
                 if (materials.TryGetValue(builder.MaterialName, out var matInfo))
                 {
-                    materialColor = matInfo.Color;
+                    materialColor = matInfo.DiffuseColor;
+                    specularColor = matInfo.SpecularColor;
+                    shininess = matInfo.Shininess;
+                    ambientColor = matInfo.AmbientColor;
                     opacity = matInfo.Opacity;
                 }
 
@@ -298,6 +316,9 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                     MaterialName = builder.MaterialName,
                     Geometry = mesh,
                     Color = materialColor,
+                    SpecularColor = specularColor,
+                    Shininess = shininess,
+                    AmbientColor = ambientColor,
                     Opacity = opacity
                 });
             }
@@ -322,9 +343,9 @@ namespace Microsoft.UI.Xaml.Media.Media3D
             return model;
         }
 
-        private static Dictionary<string, (Vector4 Color, float Opacity)> LoadMtl(string filePath)
+        private static Dictionary<string, ObjMaterialInfo> LoadMtl(string filePath)
         {
-            var materials = new Dictionary<string, (Vector4 Color, float Opacity)>(StringComparer.OrdinalIgnoreCase);
+            var materials = new Dictionary<string, ObjMaterialInfo>(StringComparer.OrdinalIgnoreCase);
             if (!File.Exists(filePath)) return materials;
 
             try
@@ -332,6 +353,9 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                 var lines = File.ReadAllLines(filePath);
                 string? currentMaterial = null;
                 Vector4 color = new Vector4(0.70f, 0.70f, 0.72f, 1.0f);
+                Vector3 specular = new Vector3(0.2f, 0.2f, 0.2f);
+                float shininess = 32.0f;
+                Vector3 ambient = new Vector3(0.2f, 0.2f, 0.2f);
                 float opacity = 1.0f;
 
                 foreach (var rawLine in lines)
@@ -346,10 +370,20 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                     {
                         if (currentMaterial != null)
                         {
-                            materials[currentMaterial] = (color, opacity);
+                            materials[currentMaterial] = new ObjMaterialInfo
+                            {
+                                DiffuseColor = color,
+                                SpecularColor = specular,
+                                Shininess = shininess,
+                                AmbientColor = ambient,
+                                Opacity = opacity
+                            };
                         }
                         currentMaterial = parts[1];
                         color = new Vector4(0.70f, 0.70f, 0.72f, 1.0f);
+                        specular = new Vector3(0.2f, 0.2f, 0.2f);
+                        shininess = 32.0f;
+                        ambient = new Vector3(0.2f, 0.2f, 0.2f);
                         opacity = 1.0f;
                     }
                     else if (parts[0].Equals("Kd", StringComparison.OrdinalIgnoreCase) && parts.Length >= 4)
@@ -358,6 +392,25 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                         float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float g);
                         float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float b);
                         color = new Vector4(r, g, b, 1.0f);
+                    }
+                    else if (parts[0].Equals("Ka", StringComparison.OrdinalIgnoreCase) && parts.Length >= 4)
+                    {
+                        float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float r);
+                        float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float g);
+                        float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float b);
+                        ambient = new Vector3(r, g, b);
+                    }
+                    else if (parts[0].Equals("Ks", StringComparison.OrdinalIgnoreCase) && parts.Length >= 4)
+                    {
+                        float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float r);
+                        float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float g);
+                        float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float b);
+                        specular = new Vector3(r, g, b);
+                    }
+                    else if (parts[0].Equals("Ns", StringComparison.OrdinalIgnoreCase) && parts.Length >= 2)
+                    {
+                        float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float nsVal);
+                        shininess = nsVal;
                     }
                     else if ((parts[0].Equals("d", StringComparison.OrdinalIgnoreCase) || parts[0].Equals("Tr", StringComparison.OrdinalIgnoreCase)) && parts.Length >= 2)
                     {
@@ -368,7 +421,14 @@ namespace Microsoft.UI.Xaml.Media.Media3D
 
                 if (currentMaterial != null)
                 {
-                    materials[currentMaterial] = (color, opacity);
+                    materials[currentMaterial] = new ObjMaterialInfo
+                    {
+                        DiffuseColor = color,
+                        SpecularColor = specular,
+                        Shininess = shininess,
+                        AmbientColor = ambient,
+                        Opacity = opacity
+                    };
                 }
             }
             catch (Exception ex)
