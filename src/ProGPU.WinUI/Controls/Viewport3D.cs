@@ -72,7 +72,7 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                 int i1 = TriangleIndices[i + 1];
                 int i2 = TriangleIndices[i + 2];
 
-                if (i0 >= Positions.Length || i1 >= Positions.Length || i2 >= Positions.Length) continue;
+                if (i0 < 0 || i0 >= Positions.Length || i1 < 0 || i1 >= Positions.Length || i2 < 0 || i2 >= Positions.Length) continue;
 
                 var p0 = Positions[i0];
                 var p1 = Positions[i1];

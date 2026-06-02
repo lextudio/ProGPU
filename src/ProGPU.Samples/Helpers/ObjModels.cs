@@ -91,14 +91,18 @@ namespace ProGPU.Samples
             for (int i = 0; i < slices; i++)
             {
                 float angle = (float)i / slices * MathF.PI * 2.0f;
-                sb.AppendLine($"v {MathF.Cos(angle) * 2.0f} 0.0 {MathF.Sin(angle) * 2.0f}"); // 1 to slices
+                float x = MathF.Cos(angle) * 2.0f;
+                float z = MathF.Sin(angle) * 2.0f;
+                sb.AppendLine($"v {x.ToString(System.Globalization.CultureInfo.InvariantCulture)} 0.0 {z.ToString(System.Globalization.CultureInfo.InvariantCulture)}"); // 1 to slices
             }
 
             // Upper ring
             for (int i = 0; i < slices; i++)
             {
                 float angle = ((float)i + 0.5f) / slices * MathF.PI * 2.0f;
-                sb.AppendLine($"v {MathF.Cos(angle) * 1.2f} 0.8 {MathF.Sin(angle) * 1.2f}"); // slices+1 to 2*slices
+                float x = MathF.Cos(angle) * 1.2f;
+                float z = MathF.Sin(angle) * 1.2f;
+                sb.AppendLine($"v {x.ToString(System.Globalization.CultureInfo.InvariantCulture)} 0.8 {z.ToString(System.Globalization.CultureInfo.InvariantCulture)}"); // slices+1 to 2*slices
             }
 
             // Top vertex
