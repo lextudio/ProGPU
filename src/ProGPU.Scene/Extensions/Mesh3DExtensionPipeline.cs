@@ -107,39 +107,133 @@ fn vs_main(input: VertexInput, @builtin(instance_index) instanceIdx: u32) -> Ver
     return output;
 }
 
+fn DistributionGGX(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+    let alpha = roughness * roughness;
+    let alpha2 = alpha * alpha;
+    let NdotH = max(dot(N, H), 0.0);
+    let NdotH2 = NdotH * NdotH;
+    
+    let denom = (NdotH2 * (alpha2 - 1.0) + 1.0);
+    return alpha2 / (3.1415926535 * denom * denom);
+}
+
+fn GeometrySchlickGGX(NdotX: f32, roughness: f32) -> f32 {
+    let r = (roughness + 1.0);
+    let k = (r * r) / 8.0;
+    let num = NdotX;
+    let denom = NdotX * (1.0 - k) + k;
+    return num / max(denom, 0.0001);
+}
+
+fn GeometrySmith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+    let NdotV = max(dot(N, V), 0.0);
+    let NdotL = max(dot(N, L), 0.0);
+    let ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    let ggx1 = GeometrySchlickGGX(NdotL, roughness);
+    return ggx1 * ggx2;
+}
+
+fn FresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let record = meshRecords[input.instanceIdx];
 
     let N = normalize(input.worldNormal);
-    let L = normalize(record.lightDirection.xyz);
     let V = normalize(uniforms.cameraPosition - input.worldPosition);
-    let H = normalize(L + V);
-
-    // Hemispherical (sky-to-ground) ambient lighting for rich 3D shading
-    let skyFactor = N.y * 0.5 + 0.5;
-    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
-    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.45;
-    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
-
-    let diffuseIntensity = max(dot(N, L), 0.0);
-    let diffuse = diffuseIntensity * record.lightDirection.w * record.color.rgb;
 
     let shininess = record.specularColor.w;
-    let specularIntensity = pow(max(dot(N, H), 0.0), shininess);
-    
-    var specular = vec3<f32>(0.0);
-    if (diffuseIntensity > 0.0 && shininess > 0.0) {
-        // PBR-like Fresnel reflection coefficient for realistic specular glints
-        let specFresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, H), 0.0), 5.0);
-        specular = specularIntensity * record.lightDirection.w * record.specularColor.rgb * specFresnel;
+    let roughness = clamp(sqrt(2.0 / (max(shininess, 0.001) + 2.0)), 0.04, 1.0);
+    let F0 = mix(vec3<f32>(0.04), record.color.rgb, 0.1);
+
+    // Three-Point Studio Lighting vectors and intensities
+    let keyDir = normalize(record.lightDirection.xyz);
+    let keyIntensity = record.lightDirection.w;
+
+    let fillDir = normalize(vec3<f32>(-keyDir.x, 0.5, -keyDir.z));
+    let fillIntensity = keyIntensity * 0.35;
+    let fillCol = vec3<f32>(0.8, 0.88, 1.0); // cool fill
+
+    let backDir = normalize(vec3<f32>(-keyDir.x, -keyDir.y, -keyDir.z));
+    let backIntensity = keyIntensity * 0.45;
+    let backCol = vec3<f32>(1.0, 0.95, 0.9); // warm back light
+
+    var diffuseOut = vec3<f32>(0.0);
+    var specularOut = vec3<f32>(0.0);
+
+    // 1. KEY LIGHT
+    {
+        let L = keyDir;
+        let H = normalize(L + V);
+        let NdotL = max(dot(N, L), 0.0);
+        let NdotV = max(dot(N, V), 0.0);
+        if (NdotL > 0.0) {
+            let D = DistributionGGX(N, H, roughness);
+            let G = GeometrySmith(N, V, L, roughness);
+            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+            let nominator = D * G * F;
+            let denominator = 4.0 * NdotV * NdotL + 0.0001;
+            let spec = nominator / denominator;
+            let kS = F;
+            let kD = (vec3<f32>(1.0) - kS);
+            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * keyIntensity;
+            specularOut += spec * NdotL * keyIntensity;
+        }
     }
 
-    // Premium iced-silver/blue Fresnel rim reflection glow
-    let F = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-    let rimColor = vec3<f32>(0.82, 0.88, 1.0) * F * 0.35 * record.lightDirection.w;
+    // 2. FILL LIGHT
+    {
+        let L = fillDir;
+        let H = normalize(L + V);
+        let NdotL = max(dot(N, L), 0.0);
+        let NdotV = max(dot(N, V), 0.0);
+        if (NdotL > 0.0) {
+            let D = DistributionGGX(N, H, roughness);
+            let G = GeometrySmith(N, V, L, roughness);
+            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+            let nominator = D * G * F;
+            let denominator = 4.0 * NdotV * NdotL + 0.0001;
+            let spec = nominator / denominator;
+            let kS = F;
+            let kD = (vec3<f32>(1.0) - kS);
+            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * fillIntensity * fillCol;
+            specularOut += spec * NdotL * fillIntensity * fillCol;
+        }
+    }
 
-    let litColor = (ambient + diffuse + specular + rimColor) * record.opacity;
+    // 3. BACK LIGHT
+    {
+        let L = backDir;
+        let H = normalize(L + V);
+        let NdotL = max(dot(N, L), 0.0);
+        let NdotV = max(dot(N, V), 0.0);
+        if (NdotL > 0.0) {
+            let D = DistributionGGX(N, H, roughness);
+            let G = GeometrySmith(N, V, L, roughness);
+            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+            let nominator = D * G * F;
+            let denominator = 4.0 * NdotV * NdotL + 0.0001;
+            let spec = nominator / denominator;
+            let kS = F;
+            let kD = (vec3<f32>(1.0) - kS);
+            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * backIntensity * backCol;
+            specularOut += spec * NdotL * backIntensity * backCol;
+        }
+    }
+
+    // Hemispherical sky-ground ambient
+    let skyFactor = N.y * 0.5 + 0.5;
+    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
+    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.4;
+    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
+
+    // Premium rim glow
+    let F_rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    let rimColor = vec3<f32>(0.85, 0.90, 1.0) * F_rim * 0.25 * keyIntensity;
+
+    let litColor = (ambient + diffuseOut + specularOut + rimColor) * record.opacity;
     return vec4<f32>(litColor, record.opacity);
 }
 ";
@@ -214,34 +308,98 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let mode = u32(input.renderMode + 0.5);
 
     let N = normalize(input.worldNormal);
-    let L = normalize(record.lightDirection.xyz);
     let V = normalize(uniforms.cameraPosition - input.worldPosition);
-    let H = normalize(L + V);
-
-    // Hemispherical (sky-to-ground) ambient lighting for rich 3D shading
-    let skyFactor = N.y * 0.5 + 0.5;
-    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
-    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.45;
-    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
-
-    let diffuseIntensity = max(dot(N, L), 0.0);
-    let diffuse = diffuseIntensity * record.lightDirection.w * record.color.rgb;
 
     let shininess = record.specularColor.w;
-    let specularIntensity = pow(max(dot(N, H), 0.0), shininess);
-    
-    var specular = vec3<f32>(0.0);
-    if (diffuseIntensity > 0.0 && shininess > 0.0) {
-        // PBR-like Fresnel reflection coefficient for realistic specular glints
-        let specFresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, H), 0.0), 5.0);
-        specular = specularIntensity * record.lightDirection.w * record.specularColor.rgb * specFresnel;
+    let roughness = clamp(sqrt(2.0 / (max(shininess, 0.001) + 2.0)), 0.04, 1.0);
+    let F0 = mix(vec3<f32>(0.04), record.color.rgb, 0.1);
+
+    // Three-Point Studio Lighting vectors and intensities
+    let keyDir = normalize(record.lightDirection.xyz);
+    let keyIntensity = record.lightDirection.w;
+
+    let fillDir = normalize(vec3<f32>(-keyDir.x, 0.5, -keyDir.z));
+    let fillIntensity = keyIntensity * 0.35;
+    let fillCol = vec3<f32>(0.8, 0.88, 1.0); // cool fill
+
+    let backDir = normalize(vec3<f32>(-keyDir.x, -keyDir.y, -keyDir.z));
+    let backIntensity = keyIntensity * 0.45;
+    let backCol = vec3<f32>(1.0, 0.95, 0.9); // warm back light
+
+    var diffuseOut = vec3<f32>(0.0);
+    var specularOut = vec3<f32>(0.0);
+
+    // 1. KEY LIGHT
+    {
+        let L = keyDir;
+        let H = normalize(L + V);
+        let NdotL = max(dot(N, L), 0.0);
+        let NdotV = max(dot(N, V), 0.0);
+        if (NdotL > 0.0) {
+            let D = DistributionGGX(N, H, roughness);
+            let G = GeometrySmith(N, V, L, roughness);
+            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+            let nominator = D * G * F;
+            let denominator = 4.0 * NdotV * NdotL + 0.0001;
+            let spec = nominator / denominator;
+            let kS = F;
+            let kD = (vec3<f32>(1.0) - kS);
+            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * keyIntensity;
+            specularOut += spec * NdotL * keyIntensity;
+        }
     }
 
-    // Premium iced-silver/blue Fresnel rim reflection glow
-    let F = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-    let rimColor = vec3<f32>(0.82, 0.88, 1.0) * F * 0.35 * record.lightDirection.w;
+    // 2. FILL LIGHT
+    {
+        let L = fillDir;
+        let H = normalize(L + V);
+        let NdotL = max(dot(N, L), 0.0);
+        let NdotV = max(dot(N, V), 0.0);
+        if (NdotL > 0.0) {
+            let D = DistributionGGX(N, H, roughness);
+            let G = GeometrySmith(N, V, L, roughness);
+            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+            let nominator = D * G * F;
+            let denominator = 4.0 * NdotV * NdotL + 0.0001;
+            let spec = nominator / denominator;
+            let kS = F;
+            let kD = (vec3<f32>(1.0) - kS);
+            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * fillIntensity * fillCol;
+            specularOut += spec * NdotL * fillIntensity * fillCol;
+        }
+    }
 
-    let litColor = (ambient + diffuse + specular + rimColor) * record.opacity;
+    // 3. BACK LIGHT
+    {
+        let L = backDir;
+        let H = normalize(L + V);
+        let NdotL = max(dot(N, L), 0.0);
+        let NdotV = max(dot(N, V), 0.0);
+        if (NdotL > 0.0) {
+            let D = DistributionGGX(N, H, roughness);
+            let G = GeometrySmith(N, V, L, roughness);
+            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+            let nominator = D * G * F;
+            let denominator = 4.0 * NdotV * NdotL + 0.0001;
+            let spec = nominator / denominator;
+            let kS = F;
+            let kD = (vec3<f32>(1.0) - kS);
+            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * backIntensity * backCol;
+            specularOut += spec * NdotL * backIntensity * backCol;
+        }
+    }
+
+    // Hemispherical sky-ground ambient
+    let skyFactor = N.y * 0.5 + 0.5;
+    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
+    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.4;
+    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
+
+    // Premium rim glow
+    let F_rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    let rimColor = vec3<f32>(0.85, 0.90, 1.0) * F_rim * 0.25 * keyIntensity;
+
+    let litColor = (ambient + diffuseOut + specularOut + rimColor) * record.opacity;
     let solidColor = vec4<f32>(litColor, record.opacity);
 
     let dFdx = dpdx(input.barycentric);
