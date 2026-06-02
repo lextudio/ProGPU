@@ -151,7 +151,23 @@ namespace Microsoft.UI.Xaml.Media.Media3D
 
     public abstract class Camera
     {
-        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
+        private Matrix4x4 _transform = Matrix4x4.Identity;
+        public Matrix4x4 Transform
+        {
+            get => _transform;
+            set
+            {
+                if (_transform != value)
+                {
+                    _transform = value;
+                    RaiseChanged();
+                }
+            }
+        }
+
+        public event EventHandler? Changed;
+
+        protected void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
 
         public abstract Matrix4x4 GetProjectionMatrix(float aspectRatio);
         public abstract Matrix4x4 GetViewMatrix();
@@ -159,11 +175,75 @@ namespace Microsoft.UI.Xaml.Media.Media3D
 
     public abstract class ProjectionCamera : Camera
     {
-        public Vector3 Position { get; set; } = new Vector3(0, 0, -10);
-        public Vector3 LookDirection { get; set; } = new Vector3(0, 0, 1);
-        public Vector3 UpDirection { get; set; } = Vector3.UnitY;
-        public float NearPlaneDistance { get; set; } = 0.125f;
-        public float FarPlaneDistance { get; set; } = 1000f;
+        private Vector3 _position = new Vector3(0, 0, -10);
+        public Vector3 Position
+        {
+            get => _position;
+            set
+            {
+                if (_position != value)
+                {
+                    _position = value;
+                    RaiseChanged();
+                }
+            }
+        }
+
+        private Vector3 _lookDirection = new Vector3(0, 0, 1);
+        public Vector3 LookDirection
+        {
+            get => _lookDirection;
+            set
+            {
+                if (_lookDirection != value)
+                {
+                    _lookDirection = value;
+                    RaiseChanged();
+                }
+            }
+        }
+
+        private Vector3 _upDirection = Vector3.UnitY;
+        public Vector3 UpDirection
+        {
+            get => _upDirection;
+            set
+            {
+                if (_upDirection != value)
+                {
+                    _upDirection = value;
+                    RaiseChanged();
+                }
+            }
+        }
+
+        private float _nearPlaneDistance = 0.125f;
+        public float NearPlaneDistance
+        {
+            get => _nearPlaneDistance;
+            set
+            {
+                if (_nearPlaneDistance != value)
+                {
+                    _nearPlaneDistance = value;
+                    RaiseChanged();
+                }
+            }
+        }
+
+        private float _farPlaneDistance = 1000f;
+        public float FarPlaneDistance
+        {
+            get => _farPlaneDistance;
+            set
+            {
+                if (_farPlaneDistance != value)
+                {
+                    _farPlaneDistance = value;
+                    RaiseChanged();
+                }
+            }
+        }
 
         // Computed property to support LookAt seamlessly (such as for orbiting controller math)
         public Vector3 LookAt
@@ -188,7 +268,19 @@ namespace Microsoft.UI.Xaml.Media.Media3D
 
     public class PerspectiveCamera : ProjectionCamera
     {
-        public float FieldOfView { get; set; } = 45f;
+        private float _fieldOfView = 45f;
+        public float FieldOfView
+        {
+            get => _fieldOfView;
+            set
+            {
+                if (_fieldOfView != value)
+                {
+                    _fieldOfView = value;
+                    RaiseChanged();
+                }
+            }
+        }
 
         public override Matrix4x4 GetProjectionMatrix(float aspectRatio)
         {
@@ -199,7 +291,19 @@ namespace Microsoft.UI.Xaml.Media.Media3D
 
     public class OrthographicCamera : ProjectionCamera
     {
-        public float Width { get; set; } = 2f;
+        private float _width = 2f;
+        public float Width
+        {
+            get => _width;
+            set
+            {
+                if (_width != value)
+                {
+                    _width = value;
+                    RaiseChanged();
+                }
+            }
+        }
 
         public override Matrix4x4 GetProjectionMatrix(float aspectRatio)
         {
@@ -223,10 +327,27 @@ namespace Microsoft.UI.Xaml.Controls
             {
                 if (_camera != value)
                 {
+                    if (_camera != null)
+                    {
+                        _camera.Changed -= OnCameraChanged;
+                    }
                     _camera = value;
+                    if (_camera != null)
+                    {
+                        _camera.Changed += OnCameraChanged;
+                    }
                     _cameraInitialized = false;
                     Invalidate();
                 }
+            }
+        }
+
+        private void OnCameraChanged(object? sender, EventArgs e)
+        {
+            if (!_isUpdatingCameraState)
+            {
+                _cameraInitialized = false;
+                Invalidate();
             }
         }
         
@@ -253,6 +374,7 @@ namespace Microsoft.UI.Xaml.Controls
         private float _cameraPhi = 0.5f;
         private float _cameraRadius = 10f;
         private bool _cameraInitialized = false;
+        private bool _isUpdatingCameraState = false;
 
         private void InitializeCameraState()
         {
@@ -277,27 +399,36 @@ namespace Microsoft.UI.Xaml.Controls
         {
             if (Camera is ProjectionCamera projCamera)
             {
-                float sinPhi = MathF.Sin(_cameraPhi);
-                float cosPhi = MathF.Cos(_cameraPhi);
-                float sinTheta = MathF.Sin(_cameraTheta);
-                float cosTheta = MathF.Cos(_cameraTheta);
+                _isUpdatingCameraState = true;
+                try
+                {
+                    float sinPhi = MathF.Sin(_cameraPhi);
+                    float cosPhi = MathF.Cos(_cameraPhi);
+                    float sinTheta = MathF.Sin(_cameraTheta);
+                    float cosTheta = MathF.Cos(_cameraTheta);
 
-                var target = projCamera.LookAt;
-                var offset = new Vector3(
-                    _cameraRadius * sinPhi * sinTheta,
-                    _cameraRadius * cosPhi,
-                    _cameraRadius * sinPhi * cosTheta
-                );
+                    var target = projCamera.LookAt;
+                    var offset = new Vector3(
+                        _cameraRadius * sinPhi * sinTheta,
+                        _cameraRadius * cosPhi,
+                        _cameraRadius * sinPhi * cosTheta
+                    );
 
-                projCamera.Position = target + offset;
-                projCamera.LookDirection = -offset;
-                
-                Invalidate();
+                    projCamera.Position = target + offset;
+                    projCamera.LookDirection = -offset;
+                    
+                    Invalidate();
+                }
+                finally
+                {
+                    _isUpdatingCameraState = false;
+                }
             }
         }
 
         public Viewport3D()
         {
+            _camera.Changed += OnCameraChanged;
             HorizontalAlignment = HorizontalAlignment.Stretch;
             VerticalAlignment = VerticalAlignment.Stretch;
             IsTabStop = true;
@@ -327,16 +458,35 @@ namespace Microsoft.UI.Xaml.Controls
             base.ArrangeOverride(arrangeRect);
         }
 
+        private WgpuContext? GetActiveWgpuContext()
+        {
+            var activeWindows = WindowManager.ActiveWindows;
+            if (activeWindows.Count == 0) return null;
+            if (activeWindows.Count == 1) return activeWindows[0].WgpuContext;
+
+            Visual? current = this;
+            while (current != null)
+            {
+                for (int i = 0; i < activeWindows.Count; i++)
+                {
+                    if (activeWindows[i].Content == current)
+                    {
+                        return activeWindows[i].WgpuContext;
+                    }
+                }
+                current = current.Parent;
+            }
+
+            return activeWindows[0].WgpuContext;
+        }
+
         public override void OnRender(DrawingContext context)
         {
             if (Size.X <= 0 || Size.Y <= 0 || Camera == null) return;
 
             if (!_cameraInitialized) InitializeCameraState();
 
-            var activeWindows = WindowManager.ActiveWindows;
-            if (activeWindows.Count == 0) return;
-            var window = activeWindows[0];
-            var wgpuContext = window.WgpuContext;
+            var wgpuContext = GetActiveWgpuContext();
             if (wgpuContext == null) return;
 
             float dpiScale = 1.0f;
@@ -469,20 +619,67 @@ namespace Microsoft.UI.Xaml.Controls
                                     opacity *= diffuseColor.W;
                                 }
 
-                                payload.Meshes.Add(new MeshCompilationEntry
+                                if (geomModel.Material != null || geomModel.BackMaterial == null)
                                 {
-                                    Geometry = mesh,
-                                    GeometryVersion = mesh.Version,
-                                    Positions = positions,
-                                    Normals = normals,
-                                    Indices = indices,
-                                    ModelTransform = localTransform,
-                                    Color = diffuseColor,
-                                    SpecularColor = specularColor,
-                                    Shininess = shininess,
-                                    AmbientColor = ambientColor,
-                                    Opacity = opacity
-                                });
+                                    payload.Meshes.Add(new MeshCompilationEntry
+                                    {
+                                        Geometry = mesh,
+                                        GeometryVersion = mesh.Version,
+                                        Positions = positions,
+                                        Normals = normals,
+                                        Indices = indices,
+                                        ModelTransform = localTransform,
+                                        Color = diffuseColor,
+                                        SpecularColor = specularColor,
+                                        Shininess = shininess,
+                                        AmbientColor = ambientColor,
+                                        Opacity = opacity,
+                                        IsBackFace = false
+                                    });
+                                }
+
+                                if (geomModel.BackMaterial is DiffuseMaterial backDiffuse && backDiffuse.Brush != null)
+                                {
+                                    Vector4 backDiffuseColor = Vector4.One;
+                                    Vector3 backSpecularColor = backDiffuse.SpecularColor;
+                                    float backShininess = backDiffuse.Shininess;
+                                    Vector3 backAmbientColor = backDiffuse.AmbientColor;
+                                    float backOpacity = backDiffuse.Brush.Opacity;
+
+                                    Brush? activeBackBrush = backDiffuse.Brush;
+                                    if (backDiffuse.Brush is ThemeResourceBrush themeResBack)
+                                    {
+                                        activeBackBrush = ThemeManager.GetBrush(themeResBack.ResourceKey, ActualTheme, ActualThemeFamily);
+                                    }
+
+                                    if (activeBackBrush is SolidColorBrush solidBack)
+                                    {
+                                        backDiffuseColor = solidBack.Color;
+                                    }
+                                    else if (activeBackBrush is LinearGradientBrush gradientBack && gradientBack.Stops.Length > 0)
+                                    {
+                                        backDiffuseColor = gradientBack.Stops[0].Color;
+                                    }
+
+                                    backDiffuseColor *= backDiffuse.Color;
+                                    backOpacity *= backDiffuseColor.W;
+
+                                    payload.Meshes.Add(new MeshCompilationEntry
+                                    {
+                                        Geometry = mesh,
+                                        GeometryVersion = mesh.Version,
+                                        Positions = positions,
+                                        Normals = normals,
+                                        Indices = indices,
+                                        ModelTransform = localTransform,
+                                        Color = backDiffuseColor,
+                                        SpecularColor = backSpecularColor,
+                                        Shininess = backShininess,
+                                        AmbientColor = backAmbientColor,
+                                        Opacity = backOpacity,
+                                        IsBackFace = true
+                                    });
+                                }
                             }
                         }
                     }

@@ -1358,17 +1358,50 @@ public static class Mesh3DViewerPage
         // Sync rotations across all views
         var rotation = Matrix4x4.CreateRotationY(_rotationAngle);
 
-        if (_model1?.Children.Count > 0 && _model1.Children[0] is ModelVisual3D n1 && n1.Content != null)
-            n1.Content.Transform = rotation;
+        if (_model1 != null)
+        {
+            for (int i = 0; i < _model1.Children.Count; i++)
+            {
+                if (_model1.Children[i] is ModelVisual3D mv && mv.Content != null)
+                {
+                    mv.Content.Transform = rotation;
+                }
+            }
+        }
 
-        if (_model2?.Children.Count > 0 && _model2.Children[0] is ModelVisual3D n2 && n2.Content != null)
-            n2.Content.Transform = rotation;
+        if (_model2 != null)
+        {
+            for (int i = 0; i < _model2.Children.Count; i++)
+            {
+                if (_model2.Children[i] is ModelVisual3D mv && mv.Content != null)
+                {
+                    mv.Content.Transform = rotation;
+                }
+            }
+        }
 
-        if (_model3?.Children.Count > 0 && _model3.Children[0] is ModelVisual3D n3 && n3.Content != null)
-            n3.Content.Transform = rotation;
+        if (_model3 != null)
+        {
+            for (int i = 0; i < _model3.Children.Count; i++)
+            {
+                if (_model3.Children[i] is ModelVisual3D mv && mv.Content != null)
+                {
+                    mv.Content.Transform = rotation;
+                }
+            }
+        }
 
-        if (_model4?.Children.Count > 0 && _model4.Children[0] is ModelVisual3D n4 && n4.Content != null)
-            n4.Content.Transform = rotation * Matrix4x4.CreateRotationX(_rotationAngle * 0.15f);
+        if (_model4 != null)
+        {
+            var rotation4 = rotation * Matrix4x4.CreateRotationX(_rotationAngle * 0.15f);
+            for (int i = 0; i < _model4.Children.Count; i++)
+            {
+                if (_model4.Children[i] is ModelVisual3D mv && mv.Content != null)
+                {
+                    mv.Content.Transform = rotation4;
+                }
+            }
+        }
 
         _viewport1?.Invalidate();
         _viewport2?.Invalidate();

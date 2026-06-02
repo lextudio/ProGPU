@@ -70,6 +70,7 @@ namespace Microsoft.UI.Xaml.Media.Media3D
             public List<Vector3> OutNormals { get; } = new(2048);
             public List<Vector2> OutTexCoords { get; } = new(2048);
             public Dictionary<ObjVertexKey, int> VertexCache { get; } = new(2048);
+            public bool HasNormals { get; set; } = false;
 
             public PartBuilder(string materialName)
             {
@@ -271,11 +272,13 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                     }
 
                     var faceIndices = new List<int>(4);
+                    bool hasNorms = builder.HasNormals;
                     while (NextToken(line, ref start, out var vToken) == 0)
                     {
                         faceIndices.Add(ParseVertex(vToken, tempPositions, tempTexCoords, tempNormals,
-                                                    builder.OutPositions, builder.OutTexCoords, builder.OutNormals, builder.VertexCache));
+                                                    builder.OutPositions, builder.OutTexCoords, builder.OutNormals, builder.VertexCache, ref hasNorms));
                     }
+                    builder.HasNormals = hasNorms;
 
                     // Triangulate face using a triangle fan
                     for (int i = 1; i < faceIndices.Count - 1; i++)
@@ -299,7 +302,7 @@ namespace Microsoft.UI.Xaml.Media.Media3D
                     TriangleIndices = builder.FaceIndices.ToArray()
                 };
 
-                if (builder.OutNormals.Count == builder.OutPositions.Count) mesh.Normals = builder.OutNormals.ToArray();
+                if (builder.HasNormals && builder.OutNormals.Count == builder.OutPositions.Count) mesh.Normals = builder.OutNormals.ToArray();
                 else mesh.Normals = mesh.GetNormalsOrCompute();
 
                 if (builder.OutTexCoords.Count == builder.OutPositions.Count) mesh.TextureCoordinates = builder.OutTexCoords.ToArray();
@@ -582,7 +585,8 @@ namespace Microsoft.UI.Xaml.Media.Media3D
             List<Vector3> outPositions,
             List<Vector2> outTexCoords,
             List<Vector3> outNormals,
-            Dictionary<ObjVertexKey, int> vertexCache)
+            Dictionary<ObjVertexKey, int> vertexCache,
+            ref bool hasNormals)
         {
             int slash1 = token.IndexOf((byte)'/');
             int rawV = 0;
@@ -630,6 +634,11 @@ namespace Microsoft.UI.Xaml.Media.Media3D
             if (vertexCache.TryGetValue(key, out int cachedIndex))
             {
                 return cachedIndex;
+            }
+
+            if (normIndex >= 0)
+            {
+                hasNormals = true;
             }
 
             int newIndex = outPositions.Count;

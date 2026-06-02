@@ -44,6 +44,7 @@ namespace ProGPU.Scene.Extensions
     public struct GpuMesh3DRecord
     {
         public Matrix4x4 ModelTransform;      // 3D Model transform for lighting
+        public Matrix4x4 NormalTransform;     // Inverse-transpose for normal transformation
         public Vector4 Color;                 // Diffuse Color Kd
         public Vector4 LightDirection;        // xyz = direction, w = intensity
         public Vector4 AmbientColor;          // rgb = color, w = intensity
@@ -76,6 +77,7 @@ struct VSUniforms {
 
 struct GpuMesh3DRecord {
     modelTransform: mat4x4<f32>,
+    normalTransform: mat4x4<f32>,
     color: vec4<f32>,
     lightDirection: vec4<f32>,
     ambientColor: vec4<f32>,
@@ -282,39 +284,40 @@ fn ComputeLighting(
 fn vs_main(input: VertexInput, @builtin(instance_index) instanceIdx: u32) -> VertexOutput {
     var output: VertexOutput;
     let record = meshRecords[instanceIdx];
-
+ 
     let worldPos = record.modelTransform * vec4<f32>(input.position, 1.0);
-    let worldNormal = normalize((record.modelTransform * vec4<f32>(input.normal, 0.0)).xyz);
-
+    let worldNormal = normalize((record.normalTransform * vec4<f32>(input.normal, 0.0)).xyz);
+ 
     output.position = uniforms.projection * uniforms.view * worldPos;
     output.worldPosition = worldPos.xyz;
     output.worldNormal = worldNormal;
     output.instanceIdx = instanceIdx;
-
+ 
     return output;
 }
-
+ 
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return ComputeLighting(input.instanceIdx, input.worldPosition, input.worldNormal);
+fn fs_main(input: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let normal = if (is_front) { input.worldNormal } else { -input.worldNormal };
+    return ComputeLighting(input.instanceIdx, input.worldPosition, normal);
 }
 ";
-
+ 
         private const string Mesh3DWireframeShaderCode = CommonShaderHelpers + @"
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIdx: u32, @builtin(instance_index) instanceIdx: u32) -> VertexOutputWireframe {
     var output: VertexOutputWireframe;
     let record = meshRecords[instanceIdx];
-
+ 
     let worldPos = record.modelTransform * vec4<f32>(input.position, 1.0);
-    let worldNormal = normalize((record.modelTransform * vec4<f32>(input.normal, 0.0)).xyz);
-
+    let worldNormal = normalize((record.normalTransform * vec4<f32>(input.normal, 0.0)).xyz);
+ 
     output.position = uniforms.projection * uniforms.view * worldPos;
     output.worldPosition = worldPos.xyz;
     output.worldNormal = worldNormal;
     output.renderMode = record.renderMode;
     output.instanceIdx = instanceIdx;
-
+ 
     let triVertexIdx = vertexIdx % 3u;
     if (triVertexIdx == 0u) {
         output.barycentric = vec3<f32>(1.0, 0.0, 0.0);
@@ -323,26 +326,27 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIdx: u32, @builtin(i
     } else {
         output.barycentric = vec3<f32>(0.0, 0.0, 1.0);
     }
-
+ 
     return output;
 }
-
+ 
 @fragment
-fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
+fn fs_main(input: VertexOutputWireframe, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     let mode = u32(input.renderMode + 0.5);
-    let solidColor = ComputeLighting(input.instanceIdx, input.worldPosition, input.worldNormal);
-
+    let normal = if (is_front) { input.worldNormal } else { -input.worldNormal };
+    let solidColor = ComputeLighting(input.instanceIdx, input.worldPosition, normal);
+ 
     let dFdx = dpdx(input.barycentric);
     let dFdy = dpdy(input.barycentric);
     let g = max(sqrt(dFdx * dFdx + dFdy * dFdy), vec3<f32>(0.00001));
     let dist = input.barycentric / g;
     let minDist = min(dist.x, min(dist.y, dist.z));
-
+ 
     let lineWidth = 1.0; 
     let edge = smoothstep(lineWidth - 0.5, lineWidth + 0.5, minDist);
-
+ 
     let wireframeColor = vec4<f32>(0.85, 0.85, 0.9, solidColor.a);
-
+ 
     if (mode == 1u) {
         let alpha = (1.0 - edge) * solidColor.a;
         if (alpha < 0.01) {
@@ -350,7 +354,7 @@ fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
         }
         return vec4<f32>(wireframeColor.rgb, alpha);
     }
-
+ 
     let finalColor = mix(wireframeColor.rgb, solidColor.rgb, edge);
     return vec4<f32>(finalColor, solidColor.a);
 }
@@ -392,6 +396,7 @@ fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
         private WgpuContext? _context;
         
         private unsafe RenderPipeline* _cachedPipeline;
+        private unsafe RenderPipeline* _cachedBackFacePipeline;
         private unsafe RenderPipeline* _cachedWireframePipeline;
 
         public unsafe void BeginFrame(Compositor compositor)
@@ -476,9 +481,16 @@ fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
                     rMode = 2.0f;
                 }
 
+                Matrix4x4 normalTransform = Matrix4x4.Identity;
+                if (Matrix4x4.Invert(mesh.ModelTransform, out var invModel))
+                {
+                    normalTransform = Matrix4x4.Transpose(invModel);
+                }
+
                 cpuRecords[i] = new GpuMesh3DRecord
                 {
                     ModelTransform = mesh.ModelTransform,
+                    NormalTransform = normalTransform,
                     Color = mesh.Color,
                     LightDirection = new Vector4(payload.LightDirection, payload.LightIntensity),
                     AmbientColor = new Vector4(payload.AmbientColor, payload.AmbientIntensity),
@@ -535,6 +547,42 @@ fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
                     depthWriteEnabled: true,
                     depthCompare: CompareFunction.LessEqual,
                     cullMode: CullMode.Back
+                );
+
+                Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
+            }
+
+            if (_cachedBackFacePipeline == null)
+            {
+                var shaderModule = compositor.PipelineCache.GetOrCreateShader("Mesh3DSolidShader_3D_v3", Mesh3DSolidShaderCode, "Mesh3D WGSL 3D Solid Shader");
+
+                var layouts = new VertexBufferLayout[]
+                {
+                    new VertexBufferLayout
+                    {
+                        ArrayStride = (uint)Marshal.SizeOf<GpuVertex3D>(),
+                        StepMode = VertexStepMode.Vertex,
+                        AttributeCount = 2,
+                        Attributes = (VertexAttribute*)Marshal.AllocHGlobal(Marshal.SizeOf<VertexAttribute>() * 2)
+                    }
+                };
+
+                var attrs = layouts[0].Attributes;
+                attrs[0] = new VertexAttribute { Format = VertexFormat.Float32x3, Offset = 0, ShaderLocation = 0 }; // Position
+                attrs[1] = new VertexAttribute { Format = VertexFormat.Float32x3, Offset = 12, ShaderLocation = 1 }; // Normal
+
+                _cachedBackFacePipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
+                    "Mesh3DBackFacePipeline_3D_v3",
+                    shaderModule,
+                    vertexBufferLayouts: layouts,
+                    topology: PrimitiveTopology.TriangleList,
+                    targetFormat: TextureFormat.Rgba8Unorm,
+                    enableDepthStencil: true,
+                    depthFormat: TextureFormat.Depth24PlusStencil8,
+                    sampleCount: 4u,
+                    depthWriteEnabled: true,
+                    depthCompare: CompareFunction.LessEqual,
+                    cullMode: CullMode.Front
                 );
 
                 Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
@@ -720,7 +768,19 @@ fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
                 for (int i = 0; i < payload.Meshes.Count; i++)
                 {
                     var entry = payload.Meshes[i];
-                    if (entry.Geometry == null) continue;
+                    if (entry.Geometry == null || entry.IsBackFace) continue;
+
+                    var cache = _geometryCache[entry.Geometry];
+
+                    wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, cache.VertexBuffer.BufferPtr, 0, cache.VertexBuffer.Size);
+                    wgpu.RenderPassEncoderDraw(pass, cache.VertexCount, 1, 0, (uint)i);
+                }
+
+                wgpu.RenderPassEncoderSetPipeline(pass, _cachedBackFacePipeline);
+                for (int i = 0; i < payload.Meshes.Count; i++)
+                {
+                    var entry = payload.Meshes[i];
+                    if (entry.Geometry == null || !entry.IsBackFace) continue;
 
                     var cache = _geometryCache[entry.Geometry];
 
@@ -828,5 +888,6 @@ fn fs_main(input: VertexOutputWireframe) -> @location(0) vec4<f32> {
         public float Shininess { get; set; } = 32.0f;
         public Vector3 AmbientColor { get; set; } = new Vector3(0.2f, 0.2f, 0.2f);
         public float Opacity { get; set; } = 1.0f;
+        public bool IsBackFace { get; set; } = false;
     }
 }
