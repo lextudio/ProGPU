@@ -366,7 +366,6 @@ public static class Mesh3DViewerPage
         var shapeCombo = new ComboBox
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            WidthConstraint = 268f,
             Margin = new Thickness(0, 0, 0, 16f)
         };
         shapeCombo.Items.Add(new ComboBoxItem { Text = "Cube" });
@@ -385,7 +384,6 @@ public static class Mesh3DViewerPage
         var renderModeCombo = new ComboBox
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            WidthConstraint = 268f,
             Margin = new Thickness(0, 0, 0, 16f)
         };
         renderModeCombo.Items.Add(new ComboBoxItem { Text = "Solid Shaded" });
@@ -415,7 +413,6 @@ public static class Mesh3DViewerPage
         var shadingModeCombo = new ComboBox
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            WidthConstraint = 268f,
             Margin = new Thickness(0, 0, 0, 16f)
         };
         shadingModeCombo.Items.Add(new ComboBoxItem { Text = "Realistic (PBR GGX)" });
@@ -575,7 +572,7 @@ public static class Mesh3DViewerPage
             CornerRadius = 6f,
             Padding = new Thickness(12f),
             Margin = new Thickness(0, 0, 0, 16f),
-            WidthConstraint = 268f
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
         var statsStack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Vertical };
@@ -773,14 +770,15 @@ public static class Mesh3DViewerPage
 
         _maxBtn1 = new Button
         {
-            HeightConstraint = 22f,
-            WidthConstraint = 22f,
+            HeightConstraint = 24f,
+            WidthConstraint = 24f,
             CornerRadius = 4f,
             Margin = new Thickness(8f, 0, 0, 0),
+            Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Background = new ThemeResourceBrush("ControlBackgroundHover")
         };
-        var maxIcon1 = new Run("↗") { FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
+        var maxIcon1 = new Run("↗") { FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
         _maxBtn1.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(maxIcon1) } };
         _maxBtn1.Click += (s, e) =>
         {
@@ -832,14 +830,15 @@ public static class Mesh3DViewerPage
 
         _maxBtn2 = new Button
         {
-            HeightConstraint = 22f,
-            WidthConstraint = 22f,
+            HeightConstraint = 24f,
+            WidthConstraint = 24f,
             CornerRadius = 4f,
             Margin = new Thickness(8f, 0, 0, 0),
+            Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Background = new ThemeResourceBrush("ControlBackgroundHover")
         };
-        var maxIcon2 = new Run("↗") { FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
+        var maxIcon2 = new Run("↗") { FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
         _maxBtn2.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(maxIcon2) } };
         _maxBtn2.Click += (s, e) =>
         {
@@ -891,14 +890,15 @@ public static class Mesh3DViewerPage
 
         _maxBtn3 = new Button
         {
-            HeightConstraint = 22f,
-            WidthConstraint = 22f,
+            HeightConstraint = 24f,
+            WidthConstraint = 24f,
             CornerRadius = 4f,
             Margin = new Thickness(8f, 0, 0, 0),
+            Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Background = new ThemeResourceBrush("ControlBackgroundHover")
         };
-        var maxIcon3 = new Run("↗") { FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
+        var maxIcon3 = new Run("↗") { FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
         _maxBtn3.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(maxIcon3) } };
         _maxBtn3.Click += (s, e) =>
         {
@@ -949,14 +949,15 @@ public static class Mesh3DViewerPage
 
         _maxBtn4 = new Button
         {
-            HeightConstraint = 22f,
-            WidthConstraint = 22f,
+            HeightConstraint = 24f,
+            WidthConstraint = 24f,
             CornerRadius = 4f,
             Margin = new Thickness(8f, 0, 0, 0),
+            Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Background = new ThemeResourceBrush("ControlBackgroundHover")
         };
-        var maxIcon4 = new Run("↗") { FontSize = 11f, Foreground = new ThemeResourceBrush("TextPrimary") };
+        var maxIcon4 = new Run("↗") { FontSize = 12f, Foreground = new ThemeResourceBrush("TextPrimary") };
         _maxBtn4.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(maxIcon4) } };
         _maxBtn4.Click += (s, e) =>
         {
@@ -1387,10 +1388,10 @@ public static class Mesh3DViewerPage
         if (_layoutBtnPersp != null) _layoutBtnPersp.Background = new ThemeResourceBrush(mode == LayoutMode3D.Perspective ? "ControlBackgroundPressed" : "ControlBackgroundHover");
 
         // Update card maximize button texts
-        if (_maxBtn1 != null) _maxBtn1.Content = new RichTextBlock { Inlines = { new Run(mode == LayoutMode3D.Top ? "↙ Restore" : "↗ Maximize") } };
-        if (_maxBtn2 != null) _maxBtn2.Content = new RichTextBlock { Inlines = { new Run(mode == LayoutMode3D.Front ? "↙ Restore" : "↗ Maximize") } };
-        if (_maxBtn3 != null) _maxBtn3.Content = new RichTextBlock { Inlines = { new Run(mode == LayoutMode3D.Right ? "↙ Restore" : "↗ Maximize") } };
-        if (_maxBtn4 != null) _maxBtn4.Content = new RichTextBlock { Inlines = { new Run(mode == LayoutMode3D.Perspective ? "↙ Restore" : "↗ Maximize") } };
+        if (_maxBtn1 != null) _maxBtn1.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(new Run(mode == LayoutMode3D.Top ? "↙" : "↗")) } };
+        if (_maxBtn2 != null) _maxBtn2.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(new Run(mode == LayoutMode3D.Front ? "↙" : "↗")) } };
+        if (_maxBtn3 != null) _maxBtn3.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(new Run(mode == LayoutMode3D.Right ? "↙" : "↗")) } };
+        if (_maxBtn4 != null) _maxBtn4.Content = new RichTextBlock { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Inlines = { new Bold(new Run(mode == LayoutMode3D.Perspective ? "↙" : "↗")) } };
 
         if (_card1 == null || _card2 == null || _card3 == null || _card4 == null || 
             _colSplitter == null || _rowSplitterLeft == null || _rowSplitterRight == null ||
@@ -1532,6 +1533,7 @@ public static class Mesh3DViewerPage
             HeightConstraint = 28f,
             CornerRadius = 4f,
             Margin = new Thickness(2f),
+            Padding = new Thickness(0),
             Background = new ThemeResourceBrush(mode == LayoutMode3D.Quad ? "ControlBackgroundPressed" : "ControlBackgroundHover")
         };
         var textRun = new Run(label) { FontSize = 10f, Foreground = new ThemeResourceBrush("TextPrimary") };
