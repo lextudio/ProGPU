@@ -229,7 +229,7 @@ public static class Mesh3DViewerPage
     private static ModelVisual3D? _model4;
 
     private static float _rotationAngle = 0f;
-    private static bool _animateRotation = true;
+    private static bool _animateRotation = false;
     
     private static Vector3 _lightDirection = new Vector3(0.5f, 1f, -0.5f);
     private static float _lightIntensity = 1.0f;
@@ -585,7 +585,7 @@ public static class Mesh3DViewerPage
         var animChk = new CheckBox
         {
             Content = animText,
-            IsChecked = true,
+            IsChecked = false,
             VerticalAlignment = VerticalAlignment.Center
         };
         animChk.CheckedChanged += (s, e) =>
