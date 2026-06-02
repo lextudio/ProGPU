@@ -116,8 +116,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let V = normalize(uniforms.cameraPosition - input.worldPosition);
     let H = normalize(L + V);
 
-    let ambientLight = record.ambientColor.rgb * record.ambientColor.w;
-    let ambient = ambientLight * record.materialAmbient.rgb;
+    // Hemispherical (sky-to-ground) ambient lighting for rich 3D shading
+    let skyFactor = N.y * 0.5 + 0.5;
+    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
+    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.45;
+    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
 
     let diffuseIntensity = max(dot(N, L), 0.0);
     let diffuse = diffuseIntensity * record.lightDirection.w * record.color.rgb;
@@ -127,10 +130,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     
     var specular = vec3<f32>(0.0);
     if (diffuseIntensity > 0.0 && shininess > 0.0) {
-        specular = specularIntensity * record.lightDirection.w * record.specularColor.rgb;
+        // PBR-like Fresnel reflection coefficient for realistic specular glints
+        let specFresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, H), 0.0), 5.0);
+        specular = specularIntensity * record.lightDirection.w * record.specularColor.rgb * specFresnel;
     }
 
-    let litColor = (ambient + diffuse + specular) * record.opacity;
+    // Premium iced-silver/blue Fresnel rim reflection glow
+    let F = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    let rimColor = vec3<f32>(0.82, 0.88, 1.0) * F * 0.35 * record.lightDirection.w;
+
+    let litColor = (ambient + diffuse + specular + rimColor) * record.opacity;
     return vec4<f32>(litColor, record.opacity);
 }
 ";
@@ -209,8 +218,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let V = normalize(uniforms.cameraPosition - input.worldPosition);
     let H = normalize(L + V);
 
-    let ambientLight = record.ambientColor.rgb * record.ambientColor.w;
-    let ambient = ambientLight * record.materialAmbient.rgb;
+    // Hemispherical (sky-to-ground) ambient lighting for rich 3D shading
+    let skyFactor = N.y * 0.5 + 0.5;
+    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
+    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.45;
+    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
 
     let diffuseIntensity = max(dot(N, L), 0.0);
     let diffuse = diffuseIntensity * record.lightDirection.w * record.color.rgb;
@@ -220,10 +232,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     
     var specular = vec3<f32>(0.0);
     if (diffuseIntensity > 0.0 && shininess > 0.0) {
-        specular = specularIntensity * record.lightDirection.w * record.specularColor.rgb;
+        // PBR-like Fresnel reflection coefficient for realistic specular glints
+        let specFresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, H), 0.0), 5.0);
+        specular = specularIntensity * record.lightDirection.w * record.specularColor.rgb * specFresnel;
     }
 
-    let litColor = (ambient + diffuse + specular) * record.opacity;
+    // Premium iced-silver/blue Fresnel rim reflection glow
+    let F = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    let rimColor = vec3<f32>(0.82, 0.88, 1.0) * F * 0.35 * record.lightDirection.w;
+
+    let litColor = (ambient + diffuse + specular + rimColor) * record.opacity;
     let solidColor = vec4<f32>(litColor, record.opacity);
 
     let dFdx = dpdx(input.barycentric);
