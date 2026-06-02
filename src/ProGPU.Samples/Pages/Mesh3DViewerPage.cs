@@ -243,6 +243,7 @@ public static class Mesh3DViewerPage
     private static Vector4 _activeModelColor = new Vector4(0.70f, 0.70f, 0.72f, 1.0f); // Default premium clay warm gray
     private static Border? _pickerPopup;
     private static RenderMode3D _selectedRenderMode = RenderMode3D.SolidWireframe;
+    private static ShadingMode3D _selectedShadingMode = ShadingMode3D.Shaded;
 
     private static Run? _statsNameRun;
     private static Run? _statsVerticesRun;
@@ -332,6 +333,36 @@ public static class Mesh3DViewerPage
                     "Wireframe Only" => RenderMode3D.Wireframe,
                     "Solid + Wireframe" => RenderMode3D.SolidWireframe,
                     _ => RenderMode3D.Solid
+                };
+                UpdateViewportModels();
+            }
+        };
+
+        // Combobox for Shading Mode selection
+        var shadingModeHeader = new RichTextBlock { Font = AppState.GetFont(), FontSize = 12f, Margin = new Thickness(0, 0, 0, 4) };
+        shadingModeHeader.Inlines.Add(new Bold(new Run("Shading & Diagnostic:")));
+
+        var shadingModeCombo = new ComboBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            WidthConstraint = 268f,
+            Margin = new Thickness(0, 0, 0, 16f)
+        };
+        shadingModeCombo.Items.Add(new ComboBoxItem { Text = "PBR GGX Shaded" });
+        shadingModeCombo.Items.Add(new ComboBoxItem { Text = "Flat / Unlit" });
+        shadingModeCombo.Items.Add(new ComboBoxItem { Text = "Normals Diagnostic" });
+        shadingModeCombo.SelectedItem = shadingModeCombo.Items[0]; // Default to Shaded
+
+        shadingModeCombo.SelectionChanged += (s, e) =>
+        {
+            if (shadingModeCombo.SelectedItem != null)
+            {
+                _selectedShadingMode = shadingModeCombo.SelectedItem.Text switch
+                {
+                    "PBR GGX Shaded" => ShadingMode3D.Shaded,
+                    "Flat / Unlit" => ShadingMode3D.Flat,
+                    "Normals Diagnostic" => ShadingMode3D.Normals,
+                    _ => ShadingMode3D.Shaded
                 };
                 UpdateViewportModels();
             }
@@ -453,6 +484,8 @@ public static class Mesh3DViewerPage
         sidebarStack.AddChild(shapeCombo);
         sidebarStack.AddChild(renderModeHeader);
         sidebarStack.AddChild(renderModeCombo);
+        sidebarStack.AddChild(shadingModeHeader);
+        sidebarStack.AddChild(shadingModeCombo);
         sidebarStack.AddChild(pathInputStack);
 
         // 1.5 Mesh Statistics Card
@@ -932,6 +965,11 @@ public static class Mesh3DViewerPage
         _viewport2.RenderMode = _selectedRenderMode;
         _viewport3.RenderMode = _selectedRenderMode;
         _viewport4.RenderMode = _selectedRenderMode;
+
+        _viewport1.ShadingMode = _selectedShadingMode;
+        _viewport2.ShadingMode = _selectedShadingMode;
+        _viewport3.ShadingMode = _selectedShadingMode;
+        _viewport4.ShadingMode = _selectedShadingMode;
 
         // Clear all model children
         _model1.Children.Clear();

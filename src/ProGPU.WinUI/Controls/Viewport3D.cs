@@ -209,6 +209,7 @@ namespace Microsoft.UI.Xaml.Controls
         public float AmbientIntensity { get; set; } = 0.25f;
 
         public RenderMode3D RenderMode { get; set; } = RenderMode3D.Solid;
+        public ShadingMode3D ShadingMode { get; set; } = ShadingMode3D.Shaded;
 
         private GpuTexture? _colorTexture;
         private GpuTexture? _msaaColorTexture;
@@ -347,7 +348,8 @@ namespace Microsoft.UI.Xaml.Controls
                 ColorTexture = _colorTexture,
                 MsaaColorTexture = _msaaColorTexture,
                 DepthTexture = _depthTexture,
-                RenderMode = RenderMode
+                RenderMode = RenderMode,
+                ShadingMode = ShadingMode
             };
 
             foreach (var visual in Children)

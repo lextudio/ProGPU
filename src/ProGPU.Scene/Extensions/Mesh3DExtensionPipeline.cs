@@ -16,6 +16,13 @@ namespace ProGPU.Scene.Extensions
         SolidWireframe = 2
     }
 
+    public enum ShadingMode3D
+    {
+        Shaded = 0,
+        Flat = 1,
+        Normals = 2
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct GpuVertex3D
     {
@@ -40,7 +47,7 @@ namespace ProGPU.Scene.Extensions
         public Vector4 MaterialAmbient;       // rgb = Material Ka, w = unused
         public float Opacity;
         public float RenderMode;              // 0.0f = Solid, 1.0f = Wireframe, 2.0f = SolidWireframe
-        private float _pad1;
+        public float ShadingMode;             // 0.0f = Shaded, 1.0f = Flat, 2.0f = Normals
         private float _pad2;
     }
 
@@ -72,7 +79,7 @@ struct GpuMesh3DRecord {
     materialAmbient: vec4<f32>,
     opacity: f32,
     renderMode: f32,
-    _pad1: f32,
+    shadingMode: f32,
     _pad2: f32,
 };
 
@@ -131,8 +138,19 @@ fn FresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let record = meshRecords[input.instanceIdx];
+    let shading = u32(record.shadingMode + 0.5);
 
     let N = normalize(input.worldNormal);
+
+    if (shading == 2u) { // Normals diagnostic view
+        let normalColor = N * 0.5 + 0.5;
+        return vec4<f32>(normalColor, record.opacity);
+    }
+
+    if (shading == 1u) { // Flat / Unlit view
+        return vec4<f32>(record.color.rgb * record.opacity, record.opacity);
+    }
+
     let V = normalize(uniforms.cameraPosition - input.worldPosition);
 
     let shininess = record.specularColor.w;
@@ -240,7 +258,7 @@ struct GpuMesh3DRecord {
     materialAmbient: vec4<f32>,
     opacity: f32,
     renderMode: f32,
-    _pad1: f32,
+    shadingMode: f32,
     _pad2: f32,
 };
 
@@ -312,96 +330,105 @@ fn FresnelSchlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let record = meshRecords[input.instanceIdx];
     let mode = u32(input.renderMode + 0.5);
+    let shading = u32(record.shadingMode + 0.5);
 
     let N = normalize(input.worldNormal);
-    let V = normalize(uniforms.cameraPosition - input.worldPosition);
 
-    let shininess = record.specularColor.w;
-    let roughness = clamp(sqrt(2.0 / (max(shininess, 0.001) + 2.0)), 0.04, 1.0);
-    let F0 = mix(vec3<f32>(0.04), record.color.rgb, 0.1);
+    var solidColor = vec4<f32>(0.0);
+    if (shading == 2u) { // Normals diagnostic view
+        solidColor = vec4<f32>(N * 0.5 + 0.5, record.opacity);
+    } else if (shading == 1u) { // Flat / Unlit view
+        solidColor = vec4<f32>(record.color.rgb * record.opacity, record.opacity);
+    } else {
+        // Shaded mode (PBR GGX)
+        let V = normalize(uniforms.cameraPosition - input.worldPosition);
 
-    // Three-Point Studio Lighting vectors and intensities
-    let keyDir = normalize(record.lightDirection.xyz);
-    let keyIntensity = record.lightDirection.w;
+        let shininess = record.specularColor.w;
+        let roughness = clamp(sqrt(2.0 / (max(shininess, 0.001) + 2.0)), 0.04, 1.0);
+        let F0 = mix(vec3<f32>(0.04), record.color.rgb, 0.1);
 
-    let fillDir = normalize(vec3<f32>(-keyDir.x, 0.5, -keyDir.z));
-    let fillIntensity = keyIntensity * 0.35;
-    let fillCol = vec3<f32>(0.8, 0.88, 1.0); // cool fill
+        // Three-Point Studio Lighting vectors and intensities
+        let keyDir = normalize(record.lightDirection.xyz);
+        let keyIntensity = record.lightDirection.w;
 
-    let backDir = normalize(vec3<f32>(-keyDir.x, -keyDir.y, -keyDir.z));
-    let backIntensity = keyIntensity * 0.45;
-    let backCol = vec3<f32>(1.0, 0.95, 0.9); // warm back light
+        let fillDir = normalize(vec3<f32>(-keyDir.x, 0.5, -keyDir.z));
+        let fillIntensity = keyIntensity * 0.35;
+        let fillCol = vec3<f32>(0.8, 0.88, 1.0); // cool fill
 
-    var diffuseOut = vec3<f32>(0.0);
-    var specularOut = vec3<f32>(0.0);
+        let backDir = normalize(vec3<f32>(-keyDir.x, -keyDir.y, -keyDir.z));
+        let backIntensity = keyIntensity * 0.45;
+        let backCol = vec3<f32>(1.0, 0.95, 0.9); // warm back light
 
-    // 1. KEY LIGHT
-    {
-        let L = keyDir;
-        let H = normalize(L + V);
-        let NdotL = max(dot(N, L), 0.0);
-        let NdotV = max(dot(N, V), 0.0);
-        if (NdotL > 0.0) {
-            let D = DistributionGGX(N, H, roughness);
-            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
-            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let spec = D * V_joint * F;
-            let kS = F;
-            let kD = (vec3<f32>(1.0) - kS);
-            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * keyIntensity;
-            specularOut += spec * NdotL * keyIntensity;
+        var diffuseOut = vec3<f32>(0.0);
+        var specularOut = vec3<f32>(0.0);
+
+        // 1. KEY LIGHT
+        {
+            let L = keyDir;
+            let H = normalize(L + V);
+            let NdotL = max(dot(N, L), 0.0);
+            let NdotV = max(dot(N, V), 0.0);
+            if (NdotL > 0.0) {
+                let D = DistributionGGX(N, H, roughness);
+                let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
+                let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+                let spec = D * V_joint * F;
+                let kS = F;
+                let kD = (vec3<f32>(1.0) - kS);
+                diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * keyIntensity;
+                specularOut += spec * NdotL * keyIntensity;
+            }
         }
-    }
 
-    // 2. FILL LIGHT
-    {
-        let L = fillDir;
-        let H = normalize(L + V);
-        let NdotL = max(dot(N, L), 0.0);
-        let NdotV = max(dot(N, V), 0.0);
-        if (NdotL > 0.0) {
-            let D = DistributionGGX(N, H, roughness);
-            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
-            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let spec = D * V_joint * F;
-            let kS = F;
-            let kD = (vec3<f32>(1.0) - kS);
-            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * fillIntensity * fillCol;
-            specularOut += spec * NdotL * fillIntensity * fillCol;
+        // 2. FILL LIGHT
+        {
+            let L = fillDir;
+            let H = normalize(L + V);
+            let NdotL = max(dot(N, L), 0.0);
+            let NdotV = max(dot(N, V), 0.0);
+            if (NdotL > 0.0) {
+                let D = DistributionGGX(N, H, roughness);
+                let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
+                let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+                let spec = D * V_joint * F;
+                let kS = F;
+                let kD = (vec3<f32>(1.0) - kS);
+                diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * fillIntensity * fillCol;
+                specularOut += spec * NdotL * fillIntensity * fillCol;
+            }
         }
-    }
 
-    // 3. BACK LIGHT
-    {
-        let L = backDir;
-        let H = normalize(L + V);
-        let NdotL = max(dot(N, L), 0.0);
-        let NdotV = max(dot(N, V), 0.0);
-        if (NdotL > 0.0) {
-            let D = DistributionGGX(N, H, roughness);
-            let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
-            let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-            let spec = D * V_joint * F;
-            let kS = F;
-            let kD = (vec3<f32>(1.0) - kS);
-            diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * backIntensity * backCol;
-            specularOut += spec * NdotL * backIntensity * backCol;
+        // 3. BACK LIGHT
+        {
+            let L = backDir;
+            let H = normalize(L + V);
+            let NdotL = max(dot(N, L), 0.0);
+            let NdotV = max(dot(N, V), 0.0);
+            if (NdotL > 0.0) {
+                let D = DistributionGGX(N, H, roughness);
+                let V_joint = VisibilitySchlickGGX(NdotV, NdotL, roughness);
+                let F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+                let spec = D * V_joint * F;
+                let kS = F;
+                let kD = (vec3<f32>(1.0) - kS);
+                diffuseOut += (kD * record.color.rgb / 3.1415926535) * NdotL * backIntensity * backCol;
+                specularOut += spec * NdotL * backIntensity * backCol;
+            }
         }
+
+        // Hemispherical sky-ground ambient
+        let skyFactor = N.y * 0.5 + 0.5;
+        let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
+        let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.4;
+        let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
+
+        // Premium rim glow
+        let F_rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+        let rimColor = vec3<f32>(0.85, 0.90, 1.0) * F_rim * 0.25 * keyIntensity;
+
+        let litColor = (ambient + diffuseOut + specularOut + rimColor) * record.opacity;
+        solidColor = vec4<f32>(litColor, record.opacity);
     }
-
-    // Hemispherical sky-ground ambient
-    let skyFactor = N.y * 0.5 + 0.5;
-    let skyAmbient = record.ambientColor.rgb * record.ambientColor.w;
-    let groundAmbient = record.ambientColor.rgb * record.ambientColor.w * 0.4;
-    let ambient = mix(groundAmbient, skyAmbient, skyFactor) * record.materialAmbient.rgb;
-
-    // Premium rim glow
-    let F_rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-    let rimColor = vec3<f32>(0.85, 0.90, 1.0) * F_rim * 0.25 * keyIntensity;
-
-    let litColor = (ambient + diffuseOut + specularOut + rimColor) * record.opacity;
-    let solidColor = vec4<f32>(litColor, record.opacity);
-
     let dFdx = dpdx(input.barycentric);
     let dFdy = dpdy(input.barycentric);
     let g = max(sqrt(dFdx * dFdx + dFdy * dFdy), vec3<f32>(0.00001));
@@ -554,7 +581,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     SpecularColor = new Vector4(mesh.SpecularColor, mesh.Shininess),
                     MaterialAmbient = new Vector4(mesh.AmbientColor, 1.0f),
                     Opacity = mesh.Opacity * compositor.ActiveOpacity,
-                    RenderMode = rMode
+                    RenderMode = rMode,
+                    ShadingMode = (float)payload.ShadingMode
                 };
             }
             res.DynamicRecordsBuffer.Write(cpuRecords);
@@ -865,6 +893,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         public GpuTexture? DepthTexture { get; set; }
         
         public RenderMode3D RenderMode { get; set; } = RenderMode3D.Solid;
+        public ShadingMode3D ShadingMode { get; set; } = ShadingMode3D.Shaded;
     }
 
     public class MeshCompilationEntry
