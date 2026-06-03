@@ -258,14 +258,14 @@ public class TtfFont
         if (subtableOffset == 0)
         {
             if (subtable12Offset != 0) return; // format 12 is active
-            throw new NotSupportedException("Could not find a supported Unicode cmap subtable in TTF font.");
+            return;
         }
 
         ushort format4 = ReadUShort(subtableOffset);
         if (format4 != 4)
         {
             if (subtable12Offset != 0) return; // format 12 is active
-            throw new NotSupportedException($"Only TTF Cmap Format 4 or 12 is supported. Found format {format4}.");
+            return;
         }
 
         _cmapOffset = subtableOffset;
@@ -444,7 +444,76 @@ public class TtfFont
         return 0;
     }
 
+    private readonly Dictionary<ushort, PathGeometry?> _glyphOutlineCache = new();
+    private readonly Dictionary<ushort, PathGeometry?> _flippedOutlineCache = new();
+
     public PathGeometry? GetGlyphOutline(ushort glyphIndex)
+    {
+        lock (_glyphOutlineCache)
+        {
+            if (_glyphOutlineCache.TryGetValue(glyphIndex, out var cached))
+            {
+                return cached;
+            }
+
+            var result = GetGlyphOutlineInternal(glyphIndex);
+            _glyphOutlineCache[glyphIndex] = result;
+            return result;
+        }
+    }
+
+    public PathGeometry? GetFlippedGlyphOutline(ushort glyphIndex)
+    {
+        lock (_flippedOutlineCache)
+        {
+            if (_flippedOutlineCache.TryGetValue(glyphIndex, out var cached))
+            {
+                return cached;
+            }
+
+            var rawOutline = GetGlyphOutline(glyphIndex);
+            if (rawOutline == null)
+            {
+                _flippedOutlineCache[glyphIndex] = null;
+                return null;
+            }
+
+            var flippedOutline = new PathGeometry();
+            foreach (var figure in rawOutline.Figures)
+            {
+                var startPt = new Vector2(figure.StartPoint.X, -figure.StartPoint.Y);
+                var newFigure = new PathFigure(startPt, figure.IsClosed) { IsFilled = figure.IsFilled };
+                foreach (var segment in figure.Segments)
+                {
+                    if (segment is LineSegment line)
+                    {
+                        newFigure.Segments.Add(new LineSegment(new Vector2(line.Point.X, -line.Point.Y)));
+                    }
+                    else if (segment is QuadraticBezierSegment quad)
+                    {
+                        newFigure.Segments.Add(new QuadraticBezierSegment(
+                            new Vector2(quad.ControlPoint.X, -quad.ControlPoint.Y),
+                            new Vector2(quad.Point.X, -quad.Point.Y)
+                        ));
+                    }
+                    else if (segment is CubicBezierSegment cubic)
+                    {
+                        newFigure.Segments.Add(new CubicBezierSegment(
+                            new Vector2(cubic.ControlPoint1.X, -cubic.ControlPoint1.Y),
+                            new Vector2(cubic.ControlPoint2.X, -cubic.ControlPoint2.Y),
+                            new Vector2(cubic.Point.X, -cubic.Point.Y)
+                        ));
+                    }
+                }
+                flippedOutline.Figures.Add(newFigure);
+            }
+
+            _flippedOutlineCache[glyphIndex] = flippedOutline;
+            return flippedOutline;
+        }
+    }
+
+    private PathGeometry? GetGlyphOutlineInternal(ushort glyphIndex)
     {
         uint startOffset = 0;
         uint endOffset = 0;
