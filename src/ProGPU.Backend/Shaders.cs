@@ -100,6 +100,7 @@ struct Uniforms {
     projection: mat4x4<f32>,
     mvp: mat4x4<f32>,
     view: mat4x4<f32>,
+    canvasSize: vec2<f32>,
 };
 
 
@@ -107,6 +108,8 @@ struct Uniforms {
 @group(0) @binding(1) var<storage, read> brushes: array<Brush>;
 @group(1) @binding(0) var pathAtlasSampler: sampler;
 @group(1) @binding(1) var pathAtlasTexture: texture_2d<f32>;
+@group(2) @binding(0) var maskSampler: sampler;
+@group(2) @binding(1) var maskTexture: texture_2d<f32>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -428,7 +431,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         finalColor = vec4<f32>(gradColor.rgb, gradColor.a * brush.opacity);
     }
 
-    return vec4<f32>(finalColor.rgb, finalColor.a * shapeAlpha);
+    let screen_uv = input.position.xy / uniforms.canvasSize;
+    let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
+    return vec4<f32>(finalColor.rgb, finalColor.a * shapeAlpha * maskAlpha);
 }
 ";
 
@@ -456,6 +461,7 @@ struct Uniforms {
     projection: mat4x4<f32>,
     mvp: mat4x4<f32>,
     view: mat4x4<f32>,
+    canvasSize: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -479,13 +485,17 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @group(1) @binding(0) var atlasSampler: sampler;
 @group(1) @binding(1) var atlasTexture: texture_2d<f32>;
+@group(2) @binding(0) var maskSampler: sampler;
+@group(2) @binding(1) var maskTexture: texture_2d<f32>;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureSample(atlasTexture, atlasSampler, input.texCoord).r;
     let dilated = clamp(alpha * input.strokeThickness, 0.0, 1.0);
     let finalAlpha = pow(dilated, input.cornerRadius);
-    return vec4<f32>(input.color.rgb, input.color.a * finalAlpha);
+    let screen_uv = input.position.xy / uniforms.canvasSize;
+    let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
+    return vec4<f32>(input.color.rgb, input.color.a * finalAlpha * maskAlpha);
 }
 ";
 
@@ -506,6 +516,7 @@ struct Uniforms {
     projection: mat4x4<f32>,
     mvp: mat4x4<f32>,
     view: mat4x4<f32>,
+    canvasSize: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -522,11 +533,15 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     @group(1) @binding(0) var texSampler: sampler;
 @group(1) @binding(1) var texTexture: texture_2d<f32>;
+@group(2) @binding(0) var maskSampler: sampler;
+@group(2) @binding(1) var maskTexture: texture_2d<f32>;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let texColor = textureSample(texTexture, texSampler, input.texCoord);
-    return texColor * input.color;
+    let screen_uv = input.position.xy / uniforms.canvasSize;
+    let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
+    return texColor * input.color * maskAlpha;
 }
 ";
 
@@ -617,15 +632,26 @@ fn is_point_inside(p: vec2<f32>, record: GlyphRecord) -> bool {
             
             for (var r: u32 = 0u; r < root_count; r = r + 1u) {
                 let t = roots[r];
-                if (t >= -0.001 && t <= 1.001) {
-                    let one_minus_t = 1.0 - t;
-                    let deriv_y = 2.0 * one_minus_t * (B.y - A.y) + 2.0 * t * (C.y - B.y);
+                if (t >= -0.01 && t <= 1.01) {
+                    let t_eval = clamp(t, 0.00001, 0.99999);
+                    let omt_eval = 1.0 - t_eval;
+                    let deriv_y = 2.0 * omt_eval * (B.y - A.y) + 2.0 * t_eval * (C.y - B.y);
                     
                     var is_valid = false;
-                    if (deriv_y > 0.0) {
-                        is_valid = (t >= -0.00005 && t < 0.99995);
-                    } else if (deriv_y < 0.0) {
-                        is_valid = (t > 0.00005 && t <= 1.00005);
+                    if (t < 0.005) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y >= A.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y < A.y);
+                        }
+                    } else if (t > 0.995) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y < C.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y >= C.y);
+                        }
+                    } else {
+                        is_valid = true;
                     }
                     
                     if (is_valid) {
@@ -763,15 +789,26 @@ fn is_point_inside(p: vec2<f32>, record: PathRecord) -> bool {
             
             for (var r: u32 = 0u; r < root_count; r = r + 1u) {
                 let t = roots[r];
-                if (t >= -0.001 && t <= 1.001) {
-                    let one_minus_t = 1.0 - t;
-                    let deriv_y = 2.0 * one_minus_t * (B.y - A.y) + 2.0 * t * (C.y - B.y);
+                if (t >= -0.01 && t <= 1.01) {
+                    let t_eval = clamp(t, 0.00001, 0.99999);
+                    let omt_eval = 1.0 - t_eval;
+                    let deriv_y = 2.0 * omt_eval * (B.y - A.y) + 2.0 * t_eval * (C.y - B.y);
                     
                     var is_valid = false;
-                    if (deriv_y > 0.0) {
-                        is_valid = (t >= -0.00005 && t < 0.99995);
-                    } else if (deriv_y < 0.0) {
-                        is_valid = (t > 0.00005 && t <= 1.00005);
+                    if (t < 0.005) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y >= A.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y < A.y);
+                        }
+                    } else if (t > 0.995) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y < C.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y >= C.y);
+                        }
+                    } else {
+                        is_valid = true;
                     }
                     
                     if (is_valid) {
@@ -805,14 +842,25 @@ fn is_point_inside(p: vec2<f32>, record: PathRecord) -> bool {
             
             for (var r: u32 = 0u; r < root_count; r = r + 1u) {
                 let t = roots[r];
-                if (t >= -0.001 && t <= 1.001) {
-                    let deriv_y = 3.0 * a * t * t + 2.0 * b * t + c;
+                if (t >= -0.01 && t <= 1.01) {
+                    let t_eval = clamp(t, 0.00001, 0.99999);
+                    let deriv_y = 3.0 * a * t_eval * t_eval + 2.0 * b * t_eval + c;
                     
                     var is_valid = false;
-                    if (deriv_y > 0.0) {
-                        is_valid = (t >= -0.00005 && t < 0.99995);
-                    } else if (deriv_y < 0.0) {
-                        is_valid = (t > 0.00005 && t <= 1.00005);
+                    if (t < 0.005) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y >= A.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y < A.y);
+                        }
+                    } else if (t > 0.995) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y < D_pt.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y >= D_pt.y);
+                        }
+                    } else {
+                        is_valid = true;
                     }
                     
                     if (is_valid) {
@@ -823,6 +871,74 @@ fn is_point_inside(p: vec2<f32>, record: PathRecord) -> bool {
                                 + 3.0 * omt * tc * tc * C.x
                                 + tc * tc * tc * D_pt.x;
                         if (p.x < x_t) {
+                            if (deriv_y > 0.0) {
+                                winding = winding + 1;
+                            } else if (deriv_y < 0.0) {
+                                winding = winding - 1;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (seg.segmentType == 3u) {
+            let p0 = seg.p0;
+            let p1 = seg.p1;
+            let center = seg.p2;
+            let r = seg.p3;
+            let rx = r.x;
+            let ry = r.y;
+            
+            let theta1 = bitcast<f32>(seg._pad0);
+            let delta_theta = bitcast<f32>(seg._pad1);
+            let phi = bitcast<f32>(seg._pad2);
+            
+            let cos_phi = cos(phi);
+            let sin_phi = sin(phi);
+            
+            let dy = p.y - center.y;
+            
+            let rx2 = rx * rx;
+            let ry2 = ry * ry;
+            
+            let A_val = (cos_phi * cos_phi) / rx2 + (sin_phi * sin_phi) / ry2;
+            let B_val = 2.0 * dy * cos_phi * sin_phi * (1.0 / rx2 - 1.0 / ry2);
+            let C_val = dy * dy * ((sin_phi * sin_phi) / rx2 + (cos_phi * cos_phi) / ry2) - 1.0;
+            
+            let discriminant = B_val * B_val - 4.0 * A_val * C_val;
+            if (discriminant >= 0.0) {
+                let sqrt_d = sqrt(discriminant);
+                let dx1 = (-B_val - sqrt_d) / (2.0 * A_val);
+                let dx2 = (-B_val + sqrt_d) / (2.0 * A_val);
+                
+                var roots = array<f32, 2>(dx1, dx2);
+                for (var r_idx: u32 = 0u; r_idx < 2u; r_idx = r_idx + 1u) {
+                    let dx = roots[r_idx];
+                    let intersectX = center.x + dx;
+                    if (p.x < intersectX) {
+                        let localX = dx * cos_phi + dy * sin_phi;
+                        let localY = -dx * sin_phi + dy * cos_phi;
+                        let theta = atan2(localY / ry, localX / rx);
+                        
+                        var t: f32 = 0.0;
+                        let pi2 = 6.283185307179586;
+                        if (delta_theta > 0.0) {
+                            let diff = (theta - theta1) - pi2 * floor((theta - theta1) / pi2);
+                            t = diff / delta_theta;
+                        } else {
+                            let diff = (theta1 - theta) - pi2 * floor((theta1 - theta) / pi2);
+                            t = diff / (-delta_theta);
+                        }
+                        
+                        let deriv_y = delta_theta * (-rx * sin(theta) * sin_phi + ry * cos(theta) * cos_phi);
+                        
+                        var is_valid = false;
+                        if (deriv_y > 0.0) {
+                            is_valid = (t >= 0.0 && t < 1.0);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (t > 0.0 && t <= 1.0);
+                        }
+                        
+                        if (is_valid) {
                             if (deriv_y > 0.0) {
                                 winding = winding + 1;
                             } else if (deriv_y < 0.0) {

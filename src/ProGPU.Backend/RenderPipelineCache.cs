@@ -5,6 +5,18 @@ using Silk.NET.WebGPU;
 
 namespace ProGPU.Backend;
 
+public enum GpuBlendMode
+{
+    SrcOver = 0,
+    Src,
+    Dst,
+    DstOver,
+    Multiply,
+    Screen,
+    Plus,
+    Clear
+}
+
 public unsafe class RenderPipelineCache : IDisposable
 {
     private readonly WgpuContext _context;
@@ -76,7 +88,9 @@ public unsafe class RenderPipelineCache : IDisposable
         uint sampleCount = 1,
         bool depthWriteEnabled = false,
         CompareFunction depthCompare = CompareFunction.Always,
-        CullMode cullMode = CullMode.None)
+        CullMode cullMode = CullMode.None,
+        GpuBlendMode blendMode = GpuBlendMode.SrcOver,
+        PipelineLayout* pipelineLayout = null)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(RenderPipelineCache));
         if (_renderPipelines.TryGetValue(key, out var cachedPipeline)) return (RenderPipeline*)cachedPipeline;
@@ -86,21 +100,50 @@ public unsafe class RenderPipelineCache : IDisposable
         var labelPtr = SilkMarshal.StringToPtr($"Pipeline_{key}");
 
         // Blending configuration for transparent/translucent UI components
-        var blendState = new BlendState
+        var blendState = new BlendState();
+        switch (blendMode)
         {
-            Color = new BlendComponent
-            {
-                SrcFactor = BlendFactor.SrcAlpha,
-                DstFactor = BlendFactor.OneMinusSrcAlpha,
-                Operation = BlendOperation.Add
-            },
-            Alpha = new BlendComponent
-            {
-                SrcFactor = BlendFactor.One,
-                DstFactor = BlendFactor.OneMinusSrcAlpha,
-                Operation = BlendOperation.Add
-            }
-        };
+            case GpuBlendMode.Src:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Dst:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.DstOver:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Multiply:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Dst, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Screen:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Plus:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Clear:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.SrcOver:
+            default:
+                if (key.Contains("Texture", StringComparison.OrdinalIgnoreCase))
+                {
+                    blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                }
+                else
+                {
+                    blendState.Color = new BlendComponent { SrcFactor = BlendFactor.SrcAlpha, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                }
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                break;
+        }
 
         var colorTarget = new ColorTargetState
         {
@@ -171,7 +214,7 @@ public unsafe class RenderPipelineCache : IDisposable
             var desc = new RenderPipelineDescriptor
             {
                 Label = (byte*)labelPtr,
-                Layout = null, // Auto-layout derived from shaders
+                Layout = pipelineLayout,
                 Vertex = vertexState,
                 Primitive = new PrimitiveState
                 {
@@ -243,23 +286,27 @@ public unsafe class RenderPipelineCache : IDisposable
     {
         if (_isDisposed) return;
 
-        foreach (var p in _renderPipelines.Values)
+        lock (_context.RenderLock)
         {
-            _context.Wgpu.RenderPipelineRelease((RenderPipeline*)p);
+            if (!_context.IsDisposed)
+            {
+                foreach (var p in _renderPipelines.Values)
+                {
+                    _context.Wgpu.RenderPipelineRelease((RenderPipeline*)p);
+                }
+                foreach (var p in _computePipelines.Values)
+                {
+                    _context.Wgpu.ComputePipelineRelease((ComputePipeline*)p);
+                }
+                foreach (var s in _shaders.Values)
+                {
+                    _context.Wgpu.ShaderModuleRelease((ShaderModule*)s);
+                }
+            }
+            _renderPipelines.Clear();
+            _computePipelines.Clear();
+            _shaders.Clear();
         }
-        _renderPipelines.Clear();
-
-        foreach (var p in _computePipelines.Values)
-        {
-            _context.Wgpu.ComputePipelineRelease((ComputePipeline*)p);
-        }
-        _computePipelines.Clear();
-
-        foreach (var s in _shaders.Values)
-        {
-            _context.Wgpu.ShaderModuleRelease((ShaderModule*)s);
-        }
-        _shaders.Clear();
 
         _isDisposed = true;
         GC.SuppressFinalize(this);
@@ -267,6 +314,6 @@ public unsafe class RenderPipelineCache : IDisposable
 
     ~RenderPipelineCache()
     {
-        Dispose();
+        // Do not call Dispose() or native WebGPU release APIs during finalization.
     }
 }
