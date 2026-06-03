@@ -35,7 +35,7 @@ public unsafe class GlyphAtlas : IDisposable
     private uint _currentY = 2;
     private uint _currentRowHeight = 0;
 
-    private readonly Dictionary<(TtfFont font, uint codePoint, float size, byte subpixelX), GlyphInfo> _glyphs = new();
+    private readonly Dictionary<(TtfFont font, ushort glyphIndex, float size, byte subpixelX), GlyphInfo> _glyphs = new();
     private readonly Dictionary<TtfFont, (GpuBuffer RecordsBuffer, GpuBuffer SegmentsBuffer)> _fontGpuData = new();
     
     private readonly RenderPipelineCache _pipelineCache;
@@ -142,13 +142,17 @@ public unsafe class GlyphAtlas : IDisposable
 
     public GlyphInfo GetOrCreateGlyph(TtfFont font, uint codePoint, float size, byte subpixelX = 0)
     {
+        ushort glyphIdx = font.GetGlyphIndex(codePoint);
+        return GetOrCreateGlyphByIndex(font, glyphIdx, size, subpixelX);
+    }
+
+    public GlyphInfo GetOrCreateGlyphByIndex(TtfFont font, ushort glyphIdx, float size, byte subpixelX = 0)
+    {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GlyphAtlas));
         
-        var key = (font, codePoint, size, subpixelX);
+        var key = (font, glyphIdx, size, subpixelX);
         if (!_glyphs.TryGetValue(key, out var info))
         {
-            ushort glyphIdx = font.GetGlyphIndex(codePoint);
-
             // If it is a dynamic color emoji inside the font, we don't need to rasterize it into the monochrome atlas!
             // Instead, we just provide proper layout bounds, and the compositor will render it using color vector paths.
             if (font.HasColorLayers(glyphIdx))
@@ -171,7 +175,7 @@ public unsafe class GlyphAtlas : IDisposable
                 var outline = font.GetGlyphOutline(glyphIdx);
 
                 // Handle space or control characters (empty outlines)
-                if (outline == null || codePoint == ' ' || codePoint == '\t' || codePoint == '\n' || codePoint == '\r')
+                if (outline == null || glyphIdx == font.GetGlyphIndex(' ') || glyphIdx == font.GetGlyphIndex('\t') || glyphIdx == font.GetGlyphIndex('\n') || glyphIdx == font.GetGlyphIndex('\r'))
                 {
                     float advance = font.GetAdvanceWidth(glyphIdx, size);
                     info = new GlyphInfo

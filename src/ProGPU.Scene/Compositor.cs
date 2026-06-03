@@ -1796,6 +1796,10 @@ public unsafe class Compositor : IDisposable
             int vectorStart = _vectorVerticesList.Count;
             int textStart = _textVerticesList.Count;
             var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
+            if (cmd.Type != RenderCommandType.DrawPath)
+            {
+                activeTransform = (cmd.Transform.M11 == 0f && cmd.Transform.M22 == 0f) ? activeTransform : cmd.Transform * activeTransform;
+            }
 
             bool savedUseGpuTransformsActive = _useGpuTransformsActive;
             Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
@@ -1959,6 +1963,9 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.DrawPicture:
                     CompilePicture(ctx, cmd.Picture, activeTransform);
                     break;
+                case RenderCommandType.DrawGlyphRun:
+                    CompileGlyphRunCommand(cmd, activeTransform);
+                    break;
             }
 
             if (cmd.UseGpuTransforms)
@@ -2017,6 +2024,10 @@ public unsafe class Compositor : IDisposable
             int vectorStart = _vectorVerticesList.Count;
             int textStart = _textVerticesList.Count;
             var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
+            if (cmd.Type != RenderCommandType.DrawPath)
+            {
+                activeTransform = (cmd.Transform.M11 == 0f && cmd.Transform.M22 == 0f) ? activeTransform : cmd.Transform * activeTransform;
+            }
             
             bool savedUseGpuTransformsActive = _useGpuTransformsActive;
             Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
@@ -2169,6 +2180,9 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.DrawPicture:
                     CompilePicture(parentContext, cmd.Picture, activeTransform);
                     break;
+                case RenderCommandType.DrawGlyphRun:
+                    CompileGlyphRunCommand(cmd, activeTransform);
+                    break;
             }
 
             if (cmd.UseGpuTransforms)
@@ -2286,6 +2300,7 @@ public unsafe class Compositor : IDisposable
     {
         SwitchBatch(BatchType.Vector);
         if (cmd.Path == null) return;
+
         int startIndex = _vectorVerticesList.Count;
 
         transform = (cmd.Transform.M11 == 0f && cmd.Transform.M22 == 0f) ? transform : cmd.Transform * transform;
@@ -3543,6 +3558,268 @@ public unsafe class Compositor : IDisposable
                 textVerticesSpan[currentVertexCount++] = new VectorVertex(v3, color, uv3, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
 
                 // Quads Triangle Indices
+                textIndicesSpan[currentIndexCount++] = idxStart;
+                textIndicesSpan[currentIndexCount++] = idxStart + 1;
+                textIndicesSpan[currentIndexCount++] = idxStart + 2;
+
+                textIndicesSpan[currentIndexCount++] = idxStart;
+                textIndicesSpan[currentIndexCount++] = idxStart + 2;
+                textIndicesSpan[currentIndexCount++] = idxStart + 3;
+            }
+        }
+
+        CollectionsMarshal.SetCount(_textVerticesList, currentVertexCount);
+        CollectionsMarshal.SetCount(_textIndicesList, currentIndexCount);
+    }
+
+    private void CompileGlyphRunCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        SwitchBatch(BatchType.Text);
+        if (ActiveCompilationContext != null && !ActiveCompilationContext.IsRecompiling)
+        {
+            _compiledTextRecords.Add(new StaticTextRecord { Command = cmd, Transform = transform });
+        }
+
+        var activeTransform = transform;
+        if (MathF.Abs(cmd.Rotation) > 0.0001f)
+        {
+            var localMat = Matrix4x4.CreateTranslation(-cmd.Position.X, -cmd.Position.Y, 0f) *
+                           Matrix4x4.CreateRotationZ(cmd.Rotation) *
+                           Matrix4x4.CreateTranslation(cmd.Position.X, cmd.Position.Y, 0f);
+            activeTransform = localMat * activeTransform;
+        }
+
+        var font = cmd.Font;
+        if (font == null || cmd.GlyphIndices == null || cmd.GlyphPositions == null) return;
+
+        float bIdx = RegisterBrush(cmd.Brush);
+        var brush = cmd.Brush as SolidColorBrush;
+        var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
+        color.W *= _activeOpacity;
+
+        int maxGlyphs = cmd.GlyphIndices.Length;
+        int maxPassCount = cmd.IsBold ? 2 : 1;
+        int maxVertices = maxGlyphs * maxPassCount * 4;
+        int maxIndices = maxGlyphs * maxPassCount * 6;
+
+        int vertexStart = _textVerticesList.Count;
+        int indexStart = _textIndicesList.Count;
+
+        CollectionsMarshal.SetCount(_textVerticesList, vertexStart + maxVertices);
+        CollectionsMarshal.SetCount(_textIndicesList, indexStart + maxIndices);
+
+        var textVerticesSpan = CollectionsMarshal.AsSpan(_textVerticesList);
+        var textIndicesSpan = CollectionsMarshal.AsSpan(_textIndicesList);
+
+        int currentVertexCount = vertexStart;
+        int currentIndexCount = indexStart;
+
+        float dpiScale = _currentDpiScale;
+        if (ActiveCompilationContext != null && ActiveCompilationContext.StaticZoom > 0.0001f)
+        {
+            dpiScale *= ActiveCompilationContext.StaticZoom;
+        }
+
+        float physicalFontSize = cmd.FontSize * dpiScale;
+        float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 64f);
+        if (rasterFontSize <= 24f)
+        {
+            rasterFontSize = MathF.Round(rasterFontSize * 2f) / 2f;
+        }
+        else
+        {
+            rasterFontSize = MathF.Round(rasterFontSize / 2f) * 2f;
+        }
+
+        bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
+                         MathF.Abs(activeTransform.M21) > 0.0001f ||
+                         activeTransform.M11 < 0.0f ||
+                         activeTransform.M22 < 0.0f;
+
+        float scaleX = new Vector2(activeTransform.M11, activeTransform.M12).Length();
+        float scaleY = new Vector2(activeTransform.M21, activeTransform.M22).Length();
+
+        for (int i = 0; i < maxGlyphs; i++)
+        {
+            ushort glyphIdx = cmd.GlyphIndices[i];
+            Vector2 position = cmd.GlyphPositions[i];
+
+            var colorLayers = font.GetColorLayers(glyphIdx);
+
+            if (colorLayers != null && colorLayers.Count > 0)
+            {
+                foreach (var layer in colorLayers)
+                {
+                    var layerOutline = font.GetGlyphOutline(layer.GlyphId);
+                    if (layerOutline == null) continue;
+
+                    float emScale = cmd.FontSize / font.UnitsPerEm;
+                    var transformedOutline = new PathGeometry();
+                    float x0 = position.X + cmd.Position.X;
+                    float y0 = position.Y + cmd.Position.Y;
+
+                    foreach (var fig in layerOutline.Figures)
+                    {
+                        Vector2 startPt = new Vector2(x0 + fig.StartPoint.X * emScale, y0 - fig.StartPoint.Y * emScale);
+                        var newFig = new PathFigure(startPt) { IsClosed = fig.IsClosed, IsFilled = fig.IsFilled };
+                        foreach (var seg in fig.Segments)
+                        {
+                            if (seg is LineSegment ls)
+                            {
+                                newFig.Segments.Add(new LineSegment(new Vector2(x0 + ls.Point.X * emScale, y0 - ls.Point.Y * emScale)));
+                            }
+                            else if (seg is QuadraticBezierSegment qbs)
+                            {
+                                newFig.Segments.Add(new QuadraticBezierSegment(
+                                    new Vector2(x0 + qbs.ControlPoint.X * emScale, y0 - qbs.ControlPoint.Y * emScale),
+                                    new Vector2(x0 + qbs.Point.X * emScale, y0 - qbs.Point.Y * emScale)
+                                ));
+                            }
+                            else if (seg is CubicBezierSegment cbs)
+                            {
+                                newFig.Segments.Add(new CubicBezierSegment(
+                                    new Vector2(x0 + cbs.ControlPoint1.X * emScale, y0 - cbs.ControlPoint1.Y * emScale),
+                                    new Vector2(x0 + cbs.ControlPoint2.X * emScale, y0 - cbs.ControlPoint2.Y * emScale),
+                                    new Vector2(x0 + cbs.Point.X * emScale, y0 - cbs.Point.Y * emScale)
+                                ));
+                            }
+                        }
+                        transformedOutline.Figures.Add(newFig);
+                    }
+
+                    var pathCmd = new RenderCommand
+                    {
+                        Type = RenderCommandType.DrawPath,
+                        Path = transformedOutline,
+                        Brush = new SolidColorBrush(layer.Color)
+                    };
+                    CompilePathCommand(pathCmd, activeTransform);
+                }
+                continue;
+            }
+
+            float baseCursorX = position.X;
+            float baseCursorY = position.Y;
+
+            Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), activeTransform);
+            Vector2 transPosPhysical = transPos * dpiScale;
+
+            byte subpixelX = 0;
+            float ipartX = 0f;
+            float snappedY = 0f;
+
+            if (!isRotated && rasterFontSize <= 24f)
+            {
+                float screenX = transPosPhysical.X;
+                float screenY = transPosPhysical.Y;
+
+                float ipartX_temp = MathF.Floor(screenX);
+                float fpartX = screenX - ipartX_temp;
+                int subIdx = (int)MathF.Round(fpartX * 4f);
+                if (subIdx == 4)
+                {
+                    subIdx = 0;
+                    ipartX_temp += 1.0f;
+                }
+                subpixelX = (byte)subIdx;
+                ipartX = ipartX_temp;
+                snappedY = MathF.Round(screenY);
+            }
+            else if (!isRotated)
+            {
+                ipartX = MathF.Round(transPosPhysical.X);
+                snappedY = MathF.Round(transPosPhysical.Y);
+            }
+
+            float scaleRatio = physicalFontSize / rasterFontSize;
+
+            var info = _atlas.GetOrCreateGlyphByIndex(font, glyphIdx, rasterFontSize, subpixelX);
+            if (info.Width == 0 || info.Height == 0) continue;
+
+            int passCount = cmd.IsBold ? 2 : 1;
+            float boldOffset = cmd.FontSize * 0.035f;
+
+            for (int pass = 0; pass < passCount; pass++)
+            {
+                float xOffset = pass * boldOffset;
+                Vector2 v0, v1, v2, v3;
+
+                if (!isRotated)
+                {
+                    float rx0 = ipartX + info.BearX * scaleX * scaleRatio + xOffset * scaleX * dpiScale;
+                    float ry0 = snappedY + info.BearY * scaleY * scaleRatio;
+                    float rx1 = rx0 + info.Width * scaleX * scaleRatio;
+                    float ry1 = ry0 + info.Height * scaleY * scaleRatio;
+
+                    float skewFactor = cmd.IsItalic ? 0.22f : 0f;
+                    float yBase = snappedY;
+
+                    float sx0 = rx0 - (ry0 - yBase) * skewFactor;
+                    float sx1 = rx1 - (ry0 - yBase) * skewFactor;
+                    float sx2 = rx1 - (ry1 - yBase) * skewFactor;
+                    float sx3 = rx0 - (ry1 - yBase) * skewFactor;
+
+                    v0 = new Vector2(sx0, ry0) / dpiScale;
+                    v1 = new Vector2(sx1, ry0) / dpiScale;
+                    v2 = new Vector2(sx2, ry1) / dpiScale;
+                    v3 = new Vector2(sx3, ry1) / dpiScale;
+                }
+                else
+                {
+                    float lx0 = info.BearX / dpiScale * scaleRatio + xOffset;
+                    float ly0 = info.BearY / dpiScale * scaleRatio;
+                    float lx1 = lx0 + info.Width / dpiScale * scaleRatio;
+                    float ly1 = ly0 + info.Height / dpiScale * scaleRatio;
+
+                    float skewFactor = cmd.IsItalic ? 0.22f : 0f;
+                    float yBase = 0f;
+
+                    float lsx0 = lx0 - (ly0 - yBase) * skewFactor;
+                    float lsx1 = lx1 - (ly0 - yBase) * skewFactor;
+                    float lsx2 = lx1 - (ly1 - yBase) * skewFactor;
+                    float lsx3 = lx0 - (ly1 - yBase) * skewFactor;
+
+                    Vector2 localP0 = new Vector2(baseCursorX + cmd.Position.X + lsx0, baseCursorY + cmd.Position.Y + ly0);
+                    Vector2 localP1 = new Vector2(baseCursorX + cmd.Position.X + lsx1, baseCursorY + cmd.Position.Y + ly0);
+                    Vector2 localP2 = new Vector2(baseCursorX + cmd.Position.X + lsx2, baseCursorY + cmd.Position.Y + ly1);
+                    Vector2 localP3 = new Vector2(baseCursorX + cmd.Position.X + lsx3, baseCursorY + cmd.Position.Y + ly1);
+
+                    v0 = Vector2.Transform(localP0, activeTransform);
+                    v1 = Vector2.Transform(localP1, activeTransform);
+                    v2 = Vector2.Transform(localP2, activeTransform);
+                    v3 = Vector2.Transform(localP3, activeTransform);
+                }
+
+                uint idxStart = (uint)currentVertexCount;
+
+                var uv0 = new Vector2(info.TexCoordMin.X, info.TexCoordMin.Y);
+                var uv1 = new Vector2(info.TexCoordMax.X, info.TexCoordMin.Y);
+                var uv2 = new Vector2(info.TexCoordMax.X, info.TexCoordMax.Y);
+                var uv3 = new Vector2(info.TexCoordMin.X, info.TexCoordMax.Y);
+
+                if (_activeClipRect.HasValue && !_useGpuTransformsActive)
+                {
+                    float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+                    float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+                    float minY = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
+                    float maxY = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
+
+                    float clipLeft = _activeClipRect.Value.X;
+                    float clipTop = _activeClipRect.Value.Y;
+                    float clipRight = clipLeft + _activeClipRect.Value.Width;
+                    float clipBottom = clipTop + _activeClipRect.Value.Height;
+
+                    if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
+                    {
+                        continue;
+                    }
+                }
+
+                textVerticesSpan[currentVertexCount++] = new VectorVertex(v0, color, uv0, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
+                textVerticesSpan[currentVertexCount++] = new VectorVertex(v1, color, uv1, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
+                textVerticesSpan[currentVertexCount++] = new VectorVertex(v2, color, uv2, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
+                textVerticesSpan[currentVertexCount++] = new VectorVertex(v3, color, uv3, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
+
                 textIndicesSpan[currentIndexCount++] = idxStart;
                 textIndicesSpan[currentIndexCount++] = idxStart + 1;
                 textIndicesSpan[currentIndexCount++] = idxStart + 2;

@@ -42,7 +42,8 @@ public enum RenderCommandType
     PushOpacityMask,
     PopOpacityMask,
     PushBlendMode,
-    PopBlendMode
+    PopBlendMode,
+    DrawGlyphRun
 }
 
 public struct Line3D
@@ -209,6 +210,10 @@ public struct RenderCommand
     // Picture property
     public GpuPicture? Picture;
 
+    // Glyph run properties (Skia SKTextBlob compatibility)
+    public ushort[]? GlyphIndices;
+    public Vector2[]? GlyphPositions;
+
     // High performance custom drawing extension properties
     public int ExtensionId;
     public int IntParam;
@@ -342,6 +347,21 @@ public class DrawingContext : IRenderDataProvider
             IsBold = isBold,
             IsItalic = isItalic,
             Rotation = rotation
+        });
+    }
+
+    public void DrawGlyphRun(ushort[] glyphIndices, Vector2[] glyphPositions, TtfFont font, float fontSize, Brush brush, Vector2 position, Matrix4x4 transform = default)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawGlyphRun,
+            GlyphIndices = glyphIndices,
+            GlyphPositions = glyphPositions,
+            Font = font,
+            FontSize = fontSize,
+            Brush = brush,
+            Position = position,
+            Transform = transform
         });
     }
 
