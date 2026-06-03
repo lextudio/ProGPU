@@ -79,11 +79,18 @@ public unsafe class GpuBuffer : IDisposable
     {
         if (_isDisposed) return;
 
-        if (BufferPtr != null)
+        lock (_context.RenderLock)
         {
-            _context.Wgpu.BufferDestroy(BufferPtr);
-            _context.Wgpu.BufferRelease(BufferPtr);
-            BufferPtr = null;
+            if (BufferPtr != null)
+            {
+                if (!_context.IsDisposed)
+                {
+                    _context.WaitIdle();
+                    _context.Wgpu.BufferDestroy(BufferPtr);
+                    _context.Wgpu.BufferRelease(BufferPtr);
+                }
+                BufferPtr = null;
+            }
         }
 
         _isDisposed = true;
@@ -92,6 +99,13 @@ public unsafe class GpuBuffer : IDisposable
 
     ~GpuBuffer()
     {
-        Dispose();
+        if (BufferPtr != null)
+        {
+            try
+            {
+                _context.QueueBufferDisposal((IntPtr)BufferPtr);
+            }
+            catch {}
+        }
     }
 }

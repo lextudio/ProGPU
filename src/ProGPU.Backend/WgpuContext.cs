@@ -17,8 +17,225 @@ public unsafe class WgpuContext : IDisposable
     public Queue* Queue { get; private set; } = null;
     public Surface* Surface { get; private set; } = null;
     public TextureFormat SwapChainFormat { get; private set; } = TextureFormat.Bgra8Unorm;
+
+    public readonly object RenderLock = new();
+    public readonly object DisposalLock = new();
+    public readonly List<IntPtr> PendingBuffers = new();
+    public readonly List<IntPtr> PendingTextures = new();
+    public readonly List<IntPtr> PendingTextureViews = new();
+    public readonly List<IntPtr> PendingBindGroups = new();
+    public readonly List<IntPtr> PendingBindGroupLayouts = new();
+    public readonly List<IntPtr> PendingPipelineLayouts = new();
+    public readonly List<IntPtr> PendingRenderPipelines = new();
+    public readonly List<IntPtr> PendingComputePipelines = new();
+    public readonly List<IntPtr> PendingSamplers = new();
+    public readonly List<IntPtr> PendingShaderModules = new();
+
+    public void QueueBufferDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingBuffers.Add(ptr);
+        }
+    }
+
+    public void QueueTextureDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingTextures.Add(ptr);
+        }
+    }
+
+    public void QueueTextureViewDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingTextureViews.Add(ptr);
+        }
+    }
+
+    public void QueueBindGroupDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingBindGroups.Add(ptr);
+        }
+    }
+
+    public void QueueBindGroupLayoutDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingBindGroupLayouts.Add(ptr);
+        }
+    }
+
+    public void QueuePipelineLayoutDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingPipelineLayouts.Add(ptr);
+        }
+    }
+
+    public void QueueRenderPipelineDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingRenderPipelines.Add(ptr);
+        }
+    }
+
+    public void QueueComputePipelineDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingComputePipelines.Add(ptr);
+        }
+    }
+
+    public void QueueSamplerDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingSamplers.Add(ptr);
+        }
+    }
+
+    public void QueueShaderModuleDisposal(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return;
+        lock (DisposalLock)
+        {
+            PendingShaderModules.Add(ptr);
+        }
+    }
+
+    public void CleanupPendingResources()
+    {
+        if (_isDisposed) return;
+
+        lock (RenderLock)
+        {
+            if (_isDisposed) return;
+
+            IntPtr[] buffers;
+            IntPtr[] textures;
+            IntPtr[] views;
+            IntPtr[] bindGroups;
+            IntPtr[] layouts;
+            IntPtr[] pipeLayouts;
+            IntPtr[] renderPipes;
+            IntPtr[] computePipes;
+            IntPtr[] samplers;
+            IntPtr[] shaders;
+
+            lock (DisposalLock)
+            {
+                buffers = PendingBuffers.ToArray();
+                PendingBuffers.Clear();
+
+                textures = PendingTextures.ToArray();
+                PendingTextures.Clear();
+
+                views = PendingTextureViews.ToArray();
+                PendingTextureViews.Clear();
+
+                bindGroups = PendingBindGroups.ToArray();
+                PendingBindGroups.Clear();
+
+                layouts = PendingBindGroupLayouts.ToArray();
+                PendingBindGroupLayouts.Clear();
+
+                pipeLayouts = PendingPipelineLayouts.ToArray();
+                PendingPipelineLayouts.Clear();
+
+                renderPipes = PendingRenderPipelines.ToArray();
+                PendingRenderPipelines.Clear();
+
+                computePipes = PendingComputePipelines.ToArray();
+                PendingComputePipelines.Clear();
+
+                samplers = PendingSamplers.ToArray();
+                PendingSamplers.Clear();
+
+                shaders = PendingShaderModules.ToArray();
+                PendingShaderModules.Clear();
+            }
+
+            if (views.Length > 0 || textures.Length > 0 || buffers.Length > 0 || bindGroups.Length > 0 || 
+                layouts.Length > 0 || pipeLayouts.Length > 0 || renderPipes.Length > 0 || 
+                computePipes.Length > 0 || samplers.Length > 0 || shaders.Length > 0)
+            {
+                WaitIdle();
+            }
+
+            foreach (var view in views)
+            {
+                Wgpu.TextureViewRelease((TextureView*)view);
+            }
+
+            foreach (var tex in textures)
+            {
+                Wgpu.TextureDestroy((Texture*)tex);
+                Wgpu.TextureRelease((Texture*)tex);
+            }
+
+            foreach (var buf in buffers)
+            {
+                Wgpu.BufferDestroy((Silk.NET.WebGPU.Buffer*)buf);
+                Wgpu.BufferRelease((Silk.NET.WebGPU.Buffer*)buf);
+            }
+
+            foreach (var bg in bindGroups)
+            {
+                Wgpu.BindGroupRelease((BindGroup*)bg);
+            }
+
+            foreach (var layout in layouts)
+            {
+                Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
+            }
+
+            foreach (var pipeLayout in pipeLayouts)
+            {
+                Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
+            }
+
+            foreach (var rp in renderPipes)
+            {
+                Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
+            }
+
+            foreach (var cp in computePipes)
+            {
+                Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
+            }
+
+            foreach (var sampler in samplers)
+            {
+                Wgpu.SamplerRelease((Sampler*)sampler);
+            }
+
+            foreach (var shader in shaders)
+            {
+                Wgpu.ShaderModuleRelease((ShaderModule*)shader);
+            }
+        }
+    }
     
     private bool _isDisposed;
+    public bool IsDisposed => _isDisposed;
     private uint _lastWidth = 1;
     private uint _lastHeight = 1;
     private bool _vsync = false;
@@ -41,6 +258,8 @@ public unsafe class WgpuContext : IDisposable
 
     private static readonly List<WgpuContext> _activeContexts = new();
 
+    public static event Action<WgpuContext>? Disposing;
+
     public static IReadOnlyList<WgpuContext> ActiveContexts
     {
         get
@@ -52,6 +271,7 @@ public unsafe class WgpuContext : IDisposable
         }
     }
 
+    [ThreadStatic]
     private static WgpuContext? _current;
 
     public static WgpuContext? Current
@@ -63,8 +283,13 @@ public unsafe class WgpuContext : IDisposable
     private IWindow? _window;
     public IWindow? Window => _window;
 
+    private static readonly object s_instanceLock = new();
+    private static Instance* s_globalInstance = null;
+
     public void Initialize(IWindow? window)
     {
+        string logPath = "/Users/wieslawsoltes/.gemini/antigravity/brain/a7990822-ca50-4be5-96d8-941456e6d9e6/test_run.log";
+        System.IO.File.AppendAllText(logPath, $"[WGPUCONTEXT] Initialize started, window exists={window != null}\n");
         lock (_activeContexts)
         {
             if (!_activeContexts.Contains(this))
@@ -76,18 +301,28 @@ public unsafe class WgpuContext : IDisposable
         _window = window;
         Wgpu = WebGPU.GetApi();
         
-        // 1. Create WebGPU Instance
-        var instanceDesc = new InstanceDescriptor();
-        Instance = Wgpu.CreateInstance(&instanceDesc);
-        if (Instance == null)
+        // 1. Create WebGPU Instance (shared statically)
+        System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Getting WebGPU Instance\n");
+        lock (s_instanceLock)
         {
-            throw new InvalidOperationException("Failed to create WebGPU Instance.");
+            if (s_globalInstance == null)
+            {
+                var instanceDesc = new InstanceDescriptor();
+                s_globalInstance = Wgpu.CreateInstance(&instanceDesc);
+                if (s_globalInstance == null)
+                {
+                    throw new InvalidOperationException("Failed to create WebGPU Instance.");
+                }
+            }
+            Instance = s_globalInstance;
         }
 
         // 2. Create Surface if window is provided
         if (window != null)
         {
+            System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Creating WebGPU Surface from window\n");
             Surface = window.CreateWebGPUSurface(Wgpu, Instance);
+            System.IO.File.AppendAllText(logPath, $"[WGPUCONTEXT] CreateWebGPUSurface returned Surface={(nint)Surface:X}\n");
             if (Surface == null)
             {
                 throw new InvalidOperationException("Failed to create WebGPU Surface from window.");
@@ -95,6 +330,7 @@ public unsafe class WgpuContext : IDisposable
         }
 
         // 3. Request Adapter (synchronously)
+        System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Requesting Adapter\n");
         var adapterSignal = new ManualResetEventSlim(false);
         Adapter* requestedAdapter = null;
 
@@ -121,6 +357,7 @@ public unsafe class WgpuContext : IDisposable
         Wgpu.InstanceRequestAdapter(Instance, &requestAdapterOptions, onAdapterReceived, null);
         adapterSignal.Wait();
         
+        System.IO.File.AppendAllText(logPath, $"[WGPUCONTEXT] RequestAdapter finished, adapter={(nint)requestedAdapter:X}\n");
         if (requestedAdapter == null)
         {
             throw new InvalidOperationException("Failed to obtain WebGPU Adapter.");
@@ -128,6 +365,7 @@ public unsafe class WgpuContext : IDisposable
         Adapter = requestedAdapter;
 
         // 4. Request Device (synchronously)
+        System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Requesting Device\n");
         var deviceSignal = new ManualResetEventSlim(false);
         Device* requestedDevice = null;
 
@@ -156,6 +394,7 @@ public unsafe class WgpuContext : IDisposable
         // Free labeled string
         SilkMarshal.Free((nint)deviceDesc.Label);
 
+        System.IO.File.AppendAllText(logPath, $"[WGPUCONTEXT] RequestDevice finished, device={(nint)requestedDevice:X}\n");
         if (requestedDevice == null)
         {
             throw new InvalidOperationException("Failed to obtain WebGPU Device.");
@@ -163,6 +402,7 @@ public unsafe class WgpuContext : IDisposable
         Device = requestedDevice;
 
         // 5. Retrieve Default Queue
+        System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Getting Default Queue\n");
         Queue = Wgpu.DeviceGetQueue(Device);
 
         // 6. Hook up validation error callback
@@ -175,7 +415,9 @@ public unsafe class WgpuContext : IDisposable
         // 7. Configure Surface if window exists
         if (window != null && Surface != null)
         {
+            System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Configuring SwapChain\n");
             ConfigureSwapChain((uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
+            System.IO.File.AppendAllText(logPath, "[WGPUCONTEXT] Configuring SwapChain finished\n");
         }
     }
 
@@ -263,43 +505,77 @@ public unsafe class WgpuContext : IDisposable
         Wgpu.SurfaceConfigure(Surface, &config);
     }
 
+    public void ReconfigureIfNeeded(uint width, uint height)
+    {
+        if (width != _lastWidth || height != _lastHeight)
+        {
+            ConfigureSwapChain(width, height);
+        }
+    }
+
+    [DllImport("wgpu_native", EntryPoint = "wgpuDevicePoll")]
+    private static extern unsafe bool wgpuDevicePoll(Device* device, bool wait, void* wrappedSubmissionIndex);
+
+    public void WaitIdle()
+    {
+        if (Device != null && !_isDisposed)
+        {
+            wgpuDevicePoll(Device, true, null);
+        }
+    }
+
     public void Dispose()
     {
         if (_isDisposed) return;
-        
-        lock (_activeContexts)
+
+        lock (RenderLock)
         {
-            _activeContexts.Remove(this);
-        }
-        
-        if (Device != null)
-        {
-            Wgpu.DeviceRelease(Device);
-            Device = null;
-        }
-        if (Adapter != null)
-        {
-            Wgpu.AdapterRelease(Adapter);
-            Adapter = null;
-        }
-        if (Surface != null)
-        {
-            Wgpu.SurfaceRelease(Surface);
-            Surface = null;
-        }
-        if (Instance != null)
-        {
-            Wgpu.InstanceRelease(Instance);
+            if (_isDisposed) return;
+
+            Disposing?.Invoke(this);
+
+            CleanupPendingResources();
+
+            WaitIdle();
+
+            if (Current == this)
+            {
+                Current = null;
+            }
+            
+            lock (_activeContexts)
+            {
+                _activeContexts.Remove(this);
+            }
+            
+            if (Device != null)
+            {
+                Wgpu.DeviceRelease(Device);
+                Device = null;
+            }
+            if (Adapter != null)
+            {
+                Wgpu.AdapterRelease(Adapter);
+                Adapter = null;
+            }
+            if (Surface != null)
+            {
+                Wgpu.SurfaceRelease(Surface);
+                Surface = null;
+            }
+            // Keep shared s_globalInstance alive; do not release it here.
             Instance = null;
+            
+            _isDisposed = true;
         }
-        
-        _isDisposed = true;
         
         GC.SuppressFinalize(this);
     }
 
     ~WgpuContext()
     {
-        Dispose();
+        // Do not call Dispose() or native WebGPU release APIs during finalization.
+        // During process exit or AssemblyLoadContext unload, the native wgpu_native library 
+        // may already be unloaded, causing native entry point calls to crash with a segfault (139).
     }
 }

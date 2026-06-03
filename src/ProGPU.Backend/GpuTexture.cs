@@ -8,11 +8,13 @@ namespace ProGPU.Backend;
 public unsafe class GpuTexture : IDisposable
 {
     private static long s_idCounter = 0;
+    public static event Action<ulong>? OnDisposedWithId;
 
     private readonly WgpuContext _context;
     private string _label;
 
     public ulong Id { get; }
+    public WgpuContext Context => _context;
     public uint Generation { get; private set; }
 
     public Texture* TexturePtr { get; private set; }
@@ -190,19 +192,35 @@ public unsafe class GpuTexture : IDisposable
         }
     }
 
+    public static void CleanupPendingResources(WgpuContext context)
+    {
+        context.CleanupPendingResources();
+    }
+
     private void ReleaseResources()
     {
-        if (ViewPtr != null)
+        lock (_context.RenderLock)
         {
-            _context.Wgpu.TextureViewRelease(ViewPtr);
-            ViewPtr = null;
-        }
+            if (_context.IsDisposed)
+            {
+                ViewPtr = null;
+                TexturePtr = null;
+                return;
+            }
 
-        if (TexturePtr != null)
-        {
-            _context.Wgpu.TextureDestroy(TexturePtr);
-            _context.Wgpu.TextureRelease(TexturePtr);
-            TexturePtr = null;
+            if (ViewPtr != null)
+            {
+                _context.Wgpu.TextureViewRelease(ViewPtr);
+                ViewPtr = null;
+            }
+
+            if (TexturePtr != null)
+            {
+                _context.WaitIdle();
+                _context.Wgpu.TextureDestroy(TexturePtr);
+                _context.Wgpu.TextureRelease(TexturePtr);
+                TexturePtr = null;
+            }
         }
     }
 
@@ -210,7 +228,28 @@ public unsafe class GpuTexture : IDisposable
     {
         if (_isDisposed) return;
 
-        ReleaseResources();
+        OnDisposedWithId?.Invoke(Id);
+
+        if (TexturePtr != null || ViewPtr != null)
+        {
+            if (Environment.HasShutdownStarted || _context.IsDisposed)
+            {
+                ReleaseResources();
+            }
+            else
+            {
+                if (ViewPtr != null)
+                {
+                    _context.QueueTextureViewDisposal((IntPtr)ViewPtr);
+                    ViewPtr = null;
+                }
+                if (TexturePtr != null)
+                {
+                    _context.QueueTextureDisposal((IntPtr)TexturePtr);
+                    TexturePtr = null;
+                }
+            }
+        }
 
         _isDisposed = true;
         GC.SuppressFinalize(this);
@@ -218,6 +257,20 @@ public unsafe class GpuTexture : IDisposable
 
     ~GpuTexture()
     {
-        Dispose();
+        if (TexturePtr != null || ViewPtr != null)
+        {
+            try
+            {
+                if (ViewPtr != null)
+                {
+                    _context.QueueTextureViewDisposal((IntPtr)ViewPtr);
+                }
+                if (TexturePtr != null)
+                {
+                    _context.QueueTextureDisposal((IntPtr)TexturePtr);
+                }
+            }
+            catch {}
+        }
     }
 }
