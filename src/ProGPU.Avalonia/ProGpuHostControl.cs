@@ -104,7 +104,16 @@ public class ProGpuHostControl : Control
         set => SetValue(WinuiRootProperty, value);
     }
 
-    public bool EnableZeroCopy { get; set; } = false;
+    public static readonly StyledProperty<CornerRadius> CornerRadiusProperty =
+        AvaloniaProperty.Register<ProGpuHostControl, CornerRadius>(nameof(CornerRadius));
+
+    public CornerRadius CornerRadius
+    {
+        get => GetValue(CornerRadiusProperty);
+        set => SetValue(CornerRadiusProperty, value);
+    }
+
+    public bool EnableZeroCopy { get; set; } = true;
 
     public WgpuContext? WgpuContext => _wgpuContext;
     public WinuiCompositor? Compositor => _compositor;
@@ -212,6 +221,7 @@ public class ProGpuHostControl : Control
         // Enable focus by default
         FocusableProperty.OverrideDefaultValue<ProGpuHostControl>(true);
         AffectsRender<ProGpuHostControl>(WinuiRootProperty);
+        AffectsRender<ProGpuHostControl>(CornerRadiusProperty);
         s_mapCallback = PfnBufferMapCallback.From(OnMapCallback);
     }
 
@@ -244,6 +254,8 @@ public class ProGpuHostControl : Control
             _surfaceVisual.Size = new Vector2((float)e.NewSize.Width, (float)e.NewSize.Height);
         }
 
+        UpdateClipGeometry();
+
         if (_isInitialized)
         {
             QueueRenderUpdate();
@@ -266,9 +278,18 @@ public class ProGpuHostControl : Control
     {
         if (_isInitialized) return;
 
-        // 1. Initialize Headless/Offscreen WebGPU Context
-        _wgpuContext = new WgpuContext();
-        _wgpuContext.Initialize(null); // No Silk window; direct offscreen render target
+        // 1. Initialize or reuse Headless/Offscreen WebGPU Context
+        var active = WgpuContext.ActiveContexts;
+        if (active.Count > 0)
+        {
+            _wgpuContext = active[0];
+            WgpuContext.Current = _wgpuContext;
+        }
+        else
+        {
+            _wgpuContext = new WgpuContext();
+            _wgpuContext.Initialize(null); // No Silk window; direct offscreen render target
+        }
         StartPolling();
 
         // 2. Initialize Compositor targeting BGRA8Unorm texture formats
@@ -459,7 +480,7 @@ public class ProGpuHostControl : Control
                 width,
                 height,
                 TextureFormat.Bgra8Unorm,
-                TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+                TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.TextureBinding,
                 $"Shared Zero-Copy Target {i}"
             );
 
@@ -641,9 +662,14 @@ public class ProGpuHostControl : Control
         else if (_customVisual != null)
         {
             // Send latest compiled tree and sizes to composition handler
-            _customVisual.SendHandlerMessage(Tuple.Create<Microsoft.UI.Xaml.FrameworkElement?, uint, uint, double>(
-                WinuiRoot, renderWidth, renderHeight, dpi
-            ));
+            _customVisual.SendHandlerMessage(new RenderState
+            {
+                WinuiRoot = WinuiRoot,
+                Width = renderWidth,
+                Height = renderHeight,
+                DpiScale = dpi,
+                CornerRadius = CornerRadius
+            });
         }
     }
 
@@ -831,6 +857,40 @@ public class ProGpuHostControl : Control
         }
     }
 
+    private void UpdateClipGeometry()
+    {
+        var cornerRadius = CornerRadius;
+        bool hasRoundedCorners = cornerRadius.TopLeft > 0 || cornerRadius.TopRight > 0 || 
+                                 cornerRadius.BottomLeft > 0 || cornerRadius.BottomRight > 0;
+
+        if (hasRoundedCorners && Bounds.Width > 0 && Bounds.Height > 0)
+        {
+            double radius = Math.Max(cornerRadius.TopLeft, Math.Max(cornerRadius.TopRight, 
+                            Math.Max(cornerRadius.BottomLeft, cornerRadius.BottomRight)));
+            
+            Clip = new RectangleGeometry
+            {
+                Rect = new AvaloniaRect(0, 0, Bounds.Width, Bounds.Height),
+                RadiusX = radius,
+                RadiusY = radius
+            };
+        }
+        else
+        {
+            Clip = null;
+        }
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == CornerRadiusProperty)
+        {
+            UpdateClipGeometry();
+            QueueRenderUpdate();
+        }
+    }
+
     public override void Render(AvaloniaDrawingContext context)
     {
         context.DrawRectangle(Brushes.Transparent, null, new AvaloniaRect(0, 0, Bounds.Width, Bounds.Height));
@@ -860,6 +920,7 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
     private uint _renderHeight;
     private double _dpiScale = 1.0;
     private bool _resourcesDirty;
+    private CornerRadius _cornerRadius;
 
     public ProGpuCustomVisualHandler(WgpuContext? wgpuContext, WinuiCompositor? compositor)
     {
@@ -881,18 +942,19 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
             return;
         }
 
-        if (message is Tuple<Microsoft.UI.Xaml.FrameworkElement?, uint, uint, double> renderState)
+        if (message is RenderState state)
         {
             lock (_stateLock)
             {
-                _winuiRoot = renderState.Item1;
-                if (_renderWidth != renderState.Item2 || _renderHeight != renderState.Item3 || _dpiScale != renderState.Item4)
+                _winuiRoot = state.WinuiRoot;
+                if (_renderWidth != state.Width || _renderHeight != state.Height || _dpiScale != state.DpiScale)
                 {
-                    _renderWidth = renderState.Item2;
-                    _renderHeight = renderState.Item3;
-                    _dpiScale = renderState.Item4;
+                    _renderWidth = state.Width;
+                    _renderHeight = state.Height;
+                    _dpiScale = state.DpiScale;
                     _resourcesDirty = true;
                 }
+                _cornerRadius = state.CornerRadius;
             }
             Invalidate();
         }
@@ -909,7 +971,7 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
                 width, 
                 height, 
                 TextureFormat.Bgra8Unorm, 
-                TextureUsage.RenderAttachment | TextureUsage.CopySrc, 
+                TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.TextureBinding, 
                 "Avalonia Host Offscreen Target"
             );
         }
@@ -957,6 +1019,7 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
         uint height;
         double dpiScale;
         bool resourcesDirty;
+        CornerRadius cornerRadius;
 
         lock (_stateLock)
         {
@@ -966,6 +1029,7 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
             dpiScale = _dpiScale;
             resourcesDirty = _resourcesDirty;
             _resourcesDirty = false;
+            cornerRadius = _cornerRadius;
         }
 
         if (localRoot == null || width == 0 || height == 0 || _wgpuContext == null || _compositor == null)
@@ -1067,7 +1131,19 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
         if (_writeableBitmap != null)
         {
             var bounds = GetRenderBounds();
-            drawingContext.DrawBitmap(_writeableBitmap, bounds);
+            bool hasRoundedCorners = cornerRadius.TopLeft > 0 || cornerRadius.TopRight > 0 || 
+                                     cornerRadius.BottomLeft > 0 || cornerRadius.BottomRight > 0;
+            if (hasRoundedCorners)
+            {
+                using (drawingContext.PushClip(new RoundedRect(bounds, cornerRadius)))
+                {
+                    drawingContext.DrawBitmap(_writeableBitmap, bounds);
+                }
+            }
+            else
+            {
+                drawingContext.DrawBitmap(_writeableBitmap, bounds);
+            }
         }
     }
 
@@ -1094,4 +1170,13 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
         _compositor?.Dispose();
         _wgpuContext?.Dispose();
     }
+}
+
+public struct RenderState
+{
+    public Microsoft.UI.Xaml.FrameworkElement? WinuiRoot;
+    public uint Width;
+    public uint Height;
+    public double DpiScale;
+    public CornerRadius CornerRadius;
 }

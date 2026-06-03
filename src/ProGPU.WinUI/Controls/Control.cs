@@ -67,7 +67,7 @@ public class Control : FrameworkElement, ITemplatedControl
         set => SetValue(TemplateProperty, value);
     }
 
-    public bool HasTemplate => _templateRoot != null;
+    public override bool HasTemplate => _templateRoot != null;
 
     public Brush? Background
     {
