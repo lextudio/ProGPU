@@ -458,11 +458,81 @@ namespace ProGPU.Transpiler
             return sb.ToString();
         }
 
+        private class BlockState
+        {
+            public bool ParentIsActive { get; set; }
+            public bool CurrentBranchActive { get; set; }
+            public bool AnyBranchWasActive { get; set; }
+            public bool IsActive => ParentIsActive && CurrentBranchActive;
+        }
+
+        private static bool EvaluateBooleanExpression(string expr)
+        {
+            expr = expr.Replace(" ", "").Replace("\t", "");
+            string last;
+            do
+            {
+                last = expr;
+                expr = expr.Replace("!1", "0");
+                expr = expr.Replace("!0", "1");
+                expr = expr.Replace("(1)", "1");
+                expr = expr.Replace("(0)", "0");
+                expr = expr.Replace("1&&1", "1");
+                expr = expr.Replace("1&&0", "0");
+                expr = expr.Replace("0&&1", "0");
+                expr = expr.Replace("0&&0", "0");
+                expr = expr.Replace("1||1", "1");
+                expr = expr.Replace("1||0", "1");
+                expr = expr.Replace("0||1", "1");
+                expr = expr.Replace("0||0", "0");
+            } while (expr != last);
+
+            return expr.Contains('1') && !expr.Contains('0');
+        }
+
+        private static bool EvaluateCondition(string expr, HashSet<string> definedMacros)
+        {
+            expr = expr.Trim();
+            if (expr == "0" || expr.Equals("false", StringComparison.OrdinalIgnoreCase)) return false;
+            if (expr == "1" || expr.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+
+            var definedRegex = new Regex(@"defined\s*\(\s*([a-zA-Z0-9_]+)\s*\)|defined\s+([a-zA-Z0-9_]+)", RegexOptions.Compiled);
+            expr = definedRegex.Replace(expr, m =>
+            {
+                string macro = !string.IsNullOrEmpty(m.Groups[1].Value) ? m.Groups[1].Value : m.Groups[2].Value;
+                return definedMacros.Contains(macro) ? "1" : "0";
+            });
+
+            var idRegex = new Regex(@"\b[a-zA-Z_][a-zA-Z0-9_]*\b", RegexOptions.Compiled);
+            expr = idRegex.Replace(expr, m =>
+            {
+                string word = m.Value;
+                if (word == "true" || word == "1") return "1";
+                if (word == "false" || word == "0") return "0";
+                if (definedMacros.Contains(word))
+                {
+                    return "1";
+                }
+                return "0";
+            });
+
+            try
+            {
+                return EvaluateBooleanExpression(expr);
+            }
+            catch
+            {
+                return expr.Contains('1');
+            }
+        }
+
         private static string Preprocess(string source)
         {
             var lines = source.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
             var simpleDefines = new Dictionary<string, string>();
             var paramDefines = new List<ParamMacro>();
+            var definedMacros = new HashSet<string>();
+            var stateStack = new Stack<BlockState>();
             var newLines = new List<string>();
 
             var paramDefineRegex = new Regex(@"^#define\s+([a-zA-Z_][a-zA-Z0-9_]*)\(([^)]*)\)\s+(.*)$", RegexOptions.Compiled);
@@ -470,47 +540,168 @@ namespace ProGPU.Transpiler
             foreach (var line in lines)
             {
                 var trimmed = line.Trim();
-                if (trimmed.StartsWith("#define"))
+                if (trimmed.StartsWith("#"))
                 {
-                    var match = paramDefineRegex.Match(trimmed);
-                    if (match.Success)
+                    bool isCurrentlyActive = (stateStack.Count == 0) ? true : stateStack.Peek().IsActive;
+
+                    if (trimmed.StartsWith("#ifdef"))
                     {
-                        var macroName = match.Groups[1].Value;
-                        var paramsStr = match.Groups[2].Value;
-                        var body = match.Groups[3].Value;
+                        var macroName = trimmed.Substring("#ifdef".Length).Trim();
+                        int commentIdx = macroName.IndexOf("//");
+                        if (commentIdx >= 0) macroName = macroName.Substring(0, commentIdx).Trim();
+                        int multilineCommentIdx = macroName.IndexOf("/*");
+                        if (multilineCommentIdx >= 0) macroName = macroName.Substring(0, multilineCommentIdx).Trim();
 
-                        var parameters = new List<string>();
-                        foreach (var p in paramsStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                        bool cond = definedMacros.Contains(macroName);
+                        stateStack.Push(new BlockState { ParentIsActive = isCurrentlyActive, CurrentBranchActive = cond, AnyBranchWasActive = cond });
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#ifndef"))
+                    {
+                        var macroName = trimmed.Substring("#ifndef".Length).Trim();
+                        int commentIdx = macroName.IndexOf("//");
+                        if (commentIdx >= 0) macroName = macroName.Substring(0, commentIdx).Trim();
+                        int multilineCommentIdx = macroName.IndexOf("/*");
+                        if (multilineCommentIdx >= 0) macroName = macroName.Substring(0, multilineCommentIdx).Trim();
+
+                        bool cond = !definedMacros.Contains(macroName);
+                        stateStack.Push(new BlockState { ParentIsActive = isCurrentlyActive, CurrentBranchActive = cond, AnyBranchWasActive = cond });
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#if"))
+                    {
+                        var expr = trimmed.Substring("#if".Length).Trim();
+                        int commentIdx = expr.IndexOf("//");
+                        if (commentIdx >= 0) expr = expr.Substring(0, commentIdx).Trim();
+                        int multilineCommentIdx = expr.IndexOf("/*");
+                        if (multilineCommentIdx >= 0) expr = expr.Substring(0, multilineCommentIdx).Trim();
+
+                        bool cond = EvaluateCondition(expr, definedMacros);
+                        stateStack.Push(new BlockState { ParentIsActive = isCurrentlyActive, CurrentBranchActive = cond, AnyBranchWasActive = cond });
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#elif"))
+                    {
+                        var expr = trimmed.Substring("#elif".Length).Trim();
+                        int commentIdx = expr.IndexOf("//");
+                        if (commentIdx >= 0) expr = expr.Substring(0, commentIdx).Trim();
+                        int multilineCommentIdx = expr.IndexOf("/*");
+                        if (multilineCommentIdx >= 0) expr = expr.Substring(0, multilineCommentIdx).Trim();
+
+                        if (stateStack.Count > 0)
                         {
-                            parameters.Add(p.Trim());
+                            var state = stateStack.Peek();
+                            if (state.AnyBranchWasActive)
+                            {
+                                state.CurrentBranchActive = false;
+                            }
+                            else
+                            {
+                                bool cond = EvaluateCondition(expr, definedMacros);
+                                state.CurrentBranchActive = cond;
+                                if (cond) state.AnyBranchWasActive = true;
+                            }
                         }
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#else"))
+                    {
+                        if (stateStack.Count > 0)
+                        {
+                            var state = stateStack.Peek();
+                            state.CurrentBranchActive = !state.AnyBranchWasActive;
+                            state.AnyBranchWasActive = true;
+                        }
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#endif"))
+                    {
+                        if (stateStack.Count > 0)
+                        {
+                            stateStack.Pop();
+                        }
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#define"))
+                    {
+                        if (isCurrentlyActive)
+                        {
+                            var match = paramDefineRegex.Match(trimmed);
+                            if (match.Success)
+                            {
+                                var macroName = match.Groups[1].Value;
+                                var paramsStr = match.Groups[2].Value;
+                                var body = match.Groups[3].Value;
 
-                        paramDefines.Add(new ParamMacro { Name = macroName, Params = parameters, Body = body });
+                                var parameters = new List<string>();
+                                foreach (var p in paramsStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    parameters.Add(p.Trim());
+                                }
+
+                                paramDefines.Add(new ParamMacro { Name = macroName, Params = parameters, Body = body });
+                                definedMacros.Add(macroName);
+                            }
+                            else
+                            {
+                                var parts = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                                if (parts.Length >= 2)
+                                {
+                                    string key = parts[1];
+                                    definedMacros.Add(key);
+
+                                    if (parts.Length >= 3)
+                                    {
+                                        string val = string.Join(" ", parts, 2, parts.Length - 2);
+                                        int commentIdx = val.IndexOf("//");
+                                        if (commentIdx >= 0) val = val.Substring(0, commentIdx).Trim();
+                                        int multilineCommentIdx = val.IndexOf("/*");
+                                        if (multilineCommentIdx >= 0) val = val.Substring(0, multilineCommentIdx).Trim();
+                                        simpleDefines[key] = val.Trim();
+                                    }
+                                    else
+                                    {
+                                        simpleDefines[key] = "";
+                                    }
+                                }
+                            }
+                        }
+                        newLines.Add("");
+                    }
+                    else if (trimmed.StartsWith("#undef"))
+                    {
+                        if (isCurrentlyActive)
+                        {
+                            var parts = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length >= 2)
+                            {
+                                string key = parts[1];
+                                definedMacros.Remove(key);
+                                simpleDefines.Remove(key);
+                            }
+                        }
                         newLines.Add("");
                     }
                     else
                     {
-                        var parts = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length >= 3)
-                        {
-                            string key = parts[1];
-                            string val = string.Join(" ", parts, 2, parts.Length - 2);
-                            int commentIdx = val.IndexOf("//");
-                            if (commentIdx >= 0) val = val.Substring(0, commentIdx).Trim();
-                            int multilineCommentIdx = val.IndexOf("/*");
-                            if (multilineCommentIdx >= 0) val = val.Substring(0, multilineCommentIdx).Trim();
-                            simpleDefines[key] = val.Trim();
-                        }
                         newLines.Add("");
                     }
                 }
-                else if (trimmed.StartsWith("#") || trimmed.StartsWith("precision"))
+                else if (trimmed.StartsWith("precision"))
                 {
                     newLines.Add("");
                 }
                 else
                 {
-                    newLines.Add(line);
+                    bool isCurrentlyActive = (stateStack.Count == 0) ? true : stateStack.Peek().IsActive;
+                    if (isCurrentlyActive)
+                    {
+                        newLines.Add(line);
+                    }
+                    else
+                    {
+                        newLines.Add("");
+                    }
                 }
             }
 
@@ -1527,6 +1718,8 @@ namespace ProGPU.Transpiler
         private readonly Dictionary<string, StructType> _structs;
         private readonly Dictionary<string, string> _userFunctions;
         private readonly List<VariableDeclarationStatement> _globalVarsWithInitializers = new();
+        private readonly Dictionary<string, FunctionDeclaration> _userFunctionDecls = new();
+        private FunctionDeclaration? _currentFunction = null;
 
         public Generator(Dictionary<string, StructType> structs, Dictionary<string, string> userFunctions)
         {
@@ -1537,6 +1730,19 @@ namespace ProGPU.Transpiler
         public string Generate(List<AstNode> nodes)
         {
             _globalVarsWithInitializers.Clear();
+            _userFunctionDecls.Clear();
+            foreach (var node in nodes)
+            {
+                if (node is FunctionDeclaration f)
+                {
+                    _userFunctionDecls[f.Name] = f;
+                    var paramTypes = new List<string>();
+                    foreach (var p in f.Parameters) paramTypes.Add(p.Type);
+                    string signatureKey = $"{f.Name}({string.Join(",", paramTypes)})";
+                    _userFunctionDecls[signatureKey] = f;
+                }
+            }
+
             var sb = new StringBuilder();
 
             sb.AppendLine("// Auto-generated from GLSL by ProGPU Compiler");
@@ -1596,6 +1802,8 @@ namespace ProGPU.Transpiler
 
         private string GenerateFunction(FunctionDeclaration node)
         {
+            _currentFunction = node;
+            string resultStr;
             if (node.Name == "mainImage")
             {
                 string colorName = "fragColor";
@@ -1618,7 +1826,7 @@ namespace ProGPU.Transpiler
                 }
                 sb.AppendLine($"    return {colorName};");
                 sb.AppendLine("}");
-                return sb.ToString();
+                resultStr = sb.ToString();
             }
             else
             {
@@ -1627,8 +1835,17 @@ namespace ProGPU.Transpiler
                 foreach (var p in node.Parameters)
                 {
                     string argName = $"{ResolveIdentifier(p.Name)}_arg";
-                    paramsList.Add($"{argName}: {MapType(p.Type)}");
-                    mutableCopies.Add($"    var {ResolveIdentifier(p.Name)} = {argName};");
+                    bool isOut = p.Modifier == "out" || p.Modifier == "inout";
+                    if (isOut)
+                    {
+                        paramsList.Add($"{argName}: ptr<function, {MapType(p.Type)}>");
+                        mutableCopies.Add($"    var {ResolveIdentifier(p.Name)} = *{argName};");
+                    }
+                    else
+                    {
+                        paramsList.Add($"{argName}: {MapType(p.Type)}");
+                        mutableCopies.Add($"    var {ResolveIdentifier(p.Name)} = {argName};");
+                    }
                 }
                 var paramTypes = new List<string>();
                 foreach (var p in node.Parameters) paramTypes.Add(p.Type);
@@ -1645,9 +1862,31 @@ namespace ProGPU.Transpiler
                 {
                     sb.Append(GenerateStatement(stmt, "    "));
                 }
+
+                bool endsWithReturn = false;
+                if (node.Body.Statements.Count > 0)
+                {
+                    var lastStmt = node.Body.Statements[node.Body.Statements.Count - 1];
+                    if (lastStmt is ReturnStatement) endsWithReturn = true;
+                }
+
+                if (!endsWithReturn)
+                {
+                    foreach (var p in node.Parameters)
+                    {
+                        if (p.Modifier == "out" || p.Modifier == "inout")
+                        {
+                            string argName = $"{ResolveIdentifier(p.Name)}_arg";
+                            sb.AppendLine($"    *{argName} = {ResolveIdentifier(p.Name)};");
+                        }
+                    }
+                }
+
                 sb.AppendLine("}");
-                return sb.ToString();
+                resultStr = sb.ToString();
             }
+            _currentFunction = null;
+            return resultStr;
         }
 
         private string GenerateStatement(Statement stmt, string indent)
@@ -1747,13 +1986,25 @@ namespace ProGPU.Transpiler
             }
             if (stmt is ReturnStatement r)
             {
+                var copyBacks = new StringBuilder();
+                if (_currentFunction != null && _currentFunction.Name != "mainImage")
+                {
+                    foreach (var p in _currentFunction.Parameters)
+                    {
+                        if (p.Modifier == "out" || p.Modifier == "inout")
+                        {
+                            string argName = $"{ResolveIdentifier(p.Name)}_arg";
+                            copyBacks.Append($"{indent}*{argName} = {ResolveIdentifier(p.Name)};\n");
+                        }
+                    }
+                }
                 if (r.Expression != null)
                 {
-                    return $"{indent}return {GenerateExpression(r.Expression)};\n";
+                    return $"{copyBacks}{indent}return {GenerateExpression(r.Expression)};\n";
                 }
                 else
                 {
-                    return $"{indent}return;\n";
+                    return $"{copyBacks}{indent}return;\n";
                 }
             }
             if (stmt is BreakStatement)
@@ -1852,6 +2103,12 @@ namespace ProGPU.Transpiler
                     }
                 }
 
+                if (call.Callee == "inversesqrt")
+                {
+                    var a0 = GenerateExpression(call.Arguments[0]);
+                    return $"inverseSqrt({a0})";
+                }
+
                 if (call.Callee == "min" || call.Callee == "max")
                 {
                     var t0 = call.Arguments[0].ResolvedType;
@@ -1897,14 +2154,16 @@ namespace ProGPU.Transpiler
                     }
                     string signatureKey = $"{call.Callee}({string.Join(",", argTypes)})";
                     string wgslName;
-                    if (_userFunctions.ContainsKey(signatureKey))
+                    FunctionDeclaration? targetDecl = null;
+                    if (_userFunctionDecls.TryGetValue(signatureKey, out var decl))
                     {
+                        targetDecl = decl;
                         wgslName = ShaderToyTranspiler.GetUniqueWgslName(call.Callee, argTypes);
                     }
                     else
                     {
                         var matchingKeys = new List<string>();
-                        foreach (var key in _userFunctions.Keys)
+                        foreach (var key in _userFunctionDecls.Keys)
                         {
                             if (key.StartsWith(call.Callee + "(")) matchingKeys.Add(key);
                         }
@@ -1922,6 +2181,10 @@ namespace ProGPU.Transpiler
                                     break;
                                 }
                             }
+                            if (_userFunctionDecls.TryGetValue(bestKey, out var bestDecl))
+                            {
+                                targetDecl = bestDecl;
+                            }
                             int start = bestKey.IndexOf('(');
                             int end = bestKey.LastIndexOf(')');
                             string typeListStr = bestKey.Substring(start + 1, end - start - 1);
@@ -1938,9 +2201,19 @@ namespace ProGPU.Transpiler
                         }
                     }
                     var argsList = new List<string>();
-                    foreach (var a in call.Arguments)
+                    for (int idx = 0; idx < call.Arguments.Count; idx++)
                     {
-                        argsList.Add(GenerateExpression(a));
+                        var a = call.Arguments[idx];
+                        string aExpr = GenerateExpression(a);
+                        if (targetDecl != null && idx < targetDecl.Parameters.Count)
+                        {
+                            var p = targetDecl.Parameters[idx];
+                            if (p.Modifier == "out" || p.Modifier == "inout")
+                            {
+                                aExpr = $"&{aExpr}";
+                            }
+                        }
+                        argsList.Add(aExpr);
                     }
                     return $"{wgslName}({string.Join(", ", argsList)})";
                 }
