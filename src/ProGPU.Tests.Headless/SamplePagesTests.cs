@@ -1351,6 +1351,12 @@ public class SamplePagesTests
     {
         RunPageTest(WpfShowcasePage.Create(), "WPF Showcase");
     }
+
+    [Fact]
+    public void Test_ShaderToyPlaygroundPage_Renders()
+    {
+        RunPageTest(ShaderToyPlaygroundPage.Create(), "ShaderToy Playground");
+    }
 }
 
 
