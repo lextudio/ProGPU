@@ -363,6 +363,7 @@ public static unsafe class MainWindowController
         var pictureCachingItem = new NavigationViewItem("Picture Caching", "🖼️", PictureShowcasePage.Create());
         var fontGlyphBrowserItem = new NavigationViewItem("Font Glyph Browser", "🔤", FontGlyphBrowserPage.Create());
         var mesh3DViewerItem = new NavigationViewItem("3D Mesh Viewer", "🧊", Mesh3DViewerPage.Create());
+        var shaderToyPlaygroundItem = new NavigationViewItem("ShaderToy Playground", "🔮", ShaderToyPlaygroundPage.Create());
 
         var wrapPanelItem = new NavigationViewItem("Wrap Panel", "🔲", WrapPanelPage.Create());
         var dockPanelItem = new NavigationViewItem("Dock Panel", "🪟", DockPanelPage.Create());
@@ -414,6 +415,7 @@ public static unsafe class MainWindowController
         AppState._navigationView.MenuItems.Add(visualDesignerItem);
         AppState._navigationView.MenuItems.Add(pictureCachingItem);
         AppState._navigationView.MenuItems.Add(mesh3DViewerItem);
+        AppState._navigationView.MenuItems.Add(shaderToyPlaygroundItem);
 
         AppState._navigationView.SelectionChanged += (s, e) =>
         {
