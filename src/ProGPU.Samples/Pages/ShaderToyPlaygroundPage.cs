@@ -32,10 +32,10 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     let uv = fragCoord / inputs.iResolution.xy;
     let t = inputs.iTime * 1.5;
     
-    var col = vec3<f32>(0.0);
-    col.r = 0.5 + 0.5 * sin(uv.x * 10.0 + t + sin(uv.y * 5.0 + t));
-    col.g = 0.5 + 0.5 * sin(uv.y * 10.0 - t + cos(uv.x * 5.0 + t));
-    col.b = 0.5 + 0.5 * sin((uv.x + uv.y) * 5.0 + t + sin(t));
+    let r = 0.5 + 0.5 * sin(uv.x * 10.0 + t + sin(uv.y * 5.0 + t));
+    let g = 0.5 + 0.5 * sin(uv.y * 10.0 - t + cos(uv.x * 5.0 + t));
+    let b = 0.5 + 0.5 * sin((uv.x + uv.y) * 5.0 + t + sin(t));
+    var col = vec3<f32>(r, g, b);
     
     // Pulse circle at mouse position if left-clicked
     let mouse = inputs.iMouse;

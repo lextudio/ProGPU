@@ -210,11 +210,24 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
             if (activePipeline == null)
             {
+                bool hasError = false;
+                Action<ErrorType, string> errorHandler = (type, msg) => {
+                    hasError = true;
+                };
+
+                WgpuContext.OnWebGpuError += errorHandler;
+
                 try
                 {
                     // Build full shader code
                     string fullShaderCode = VertexAndHeaderShader + "\n" + p.ShaderSource + "\n" + FragmentWrapperShader;
-                    var shaderModule = compositor.PipelineCache.GetOrCreateShader(p.ShaderKey, fullShaderCode, "ShaderToy WGSL Module");
+                    var shaderModule = compositor.PipelineCache.GetOrCreateShader(p.ShaderKey, fullShaderCode, $"ShaderToy_{p.ShaderKey}");
+
+                    if (hasError || shaderModule == null)
+                    {
+                        Console.WriteLine("[ShaderToy Render] Shader module creation failed, skipping pipeline creation.");
+                        return;
+                    }
 
                     var layouts = new VertexBufferLayout[]
                     {
@@ -232,21 +245,30 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     attrs[1] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }; // Color
                     attrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }; // TexCoord
 
-                    activePipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
-                        pipelineKey,
-                        shaderModule,
-                        vertexBufferLayouts: layouts,
-                        topology: PrimitiveTopology.TriangleList,
-                        targetFormat: isOffscreen ? TextureFormat.Rgba8Unorm : compositor.Context.SwapChainFormat,
-                        sampleCount: isOffscreen ? 1u : 4u
-                    );
-
-                    Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
+                    try
+                    {
+                        activePipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
+                            pipelineKey,
+                            shaderModule,
+                            vertexBufferLayouts: layouts,
+                            topology: PrimitiveTopology.TriangleList,
+                            targetFormat: isOffscreen ? TextureFormat.Rgba8Unorm : compositor.Context.SwapChainFormat,
+                            sampleCount: isOffscreen ? 1u : 4u
+                        );
+                    }
+                    finally
+                    {
+                        Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
+                    }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[ShaderToy Render] Error compiling shader or pipeline: {ex.Message}");
                     return;
+                }
+                finally
+                {
+                    WgpuContext.OnWebGpuError -= errorHandler;
                 }
             }
 
