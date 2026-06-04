@@ -28,6 +28,7 @@ namespace ProGPU.Scene.Extensions
         public string ShaderSource { get; set; } = string.Empty;
         public string ShaderKey { get; set; } = string.Empty;
         public string OldShaderKey { get; set; } = string.Empty;
+        public bool IsFailed { get; set; }
 
         public Vector3 Resolution { get; set; }
         public float Time { get; set; }
@@ -175,7 +176,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             in Compositor.CompositorDrawCall dc)
         {
             if (dc.PointBufferCount <= 0 || dc.DataParam is not ShaderToyParams p) return;
-            if (string.IsNullOrEmpty(p.ShaderKey)) return;
+            if (p.IsFailed || string.IsNullOrEmpty(p.ShaderKey)) return;
 
             var wgpu = compositor.Context.Wgpu;
             var device = compositor.Context.Device;
@@ -223,9 +224,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     string fullShaderCode = VertexAndHeaderShader + "\n" + p.ShaderSource + "\n" + FragmentWrapperShader;
                     var shaderModule = compositor.PipelineCache.GetOrCreateShader(p.ShaderKey, fullShaderCode, $"ShaderToy_{p.ShaderKey}");
 
+                    // Force dispatching of queued validation errors
+                    compositor.Context.WaitIdle();
+
                     if (hasError || shaderModule == null)
                     {
                         Console.WriteLine("[ShaderToy Render] Shader module creation failed, skipping pipeline creation.");
+                        p.IsFailed = true;
+                        compositor.PipelineCache.ReleaseShader(p.ShaderKey);
                         return;
                     }
 
@@ -252,7 +258,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                             shaderModule,
                             vertexBufferLayouts: layouts,
                             topology: PrimitiveTopology.TriangleList,
-                            targetFormat: isOffscreen ? TextureFormat.Rgba8Unorm : compositor.Context.SwapChainFormat,
+                            targetFormat: compositor.RenderFormat,
                             sampleCount: isOffscreen ? 1u : 4u
                         );
                     }
@@ -260,10 +266,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     {
                         Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
                     }
+
+                    // Force dispatching of pipeline creation validation errors
+                    compositor.Context.WaitIdle();
+
+                    if (hasError || activePipeline == null)
+                    {
+                        Console.WriteLine("[ShaderToy Render] Pipeline creation failed, aborting.");
+                        p.IsFailed = true;
+                        compositor.PipelineCache.ReleaseRenderPipeline(p.ShaderKey + "_onscreen");
+                        compositor.PipelineCache.ReleaseRenderPipeline(p.ShaderKey + "_offscreen");
+                        compositor.PipelineCache.ReleaseShader(p.ShaderKey);
+                        activePipeline = null;
+                        return;
+                    }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[ShaderToy Render] Error compiling shader or pipeline: {ex.Message}");
+                    p.IsFailed = true;
                     return;
                 }
                 finally

@@ -102,6 +102,7 @@ namespace Microsoft.UI.Xaml.Controls
             _params.ShaderSource = source;
             _params.ShaderKey = Guid.NewGuid().ToString("N");
             _params.OldShaderKey = oldKey;
+            _params.IsFailed = false;
             
             CompileError = null;
             _compilePending = true;
