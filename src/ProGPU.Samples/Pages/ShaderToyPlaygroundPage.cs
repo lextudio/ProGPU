@@ -184,7 +184,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             leftGrid.RowDefinitions.Add(new GridLength(1f, GridUnitType.Star));    // Editor
 
             // Row 0: Presets dropdown ComboBox
-            var toolbarStack = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
+            var toolbarStack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
             var presetLabel = new TextBlock
             {
                 Text = "Preset: ",
@@ -196,10 +196,13 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             toolbarStack.AddChild(presetLabel);
 
             var presetCombo = new ComboBox { Font = AppState._font, Width = 180f };
-            presetCombo.Items.Add(new ComboBoxItem("Cosmic Waves"));
-            presetCombo.Items.Add(new ComboBoxItem("Star Nest Journey"));
-            presetCombo.Items.Add(new ComboBoxItem("Raymarched Torus"));
-            presetCombo.SelectedIndex = 0;
+            var wavesItem = new ComboBoxItem("Cosmic Waves");
+            var starNestItem = new ComboBoxItem("Star Nest Journey");
+            var torusItem = new ComboBoxItem("Raymarched Torus");
+            presetCombo.Items.Add(wavesItem);
+            presetCombo.Items.Add(starNestItem);
+            presetCombo.Items.Add(torusItem);
+            presetCombo.SelectedItem = wavesItem;
             toolbarStack.AddChild(presetCombo);
 
             // Run Button
@@ -227,7 +230,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             Grid.SetRow(toolbarStack, 0);
 
             // Row 1: Playing / Timeline Actions
-            var actionStack = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
+            var actionStack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
             
             _playBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 6, 0) };
             _playBtn.Content = new TextBlock { Text = "Play", Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -312,8 +315,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 BorderBrush = new ThemeResourceBrush("ControlBorder"),
                 BorderThickness = new Thickness(1f),
                 CornerRadius = 8f,
-                Padding = new Thickness(0),
-                ClipToBounds = true
+                Padding = new Thickness(0)
             };
 
             _toyControl = new ShaderToyControl();
