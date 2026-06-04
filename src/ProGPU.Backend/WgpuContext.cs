@@ -18,6 +18,8 @@ public unsafe class WgpuContext : IDisposable
     public Surface* Surface { get; private set; } = null;
     public TextureFormat SwapChainFormat { get; private set; } = TextureFormat.Bgra8Unorm;
 
+    public static event Action<ErrorType, string>? OnWebGpuError;
+
     public readonly object RenderLock = new();
     public readonly object DisposalLock = new();
     public readonly List<IntPtr> PendingBuffers = new();
@@ -410,6 +412,7 @@ public unsafe class WgpuContext : IDisposable
         {
             string errorMsg = (msg != null ? SilkMarshal.PtrToString((nint)msg) : null) ?? "Unknown error";
             Console.WriteLine($"[WebGPU Error] Type: {type}, Message: {errorMsg}");
+            OnWebGpuError?.Invoke(type, errorMsg);
         }), null);
 
         // 7. Configure Surface if window exists

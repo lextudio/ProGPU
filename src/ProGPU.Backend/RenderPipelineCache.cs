@@ -282,6 +282,34 @@ public unsafe class RenderPipelineCache : IDisposable
         return pipeline;
     }
 
+    public void ReleaseShader(string key)
+    {
+        lock (_context.RenderLock)
+        {
+            if (_shaders.Remove(key, out var s))
+            {
+                if (!_context.IsDisposed)
+                {
+                    _context.QueueShaderModuleDisposal((nint)s);
+                }
+            }
+        }
+    }
+
+    public void ReleaseRenderPipeline(string key)
+    {
+        lock (_context.RenderLock)
+        {
+            if (_renderPipelines.Remove(key, out var p))
+            {
+                if (!_context.IsDisposed)
+                {
+                    _context.QueueRenderPipelineDisposal((nint)p);
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (_isDisposed) return;
