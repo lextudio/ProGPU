@@ -699,6 +699,40 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 
         public ShaderToyPlaygroundPageGrid()
         {
+            _toyControl = new ShaderToyControl();
+            _toyControl.CompilationFailed += HandleCompilationFailed;
+            _toyControl.CompilationSucceeded += HandleCompilationSucceeded;
+
+            _editor = new RichEditBox
+            {
+                Font = AppState._fontCourier,
+                FontSize = 12f,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+
+            _consoleText = new RichTextBlock
+            {
+                Font = AppState._fontCourier,
+                FontSize = 11f,
+                Foreground = new SolidColorBrush(new Vector4(0.7f, 0.7f, 0.75f, 1f))
+            };
+
+            _statsText = new TextBlock
+            {
+                Text = "Time: 0.0s | Frame: 0",
+                Font = AppState._fontCourier,
+                FontSize = 11f,
+                Foreground = new ThemeResourceBrush("TextSecondary"),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            _playBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 6, 0) };
+            _playBtn.Content = new TextBlock { Text = "Play", Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+
+            _pauseBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 6, 0) };
+            _pauseBtn.Content = new TextBlock { Text = "Pause", Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+
             Margin = new Thickness(12);
 
             // Columns: Left (Code & Controls) / Right (Canvas & Console)
@@ -760,19 +794,49 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
             runBtn.Click += (s, e) => CompileNow();
             toolbarStack.AddChild(runBtn);
 
+            // Scale Selector
+            var scaleLabel = new TextBlock
+            {
+                Text = "Scale:",
+                Font = AppState._font,
+                FontSize = 12f,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 0, 4, 0)
+            };
+            toolbarStack.AddChild(scaleLabel);
+
+            var scaleCombo = new ComboBox { Font = AppState._font, Width = 85f };
+            var scale05 = new ComboBoxItem("0.5x");
+            var scale10 = new ComboBoxItem("1.0x");
+            var scale15 = new ComboBoxItem("1.5x");
+            var scale20 = new ComboBoxItem("2.0x");
+            var scaleNative = new ComboBoxItem("Retina");
+            scaleCombo.Items.Add(scale05);
+            scaleCombo.Items.Add(scale10);
+            scaleCombo.Items.Add(scale15);
+            scaleCombo.Items.Add(scale20);
+            scaleCombo.Items.Add(scaleNative);
+            scaleCombo.SelectedItem = scale10; // Default to 1.0x (Normal)
+            scaleCombo.SelectionChanged += (s, e) =>
+            {
+                if (_toyControl == null) return;
+                if (scaleCombo.SelectedItem == scale05) _toyControl.RenderScale = 0.5f;
+                else if (scaleCombo.SelectedItem == scale10) _toyControl.RenderScale = 1.0f;
+                else if (scaleCombo.SelectedItem == scale15) _toyControl.RenderScale = 1.5f;
+                else if (scaleCombo.SelectedItem == scale20) _toyControl.RenderScale = 2.0f;
+                else if (scaleCombo.SelectedItem == scaleNative) _toyControl.RenderScale = 0.0f; // 0.0f = Native DPI
+            };
+            toolbarStack.AddChild(scaleCombo);
+
             leftGrid.AddChild(toolbarStack);
             Grid.SetRow(toolbarStack, 0);
 
             // Row 1: Playing / Timeline Actions
             var actionStack = new Microsoft.UI.Xaml.Controls.StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
             
-            _playBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 6, 0) };
-            _playBtn.Content = new TextBlock { Text = "Play", Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             _playBtn.Click += (s, e) => SetPlaying(true);
             actionStack.AddChild(_playBtn);
 
-            _pauseBtn = new Button { Width = 60f, Height = 28f, CornerRadius = 4f, Margin = new Thickness(0, 0, 6, 0) };
-            _pauseBtn.Content = new TextBlock { Text = "Pause", Font = AppState._font, FontSize = 11f, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             _pauseBtn.Click += (s, e) => SetPlaying(false);
             actionStack.AddChild(_pauseBtn);
 
@@ -811,14 +875,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
             actionStack.AddChild(transpileBtn);
 
             // Stats Text block
-            _statsText = new TextBlock
-            {
-                Text = "Time: 0.0s | Frame: 0",
-                Font = AppState._fontCourier,
-                FontSize = 11f,
-                Foreground = new ThemeResourceBrush("TextSecondary"),
-                VerticalAlignment = VerticalAlignment.Center
-            };
             actionStack.AddChild(_statsText);
 
             leftGrid.AddChild(actionStack);
@@ -833,14 +889,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
                 Padding = new Thickness(4)
             };
 
-            _editor = new RichEditBox
-            {
-                Font = AppState._fontCourier,
-                FontSize = 12f,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
-            };
-            
             // Listen to edits and debounce compilation
             _editor.TextChanged += (s, e) =>
             {
@@ -874,9 +922,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
                 Padding = new Thickness(0)
             };
 
-            _toyControl = new ShaderToyControl();
-            _toyControl.CompilationFailed += HandleCompilationFailed;
-            _toyControl.CompilationSucceeded += HandleCompilationSucceeded;
             canvasCard.Child = _toyControl;
             rightGrid.AddChild(canvasCard);
             Grid.SetRow(canvasCard, 0);
@@ -893,12 +938,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
             };
 
             var consoleScroll = new ScrollViewer { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
-            _consoleText = new RichTextBlock
-            {
-                Font = AppState._fontCourier,
-                FontSize = 11f,
-                Foreground = new SolidColorBrush(new Vector4(0.7f, 0.7f, 0.75f, 1f))
-            };
             
             _consoleText.Inlines.Add(new Run("[System] ShaderToy Playground ready. Welcome!\n"));
             _consoleText.Inlines.Add(new Run("[System] Type WGSL code and click Run (or press Ctrl+Enter)."));

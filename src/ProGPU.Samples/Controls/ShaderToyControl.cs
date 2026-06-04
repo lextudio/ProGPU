@@ -52,6 +52,19 @@ namespace Microsoft.UI.Xaml.Controls
             set => SetValue(IsPlayingProperty, value);
         }
 
+        public static readonly DependencyProperty RenderScaleProperty =
+            DependencyProperty.Register(
+                "RenderScale",
+                typeof(float),
+                typeof(ShaderToyControl),
+                new PropertyMetadata(1.0f) { AffectsRender = true });
+
+        public float RenderScale
+        {
+            get => (float)(GetValue(RenderScaleProperty) ?? 1.0f);
+            set => SetValue(RenderScaleProperty, value);
+        }
+
         public event Action<string>? CompilationFailed;
         public event Action? CompilationSucceeded;
 
@@ -201,27 +214,31 @@ namespace Microsoft.UI.Xaml.Controls
             var wgpuContext = GetActiveWgpuContext();
             if (wgpuContext == null) return;
 
-            float dpiScale = 1.0f;
-            if (wgpuContext.Window != null && wgpuContext.Window.Size.X > 0)
+            float activeScale = RenderScale;
+            if (activeScale <= 0f)
             {
-                dpiScale = (float)wgpuContext.Window.FramebufferSize.X / wgpuContext.Window.Size.X;
+                activeScale = 1.0f;
+                if (wgpuContext.Window != null && wgpuContext.Window.Size.X > 0)
+                {
+                    activeScale = (float)wgpuContext.Window.FramebufferSize.X / wgpuContext.Window.Size.X;
+                }
             }
 
             // 1. Calculate resolution uniform (in physical pixels)
-            float width = Size.X * dpiScale;
-            float height = Size.Y * dpiScale;
+            float width = Size.X * activeScale;
+            float height = Size.Y * activeScale;
             _params.Resolution = new Vector3(width, height, 1.0f);
             _params.Rect = new Rect(Vector2.Zero, Size);
 
             // 2. Calculate iMouse uniform inputs in standard ShaderToy bottom-left y-up space
             if (_isMouseDown)
             {
-                _mouse.X = _currentMousePos.X * dpiScale;
-                _mouse.Y = (Size.Y - _currentMousePos.Y) * dpiScale;
+                _mouse.X = _currentMousePos.X * activeScale;
+                _mouse.Y = (Size.Y - _currentMousePos.Y) * activeScale;
                 if (_clickPos.HasValue)
                 {
-                    _mouse.Z = _clickPos.Value.X * dpiScale;
-                    _mouse.W = (Size.Y - _clickPos.Value.Y) * dpiScale;
+                    _mouse.Z = _clickPos.Value.X * activeScale;
+                    _mouse.W = (Size.Y - _clickPos.Value.Y) * activeScale;
                 }
             }
             else
@@ -229,8 +246,8 @@ namespace Microsoft.UI.Xaml.Controls
                 // When mouse is up, Z and W are negated in ShaderToy to signal mouse button up
                 if (_clickPos.HasValue)
                 {
-                    _mouse.Z = -MathF.Abs(_clickPos.Value.X * dpiScale);
-                    _mouse.W = -MathF.Abs((Size.Y - _clickPos.Value.Y) * dpiScale);
+                    _mouse.Z = -MathF.Abs(_clickPos.Value.X * activeScale);
+                    _mouse.W = -MathF.Abs((Size.Y - _clickPos.Value.Y) * activeScale);
                 }
             }
             _params.Mouse = _mouse;
