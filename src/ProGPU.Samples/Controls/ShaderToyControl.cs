@@ -82,7 +82,6 @@ namespace Microsoft.UI.Xaml.Controls
         {
             HorizontalAlignment = HorizontalAlignment.Stretch;
             VerticalAlignment = VerticalAlignment.Stretch;
-            IsTabStop = true;
 
             WgpuContext.OnWebGpuError += HandleWebGpuError;
             Unloaded += (s, e) =>
