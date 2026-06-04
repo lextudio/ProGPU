@@ -51,6 +51,20 @@ This Pull Request introduces significant performance optimizations, architectura
 - **GPGPU Solver**: Implemented 100% GPU-bound analytical path boolean solvers (Union, Intersect, Difference, XOR, Reverse Difference) without CPU curve flattening or triangulation.
 - **Anti-Artifacting & Precision Fixes**: Resolved chord intersections near endpoints using boundary perturbation, relaxed endpoint containment intervals, and dynamic 16-step subdivision for curved chords.
 
+### 10. High-Performance GPU-Accelerated Image Effects Engine
+- **Image Filters**: Built a custom compositor pipeline to execute GPU-bound effects (e.g. Blur, Grayscale, Invert, Sepia, Brightness, Contrast) via customized shaders.
+- **Demo Gallery**: Added an interactive UI page enabling users to tweak filter properties live and see the rendering performance.
+
+### 11. Instanced Snapping & Subpixel Positioned Text Rendering
+- **Retina Snapping**: Implemented physical pixel boundary snapping for glyph positions, eliminating font-rendering blurriness and improving readability at standard/retina DPI levels.
+
+### 12. ShaderToy Playground & Live Compilation Engine
+- **WebGPU WGSL Engine**: Created a custom compositor drawing extension `ShaderToyExtensionPipeline` (registered under `IDrawingExtension.ShaderToy = 11`) to execute custom fragment shaders backed by WebGPU.
+- **ShaderToy Compatibility**: Created `ShaderToyControl` simulating the standard ShaderToy environment, supporting standard input uniforms (resolution `iResolution`, time `iTime`, frames `iFrame`, and mouse position `iMouse`).
+- **Interactive Editor UI**: Built `ShaderToyPlaygroundPage` consisting of a live WebGPU canvas, Preset dropdown loaded with rich graphics presets (Cosmic Waves, Star Nest, Raymarched Torus SDF), real-time Timeline control, monospaced text editor, and a live compiler log diagnostics console.
+- **Panic Protection**: Subscribed to static `WgpuContext.OnWebGpuError` events to catch shader compilation errors safely and skip pipeline creation when errors occur, preventing underlying WebGPU/Rust panics from aborting the host process.
+- **Headless Testing**: Implemented headless unit tests to verify the ShaderToy Playground page and compilation pipeline under testing environments.
+
 ---
 
 ## Commit Log
@@ -66,9 +80,25 @@ This Pull Request introduces significant performance optimizations, architectura
 9. **`64f724a`** `shim: Implement SkiaSharp compatibility API and drawing context integration`
 10. **`3bff12c`** `vector: Implement GPU-accelerated analytical Path Boolean operations`
 11. **`a51c0e0`** `backend: Fix Path Ops rendering artifacts via boundary perturbation, endpoint relaxation, and dynamic chord steps`
-12. **`90bac10`** `samples: Add GDI Shim Showcase Page`
-13. **`a6f1c8e`** `samples: Add Glyph Run Showcase Page`
-14. **`4ae7378`** `backend: Fix shaders DPI scaling for text snapping and glyph rendering`
-15. **`3f575b6`** `shim: Implement PresentationCore WPF DrawingContext compatibility shim`
-16. **`da76db2`** `samples: Add WPF DrawingContext Shim Showcase Page and register in MainWindow`
-17. **`626bad1`** `tests: Add headless unit test verifying WPF Showcase Page rendering`
+12. **`e84bea6`** `Improve text rendering performance and quality via instanced snapping and subpixel positioning`
+13. **`8cd692a`** `Implement high performance GPU-accelerated Image Effects Engine and demo page`
+14. **`fd7df1c`** `Implement System.Drawing.Common (GDI+) shim library using ProGPU drawing context backend`
+15. **`90bac10`** `samples: Add GDI Shim Showcase Page`
+16. **`a6f1c8e`** `samples: Add Glyph Run Showcase Page`
+17. **`4ae7378`** `backend: Fix shaders DPI scaling for text snapping and glyph rendering`
+18. **`3f575b6`** `shim: Implement PresentationCore WPF DrawingContext compatibility shim`
+19. **`da76db2`** `samples: Add WPF DrawingContext Shim Showcase Page and register in MainWindow`
+20. **`626bad1`** `tests: Add headless unit test verifying WPF Showcase Page rendering`
+21. **`3c53832`** `docs: Update PR Summary with GDI+ and WPF DrawingContext shim details`
+22. **`94cb793`** `Implement ShaderToyControl WinUI control for real-time WebGPU shader execution`
+23. **`cc7861b`** `Add Text property to RichEditBox for raw string getting and setting`
+24. **`d7cc550`** `Implement ShaderToyPlaygroundPage gallery page with editor, preset selection, and error console`
+25. **`b0b0374`** `Integrate ShaderToy Playground page inside navigation drawer`
+26. **`a259b2e`** `Relocate ShaderToyControl to ProGPU.Samples to resolve project circular dependencies`
+27. **`66577ab`** `Fix StackPanel ambiguity, ComboBox SelectedIndex, and Border properties in ShaderToyPlaygroundPage.cs`
+28. **`abd4e7f`** `Add headless test verifying ShaderToy Playground page rendering`
+29. **`1f44bcf`** `Expose WebGPU compiler/validation error event and deferred render pipeline disposal helpers`
+30. **`b499186`** `Implement and register ShaderToyExtensionPipeline compositor backend for fragment shader rendering`
+31. **`441a735`** `Remove IsTabStop from ShaderToyControl to fix FrameworkElement compilation`
+32. **`5cd061c`** `Fix StackOverflowException by removing redundant animation propagation loop in ShaderToyPlaygroundPage`
+33. **`5534c20`** `Protect pipeline creation from compilation failures to prevent wgpu abort panics, and fix Preset 1 swizzling style`
