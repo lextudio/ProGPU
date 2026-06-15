@@ -23,7 +23,7 @@ namespace ProGPU.Scene.Extensions
         {
             if (dc.DataParam != null)
             {
-                compositor.DrawStaticDxfBuffer((Silk.NET.WebGPU.RenderPassEncoder*)renderPassEncoder, dc.DataParam, isOffscreen);
+                compositor.DrawStaticDxfBuffer((Silk.NET.WebGPU.RenderPassEncoder*)renderPassEncoder, dc.DataParam, isOffscreen, dc.MaskTexture);
             }
         }
     }

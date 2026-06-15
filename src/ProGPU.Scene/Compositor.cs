@@ -1259,7 +1259,9 @@ public unsafe class Compositor : IDisposable
                         {
                             Type = DrawCallType.StaticDxf,
                             StaticBuffer = cmd.StaticBuffer,
-                            ClipRect = _activeClipRect
+                            ClipRect = _activeClipRect,
+                            MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                            BlendMode = _activeBlendMode
                         });
                         _pendingVectorStart = (uint)_vectorIndicesList.Count;
                         _pendingTextStart = (uint)_textVerticesList.Count;
@@ -2024,7 +2026,9 @@ public unsafe class Compositor : IDisposable
                     {
                         Type = DrawCallType.StaticDxf,
                         StaticBuffer = cmd.StaticBuffer,
-                        ClipRect = _activeClipRect
+                        ClipRect = _activeClipRect,
+                        MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                        BlendMode = _activeBlendMode
                     });
                     _pendingVectorStart = (uint)_vectorIndicesList.Count;
                     _pendingTextStart = (uint)_textVerticesList.Count;
@@ -5984,6 +5988,9 @@ public unsafe class Compositor : IDisposable
                     case RenderCommandType.DrawText:
                         CompileTextCommand(cmd, null, Matrix4x4.Identity);
                         break;
+                    case RenderCommandType.DrawGlyphRun:
+                        CompileGlyphRunCommand(cmd, Matrix4x4.Identity);
+                        break;
                     case RenderCommandType.DrawTexture:
                         CompileTextureCommand(cmd, Matrix4x4.Identity);
                         break;
@@ -6388,6 +6395,9 @@ public unsafe class Compositor : IDisposable
                     case RenderCommandType.DrawText:
                         CompileTextCommand(cmd, null, Matrix4x4.Identity);
                         break;
+                    case RenderCommandType.DrawGlyphRun:
+                        CompileGlyphRunCommand(cmd, Matrix4x4.Identity);
+                        break;
                     case RenderCommandType.DrawTexture:
                         CompileTextureCommand(cmd, Matrix4x4.Identity);
                         break;
@@ -6738,6 +6748,8 @@ public unsafe class Compositor : IDisposable
     internal unsafe void DrawStaticDxfBuffer(RenderPassEncoder* pass, object staticBufferObj, bool isOffscreen, GpuTexture? maskTexture = null)
     {
         if (staticBufferObj is not DxfStaticBuffer sb) return;
+
+        sb.UpdateDefaultViewport(_currentProjection, new Vector2(_currentWidth, _currentHeight), _currentDpiScale);
         
         var currentType = DrawCallType.StaticDxf;
         var maskBg = GetMaskBindGroup(maskTexture, isOffscreen);

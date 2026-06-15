@@ -26,6 +26,7 @@ public unsafe class DxfStaticBuffer : IDisposable
     public GpuBuffer? GradientStopsBuffer { get; private set; }
     
     private readonly Dictionary<int, object> _extensionStates = new();
+    private bool _hasExplicitViewport;
     
     public void SetExtensionState(int extensionId, object state) => _extensionStates[extensionId] = state;
     public object? GetExtensionState(int extensionId) => _extensionStates.TryGetValue(extensionId, out var state) ? state : null;
@@ -227,15 +228,42 @@ public unsafe class DxfStaticBuffer : IDisposable
             0, 0, 1, 0,
             -screenCenter.X * zoom + screenCenter.X + pan.X, -screenCenter.Y * zoom + screenCenter.Y + pan.Y, 0, 1
         );
-        
+
+        WriteViewportUniforms(projection, modelToScreen, GetCanvasSize(projection), 1.0f);
+        _hasExplicitViewport = true;
+    }
+
+    internal void UpdateDefaultViewport(Matrix4x4 projection, Vector2 canvasSize, float dpiScale)
+    {
+        if (_hasExplicitViewport)
+        {
+            return;
+        }
+
+        WriteViewportUniforms(projection, Matrix4x4.Identity, canvasSize, dpiScale);
+    }
+
+    private void WriteViewportUniforms(Matrix4x4 projection, Matrix4x4 modelToScreen, Vector2 canvasSize, float dpiScale)
+    {
+        if (UniformBuffer == null) return;
+
         var uniformsData = new GpuUniforms
         {
             Projection = projection,
             Mvp = modelToScreen,
-            View = Matrix4x4.Identity
+            View = Matrix4x4.Identity,
+            CanvasSize = canvasSize,
+            DpiScale = dpiScale
         };
-        
+
         UniformBuffer.WriteSingle(uniformsData);
+    }
+
+    private static Vector2 GetCanvasSize(Matrix4x4 projection)
+    {
+        var width = projection.M11 != 0f ? MathF.Abs(2.0f / projection.M11) : 0f;
+        var height = projection.M22 != 0f ? MathF.Abs(2.0f / projection.M22) : 0f;
+        return new Vector2(width, height);
     }
 
     public void Dispose()
