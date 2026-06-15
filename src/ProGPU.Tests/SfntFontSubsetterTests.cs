@@ -1,0 +1,255 @@
+using ProGPU.Text;
+using Xunit;
+
+namespace ProGPU.Tests;
+
+public class SfntFontSubsetterTests
+{
+    [Fact]
+    public void CreatesGlyphIdPreservingTrueTypeSubsetWithCompositeDependencies()
+    {
+        byte[] fontData = BuildTrueTypeSubsetFixtureFont();
+        SfntFontFace originalFace = SfntFontFace.Load(fontData);
+        Assert.True(originalFace.TryGetTable("glyf", out ReadOnlyMemory<byte> originalGlyf));
+
+        byte[] subset = SfntFontSubsetter.CreateGlyphIdPreservingSubset(fontData, 0, new ushort[] { 2 });
+
+        Assert.True(subset.Length < fontData.Length);
+        SfntFontFace subsetFace = SfntFontFace.Load(subset);
+        Assert.True(subsetFace.TryGetGlyphCount(out ushort glyphCount));
+        Assert.Equal(4, glyphCount);
+        Assert.True(subsetFace.TryGetTable("glyf", out ReadOnlyMemory<byte> subsetGlyf));
+        Assert.True(subsetGlyf.Length < originalGlyf.Length);
+        Assert.False(subsetFace.TryGetTable("DSIG", out _));
+        Assert.True(subsetFace.TryGetTable("head", out ReadOnlyMemory<byte> head));
+        Assert.Equal(1, ReadShort(head.Span, 50));
+
+        Assert.True(subsetFace.TryGetGlyphBounds(1, out SfntGlyphBounds componentBounds));
+        Assert.Equal(20, componentBounds.XMax);
+        Assert.True(subsetFace.TryGetGlyphBounds(2, out SfntGlyphBounds compositeBounds));
+        Assert.Equal(40, compositeBounds.XMax);
+        Assert.True(subsetFace.TryGetGlyphBounds(3, out SfntGlyphBounds omittedBounds));
+        Assert.Equal(0, omittedBounds.XMax);
+    }
+
+    [Fact]
+    public void TryCreateGlyphIdPreservingSubsetFailsClosedForInvalidFonts()
+    {
+        Assert.False(SfntFontSubsetter.TryCreateGlyphIdPreservingSubset(
+            new byte[] { 1, 2, 3 },
+            0,
+            new ushort[] { 1 },
+            out byte[] subset));
+        Assert.Empty(subset);
+    }
+
+    private static byte[] BuildTrueTypeSubsetFixtureFont()
+    {
+        byte[] glyf = BuildGlyfTable(out uint[] glyphOffsets);
+        return BuildSfntWithTables(
+            ("head", BuildHeadTable()),
+            ("hhea", BuildHheaTable()),
+            ("maxp", BuildMaxpTable(4)),
+            ("hmtx", BuildHmtxTable(4)),
+            ("loca", BuildLongLoca(glyphOffsets)),
+            ("glyf", glyf),
+            ("DSIG", Enumerable.Repeat((byte)0xA5, 128).ToArray()));
+    }
+
+    private static byte[] BuildGlyfTable(out uint[] glyphOffsets)
+    {
+        byte[][] glyphs =
+        {
+            Array.Empty<byte>(),
+            BuildSimpleGlyph(0, 0, 20, 20),
+            BuildCompositeGlyph(0, 0, 40, 40, 1),
+            BuildSimpleGlyph(0, 0, 300, 300, 768),
+        };
+
+        glyphOffsets = new uint[glyphs.Length + 1];
+        using var stream = new MemoryStream();
+        for (int i = 0; i < glyphs.Length; i++)
+        {
+            glyphOffsets[i] = checked((uint)stream.Position);
+            stream.Write(glyphs[i]);
+            WritePadding(stream);
+        }
+
+        glyphOffsets[^1] = checked((uint)stream.Position);
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildSimpleGlyph(short xMin, short yMin, short xMax, short yMax, int extraBytes = 0)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        WriteShort(writer, 1);
+        WriteShort(writer, xMin);
+        WriteShort(writer, yMin);
+        WriteShort(writer, xMax);
+        WriteShort(writer, yMax);
+        writer.Write(new byte[extraBytes]);
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildCompositeGlyph(short xMin, short yMin, short xMax, short yMax, ushort componentGlyph)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        WriteShort(writer, -1);
+        WriteShort(writer, xMin);
+        WriteShort(writer, yMin);
+        WriteShort(writer, xMax);
+        WriteShort(writer, yMax);
+        WriteUShort(writer, 0x0002);
+        WriteUShort(writer, componentGlyph);
+        writer.Write((byte)0);
+        writer.Write((byte)0);
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildHeadTable()
+    {
+        byte[] table = new byte[54];
+        using var stream = new MemoryStream(table);
+        using var writer = new BinaryWriter(stream);
+
+        WriteUInt(writer, 0x00010000);
+        WriteUInt(writer, 0x00010000);
+        stream.Position = 18;
+        WriteUShort(writer, 1000);
+        stream.Position = 50;
+        WriteShort(writer, 1);
+        return table;
+    }
+
+    private static byte[] BuildHheaTable()
+    {
+        byte[] table = new byte[36];
+        using var stream = new MemoryStream(table);
+        using var writer = new BinaryWriter(stream);
+
+        stream.Position = 4;
+        WriteShort(writer, 800);
+        WriteShort(writer, -200);
+        WriteShort(writer, 0);
+        stream.Position = 34;
+        WriteUShort(writer, 4);
+        return table;
+    }
+
+    private static byte[] BuildMaxpTable(ushort glyphCount)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        WriteUInt(writer, 0x00010000);
+        WriteUShort(writer, glyphCount);
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildHmtxTable(int glyphCount)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        for (int i = 0; i < glyphCount; i++)
+        {
+            WriteUShort(writer, checked((ushort)(500 + i)));
+            WriteShort(writer, 0);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildLongLoca(uint[] glyphOffsets)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        foreach (uint offset in glyphOffsets)
+        {
+            WriteUInt(writer, offset);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildSfntWithTables(params (string Tag, byte[] Data)[] tables)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        WriteUInt(writer, 0x00010000);
+        WriteUShort(writer, checked((ushort)tables.Length));
+        WriteUShort(writer, 0);
+        WriteUShort(writer, 0);
+        WriteUShort(writer, 0);
+
+        uint tableOffset = checked((uint)(12 + tables.Length * 16));
+        foreach ((string tag, byte[] data) in tables)
+        {
+            WriteTag(writer, tag);
+            WriteUInt(writer, 0);
+            WriteUInt(writer, tableOffset);
+            WriteUInt(writer, checked((uint)data.Length));
+            tableOffset += checked((uint)Align4(data.Length));
+        }
+
+        foreach ((_, byte[] data) in tables)
+        {
+            writer.Write(data);
+            WritePadding(stream);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static void WritePadding(Stream stream)
+    {
+        while ((stream.Position & 3) != 0)
+        {
+            stream.WriteByte(0);
+        }
+    }
+
+    private static int Align4(int value)
+    {
+        return checked((value + 3) & ~3);
+    }
+
+    private static short ReadShort(ReadOnlySpan<byte> data, int offset)
+    {
+        return unchecked((short)((data[offset] << 8) | data[offset + 1]));
+    }
+
+    private static void WriteTag(BinaryWriter writer, string tag)
+    {
+        Assert.Equal(4, tag.Length);
+        foreach (char ch in tag)
+        {
+            writer.Write(checked((byte)ch));
+        }
+    }
+
+    private static void WriteUShort(BinaryWriter writer, ushort value)
+    {
+        writer.Write((byte)((value >> 8) & 0xFF));
+        writer.Write((byte)(value & 0xFF));
+    }
+
+    private static void WriteShort(BinaryWriter writer, short value)
+    {
+        WriteUShort(writer, unchecked((ushort)value));
+    }
+
+    private static void WriteUInt(BinaryWriter writer, uint value)
+    {
+        writer.Write((byte)((value >> 24) & 0xFF));
+        writer.Write((byte)((value >> 16) & 0xFF));
+        writer.Write((byte)((value >> 8) & 0xFF));
+        writer.Write((byte)(value & 0xFF));
+    }
+}
