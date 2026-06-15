@@ -341,10 +341,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     if ((isStatic || useGpuTransforms) && sType != 8u) {
         if (useGpuTransforms) {
             inPos = (uniforms.view * vec4<f32>(input.position, 0.0, 1.0)).xy;
-            if (sType == 11u) {
-                inTexCoord = (uniforms.view * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
-                inShapeSize = (uniforms.view * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
-            } else if (sType == 12u) {
+            if (sType == 12u) {
                 inTexCoord = (uniforms.view * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
                 inShapeSize = (uniforms.view * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
                 inColor = vec4<f32>((uniforms.view * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
@@ -363,10 +360,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
             }
         } else {
             inPos = (uniforms.mvp * vec4<f32>(input.position, 0.0, 1.0)).xy;
-            if (sType == 11u) {
-                inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
-                inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
-            } else if (sType == 12u) {
+            if (sType == 12u) {
                 inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
                 inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
                 inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
@@ -477,37 +471,6 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
                     + 6.0 * oneMinusT * t * (p2 - p1) 
                     + 3.0 * t * t * (p3 - p2);
                     
-        let len = length(tangent);
-        var normal = vec2<f32>(0.0, 0.0);
-        if (len > 0.0001) {
-            normal = vec2<f32>(-tangent.y, tangent.x) / len;
-        }
-        let halfThickness = input.strokeThickness * 0.5;
-        let expandedDistance = halfThickness + 1.5;
-        let offset = normal * expandedDistance * signVal;
-        worldPos = pos + offset;
-        texCoord = pos;
-        gridIndex = signVal * expandedDistance;
-    } else if (sType == 11u) {
-        // GPU elliptical arc evaluation. input.texCoord and input.shapeSize are
-        // transformed ellipse axis vectors, not control points.
-        let center = inPos;
-        let axisX = inTexCoord;
-        let axisY = inShapeSize;
-        let theta1 = inColor.x;
-        let deltaTheta = inColor.y;
-        let idxStart = u32(round(input.cornerRadius));
-        let localIndex = vertexIndex - idxStart;
-        let N = max(u32(round(inColor.z)), 1u);
-        let t = f32(localIndex / 2u) / f32(N);
-        let signVal = select(-1.0, 1.0, (localIndex % 2u) == 0u);
-        let theta = theta1 + deltaTheta * t;
-        let cosTheta = cos(theta);
-        let sinTheta = sin(theta);
-
-        let pos = center + axisX * cosTheta + axisY * sinTheta;
-        let sweepSign = select(-1.0, 1.0, deltaTheta >= 0.0);
-        let tangent = (-axisX * sinTheta + axisY * cosTheta) * sweepSign;
         let len = length(tangent);
         var normal = vec2<f32>(0.0, 0.0);
         if (len > 0.0001) {
@@ -640,8 +603,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let antialiasedAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
         let aliasedAlpha = select(0.0, 1.0, d_shape <= 0.0);
         shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
-    } else if (sType == 3u || sType == 5u || sType == 6u || sType == 11u) {
-        // Line, Quadratic, Cubic Bezier, and Arc stroke anti-aliasing via signed pixel distance
+    } else if (sType == 3u || sType == 5u || sType == 6u) {
+        // Line, Quadratic, and Cubic Bezier stroke anti-aliasing via signed pixel distance
         let d_pixels = abs(input.gridIndex);
         let d_shape = d_pixels - input.strokeThickness * 0.5;
         let antialiasedAlpha = 1.0 - smoothstep(-0.5, 0.5, d_shape);
@@ -666,7 +629,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var finalColor = input.color;
     if (brush.brushType == 0u) {
-        if (sType == 5u || sType == 6u || sType == 11u || sType == 12u) {
+        if (sType == 5u || sType == 6u || sType == 12u) {
             finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
         } else {
             finalColor = vec4<f32>(input.color.rgb, input.color.a * brush.opacity);

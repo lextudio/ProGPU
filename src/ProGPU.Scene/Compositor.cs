@@ -121,9 +121,6 @@ public unsafe class Compositor : IDisposable
     internal const int MaxGradientStops = 65536;
     private const float StrokeEpsilon = 0.0001f;
     private const float AliasedShapeTypeOffset = 1000f;
-    private const int MinGpuArcStrokeSegmentCount = 8;
-    private const int MaxGpuArcStrokeSegmentCount = 96;
-    private const float GpuArcStrokeSegmentPixelLength = 12f;
     private const float ArcSdfShapeType = 12f;
 
     public struct StaticTextRecord
@@ -2552,14 +2549,9 @@ public unsafe class Compositor : IDisposable
                             maxVertices += 4;
                             maxIndices += 6;
                         }
-                        else if (TryGetGpuArcStrokeSegmentCount(segmentStart, arc, transform, thickness, out int segmentCount))
-                        {
-                            maxVertices += 2 * (segmentCount + 1);
-                            maxIndices += 6 * segmentCount;
-                        }
                         else
                         {
-                            segmentCount = ArcSegmentGeometry.CountFlattenedSegments(segmentStart, arc);
+                            var segmentCount = ArcSegmentGeometry.CountFlattenedSegments(segmentStart, arc);
                             maxVertices += 4 * segmentCount;
                             maxIndices += 6 * segmentCount;
                         }
@@ -3054,65 +3046,17 @@ public unsafe class Compositor : IDisposable
         Matrix4x4 transform,
         bool isEdgeAliased)
     {
-        if (AppendStrokeArcSdfVertices(
-                verticesSpan,
-                indicesSpan,
-                ref currentVertexCount,
-                ref currentIndexCount,
-                penBrushIdx,
-                thickness,
-                segmentStart,
-                arc,
-                transform,
-                isEdgeAliased))
-        {
-            return true;
-        }
-
-        if (!ArcSegmentGeometry.TryCreateShaderParameters(
-                segmentStart,
-                arc,
-                transform,
-                out var arcParameters))
-        {
-            return false;
-        }
-
-        int segmentCount = CountGpuArcStrokeSegments(arcParameters.AxisX, arcParameters.AxisY, arcParameters.DeltaTheta, thickness);
-        uint idxStart = (uint)currentVertexCount;
-        var arcShapeType = EncodeShapeType(isEdgeAliased, 11f);
-        var shaderParameters = new Vector4(arcParameters.Theta1, arcParameters.DeltaTheta, segmentCount, 0f);
-        var baseVertex = new VectorVertex(
-            arcParameters.Center,
-            shaderParameters,
-            arcParameters.AxisX,
+        return AppendStrokeArcSdfVertices(
+            verticesSpan,
+            indicesSpan,
+            ref currentVertexCount,
+            ref currentIndexCount,
             penBrushIdx,
-            arcParameters.AxisY,
-            idxStart,
             thickness,
-            arcShapeType);
-
-        int vertexToAdd = 2 * (segmentCount + 1);
-        verticesSpan.Slice(currentVertexCount, vertexToAdd).Fill(baseVertex);
-        currentVertexCount += vertexToAdd;
-
-        for (int i = 0; i < segmentCount; i++)
-        {
-            uint currentLeft = (uint)(idxStart + 2 * i);
-            uint currentRight = (uint)(idxStart + 2 * i + 1);
-            uint nextLeft = (uint)(idxStart + 2 * i + 2);
-            uint nextRight = (uint)(idxStart + 2 * i + 3);
-
-            indicesSpan[currentIndexCount++] = currentLeft;
-            indicesSpan[currentIndexCount++] = currentRight;
-            indicesSpan[currentIndexCount++] = nextLeft;
-
-            indicesSpan[currentIndexCount++] = currentRight;
-            indicesSpan[currentIndexCount++] = nextRight;
-            indicesSpan[currentIndexCount++] = nextLeft;
-        }
-
-        return true;
+            segmentStart,
+            arc,
+            transform,
+            isEdgeAliased);
     }
 
     private static bool AppendStrokeArcSdfVertices(
@@ -3243,44 +3187,6 @@ public unsafe class Compositor : IDisposable
         min -= pad;
         max += pad;
         return true;
-    }
-
-    private static bool TryGetGpuArcStrokeSegmentCount(
-        Vector2 segmentStart,
-        ArcSegment arc,
-        Matrix4x4 transform,
-        float thickness,
-        out int segmentCount)
-    {
-        segmentCount = 0;
-        if (!ArcSegmentGeometry.TryCreateShaderParameters(
-                segmentStart,
-                arc,
-                transform,
-                out var arcParameters))
-        {
-            return false;
-        }
-
-        segmentCount = CountGpuArcStrokeSegments(arcParameters.AxisX, arcParameters.AxisY, arcParameters.DeltaTheta, thickness);
-        return true;
-    }
-
-    private static int CountGpuArcStrokeSegments(Vector2 axisX, Vector2 axisY, float deltaTheta, float thickness)
-    {
-        float maxRadius = MathF.Max(axisX.Length(), axisY.Length());
-        float geometrySegmentEstimate = MathF.Abs(deltaTheta) * maxRadius / GpuArcStrokeSegmentPixelLength;
-        int geometrySegments = float.IsFinite(geometrySegmentEstimate)
-            ? (int)MathF.Ceiling(MathF.Min(geometrySegmentEstimate, MaxGpuArcStrokeSegmentCount))
-            : MaxGpuArcStrokeSegmentCount;
-        float strokeSegmentEstimate = thickness * 1.5f + MinGpuArcStrokeSegmentCount;
-        int strokeSegments = float.IsFinite(strokeSegmentEstimate)
-            ? (int)MathF.Ceiling(MathF.Min(strokeSegmentEstimate, MaxGpuArcStrokeSegmentCount))
-            : MaxGpuArcStrokeSegmentCount;
-        return Math.Clamp(
-            Math.Max(geometrySegments, strokeSegments),
-            MinGpuArcStrokeSegmentCount,
-            MaxGpuArcStrokeSegmentCount);
     }
 
     private static void AppendStrokeSegmentJoinTriangles(
