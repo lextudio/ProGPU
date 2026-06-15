@@ -213,22 +213,22 @@ public unsafe class WgpuContext : IDisposable
 
             foreach (var layout in layouts)
             {
-                // Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
+                Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
             }
 
             foreach (var pipeLayout in pipeLayouts)
             {
-                // Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
+                Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
             }
 
             foreach (var rp in renderPipes)
             {
-                // Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
+                Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
             }
 
             foreach (var cp in computePipes)
             {
-                // Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
+                Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
             }
 
             foreach (var sampler in samplers)
@@ -238,7 +238,7 @@ public unsafe class WgpuContext : IDisposable
 
             foreach (var shader in shaders)
             {
-                // Wgpu.ShaderModuleRelease((ShaderModule*)shader);
+                Wgpu.ShaderModuleRelease((ShaderModule*)shader);
             }
         }
     }
