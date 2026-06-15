@@ -247,6 +247,69 @@ fn transform_brush_coordinate(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
         dot(p, brush.coordinateTransform1.xyz));
 }
 
+const PROGPU_TWO_PI: f32 = 6.28318530718;
+
+fn normalize_positive_radians(angle: f32) -> f32 {
+    return angle - floor(angle / PROGPU_TWO_PI) * PROGPU_TWO_PI;
+}
+
+fn arc_eval(center: vec2<f32>, axisX: vec2<f32>, axisY: vec2<f32>, theta: f32) -> vec2<f32> {
+    return center + axisX * cos(theta) + axisY * sin(theta);
+}
+
+fn arc_derivative(axisX: vec2<f32>, axisY: vec2<f32>, theta: f32, deltaTheta: f32) -> vec2<f32> {
+    let sweepSign = select(-1.0, 1.0, deltaTheta >= 0.0);
+    return (-axisX * sin(theta) + axisY * cos(theta)) * sweepSign;
+}
+
+fn safe_normalize(value: vec2<f32>) -> vec2<f32> {
+    let len = length(value);
+    if (len > 0.0001) {
+        return value / len;
+    }
+
+    return vec2<f32>(0.0, 0.0);
+}
+
+fn nearest_ellipse_theta(point: vec2<f32>, center: vec2<f32>, axisX: vec2<f32>, axisY: vec2<f32>) -> f32 {
+    let p = point - center;
+    let det = axisX.x * axisY.y - axisX.y * axisY.x;
+    var theta = 0.0;
+    if (abs(det) > 0.00001) {
+        let local = vec2<f32>(
+            (p.x * axisY.y - p.y * axisY.x) / det,
+            (axisX.x * p.y - axisX.y * p.x) / det);
+        theta = atan2(local.y, local.x);
+    }
+
+    for (var i = 0u; i < 5u; i = i + 1u) {
+        let c = cos(theta);
+        let s = sin(theta);
+        let q = center + axisX * c + axisY * s;
+        let dq = -axisX * s + axisY * c;
+        let ddq = -axisX * c - axisY * s;
+        let r = q - point;
+        let numerator = dot(r, dq);
+        let denominator = dot(dq, dq) + dot(r, ddq);
+        if (abs(denominator) > 0.00001) {
+            theta = theta - numerator / denominator;
+        }
+    }
+
+    return theta;
+}
+
+fn is_angle_inside_arc(theta: f32, theta1: f32, deltaTheta: f32) -> bool {
+    let span = abs(deltaTheta);
+    if (span >= PROGPU_TWO_PI - 0.001) {
+        return true;
+    }
+
+    let sweepSign = select(-1.0, 1.0, deltaTheta >= 0.0);
+    let along = normalize_positive_radians((theta - theta1) * sweepSign);
+    return along <= span + 0.001;
+}
+
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
     var output: VertexOutput;
@@ -281,6 +344,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
             if (sType == 11u) {
                 inTexCoord = (uniforms.view * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
                 inShapeSize = (uniforms.view * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
+            } else if (sType == 12u) {
+                inTexCoord = (uniforms.view * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
+                inShapeSize = (uniforms.view * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
+                inColor = vec4<f32>((uniforms.view * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
             } else if (sType == 3u || sType == 5u || sType == 6u) {
                 inTexCoord = (uniforms.view * vec4<f32>(input.texCoord, 0.0, 1.0)).xy;
                 inShapeSize = (uniforms.view * vec4<f32>(input.shapeSize, 0.0, 1.0)).xy;
@@ -299,6 +366,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
             if (sType == 11u) {
                 inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
                 inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
+            } else if (sType == 12u) {
+                inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 0.0)).xy;
+                inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 0.0)).xy;
+                inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.xy, 0.0, 1.0)).xy, input.color.z, input.color.w);
             } else if (sType == 3u || sType == 5u || sType == 6u) {
                 inTexCoord = (uniforms.mvp * vec4<f32>(input.texCoord, 0.0, 1.0)).xy;
                 inShapeSize = (uniforms.mvp * vec4<f32>(input.shapeSize, 0.0, 1.0)).xy;
@@ -318,6 +389,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     var worldPos = inPos;
     var texCoord = inTexCoord;
     var gridIndex = 0.0;
+    var outputCornerRadius = input.cornerRadius;
 
     if (sType == 3u) {
         // GPU Stroke Expansion
@@ -447,6 +519,14 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         worldPos = pos + offset;
         texCoord = pos;
         gridIndex = signVal * expandedDistance;
+    } else if (sType == 12u) {
+        // Fixed-quad native arc stroke. The fragment shader evaluates the
+        // transformed ellipse and WPF/SVG sweep directly, so the CPU does not
+        // tessellate valid arcs into a line strip.
+        worldPos = inPos;
+        texCoord = worldPos;
+        outputCornerRadius = inTexCoord.x;
+        gridIndex = inTexCoord.y;
     }
 
     if (sType == 8u) {
@@ -471,7 +551,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     output.texCoord = texCoord;
     output.brushIndex = input.brushIndex;
     output.shapeSize = inShapeSize;
-    output.cornerRadius = input.cornerRadius;
+    output.cornerRadius = outputCornerRadius;
     output.strokeThickness = input.strokeThickness;
     output.shapeType = select(f32(sType), f32(sType) + 1000.0, aliasedEdge);
     output.gridIndex = gridIndex;
@@ -530,6 +610,36 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let antialiasedAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
         let aliasedAlpha = select(0.0, 1.0, d_shape <= 0.0);
         shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
+    } else if (sType == 12u) {
+        // Fixed-quad elliptical arc stroke SDF. color.xy carries the center,
+        // color.zw carries theta1/deltaTheta, cornerRadius/gridIndex carries
+        // axisX, shapeSize carries axisY, and texCoord is the pixel position.
+        let center = input.color.xy;
+        let theta1 = input.color.z;
+        let deltaTheta = input.color.w;
+        let axisX = vec2<f32>(input.cornerRadius, input.gridIndex);
+        let axisY = input.shapeSize;
+        let point = input.texCoord;
+        let theta = nearest_ellipse_theta(point, center, axisX, axisY);
+        let nearest = arc_eval(center, axisX, axisY, theta);
+        var d_shape = length(point - nearest) - input.strokeThickness * 0.5;
+
+        if (abs(deltaTheta) < PROGPU_TWO_PI - 0.001) {
+            let startPoint = arc_eval(center, axisX, axisY, theta1);
+            let endPoint = arc_eval(center, axisX, axisY, theta1 + deltaTheta);
+            let startTangent = safe_normalize(arc_derivative(axisX, axisY, theta1, deltaTheta));
+            let endTangent = safe_normalize(arc_derivative(axisX, axisY, theta1 + deltaTheta, deltaTheta));
+            let startCap = -dot(point - startPoint, startTangent);
+            let endCap = dot(point - endPoint, endTangent);
+            let capDistance = max(startCap, endCap);
+            let insideSweep = is_angle_inside_arc(theta, theta1, deltaTheta);
+            d_shape = select(max(d_shape, capDistance), d_shape, insideSweep);
+        }
+
+        let fw = max(fwidth(d_shape), 0.0001);
+        let antialiasedAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
+        let aliasedAlpha = select(0.0, 1.0, d_shape <= 0.0);
+        shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
     } else if (sType == 3u || sType == 5u || sType == 6u || sType == 11u) {
         // Line, Quadratic, Cubic Bezier, and Arc stroke anti-aliasing via signed pixel distance
         let d_pixels = abs(input.gridIndex);
@@ -556,7 +666,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var finalColor = input.color;
     if (brush.brushType == 0u) {
-        if (sType == 5u || sType == 6u || sType == 11u) {
+        if (sType == 5u || sType == 6u || sType == 11u || sType == 12u) {
             finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
         } else {
             finalColor = vec4<f32>(input.color.rgb, input.color.a * brush.opacity);

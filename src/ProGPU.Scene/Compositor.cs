@@ -124,6 +124,7 @@ public unsafe class Compositor : IDisposable
     private const int MinGpuArcStrokeSegmentCount = 8;
     private const int MaxGpuArcStrokeSegmentCount = 96;
     private const float GpuArcStrokeSegmentPixelLength = 12f;
+    private const float ArcSdfShapeType = 12f;
 
     public struct StaticTextRecord
     {
@@ -2546,7 +2547,12 @@ public unsafe class Compositor : IDisposable
                     }
                     else if (segment is ArcSegment arc)
                     {
-                        if (TryGetGpuArcStrokeSegmentCount(segmentStart, arc, transform, thickness, out int segmentCount))
+                        if (CanUseArcSdfStroke(segmentStart, arc, transform))
+                        {
+                            maxVertices += 4;
+                            maxIndices += 6;
+                        }
+                        else if (TryGetGpuArcStrokeSegmentCount(segmentStart, arc, transform, thickness, out int segmentCount))
                         {
                             maxVertices += 2 * (segmentCount + 1);
                             maxIndices += 6 * segmentCount;
@@ -3048,6 +3054,21 @@ public unsafe class Compositor : IDisposable
         Matrix4x4 transform,
         bool isEdgeAliased)
     {
+        if (AppendStrokeArcSdfVertices(
+                verticesSpan,
+                indicesSpan,
+                ref currentVertexCount,
+                ref currentIndexCount,
+                penBrushIdx,
+                thickness,
+                segmentStart,
+                arc,
+                transform,
+                isEdgeAliased))
+        {
+            return true;
+        }
+
         if (!ArcSegmentGeometry.TryCreateShaderParameters(
                 segmentStart,
                 arc,
@@ -3091,6 +3112,136 @@ public unsafe class Compositor : IDisposable
             indicesSpan[currentIndexCount++] = nextLeft;
         }
 
+        return true;
+    }
+
+    private static bool AppendStrokeArcSdfVertices(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        float penBrushIdx,
+        float thickness,
+        Vector2 segmentStart,
+        ArcSegment arc,
+        Matrix4x4 transform,
+        bool isEdgeAliased)
+    {
+        if (!CanUseArcSdfStroke(segmentStart, arc, transform) ||
+            !ArcSegmentGeometry.TryCreateShaderParameters(
+                segmentStart,
+                arc,
+                transform,
+                out var arcParameters))
+        {
+            return false;
+        }
+
+        float pad = thickness * 0.5f + 2.0f;
+        if (!TryGetTransformedArcBounds(segmentStart, arc, transform, pad, out Vector2 min, out Vector2 max))
+        {
+            Vector2 extent = new(
+                MathF.Abs(arcParameters.AxisX.X) + MathF.Abs(arcParameters.AxisY.X) + pad,
+                MathF.Abs(arcParameters.AxisX.Y) + MathF.Abs(arcParameters.AxisY.Y) + pad);
+            min = arcParameters.Center - extent;
+            max = arcParameters.Center + extent;
+        }
+
+        if (!IsFinite(min) ||
+            !IsFinite(max) ||
+            min.X >= max.X ||
+            min.Y >= max.Y)
+        {
+            return false;
+        }
+
+        uint idxStart = (uint)currentVertexCount;
+        var arcShapeType = EncodeShapeType(isEdgeAliased, ArcSdfShapeType);
+        var shaderParameters = new Vector4(
+            arcParameters.Center.X,
+            arcParameters.Center.Y,
+            arcParameters.Theta1,
+            arcParameters.DeltaTheta);
+
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(min.X, min.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(max.X, min.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(max.X, max.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(min.X, max.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+
+        indicesSpan[currentIndexCount++] = idxStart;
+        indicesSpan[currentIndexCount++] = idxStart + 1;
+        indicesSpan[currentIndexCount++] = idxStart + 2;
+
+        indicesSpan[currentIndexCount++] = idxStart;
+        indicesSpan[currentIndexCount++] = idxStart + 2;
+        indicesSpan[currentIndexCount++] = idxStart + 3;
+
+        return true;
+    }
+
+    private static bool CanUseArcSdfStroke(Vector2 segmentStart, ArcSegment arc, Matrix4x4 transform)
+    {
+        if (!ArcSegmentGeometry.TryCreateShaderParameters(segmentStart, arc, transform, out var arcParameters))
+        {
+            return false;
+        }
+
+        float determinant = arcParameters.AxisX.X * arcParameters.AxisY.Y -
+                            arcParameters.AxisX.Y * arcParameters.AxisY.X;
+        return float.IsFinite(determinant) && MathF.Abs(determinant) > 0.0001f;
+    }
+
+    private static bool TryGetTransformedArcBounds(
+        Vector2 segmentStart,
+        ArcSegment arc,
+        Matrix4x4 transform,
+        float padding,
+        out Vector2 min,
+        out Vector2 max)
+    {
+        min = default;
+        max = default;
+        if (!ArcSegmentGeometry.TryTransformArcSegment(segmentStart, arc, transform, out var transformedStart, out var transformedArc) ||
+            !ArcSegmentGeometry.TryGetArcBounds(transformedStart, transformedArc, out min, out max))
+        {
+            return false;
+        }
+
+        var pad = new Vector2(padding, padding);
+        min -= pad;
+        max += pad;
         return true;
     }
 

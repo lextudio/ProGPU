@@ -113,7 +113,8 @@ public sealed class PathArcShimTests
 
         window.Render();
 
-        Assert.Contains(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 11);
+        Assert.Equal(4, window.Compositor.VectorVertices.Count(vertex => DecodeShapeType(vertex.ShapeType) == 12));
+        Assert.DoesNotContain(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 11);
         Assert.DoesNotContain(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 3);
 
         window.Content = null;

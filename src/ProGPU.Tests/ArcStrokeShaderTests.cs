@@ -10,18 +10,36 @@ namespace ProGPU.Tests;
 public class ArcStrokeShaderTests
 {
     [Fact]
-    public void StrokedPathArc_UsesGpuArcShapeType()
+    public void StrokedPathArc_UsesFixedQuadGpuArcSdfShapeType()
     {
         var window = HeadlessWindow.Shared;
         window.Resize(240, 160);
         window.Content = new ArcStrokeVisual();
 
-        window.Render();
+        try
+        {
+            window.Render();
 
-        Assert.Contains(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 11);
-        Assert.DoesNotContain(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 3);
+            Assert.Equal(4, window.Compositor.VectorVertices.Count(vertex => DecodeShapeType(vertex.ShapeType) == 12));
+            Assert.DoesNotContain(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 11);
+            Assert.DoesNotContain(window.Compositor.VectorVertices, vertex => DecodeShapeType(vertex.ShapeType) == 3);
 
-        window.Content = null;
+            byte[] pixels = window.ReadPixels();
+            int strokePixels = 0;
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                if (pixels[i] < 80 && pixels[i + 1] > 90 && pixels[i + 2] > 150)
+                {
+                    strokePixels++;
+                }
+            }
+
+            Assert.True(strokePixels > 100, $"Expected visible arc stroke pixels, found {strokePixels}.");
+        }
+        finally
+        {
+            window.Content = null;
+        }
     }
 
     private static int DecodeShapeType(float shapeType)
