@@ -92,6 +92,30 @@ public readonly struct ArcDashSegment
     public ArcSegment Arc { get; }
 }
 
+public readonly struct QuadraticBezierDashSegment
+{
+    public QuadraticBezierDashSegment(Vector2 start, QuadraticBezierSegment segment)
+    {
+        Start = start;
+        Segment = segment ?? throw new ArgumentNullException(nameof(segment));
+    }
+
+    public Vector2 Start { get; }
+    public QuadraticBezierSegment Segment { get; }
+}
+
+public readonly struct CubicBezierDashSegment
+{
+    public CubicBezierDashSegment(Vector2 start, CubicBezierSegment segment)
+    {
+        Start = start;
+        Segment = segment ?? throw new ArgumentNullException(nameof(segment));
+    }
+
+    public Vector2 Start { get; }
+    public CubicBezierSegment Segment { get; }
+}
+
 public class PathFigure
 {
     public Vector2 StartPoint { get; set; }
