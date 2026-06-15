@@ -13,6 +13,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Charts\ProGPU.WinUI.Charts.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Designer\ProGPU.WinUI.Designer.csproj" />

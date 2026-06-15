@@ -17,8 +17,12 @@ using Xunit;
 namespace ProGPU.Tests.Headless;
 
 [Collection("HeadlessTests")]
-public class SamplePagesTests
+public class SamplePagesTests : IDisposable
 {
+    public void Dispose()
+    {
+    }
+
     private static void EnsureFontsAndStateLoaded()
     {
         if (PopupService.DefaultFont != null) return;
@@ -442,18 +446,36 @@ public class SamplePagesTests
 
         // Cleanup
         window.Content = null;
-        AppState._offscreenCompositor.Dispose();
-        AppState._offscreenCompositor = null;
-        AppState._compute.Dispose();
-        AppState._compute = null;
-        AppState._canvasSourceTexture.Dispose();
-        AppState._canvasSourceTexture = null;
-        AppState._canvasTempTexture.Dispose();
-        AppState._canvasTempTexture = null;
-        AppState._canvasBlurTexture.Dispose();
-        AppState._canvasBlurTexture = null;
-        AppState._canvasShadowTexture.Dispose();
-        AppState._canvasShadowTexture = null;
+        if (AppState._offscreenCompositor != null)
+        {
+            AppState._offscreenCompositor.Dispose();
+            AppState._offscreenCompositor = null;
+        }
+        if (AppState._compute != null)
+        {
+            AppState._compute.Dispose();
+            AppState._compute = null;
+        }
+        if (AppState._canvasSourceTexture != null)
+        {
+            AppState._canvasSourceTexture.Dispose();
+            AppState._canvasSourceTexture = null;
+        }
+        if (AppState._canvasTempTexture != null)
+        {
+            AppState._canvasTempTexture.Dispose();
+            AppState._canvasTempTexture = null;
+        }
+        if (AppState._canvasBlurTexture != null)
+        {
+            AppState._canvasBlurTexture.Dispose();
+            AppState._canvasBlurTexture = null;
+        }
+        if (AppState._canvasShadowTexture != null)
+        {
+            AppState._canvasShadowTexture.Dispose();
+            AppState._canvasShadowTexture = null;
+        }
     }
 
     [Fact]

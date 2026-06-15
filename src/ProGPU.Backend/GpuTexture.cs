@@ -331,8 +331,10 @@ public unsafe class GpuTexture : IDisposable
         return unpaddedPixels;
     }
 
-    private void ReleaseResources()
+    private void ReleaseResources(bool immediate = false)
     {
+        OnDisposedWithId?.Invoke(Id);
+
         lock (_context.RenderLock)
         {
             if (_context.IsDisposed)
@@ -342,33 +344,20 @@ public unsafe class GpuTexture : IDisposable
                 return;
             }
 
-            if (ViewPtr != null)
+            if (immediate)
             {
-                _context.Wgpu.TextureViewRelease(ViewPtr);
-                ViewPtr = null;
-            }
+                if (ViewPtr != null)
+                {
+                    _context.Wgpu.TextureViewRelease(ViewPtr);
+                    ViewPtr = null;
+                }
 
-            if (TexturePtr != null)
-            {
-                _context.WaitIdle();
-                _context.Wgpu.TextureDestroy(TexturePtr);
-                _context.Wgpu.TextureRelease(TexturePtr);
-                TexturePtr = null;
-            }
-        }
-    }
-
-    public void Dispose()
-    {
-        if (_isDisposed) return;
-
-        OnDisposedWithId?.Invoke(Id);
-
-        if (TexturePtr != null || ViewPtr != null)
-        {
-            if (Environment.HasShutdownStarted || _context.IsDisposed)
-            {
-                ReleaseResources();
+                if (TexturePtr != null)
+                {
+                    _context.Wgpu.TextureDestroy(TexturePtr);
+                    _context.Wgpu.TextureRelease(TexturePtr);
+                    TexturePtr = null;
+                }
             }
             else
             {
@@ -377,12 +366,23 @@ public unsafe class GpuTexture : IDisposable
                     _context.QueueTextureViewDisposal((IntPtr)ViewPtr);
                     ViewPtr = null;
                 }
+
                 if (TexturePtr != null)
                 {
                     _context.QueueTextureDisposal((IntPtr)TexturePtr);
                     TexturePtr = null;
                 }
             }
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed) return;
+
+        if (TexturePtr != null || ViewPtr != null)
+        {
+            ReleaseResources(Environment.HasShutdownStarted || _context.IsDisposed);
         }
 
         _isDisposed = true;

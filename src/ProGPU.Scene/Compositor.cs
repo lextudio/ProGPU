@@ -350,6 +350,7 @@ public unsafe class Compositor : IDisposable
     private readonly HashSet<GpuTexture> _allocatedLayerTextures = new();
 
     private bool _isDisposed;
+    public bool IsDisposed => _isDisposed;
 
     private readonly Stack<Rect> _clipStack = new();
     private Rect? _activeClipRect;
@@ -365,7 +366,7 @@ public unsafe class Compositor : IDisposable
     public List<VectorVertex> VectorVertices => _vectorVerticesList;
     public List<uint> VectorIndices => _vectorIndicesList;
     
-    internal WgpuContext Context => _context;
+    public WgpuContext Context => _context;
     internal RenderPipelineCache PipelineCache => _pipelineCache;
     internal GpuBuffer VectorVertexBuffer => _vectorVertexBuffer;
     internal GpuBuffer VectorIndexBuffer => _vectorIndexBuffer;
@@ -934,6 +935,8 @@ public unsafe class Compositor : IDisposable
     public void RenderScene(Visual root, uint width, uint height, TextureView* targetView)
     {
         if (_isDisposed) return;
+        
+        _context.CleanupPendingResources();
         
         _currentWidth = width;
         _currentHeight = height;
@@ -3952,10 +3955,10 @@ public unsafe class Compositor : IDisposable
             
             if (!_context.IsDisposed)
             {
-                if (_pathAtlasBindGroup != null) _context.Wgpu.BindGroupRelease(_pathAtlasBindGroup);
-                if (_pathAtlasBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_pathAtlasBindGroupLayout);
-                if (_pathAtlasBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_pathAtlasBindGroupOffscreen);
-                if (_pathAtlasBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_pathAtlasBindGroupLayoutOffscreen);
+                if (_pathAtlasBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_pathAtlasBindGroup);
+                if (_pathAtlasBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_pathAtlasBindGroupLayout);
+                if (_pathAtlasBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_pathAtlasBindGroupOffscreen);
+                if (_pathAtlasBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_pathAtlasBindGroupLayoutOffscreen);
             }
             _pipelineCache.Dispose();
             _compute.Dispose();
@@ -3975,45 +3978,45 @@ public unsafe class Compositor : IDisposable
 
             if (!_context.IsDisposed)
             {
-                if (_atlasSampler != null) _context.Wgpu.SamplerRelease(_atlasSampler);
+                if (_atlasSampler != null) _context.QueueSamplerDisposal((IntPtr)_atlasSampler);
 
-                if (_vectorUniformBindGroup != null) _context.Wgpu.BindGroupRelease(_vectorUniformBindGroup);
-                if (_vectorUniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_vectorUniformBindGroupOffscreen);
-                if (_textUniformBindGroup != null) _context.Wgpu.BindGroupRelease(_textUniformBindGroup);
-                if (_textUniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_textUniformBindGroupOffscreen);
-                if (_textureUniformBindGroup != null) _context.Wgpu.BindGroupRelease(_textureUniformBindGroup);
-                if (_textureUniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_textureUniformBindGroupOffscreen);
+                if (_vectorUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroup);
+                if (_vectorUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroupOffscreen);
+                if (_textUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_textUniformBindGroup);
+                if (_textUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_textUniformBindGroupOffscreen);
+                if (_textureUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_textureUniformBindGroup);
+                if (_textureUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_textureUniformBindGroupOffscreen);
 
-                if (_vectorUniformBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_vectorUniformBindGroupLayout);
-                if (_vectorUniformBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_vectorUniformBindGroupLayoutOffscreen);
-                if (_textUniformBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_textUniformBindGroupLayout);
-                if (_textUniformBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_textUniformBindGroupLayoutOffscreen);
-                if (_textureUniformBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_textureUniformBindGroupLayout);
-                if (_textureUniformBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_textureUniformBindGroupLayoutOffscreen);
+                if (_vectorUniformBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_vectorUniformBindGroupLayout);
+                if (_vectorUniformBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_vectorUniformBindGroupLayoutOffscreen);
+                if (_textUniformBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textUniformBindGroupLayout);
+                if (_textUniformBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textUniformBindGroupLayoutOffscreen);
+                if (_textureUniformBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureUniformBindGroupLayout);
+                if (_textureUniformBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureUniformBindGroupLayoutOffscreen);
 
-                if (_vectorPipelineLayout != null) _context.Wgpu.PipelineLayoutRelease(_vectorPipelineLayout);
-                if (_textPipelineLayout != null) _context.Wgpu.PipelineLayoutRelease(_textPipelineLayout);
-                if (_texturePipelineLayout != null) _context.Wgpu.PipelineLayoutRelease(_texturePipelineLayout);
-                if (_vectorPipelineLayoutOffscreen != null) _context.Wgpu.PipelineLayoutRelease(_vectorPipelineLayoutOffscreen);
-                if (_textPipelineLayoutOffscreen != null) _context.Wgpu.PipelineLayoutRelease(_textPipelineLayoutOffscreen);
-                if (_texturePipelineLayoutOffscreen != null) _context.Wgpu.PipelineLayoutRelease(_texturePipelineLayoutOffscreen);
+                if (_vectorPipelineLayout != null) _context.QueuePipelineLayoutDisposal((IntPtr)_vectorPipelineLayout);
+                if (_textPipelineLayout != null) _context.QueuePipelineLayoutDisposal((IntPtr)_textPipelineLayout);
+                if (_texturePipelineLayout != null) _context.QueuePipelineLayoutDisposal((IntPtr)_texturePipelineLayout);
+                if (_vectorPipelineLayoutOffscreen != null) _context.QueuePipelineLayoutDisposal((IntPtr)_vectorPipelineLayoutOffscreen);
+                if (_textPipelineLayoutOffscreen != null) _context.QueuePipelineLayoutDisposal((IntPtr)_textPipelineLayoutOffscreen);
+                if (_texturePipelineLayoutOffscreen != null) _context.QueuePipelineLayoutDisposal((IntPtr)_texturePipelineLayoutOffscreen);
 
-                if (_atlasBindGroup != null) _context.Wgpu.BindGroupRelease(_atlasBindGroup);
-                if (_atlasBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_atlasBindGroupOffscreen);
-                if (_atlasBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_atlasBindGroupLayout);
-                if (_atlasBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_atlasBindGroupLayoutOffscreen);
+                if (_atlasBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_atlasBindGroup);
+                if (_atlasBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_atlasBindGroupOffscreen);
+                if (_atlasBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_atlasBindGroupLayout);
+                if (_atlasBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_atlasBindGroupLayoutOffscreen);
 
-                if (_texturePipeline != null) _context.Wgpu.RenderPipelineRelease(_texturePipeline);
-                if (_textureBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_textureBindGroupLayout);
-                if (_textureBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_textureBindGroupLayoutOffscreen);
+                if (_texturePipeline != null) _context.QueueRenderPipelineDisposal((IntPtr)_texturePipeline);
+                if (_textureBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureBindGroupLayout);
+                if (_textureBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureBindGroupLayoutOffscreen);
 
-                if (_chartLinePipeline != null) _context.Wgpu.RenderPipelineRelease(_chartLinePipeline);
-                if (_chartScatterPipeline != null) _context.Wgpu.RenderPipelineRelease(_chartScatterPipeline);
-                if (_chartLinePipelineOffscreen != null) _context.Wgpu.RenderPipelineRelease(_chartLinePipelineOffscreen);
-                if (_chartScatterPipelineOffscreen != null) _context.Wgpu.RenderPipelineRelease(_chartScatterPipelineOffscreen);
+                if (_chartLinePipeline != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartLinePipeline);
+                if (_chartScatterPipeline != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartScatterPipeline);
+                if (_chartLinePipelineOffscreen != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartLinePipelineOffscreen);
+                if (_chartScatterPipelineOffscreen != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartScatterPipelineOffscreen);
 
-                if (_chartLineBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_chartLineBindGroupLayout);
-                if (_chartScatterBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_chartScatterBindGroupLayout);
+                if (_chartLineBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_chartLineBindGroupLayout);
+                if (_chartScatterBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_chartScatterBindGroupLayout);
             }
 
             lock (_persistentTextureBindGroups)
@@ -4022,7 +4025,7 @@ public unsafe class Compositor : IDisposable
                 {
                     foreach (var cachedBg in _persistentTextureBindGroups.Values)
                     {
-                        if (cachedBg.BindGroupPtr != 0) _context.Wgpu.BindGroupRelease((BindGroup*)cachedBg.BindGroupPtr);
+                        if (cachedBg.BindGroupPtr != 0) _context.QueueBindGroupDisposal((IntPtr)cachedBg.BindGroupPtr);
                     }
                 }
                 _persistentTextureBindGroups.Clear();
@@ -4030,18 +4033,18 @@ public unsafe class Compositor : IDisposable
             if (_dummyMaskTexture != null) _dummyMaskTexture.Dispose();
             if (!_context.IsDisposed)
             {
-                if (_dummyMaskBindGroup != null) _context.Wgpu.BindGroupRelease(_dummyMaskBindGroup);
-                if (_dummyMaskBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_dummyMaskBindGroupOffscreen);
-                if (_maskBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_maskBindGroupLayout);
-                if (_maskBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_maskBindGroupLayoutOffscreen);
+                if (_dummyMaskBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_dummyMaskBindGroup);
+                if (_dummyMaskBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_dummyMaskBindGroupOffscreen);
+                if (_maskBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_maskBindGroupLayout);
+                if (_maskBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_maskBindGroupLayoutOffscreen);
 
                 foreach (var bg in _maskBindGroups.Values)
                 {
-                    _context.Wgpu.BindGroupRelease((BindGroup*)bg);
+                    _context.QueueBindGroupDisposal((IntPtr)bg);
                 }
                 foreach (var bg in _maskBindGroupsOffscreen.Values)
                 {
-                    _context.Wgpu.BindGroupRelease((BindGroup*)bg);
+                    _context.QueueBindGroupDisposal((IntPtr)bg);
                 }
             }
             _maskBindGroups.Clear();
@@ -4377,6 +4380,12 @@ public unsafe class Compositor : IDisposable
         var savedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
         var savedGpuTransformsCameraView = _gpuTransformsCameraView;
 
+        var savedBlendModeStack = _blendModeStack.ToArray();
+        var savedActiveBlendMode = _activeBlendMode;
+        var savedMaskStack = _maskStack.ToArray();
+        var savedMaskRenderPasses = _maskRenderPasses.ToArray();
+        var savedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+
         _useGpuTransformsActive = false;
         _cameraViewMatrix = Matrix4x4.Identity;
         _hasGpuTransformsInFrame = false;
@@ -4705,15 +4714,40 @@ public unsafe class Compositor : IDisposable
         _textureIndicesList.Clear(); _textureIndicesList.AddRange(savedTextureIndices);
         _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
         _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
+        
         _clipStack.Clear();
-        foreach (var clip in savedClipStack) _clipStack.Push(clip);
+        for (int i = savedClipStack.Length - 1; i >= 0; i--)
+        {
+            _clipStack.Push(savedClipStack[i]);
+        }
         _activeClipRect = savedActiveClipRect;
+        
         _opacityStack.Clear();
         for (int i = savedOpacityStack.Length - 1; i >= 0; i--)
         {
             _opacityStack.Push(savedOpacityStack[i]);
         }
         _activeOpacity = savedActiveOpacity;
+
+        _blendModeStack.Clear();
+        for (int i = savedBlendModeStack.Length - 1; i >= 0; i--)
+        {
+            _blendModeStack.Push(savedBlendModeStack[i]);
+        }
+        _activeBlendMode = savedActiveBlendMode;
+
+        _maskStack.Clear();
+        for (int i = savedMaskStack.Length - 1; i >= 0; i--)
+        {
+            _maskStack.Push(savedMaskStack[i]);
+        }
+
+        _maskRenderPasses.Clear();
+        _maskRenderPasses.AddRange(savedMaskRenderPasses);
+
+        _masksToReturnToPool.Clear();
+        _masksToReturnToPool.AddRange(savedMasksToReturnToPool);
+
         _pendingVectorStart = savedPendingVectorStart;
         _pendingTextStart = savedPendingTextStart;
         _currentBatchType = savedCurrentBatchType;
@@ -4731,24 +4765,67 @@ public unsafe class Compositor : IDisposable
 
     public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands, float staticZoom = 1.0f)
     {
-        // Save current lists
-        var savedVectorVertices = _vectorVerticesList.ToArray();
-        var savedVectorIndices = _vectorIndicesList.ToArray();
-        var savedTextVertices = _textVerticesList.ToArray();
-        var savedActiveBrushes = _activeBrushes.ToArray();
+        // Save current lists and states
+        var dxfSavedVectorVertices = _vectorVerticesList.ToArray();
+        var dxfSavedVectorIndices = _vectorIndicesList.ToArray();
+        var dxfSavedTextVertices = _textVerticesList.ToArray();
+        var dxfSavedTextureVertices = _textureVerticesList.ToArray();
+        var dxfSavedTextureIndices = _textureIndicesList.ToArray();
+        var dxfSavedDrawCalls = _drawCalls.ToArray();
+        var dxfSavedActiveBrushes = _activeBrushes.ToArray();
+        var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
 
-        var savedActiveClipRect = _activeClipRect;
-        var savedClipStack = _clipStack.ToArray();
+        var dxfSavedActiveClipRect = _activeClipRect;
+        var dxfSavedClipStack = _clipStack.ToArray();
 
-        _activeClipRect = null;
-        _clipStack.Clear();
-        
+        var dxfSavedOpacityStack = _opacityStack.ToArray();
+        var dxfSavedActiveOpacity = _activeOpacity;
+
+        var dxfSavedPendingVectorStart = _pendingVectorStart;
+        var dxfSavedPendingTextStart = _pendingTextStart;
+        var dxfSavedCurrentBatchType = _currentBatchType;
+
+        var dxfSavedUseGpuTransformsActive = _useGpuTransformsActive;
+        var dxfSavedCameraViewMatrix = _cameraViewMatrix;
+        var dxfSavedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
+        var dxfSavedGpuTransformsCameraView = _gpuTransformsCameraView;
+
+        var dxfSavedBlendModeStack = _blendModeStack.ToArray();
+        var dxfSavedActiveBlendMode = _activeBlendMode;
+        var dxfSavedMaskStack = _maskStack.ToArray();
+        var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
+        var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+
         // Clear for compilation
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
+        _textureVerticesList.Clear();
+        _textureIndicesList.Clear();
+        _drawCalls.Clear();
         _activeBrushes.Clear();
         _compiledTextRecords.Clear();
+
+        _activeClipRect = null;
+        _clipStack.Clear();
+
+        _opacityStack.Clear();
+        _activeOpacity = 1.0f;
+
+        _pendingVectorStart = 0;
+        _pendingTextStart = 0;
+        _currentBatchType = BatchType.None;
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
+
+        _blendModeStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _maskStack.Clear();
+        _maskRenderPasses.Clear();
+        _masksToReturnToPool.Clear();
 
         ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom };
         lock (_registeredExtensions)
@@ -5032,41 +5109,123 @@ public unsafe class Compositor : IDisposable
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            // Restore dynamic lists
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
-            
-            _activeClipRect = savedActiveClipRect;
+            // Restore dynamic lists and states
+            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(dxfSavedVectorVertices);
+            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(dxfSavedVectorIndices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(dxfSavedTextVertices);
+            _textureVerticesList.Clear(); _textureVerticesList.AddRange(dxfSavedTextureVertices);
+            _textureIndicesList.Clear(); _textureIndicesList.AddRange(dxfSavedTextureIndices);
+            _drawCalls.Clear(); _drawCalls.AddRange(dxfSavedDrawCalls);
+            _activeBrushes.Clear(); _activeBrushes.AddRange(dxfSavedActiveBrushes);
+            _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
+
+            _activeClipRect = dxfSavedActiveClipRect;
             _clipStack.Clear();
-            for (int i = savedClipStack.Length - 1; i >= 0; i--)
+            for (int i = dxfSavedClipStack.Length - 1; i >= 0; i--)
             {
-                _clipStack.Push(savedClipStack[i]);
+                _clipStack.Push(dxfSavedClipStack[i]);
             }
+
+            _opacityStack.Clear();
+            for (int i = dxfSavedOpacityStack.Length - 1; i >= 0; i--)
+            {
+                _opacityStack.Push(dxfSavedOpacityStack[i]);
+            }
+            _activeOpacity = dxfSavedActiveOpacity;
+
+            _pendingVectorStart = dxfSavedPendingVectorStart;
+            _pendingTextStart = dxfSavedPendingTextStart;
+            _currentBatchType = dxfSavedCurrentBatchType;
+
+            _useGpuTransformsActive = dxfSavedUseGpuTransformsActive;
+            _cameraViewMatrix = dxfSavedCameraViewMatrix;
+            _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
+            _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
+
+            _blendModeStack.Clear();
+            for (int i = dxfSavedBlendModeStack.Length - 1; i >= 0; i--)
+            {
+                _blendModeStack.Push(dxfSavedBlendModeStack[i]);
+            }
+            _activeBlendMode = dxfSavedActiveBlendMode;
+
+            _maskStack.Clear();
+            for (int i = dxfSavedMaskStack.Length - 1; i >= 0; i--)
+            {
+                _maskStack.Push(dxfSavedMaskStack[i]);
+            }
+
+            _maskRenderPasses.Clear();
+            _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
+
+            _masksToReturnToPool.Clear();
+            _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
         }
     }
 
     public DxfStaticBuffer CompileStaticDxf(DrawingContext context, float staticZoom = 1.0f)
     {
-        // Save current lists
-        var savedVectorVertices = _vectorVerticesList.ToArray();
-        var savedVectorIndices = _vectorIndicesList.ToArray();
-        var savedTextVertices = _textVerticesList.ToArray();
-        var savedActiveBrushes = _activeBrushes.ToArray();
+        // Save current lists and states
+        var dxfSavedVectorVertices = _vectorVerticesList.ToArray();
+        var dxfSavedVectorIndices = _vectorIndicesList.ToArray();
+        var dxfSavedTextVertices = _textVerticesList.ToArray();
+        var dxfSavedTextureVertices = _textureVerticesList.ToArray();
+        var dxfSavedTextureIndices = _textureIndicesList.ToArray();
+        var dxfSavedDrawCalls = _drawCalls.ToArray();
+        var dxfSavedActiveBrushes = _activeBrushes.ToArray();
+        var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
 
-        var savedActiveClipRect = _activeClipRect;
-        var savedClipStack = _clipStack.ToArray();
+        var dxfSavedActiveClipRect = _activeClipRect;
+        var dxfSavedClipStack = _clipStack.ToArray();
 
-        _activeClipRect = null;
-        _clipStack.Clear();
-        
+        var dxfSavedOpacityStack = _opacityStack.ToArray();
+        var dxfSavedActiveOpacity = _activeOpacity;
+
+        var dxfSavedPendingVectorStart = _pendingVectorStart;
+        var dxfSavedPendingTextStart = _pendingTextStart;
+        var dxfSavedCurrentBatchType = _currentBatchType;
+
+        var dxfSavedUseGpuTransformsActive = _useGpuTransformsActive;
+        var dxfSavedCameraViewMatrix = _cameraViewMatrix;
+        var dxfSavedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
+        var dxfSavedGpuTransformsCameraView = _gpuTransformsCameraView;
+
+        var dxfSavedBlendModeStack = _blendModeStack.ToArray();
+        var dxfSavedActiveBlendMode = _activeBlendMode;
+        var dxfSavedMaskStack = _maskStack.ToArray();
+        var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
+        var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+
         // Clear for compilation
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
+        _textureVerticesList.Clear();
+        _textureIndicesList.Clear();
+        _drawCalls.Clear();
         _activeBrushes.Clear();
         _compiledTextRecords.Clear();
+
+        _activeClipRect = null;
+        _clipStack.Clear();
+
+        _opacityStack.Clear();
+        _activeOpacity = 1.0f;
+
+        _pendingVectorStart = 0;
+        _pendingTextStart = 0;
+        _currentBatchType = BatchType.None;
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
+
+        _blendModeStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _maskStack.Clear();
+        _maskRenderPasses.Clear();
+        _masksToReturnToPool.Clear();
 
         ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom };
         lock (_registeredExtensions)
@@ -5419,26 +5578,73 @@ public unsafe class Compositor : IDisposable
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            // Restore dynamic lists
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
-            
-            _activeClipRect = savedActiveClipRect;
+            // Restore dynamic lists and states
+            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(dxfSavedVectorVertices);
+            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(dxfSavedVectorIndices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(dxfSavedTextVertices);
+            _textureVerticesList.Clear(); _textureVerticesList.AddRange(dxfSavedTextureVertices);
+            _textureIndicesList.Clear(); _textureIndicesList.AddRange(dxfSavedTextureIndices);
+            _drawCalls.Clear(); _drawCalls.AddRange(dxfSavedDrawCalls);
+            _activeBrushes.Clear(); _activeBrushes.AddRange(dxfSavedActiveBrushes);
+            _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
+
+            _activeClipRect = dxfSavedActiveClipRect;
             _clipStack.Clear();
-            for (int i = savedClipStack.Length - 1; i >= 0; i--)
+            for (int i = dxfSavedClipStack.Length - 1; i >= 0; i--)
             {
-                _clipStack.Push(savedClipStack[i]);
+                _clipStack.Push(dxfSavedClipStack[i]);
             }
+
+            _opacityStack.Clear();
+            for (int i = dxfSavedOpacityStack.Length - 1; i >= 0; i--)
+            {
+                _opacityStack.Push(dxfSavedOpacityStack[i]);
+            }
+            _activeOpacity = dxfSavedActiveOpacity;
+
+            _pendingVectorStart = dxfSavedPendingVectorStart;
+            _pendingTextStart = dxfSavedPendingTextStart;
+            _currentBatchType = dxfSavedCurrentBatchType;
+
+            _useGpuTransformsActive = dxfSavedUseGpuTransformsActive;
+            _cameraViewMatrix = dxfSavedCameraViewMatrix;
+            _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
+            _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
+
+            _blendModeStack.Clear();
+            for (int i = dxfSavedBlendModeStack.Length - 1; i >= 0; i--)
+            {
+                _blendModeStack.Push(dxfSavedBlendModeStack[i]);
+            }
+            _activeBlendMode = dxfSavedActiveBlendMode;
+
+            _maskStack.Clear();
+            for (int i = dxfSavedMaskStack.Length - 1; i >= 0; i--)
+            {
+                _maskStack.Push(dxfSavedMaskStack[i]);
+            }
+
+            _maskRenderPasses.Clear();
+            _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
+
+            _masksToReturnToPool.Clear();
+            _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
         }
     }
     
     public void RecompileStaticText(DxfStaticBuffer staticBuffer, float staticZoom)
     {
         var savedTextVertices = _textVerticesList.ToArray();
+        var savedDrawCalls = _drawCalls.ToArray();
+        var savedPendingTextStart = _pendingTextStart;
+        var savedCurrentBatchType = _currentBatchType;
+        var savedActiveOpacity = _activeOpacity;
 
         _textVerticesList.Clear();
+        _drawCalls.Clear();
+        _pendingTextStart = 0;
+        _currentBatchType = BatchType.None;
+        _activeOpacity = 1.0f;
 
         ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom, IsRecompiling = true };
 
@@ -5464,8 +5670,11 @@ public unsafe class Compositor : IDisposable
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            _textVerticesList.Clear();
-            _textVerticesList.AddRange(savedTextVertices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
+            _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
+            _pendingTextStart = savedPendingTextStart;
+            _currentBatchType = savedCurrentBatchType;
+            _activeOpacity = savedActiveOpacity;
         }
     }
 

@@ -13,10 +13,21 @@ internal static class GpuProvider
     {
         get
         {
-            if (_context != null) return _context;
             if (WgpuContext.ActiveContexts.Count > 0)
             {
-                return WgpuContext.ActiveContexts[0];
+                var active = WgpuContext.ActiveContexts[0];
+                if (!active.IsDisposed)
+                {
+                    return active;
+                }
+            }
+            if (_context != null && !_context.IsDisposed)
+            {
+                return _context;
+            }
+            if (_context != null)
+            {
+                try { _context.Dispose(); } catch {}
             }
             _context = new WgpuContext();
             _context.Initialize(null);
@@ -28,8 +39,16 @@ internal static class GpuProvider
     {
         get
         {
-            if (_compositor != null) return _compositor;
-            _compositor = new Compositor(Context, TextureFormat.Rgba8Unorm);
+            var ctx = Context;
+            if (_compositor != null && !_compositor.IsDisposed && _compositor.Context == ctx)
+            {
+                return _compositor;
+            }
+            if (_compositor != null)
+            {
+                try { _compositor.Dispose(); } catch {}
+            }
+            _compositor = new Compositor(ctx, TextureFormat.Rgba8Unorm);
             return _compositor;
         }
     }

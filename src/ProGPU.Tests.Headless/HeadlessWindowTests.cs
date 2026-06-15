@@ -14,8 +14,12 @@ using ProGPU.Vector;
 namespace ProGPU.Tests.Headless;
 
 [Collection("HeadlessTests")]
-public class HeadlessWindowTests
+public class HeadlessWindowTests : IDisposable
 {
+    public void Dispose()
+    {
+    }
+
     [Fact]
     public void Test_HeadlessWindow_Initialization_And_Render()
     {

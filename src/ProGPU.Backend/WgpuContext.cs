@@ -213,22 +213,22 @@ public unsafe class WgpuContext : IDisposable
 
             foreach (var layout in layouts)
             {
-                Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
+                // Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
             }
 
             foreach (var pipeLayout in pipeLayouts)
             {
-                Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
+                // Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
             }
 
             foreach (var rp in renderPipes)
             {
-                Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
+                // Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
             }
 
             foreach (var cp in computePipes)
             {
-                Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
+                // Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
             }
 
             foreach (var sampler in samplers)
@@ -238,7 +238,7 @@ public unsafe class WgpuContext : IDisposable
 
             foreach (var shader in shaders)
             {
-                Wgpu.ShaderModuleRelease((ShaderModule*)shader);
+                // Wgpu.ShaderModuleRelease((ShaderModule*)shader);
             }
         }
     }
@@ -292,8 +292,7 @@ public unsafe class WgpuContext : IDisposable
     private IWindow? _window;
     public IWindow? Window => _window;
 
-    private static readonly object s_instanceLock = new();
-    private static Instance* s_globalInstance = null;
+
 
     public void Initialize(IWindow? window)
     {
@@ -322,20 +321,13 @@ public unsafe class WgpuContext : IDisposable
         _window = window;
         Wgpu = WebGPU.GetApi();
         
-        // 1. Create WebGPU Instance (shared statically)
-        SafeLog("[WGPUCONTEXT] Getting WebGPU Instance\n");
-        lock (s_instanceLock)
+        // 1. Create WebGPU Instance (isolated per context)
+        SafeLog("[WGPUCONTEXT] Creating WebGPU Instance\n");
+        var instanceDesc = new InstanceDescriptor();
+        Instance = Wgpu.CreateInstance(&instanceDesc);
+        if (Instance == null)
         {
-            if (s_globalInstance == null)
-            {
-                var instanceDesc = new InstanceDescriptor();
-                s_globalInstance = Wgpu.CreateInstance(&instanceDesc);
-                if (s_globalInstance == null)
-                {
-                    throw new InvalidOperationException("Failed to create WebGPU Instance.");
-                }
-            }
-            Instance = s_globalInstance;
+            throw new InvalidOperationException("Failed to create WebGPU Instance.");
         }
 
         // 2. Create Surface if window is provided
@@ -543,7 +535,7 @@ public unsafe class WgpuContext : IDisposable
     {
         if (Device != null && !_isDisposed)
         {
-            wgpuDevicePoll(Device, true, null);
+            wgpuDevicePoll(Device, false, null);
         }
     }
 
@@ -588,8 +580,14 @@ public unsafe class WgpuContext : IDisposable
                 _activeContexts.Remove(this);
             }
             
+            if (Queue != null)
+            {
+                Wgpu.QueueRelease(Queue);
+                Queue = null;
+            }
             if (Device != null)
             {
+                Wgpu.DeviceDestroy(Device);
                 Wgpu.DeviceRelease(Device);
                 Device = null;
             }
@@ -603,8 +601,11 @@ public unsafe class WgpuContext : IDisposable
                 Wgpu.SurfaceRelease(Surface);
                 Surface = null;
             }
-            // Keep shared s_globalInstance alive; do not release it here.
-            Instance = null;
+            if (Instance != null)
+            {
+                Wgpu.InstanceRelease(Instance);
+                Instance = null;
+            }
             
             _isDisposed = true;
         }

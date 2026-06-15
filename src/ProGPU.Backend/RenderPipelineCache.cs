@@ -325,15 +325,15 @@ public unsafe class RenderPipelineCache : IDisposable
             {
                 foreach (var p in _renderPipelines.Values)
                 {
-                    _context.Wgpu.RenderPipelineRelease((RenderPipeline*)p);
+                    _context.QueueRenderPipelineDisposal((nint)p);
                 }
                 foreach (var p in _computePipelines.Values)
                 {
-                    _context.Wgpu.ComputePipelineRelease((ComputePipeline*)p);
+                    _context.QueueComputePipelineDisposal((nint)p);
                 }
                 foreach (var s in _shaders.Values)
                 {
-                    _context.Wgpu.ShaderModuleRelease((ShaderModule*)s);
+                    _context.QueueShaderModuleDisposal((nint)s);
                 }
             }
             _renderPipelines.Clear();
