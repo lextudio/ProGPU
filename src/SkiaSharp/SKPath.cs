@@ -140,9 +140,9 @@ public class SKPath : IDisposable
         var r = rect.Rect;
         var radii = rect.CornerRadii;
 
-        MoveTo(r.Left + radii[0].X, r.Top);
         if (direction == SKPathDirection.Clockwise)
         {
+            MoveTo(r.Left + radii[0].X, r.Top);
             LineTo(r.Right - radii[1].X, r.Top);
             ArcTo(radii[1].X, radii[1].Y, 0f, SKPathArcSize.Small, SKPathDirection.Clockwise, r.Right, r.Top + radii[1].Y);
             LineTo(r.Right, r.Bottom - radii[2].Y);
@@ -154,14 +154,15 @@ public class SKPath : IDisposable
         }
         else
         {
-            LineTo(r.Left, r.Top + radii[0].Y);
-            ArcTo(radii[0].X, radii[0].Y, 0f, SKPathArcSize.Small, SKPathDirection.CounterClockwise, r.Left + radii[0].X, r.Top);
-            LineTo(r.Left + radii[3].X, r.Bottom);
-            ArcTo(radii[3].X, radii[3].Y, 0f, SKPathArcSize.Small, SKPathDirection.CounterClockwise, r.Left, r.Bottom - radii[3].Y);
+            MoveTo(r.Left, r.Top + radii[0].Y);
+            LineTo(r.Left, r.Bottom - radii[3].Y);
+            ArcTo(radii[3].X, radii[3].Y, 0f, SKPathArcSize.Small, SKPathDirection.CounterClockwise, r.Left + radii[3].X, r.Bottom);
             LineTo(r.Right - radii[2].X, r.Bottom);
             ArcTo(radii[2].X, radii[2].Y, 0f, SKPathArcSize.Small, SKPathDirection.CounterClockwise, r.Right, r.Bottom - radii[2].Y);
             LineTo(r.Right, r.Top + radii[1].Y);
             ArcTo(radii[1].X, radii[1].Y, 0f, SKPathArcSize.Small, SKPathDirection.CounterClockwise, r.Right - radii[1].X, r.Top);
+            LineTo(r.Left + radii[0].X, r.Top);
+            ArcTo(radii[0].X, radii[0].Y, 0f, SKPathArcSize.Small, SKPathDirection.CounterClockwise, r.Left, r.Top + radii[0].Y);
         }
         Close();
     }

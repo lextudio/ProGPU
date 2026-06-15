@@ -76,6 +76,31 @@ public sealed class PathShimCompatibilityTests
     }
 
     [Fact]
+    public void SkPathCounterClockwiseRoundRectWalksPerimeter()
+    {
+        using var path = new SKPath();
+
+        path.AddRoundRect(new SKRect(0f, 0f, 100f, 50f), 10f, 10f, SKPathDirection.CounterClockwise);
+
+        var figure = Assert.Single(path.Geometry.Figures);
+        Assert.Equal(new Vector2(0f, 10f), figure.StartPoint);
+        Assert.True(figure.IsClosed);
+        Assert.Equal(8, figure.Segments.Count);
+
+        Assert.Equal(new Vector2(0f, 40f), Assert.IsType<LineSegment>(figure.Segments[0]).Point);
+        Assert.Equal(new Vector2(10f, 50f), Assert.IsType<ArcSegment>(figure.Segments[1]).Point);
+        Assert.Equal(new Vector2(90f, 50f), Assert.IsType<LineSegment>(figure.Segments[2]).Point);
+        Assert.Equal(new Vector2(100f, 40f), Assert.IsType<ArcSegment>(figure.Segments[3]).Point);
+        Assert.Equal(new Vector2(100f, 10f), Assert.IsType<LineSegment>(figure.Segments[4]).Point);
+        Assert.Equal(new Vector2(90f, 0f), Assert.IsType<ArcSegment>(figure.Segments[5]).Point);
+        Assert.Equal(new Vector2(10f, 0f), Assert.IsType<LineSegment>(figure.Segments[6]).Point);
+        Assert.Equal(new Vector2(0f, 10f), Assert.IsType<ArcSegment>(figure.Segments[7]).Point);
+        Assert.All(
+            figure.Segments.OfType<ArcSegment>(),
+            arc => Assert.Equal(SweepDirection.Counterclockwise, arc.SweepDirection));
+    }
+
+    [Fact]
     public void SkCanvasDrawPathCarriesEvenOddFillRule()
     {
         var context = new DrawingContext();
