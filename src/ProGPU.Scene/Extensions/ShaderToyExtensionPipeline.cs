@@ -64,6 +64,9 @@ struct ShaderToyUniforms {
 
 @group(1) @binding(0) var<uniform> inputs: ShaderToyUniforms;
 
+@group(2) @binding(0) var activeMaskSampler: sampler;
+@group(2) @binding(1) var activeMaskTexture: texture_2d<f32>;
+
 struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
@@ -90,7 +93,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fragCoord = vec2<f32>(input.texCoord.x * inputs.iResolution.x, (1.0 - input.texCoord.y) * inputs.iResolution.y);
-    return mainImage(fragCoord);
+    let maskSize = max(vec2<f32>(textureDimensions(activeMaskTexture)), vec2<f32>(1.0));
+    let screenUv = input.position.xy / maskSize;
+    let maskAlpha = textureSample(activeMaskTexture, activeMaskSampler, screenUv).r;
+    return mainImage(fragCoord) * input.color * maskAlpha;
 }
 ";
 
@@ -135,23 +141,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             _toyBindGroupLayout = wgpu.DeviceCreateBindGroupLayout(device, &layoutDesc);
 
             // Onscreen pipeline layout
-            var onscreenLayouts = stackalloc BindGroupLayout*[2];
+            var onscreenLayouts = stackalloc BindGroupLayout*[3];
             onscreenLayouts[0] = compositor.VectorUniformBindGroupLayout;
             onscreenLayouts[1] = _toyBindGroupLayout;
+            onscreenLayouts[2] = compositor.MaskBindGroupLayout;
             var onscreenDesc = new PipelineLayoutDescriptor
             {
-                BindGroupLayoutCount = 2,
+                BindGroupLayoutCount = 3,
                 BindGroupLayouts = onscreenLayouts
             };
             _onscreenPipelineLayout = wgpu.DeviceCreatePipelineLayout(device, &onscreenDesc);
 
             // Offscreen pipeline layout
-            var offscreenLayouts = stackalloc BindGroupLayout*[2];
+            var offscreenLayouts = stackalloc BindGroupLayout*[3];
             offscreenLayouts[0] = compositor.VectorUniformBindGroupLayoutOffscreen;
             offscreenLayouts[1] = _toyBindGroupLayout;
+            offscreenLayouts[2] = compositor.MaskBindGroupLayoutOffscreen;
             var offscreenDesc = new PipelineLayoutDescriptor
             {
-                BindGroupLayoutCount = 2,
+                BindGroupLayoutCount = 3,
                 BindGroupLayouts = offscreenLayouts
             };
             _offscreenPipelineLayout = wgpu.DeviceCreatePipelineLayout(device, &offscreenDesc);
@@ -299,11 +307,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                         catch (Exception ex)
                         {
                             Console.WriteLine($"[ShaderToy Transpiler] Transpilation failed: {ex.Message}");
-                            try
-                            {
-                                System.IO.File.WriteAllText("/Users/wieslawsoltes/GitHub/ProGPU/transpiler_error.txt", ex.ToString());
-                            }
-                            catch {}
                         }
                     }
                     string fullShaderCode = VertexAndHeaderShader + "\n" + userSource + "\n" + FragmentWrapperShader;
@@ -346,33 +349,30 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
                     try
                     {
-                        activePipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
-                            pipelineKey,
-                            shaderModule,
-                            vertexBufferLayouts: layouts,
-                            topology: PrimitiveTopology.TriangleList,
-                            targetFormat: compositor.RenderFormat,
-                            sampleCount: isOffscreen ? 1u : 4u,
-                            pipelineLayout: isOffscreen ? _offscreenPipelineLayout : _onscreenPipelineLayout
-                        );
+                        try
+                        {
+                            activePipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
+                                pipelineKey,
+                                shaderModule,
+                                vertexBufferLayouts: layouts,
+                                topology: PrimitiveTopology.TriangleList,
+                                targetFormat: compositor.RenderFormat,
+                                sampleCount: isOffscreen ? 1u : 4u,
+                                pipelineLayout: isOffscreen ? _offscreenPipelineLayout : _onscreenPipelineLayout
+                            );
+                        }
+                        finally
+                        {
+                            Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
+                        }
+
+                        // Force dispatching of pipeline creation validation errors before unhooking the error handler.
+                        compositor.Context.WaitIdle();
                     }
                     finally
                     {
-                        Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
                         WgpuContext.OnWebGpuError -= pipelineErrorHandler;
                     }
-
-                    // Force dispatching of pipeline creation validation errors
-                    compositor.Context.WaitIdle();
-
-                    try
-                    {
-                        System.IO.File.AppendAllText(
-                            "/Users/wieslawsoltes/GitHub/ProGPU/debug.txt",
-                            $"[ShaderToy Render] pipelineFailed: {pipelineFailed}, activePipeline is null: {activePipeline == null}\n"
-                        );
-                    }
-                    catch {}
 
                     if (pipelineFailed || activePipeline == null)
                     {
@@ -449,6 +449,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
             // @group(1): ShaderToy uniform inputs
             wgpu.RenderPassEncoderSetBindGroup(pass, 1, (BindGroup*)gpuRes.BindGroupPtr, 0, null);
+
+            // @group(2): active opacity mask, or a dummy white mask when no mask is active
+            wgpu.RenderPassEncoderSetBindGroup(pass, 2, compositor.GetMaskBindGroup(dc.MaskTexture, isOffscreen), 0, null);
 
             // Set pipeline & draw indexed
             wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
