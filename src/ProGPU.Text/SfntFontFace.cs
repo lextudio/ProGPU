@@ -6,7 +6,14 @@ using System.Text;
 
 namespace ProGPU.Text;
 
-public static class SfntNameIds
+#pragma warning disable IDE0078, IDE0300
+
+#if PROGPU_TEXT_PUBLIC
+public
+#else
+internal
+#endif
+static class SfntNameIds
 {
     public const ushort FamilyName = 1;
     public const ushort SubfamilyName = 2;
@@ -18,7 +25,12 @@ public static class SfntNameIds
     public const ushort PreferredSubfamilyName = 17;
 }
 
-public readonly struct SfntTableRecord
+#if PROGPU_TEXT_PUBLIC
+public
+#else
+internal
+#endif
+readonly struct SfntTableRecord
 {
     public SfntTableRecord(string tag, uint checksum, uint offset, uint length)
     {
@@ -34,7 +46,12 @@ public readonly struct SfntTableRecord
     public uint Length { get; }
 }
 
-public sealed class SfntFontFace
+#if PROGPU_TEXT_PUBLIC
+public
+#else
+internal
+#endif
+sealed class SfntFontFace
 {
     private readonly byte[] _data;
     private readonly Dictionary<string, SfntTableRecord> _tables;
