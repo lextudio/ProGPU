@@ -23,6 +23,13 @@ public class SamplePagesTests : IDisposable
     {
     }
 
+    private static string GetArtifactPath(string fileName)
+    {
+        string artifactDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "artifacts");
+        Directory.CreateDirectory(artifactDirectory);
+        return Path.Combine(artifactDirectory, fileName);
+    }
+
     private static void EnsureFontsAndStateLoaded()
     {
         if (PopupService.DefaultFont != null) return;
@@ -1385,7 +1392,7 @@ public class SamplePagesTests : IDisposable
     {
         try
         {
-            System.IO.File.WriteAllText("/Users/wieslawsoltes/GitHub/ProGPU/debug.txt", "Test start\n");
+            File.WriteAllText(GetArtifactPath("debug.txt"), "Test start\n");
         }
         catch (Exception ex)
         {
@@ -1408,7 +1415,7 @@ public class SamplePagesTests : IDisposable
         }
         
         byte[] pixels = window.ReadPixels();
-        window.SaveScreenshot("/Users/wieslawsoltes/GitHub/ProGPU/preset2.png");
+        window.SaveScreenshot(GetArtifactPath("preset2.png"));
 
         int nonBgCount = 0;
         for (int i = 0; i < pixels.Length; i += 4)
@@ -1445,7 +1452,7 @@ public class SamplePagesTests : IDisposable
         }
         
         byte[] pixels = window.ReadPixels();
-        window.SaveScreenshot("/Users/wieslawsoltes/GitHub/ProGPU/preset3.png");
+        window.SaveScreenshot(GetArtifactPath("preset3.png"));
 
         int nonBgCount = 0;
         for (int i = 0; i < pixels.Length; i += 4)
@@ -1482,7 +1489,7 @@ public class SamplePagesTests : IDisposable
         }
         
         byte[] pixels = window.ReadPixels();
-        window.SaveScreenshot("/Users/wieslawsoltes/GitHub/ProGPU/preset4.png");
+        window.SaveScreenshot(GetArtifactPath("preset4.png"));
 
         int nonBgCount = 0;
         for (int i = 0; i < pixels.Length; i += 4)
@@ -1519,7 +1526,7 @@ public class SamplePagesTests : IDisposable
         }
         
         byte[] pixels = window.ReadPixels();
-        window.SaveScreenshot("/Users/wieslawsoltes/GitHub/ProGPU/preset5.png");
+        window.SaveScreenshot(GetArtifactPath("preset5.png"));
 
         int nonBgCount = 0;
         for (int i = 0; i < pixels.Length; i += 4)
@@ -1857,7 +1864,7 @@ void mainImage(out vec4 O, vec2 C) {
         }
 
         byte[] pixels = window.ReadPixels();
-        window.SaveScreenshot("/Users/wieslawsoltes/GitHub/ProGPU/terrain.png");
+        window.SaveScreenshot(GetArtifactPath("terrain.png"));
 
         int nonBgCount = 0;
         for (int i = 0; i < pixels.Length; i += 4)
@@ -2098,7 +2105,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
         }
 
         byte[] pixels = window.ReadPixels();
-        window.SaveScreenshot("/Users/wieslawsoltes/GitHub/ProGPU/seascape.png");
+        window.SaveScreenshot(GetArtifactPath("seascape.png"));
 
         int nonBgCount = 0;
         for (int i = 0; i < pixels.Length; i += 4)
@@ -2115,6 +2122,5 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
         window.Content = null;
     }
 }
-
 
 
