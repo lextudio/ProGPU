@@ -1847,6 +1847,11 @@ public unsafe class Compositor : IDisposable
 
     private void CompileVisualTree(Visual node, Matrix4x4 parentTransform)
     {
+        CompileVisualTree(node, parentTransform, offsetOverride: null);
+    }
+
+    private void CompileVisualTree(Visual node, Matrix4x4 parentTransform, Vector2? offsetOverride)
+    {
         if (!node.IsVisible || node.Opacity <= 0.0001f || _activeOpacity <= 0.0001f)
         {
             node.IsDirty = false;
@@ -1866,7 +1871,9 @@ public unsafe class Compositor : IDisposable
         }
 
         // 1. Calculate global transform
-        var localTransform = node.GetLocalTransform();
+        var localTransform = offsetOverride.HasValue
+            ? node.GetLocalTransform(offsetOverride.Value)
+            : node.GetLocalTransform();
         var globalTransform = localTransform * parentTransform;
 
         bool pushedClip = false;
@@ -5322,16 +5329,10 @@ public unsafe class Compositor : IDisposable
         _maskRenderPasses.Clear();
         _masksToReturnToPool.Clear();
 
-        // Save offset and temporarily set to padding to render centered in the inflated offscreen texture
-        var oldOffset = node.Offset;
-        node.Offset = new Vector2(padding, padding);
-
         _pendingVectorStart = 0;
         _pendingTextStart = 0;
 
-        CompileVisualTree(node, Matrix4x4.Identity);
-
-        node.Offset = oldOffset;
+        CompileVisualTree(node, Matrix4x4.Identity, new Vector2(padding, padding));
 
         CommitPendingDrawCalls();
 

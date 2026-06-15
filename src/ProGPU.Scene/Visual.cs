@@ -232,6 +232,11 @@ public class Visual
 
     public Matrix4x4 GetLocalTransform()
     {
+        return GetLocalTransform(Offset);
+    }
+
+    public Matrix4x4 GetLocalTransform(Vector2 offset)
+    {
         Vector3 anchor = new Vector3(Size.X * RenderTransformOrigin.X, Size.Y * RenderTransformOrigin.Y, 0f);
         if (CenterPoint != Vector3.Zero)
         {
@@ -241,7 +246,7 @@ public class Visual
         var translationToOrigin = Matrix4x4.CreateTranslation(-anchor.X, -anchor.Y, -anchor.Z);
         var scaleMatrix = Matrix4x4.CreateScale(Scale);
         var rotationMatrix = Matrix4x4.CreateRotationZ(Rotation);
-        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(Offset.X + anchor.X, Offset.Y + anchor.Y, anchor.Z);
+        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(offset.X + anchor.X, offset.Y + anchor.Y, anchor.Z);
 
         var modelMatrix = translationToOrigin * scaleMatrix * rotationMatrix * translationToOffsetAndRestoreCenter;
         return Transform * modelMatrix;
