@@ -500,29 +500,13 @@ public static class ArcSegmentGeometry
         finalDistanceInPattern = distanceInPattern;
 
         if (arc == null ||
-            dashPattern.IsEmpty ||
-            patternIndex < 0 ||
-            patternIndex >= dashPattern.Length ||
-            !float.IsFinite(distanceInPattern) ||
-            distanceInPattern < 0.0f ||
+            !DashPattern.TryValidateState(dashPattern, patternIndex, distanceInPattern) ||
             !TryBuildArcLengthTable(start, arc, maxAngleRadians, out var cumulativeLengths, out var totalLength))
         {
             return false;
         }
 
-        for (var i = 0; i < dashPattern.Length; i++)
-        {
-            if (!float.IsFinite(dashPattern[i]) || dashPattern[i] <= Epsilon)
-            {
-                return false;
-            }
-        }
-
-        while (distanceInPattern >= dashPattern[patternIndex])
-        {
-            distanceInPattern -= dashPattern[patternIndex];
-            patternIndex = (patternIndex + 1) % dashPattern.Length;
-        }
+        DashPattern.NormalizeState(dashPattern, ref patternIndex, ref distanceInPattern);
 
         var segments = new List<ArcDashSegment>();
         var distance = 0.0f;
@@ -546,7 +530,7 @@ public static class ArcSegmentGeometry
                 }
             }
 
-            AdvanceDashPattern(dashPattern, ref patternIndex, ref distanceInPattern, remainingInElement, step);
+            DashPattern.Advance(dashPattern, ref patternIndex, ref distanceInPattern, remainingInElement, step);
             distance += step;
         }
 
@@ -634,24 +618,6 @@ public static class ArcSegmentGeometry
         }
 
         return 1.0f;
-    }
-
-    private static void AdvanceDashPattern(
-        ReadOnlySpan<float> dashPattern,
-        ref int patternIndex,
-        ref float distanceInPattern,
-        float remainingInElement,
-        float step)
-    {
-        if (step >= remainingInElement - Epsilon)
-        {
-            distanceInPattern = 0.0f;
-            patternIndex = (patternIndex + 1) % dashPattern.Length;
-        }
-        else
-        {
-            distanceInPattern += step;
-        }
     }
 
     private static int CountArcSegments(float deltaTheta, float maxAngleRadians)

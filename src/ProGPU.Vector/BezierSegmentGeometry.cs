@@ -329,28 +329,12 @@ public static class BezierSegmentGeometry
         finalDistanceInPattern = distanceInPattern;
 
         if (cumulativeLengths.Length < 2 ||
-            dashPattern.IsEmpty ||
-            patternIndex < 0 ||
-            patternIndex >= dashPattern.Length ||
-            !float.IsFinite(distanceInPattern) ||
-            distanceInPattern < 0.0f)
+            !DashPattern.TryValidateState(dashPattern, patternIndex, distanceInPattern))
         {
             return false;
         }
 
-        for (var i = 0; i < dashPattern.Length; i++)
-        {
-            if (!float.IsFinite(dashPattern[i]) || dashPattern[i] <= Epsilon)
-            {
-                return false;
-            }
-        }
-
-        while (distanceInPattern >= dashPattern[patternIndex])
-        {
-            distanceInPattern -= dashPattern[patternIndex];
-            patternIndex = (patternIndex + 1) % dashPattern.Length;
-        }
+        DashPattern.NormalizeState(dashPattern, ref patternIndex, ref distanceInPattern);
 
         var totalLength = cumulativeLengths[^1];
         var spans = new List<DashParameterSpan>();
@@ -366,7 +350,7 @@ public static class BezierSegmentGeometry
                     GetParameterAtDistance(cumulativeLengths, distance + step)));
             }
 
-            AdvanceDashPattern(dashPattern, ref patternIndex, ref distanceInPattern, remainingInElement, step);
+            DashPattern.Advance(dashPattern, ref patternIndex, ref distanceInPattern, remainingInElement, step);
             distance += step;
         }
 
@@ -476,24 +460,6 @@ public static class BezierSegmentGeometry
         right1 = p123;
         right2 = p23;
         right3 = p3;
-    }
-
-    private static void AdvanceDashPattern(
-        ReadOnlySpan<float> dashPattern,
-        ref int patternIndex,
-        ref float distanceInPattern,
-        float remainingInElement,
-        float step)
-    {
-        if (step >= remainingInElement - Epsilon)
-        {
-            distanceInPattern = 0.0f;
-            patternIndex = (patternIndex + 1) % dashPattern.Length;
-        }
-        else
-        {
-            distanceInPattern += step;
-        }
     }
 
     private static bool HasQuadraticLength(Vector2 start, QuadraticBezierSegment segment)
