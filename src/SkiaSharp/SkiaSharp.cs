@@ -531,6 +531,7 @@ public class SKData : IDisposable
 public class SKCodec : IDisposable
 {
     private readonly byte[] _data;
+    internal byte[] EncodedBytes => _data;
 
     private SKCodec(byte[] data)
     {

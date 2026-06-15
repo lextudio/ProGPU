@@ -252,8 +252,53 @@ public class SKBitmap : IDisposable
 
     public static SKBitmap Decode(SKCodec codec, SKImageInfo info)
     {
-        // Simple decoder fallback using data stream
-        return new SKBitmap(info);
+        using var ms = new MemoryStream(codec.EncodedBytes);
+        var result = StbImageSharp.ImageResult.FromStream(ms, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+        var targetInfo = info.Width > 0 && info.Height > 0
+            ? info
+            : new SKImageInfo(result.Width, result.Height, info.ColorType, info.AlphaType, info.ColorSpace);
+        var bitmap = new SKBitmap(targetInfo);
+
+        unsafe
+        {
+            fixed (byte* src = result.Data)
+            {
+                byte* dst = (byte*)bitmap.GetPixels();
+                for (int y = 0; y < targetInfo.Height; y++)
+                {
+                    int srcY = targetInfo.Height == result.Height
+                        ? y
+                        : Math.Clamp((int)((long)y * result.Height / targetInfo.Height), 0, result.Height - 1);
+                    byte* dstRow = dst + y * bitmap.RowBytes;
+
+                    for (int x = 0; x < targetInfo.Width; x++)
+                    {
+                        int srcX = targetInfo.Width == result.Width
+                            ? x
+                            : Math.Clamp((int)((long)x * result.Width / targetInfo.Width), 0, result.Width - 1);
+                        byte* srcPixel = src + (srcY * result.Width + srcX) * 4;
+                        byte* dstPixel = dstRow + x * 4;
+
+                        if (targetInfo.ColorType == SKColorType.Bgra8888)
+                        {
+                            dstPixel[0] = srcPixel[2];
+                            dstPixel[1] = srcPixel[1];
+                            dstPixel[2] = srcPixel[0];
+                            dstPixel[3] = srcPixel[3];
+                        }
+                        else
+                        {
+                            dstPixel[0] = srcPixel[0];
+                            dstPixel[1] = srcPixel[1];
+                            dstPixel[2] = srcPixel[2];
+                            dstPixel[3] = srcPixel[3];
+                        }
+                    }
+                }
+            }
+        }
+
+        return bitmap;
     }
 
     public SKPixmap PeekPixels()

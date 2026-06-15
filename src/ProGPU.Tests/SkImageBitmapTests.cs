@@ -84,6 +84,42 @@ public sealed class SkImageBitmapTests
     }
 
     [Fact]
+    public void DecodeCodecCopiesEncodedPixelsIntoBitmap()
+    {
+        using var codec = SKCodec.Create(new SKData(TwoPixelPngBytes()));
+
+        using var bitmap = SKBitmap.Decode(
+            codec,
+            new SKImageInfo(2, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
+
+        Assert.Equal(2, bitmap.Width);
+        Assert.Equal(1, bitmap.Height);
+        Assert.Equal(8, bitmap.RowBytes);
+        Assert.Equal(new byte[]
+        {
+            255, 0, 0, 255,
+            0, 255, 0, 255
+        }, ReadBytes(bitmap.GetPixels(), 8));
+    }
+
+    [Fact]
+    public void DecodeCodecConvertsEncodedPixelsToRequestedBgraBitmap()
+    {
+        using var codec = SKCodec.Create(new SKData(TwoPixelPngBytes()));
+
+        using var bitmap = SKBitmap.Decode(
+            codec,
+            new SKImageInfo(2, 1, SKColorType.Bgra8888, SKAlphaType.Premul));
+
+        Assert.Equal(SKColorType.Bgra8888, bitmap.ColorType);
+        Assert.Equal(new byte[]
+        {
+            0, 0, 255, 255,
+            0, 255, 0, 255
+        }, ReadBytes(bitmap.GetPixels(), 8));
+    }
+
+    [Fact]
     public void ReadPixelsClipsNegativeSourceOrigin()
     {
         using var bitmap = new SKBitmap(new SKImageInfo(2, 2, SKColorType.Rgba8888, SKAlphaType.Premul));
@@ -155,5 +191,11 @@ public sealed class SkImageBitmapTests
         var bytes = new byte[length];
         Marshal.Copy(source, bytes, 0, length);
         return bytes;
+    }
+
+    private static byte[] TwoPixelPngBytes()
+    {
+        return Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8DwHwQBEPgD/U6VwW8AAAAASUVORK5CYII=");
     }
 }
