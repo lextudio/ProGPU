@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using Xunit;
 
@@ -67,5 +68,47 @@ public class GdiShimTests
         // Assert border pixel on the red rectangle is Red
         Color rectBorderColor = bitmap.GetPixel(10, 50);
         Assert.Equal(Color.Red.ToArgb(), rectBorderColor.ToArgb());
+    }
+
+    [Theory]
+    [InlineData(-1, 0, 1, 1)]
+    [InlineData(0, -1, 1, 1)]
+    [InlineData(9, 0, 2, 1)]
+    [InlineData(0, 9, 1, 2)]
+    [InlineData(0, 0, 0, 1)]
+    [InlineData(0, 0, 1, 0)]
+    public void LockBitsRejectsRectanglesOutsideBitmapBounds(int x, int y, int width, int height)
+    {
+        using var bitmap = new Bitmap(10, 10);
+
+        Assert.Throws<ArgumentException>(
+            () => bitmap.LockBits(
+                new Rectangle(x, y, width, height),
+                ImageLockMode.ReadWrite,
+                PixelFormat.Format32bppArgb));
+    }
+
+    [Fact]
+    public void LockBitsAcceptsRectangleInsideBitmapBounds()
+    {
+        using var bitmap = new Bitmap(10, 10);
+
+        BitmapData data = bitmap.LockBits(
+            new Rectangle(2, 3, 4, 5),
+            ImageLockMode.ReadWrite,
+            PixelFormat.Format32bppArgb);
+
+        try
+        {
+            Assert.Equal(4, data.Width);
+            Assert.Equal(5, data.Height);
+            Assert.Equal(16, data.Stride);
+            Assert.Equal(PixelFormat.Format32bppArgb, data.PixelFormat);
+            Assert.NotEqual(IntPtr.Zero, data.Scan0);
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
     }
 }

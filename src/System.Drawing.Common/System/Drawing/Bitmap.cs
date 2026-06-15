@@ -120,6 +120,8 @@ public class Bitmap : Image
 
     public BitmapData LockBits(Rectangle rect, ImageLockMode flags, PixelFormat format)
     {
+        ValidateLockBitsRectangle(rect);
+
         Flush();
         byte[] fullPixels = _texture.ReadPixels();
         
@@ -161,6 +163,22 @@ public class Bitmap : Image
             PixelFormat = PixelFormat.Format32bppArgb,
             Scan0 = _lockedHandle.AddrOfPinnedObject()
         };
+    }
+
+    private void ValidateLockBitsRectangle(Rectangle rect)
+    {
+        if (rect.Width <= 0 || rect.Height <= 0)
+        {
+            throw new ArgumentException("LockBits rectangle must have a positive width and height.", nameof(rect));
+        }
+
+        if (rect.X < 0
+            || rect.Y < 0
+            || rect.X > Width - rect.Width
+            || rect.Y > Height - rect.Height)
+        {
+            throw new ArgumentException("LockBits rectangle must be contained within the bitmap bounds.", nameof(rect));
+        }
     }
 
     public void UnlockBits(BitmapData bitmapData)
