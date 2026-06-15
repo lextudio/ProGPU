@@ -181,6 +181,46 @@ public class PixelDataConverterTests
     }
 
     [Fact]
+    public void Pbgra32PixelBufferReturnsCompactRowsWithoutCopy()
+    {
+        var pixels = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+        var upload = new Pbgra32PixelBuffer(
+            width: 2,
+            height: 1,
+            stride: 8,
+            pixels);
+
+        Assert.True(upload.IsCompact);
+        Assert.True(upload.TryCopyCompactRows(out var compactPixels));
+        Assert.Same(pixels, compactPixels);
+    }
+
+    [Fact]
+    public void Pbgra32PixelBufferStripsPaddedRowsForTextureUpload()
+    {
+        var upload = new Pbgra32PixelBuffer(
+            width: 2,
+            height: 2,
+            stride: 12,
+            new byte[]
+            {
+                1, 2, 3, 4, 5, 6, 7, 8, 200, 201, 202, 203,
+                9, 10, 11, 12, 13, 14, 15, 16, 204, 205, 206, 207
+            });
+
+        Assert.True(upload.IsValid);
+        Assert.False(upload.IsCompact);
+        Assert.True(upload.TryCopyCompactRows(out var compactPixels));
+        Assert.Equal(
+            new byte[]
+            {
+                1, 2, 3, 4, 5, 6, 7, 8,
+                9, 10, 11, 12, 13, 14, 15, 16
+            },
+            compactPixels);
+    }
+
+    [Fact]
     public void PixelDataBufferRejectsIndexedRowsWithoutPalette()
     {
         var source = new PixelDataBuffer(

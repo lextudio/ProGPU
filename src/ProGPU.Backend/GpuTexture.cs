@@ -146,6 +146,42 @@ public unsafe class GpuTexture : IDisposable
         }
     }
 
+    public void WritePbgra32(Pbgra32PixelBuffer pixels)
+    {
+        if (Width > int.MaxValue
+            || Height > int.MaxValue
+            || pixels.Width != (int)Width
+            || pixels.Height != (int)Height)
+        {
+            throw new ArgumentException("PBgra32 pixel buffer dimensions must match the texture dimensions.", nameof(pixels));
+        }
+
+        WritePbgra32SubRect(pixels, 0, 0);
+    }
+
+    public void WritePbgra32SubRect(Pbgra32PixelBuffer pixels, uint x, uint y)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
+        if (!pixels.IsValid)
+        {
+            throw new ArgumentException("PBgra32 pixel buffer is not valid.", nameof(pixels));
+        }
+
+        EnsurePbgra32CompatibleFormat();
+
+        var subWidth = (uint)pixels.Width;
+        var subHeight = (uint)pixels.Height;
+        if (x > Width
+            || y > Height
+            || subWidth > Width - x
+            || subHeight > Height - y)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pixels), "PBgra32 pixel buffer does not fit inside the texture bounds.");
+        }
+
+        WritePixelsSubRect(pixels.CopyCompactRows(), x, y, subWidth, subHeight);
+    }
+
     public void WritePixelsSubRect<T>(ReadOnlySpan<T> pixels, uint x, uint y, uint subWidth, uint subHeight) where T : unmanaged
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
@@ -189,6 +225,14 @@ public unsafe class GpuTexture : IDisposable
         fixed (T* ptr = pixels)
         {
             _context.Wgpu.QueueWriteTexture(_context.Queue, &destination, ptr, passedSize, &layout, &extent);
+        }
+    }
+
+    private void EnsurePbgra32CompatibleFormat()
+    {
+        if (Format is not (TextureFormat.Bgra8Unorm or TextureFormat.Bgra8UnormSrgb))
+        {
+            throw new InvalidOperationException($"PBgra32 uploads require a BGRA8 texture format. Actual format: {Format}.");
         }
     }
 

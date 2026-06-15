@@ -59,46 +59,18 @@ namespace System.Windows.Media.Imaging
 
         public void WritePixels(Int32Rect sourceRect, IntPtr buffer, int bufferSize, int stride)
         {
-            int width = sourceRect.Width;
-            int height = sourceRect.Height;
-            int bytesPerPixel = 4;
-            int packedStride = width * bytesPerPixel;
-            
             unsafe
             {
-                if (stride > packedStride)
-                {
-                    byte[] temp = new byte[width * height * bytesPerPixel];
-                    byte* src = (byte*)buffer;
-                    fixed (byte* dst = temp)
-                    {
-                        for (int y = 0; y < height; y++)
-                        {
-                            byte* srcRow = src + y * stride;
-                            byte* dstRow = dst + y * packedStride;
-                            System.Buffer.MemoryCopy(srcRow, dstRow, packedStride, packedStride);
-                        }
-                    }
-                    _texture.WritePixelsSubRect(
-                        temp.AsSpan(),
-                        (uint)sourceRect.X,
-                        (uint)sourceRect.Y,
-                        (uint)width,
-                        (uint)height
-                    );
-                }
-                else
-                {
-                    var span = new ReadOnlySpan<byte>((void*)buffer, bufferSize);
-                    _texture.WritePixelsSubRect(
-                        span,
-                        (uint)sourceRect.X,
-                        (uint)sourceRect.Y,
-                        (uint)width,
-                        (uint)height
-                    );
-                }
+                var pixels = new ReadOnlySpan<byte>((void*)buffer, bufferSize).ToArray();
+                WritePbgra32Pixels(
+                    sourceRect,
+                    new Pbgra32PixelBuffer(sourceRect.Width, sourceRect.Height, stride, pixels));
             }
+        }
+
+        public void WritePbgra32Pixels(Int32Rect sourceRect, Pbgra32PixelBuffer pixels)
+        {
+            _texture.WritePbgra32SubRect(pixels, (uint)sourceRect.X, (uint)sourceRect.Y);
         }
     }
 }

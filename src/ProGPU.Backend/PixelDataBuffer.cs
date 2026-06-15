@@ -24,6 +24,10 @@ public readonly record struct Pbgra32PixelBuffer
 
     public int RequiredByteLength => checked(Stride * Height);
 
+    public int CompactStride => checked(Width * 4);
+
+    public bool IsCompact => IsValid && Stride == CompactStride && Pixels.Length == RequiredByteLength;
+
     public bool IsValid
     {
         get
@@ -41,6 +45,42 @@ public readonly record struct Pbgra32PixelBuffer
                 return false;
             }
         }
+    }
+
+    public bool TryCopyCompactRows(out byte[] compactPixels)
+    {
+        compactPixels = Array.Empty<byte>();
+
+        if (!IsValid)
+        {
+            return false;
+        }
+
+        var compactStride = CompactStride;
+        var compactLength = checked(compactStride * Height);
+        if (Stride == compactStride && Pixels.Length == compactLength)
+        {
+            compactPixels = Pixels;
+            return true;
+        }
+
+        compactPixels = new byte[compactLength];
+        for (var y = 0; y < Height; y++)
+        {
+            Buffer.BlockCopy(Pixels, y * Stride, compactPixels, y * compactStride, compactStride);
+        }
+
+        return true;
+    }
+
+    public byte[] CopyCompactRows()
+    {
+        if (!TryCopyCompactRows(out var compactPixels))
+        {
+            throw new ArgumentException("PBgra32 pixel rows are not valid for compact upload.", nameof(Pixels));
+        }
+
+        return compactPixels;
     }
 }
 
