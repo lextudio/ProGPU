@@ -147,6 +147,52 @@ public class ArcPathCompilerTests
     }
 
     [Fact]
+    public void ShaderParametersExposeTransformedEllipseAxesForNativeStroke()
+    {
+        var start = new Vector2(10f, 0f);
+        var arc = new ArcSegment(
+            new Vector2(-10f, 0f),
+            new Vector2(10f, 5f),
+            rotationAngle: 0f,
+            isLargeArc: false,
+            SweepDirection.Clockwise);
+        var transform = new Matrix4x4(
+            1.2f, 0.2f, 0f, 0f,
+            0.35f, 1.4f, 0f, 0f,
+            0f, 0f, 1f, 0f,
+            3f, -2f, 0f, 1f);
+
+        Assert.True(ArcSegmentGeometry.TryCreateShaderParameters(
+            start,
+            arc,
+            transform,
+            out var parameters));
+
+        AssertClose(new Vector2(3f, -2f), parameters.Center);
+        AssertClose(new Vector2(12f, 2f), parameters.AxisX);
+        AssertClose(new Vector2(1.75f, 7f), parameters.AxisY);
+        AssertClose(0f, parameters.Theta1);
+        AssertClose(MathF.PI, parameters.DeltaTheta);
+    }
+
+    [Fact]
+    public void ShaderParametersRejectDegenerateArcs()
+    {
+        Assert.False(ArcSegmentGeometry.TryCreateShaderParameters(
+            Vector2.Zero,
+            new ArcSegment(
+                new Vector2(10f, 0f),
+                Vector2.Zero,
+                rotationAngle: 0f,
+                isLargeArc: false,
+                SweepDirection.Clockwise),
+            Matrix4x4.Identity,
+            out var parameters));
+
+        Assert.Equal(default, parameters);
+    }
+
+    [Fact]
     public void PathAtlasCompilerPreservesNativeArcSegmentAndExactBounds()
     {
         var (records, segments) = PathAtlas.CompilePath(

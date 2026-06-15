@@ -3041,29 +3041,25 @@ public unsafe class Compositor : IDisposable
         Matrix4x4 transform,
         bool isEdgeAliased)
     {
-        if (!TryGetArcShaderParameters(
+        if (!ArcSegmentGeometry.TryCreateShaderParameters(
                 segmentStart,
                 arc,
                 transform,
-                out Vector2 center,
-                out Vector2 axisX,
-                out Vector2 axisY,
-                out float theta1,
-                out float deltaTheta))
+                out var arcParameters))
         {
             return false;
         }
 
-        int segmentCount = CountGpuArcStrokeSegments(axisX, axisY, deltaTheta, thickness);
+        int segmentCount = CountGpuArcStrokeSegments(arcParameters.AxisX, arcParameters.AxisY, arcParameters.DeltaTheta, thickness);
         uint idxStart = (uint)currentVertexCount;
         var arcShapeType = EncodeShapeType(isEdgeAliased, 11f);
-        var arcParameters = new Vector4(theta1, deltaTheta, segmentCount, 0f);
+        var shaderParameters = new Vector4(arcParameters.Theta1, arcParameters.DeltaTheta, segmentCount, 0f);
         var baseVertex = new VectorVertex(
-            center,
-            arcParameters,
-            axisX,
+            arcParameters.Center,
+            shaderParameters,
+            arcParameters.AxisX,
             penBrushIdx,
-            axisY,
+            arcParameters.AxisY,
             idxStart,
             thickness,
             arcShapeType);
@@ -3099,20 +3095,16 @@ public unsafe class Compositor : IDisposable
         out int segmentCount)
     {
         segmentCount = 0;
-        if (!TryGetArcShaderParameters(
+        if (!ArcSegmentGeometry.TryCreateShaderParameters(
                 segmentStart,
                 arc,
                 transform,
-                out _,
-                out Vector2 axisX,
-                out Vector2 axisY,
-                out _,
-                out float deltaTheta))
+                out var arcParameters))
         {
             return false;
         }
 
-        segmentCount = CountGpuArcStrokeSegments(axisX, axisY, deltaTheta, thickness);
+        segmentCount = CountGpuArcStrokeSegments(arcParameters.AxisX, arcParameters.AxisY, arcParameters.DeltaTheta, thickness);
         return true;
     }
 
@@ -3131,58 +3123,6 @@ public unsafe class Compositor : IDisposable
             Math.Max(geometrySegments, strokeSegments),
             MinGpuArcStrokeSegmentCount,
             MaxGpuArcStrokeSegmentCount);
-    }
-
-    private static bool TryGetArcShaderParameters(
-        Vector2 segmentStart,
-        ArcSegment arc,
-        Matrix4x4 transform,
-        out Vector2 center,
-        out Vector2 axisX,
-        out Vector2 axisY,
-        out float theta1,
-        out float deltaTheta)
-    {
-        center = default;
-        axisX = default;
-        axisY = default;
-        theta1 = 0f;
-        deltaTheta = 0f;
-
-        if (!ArcSegmentGeometry.TryGetArcCenter(
-                segmentStart,
-                arc.Point,
-                arc.Size,
-                arc.RotationAngle,
-                arc.IsLargeArc,
-                arc.SweepDirection,
-                out Vector2 localCenter,
-                out theta1,
-                out deltaTheta,
-                out float radiusX,
-                out float radiusY))
-        {
-            return false;
-        }
-
-        float phi = arc.RotationAngle * MathF.PI / 180f;
-        float cosPhi = MathF.Cos(phi);
-        float sinPhi = MathF.Sin(phi);
-        var localAxisX = new Vector2(radiusX * cosPhi, radiusX * sinPhi);
-        var localAxisY = new Vector2(-radiusY * sinPhi, radiusY * cosPhi);
-
-        center = Vector2.Transform(localCenter, transform);
-        axisX = TransformDirection(localAxisX, transform);
-        axisY = TransformDirection(localAxisY, transform);
-
-        return IsFinite(center) &&
-               IsFinite(axisX) &&
-               IsFinite(axisY) &&
-               float.IsFinite(theta1) &&
-               float.IsFinite(deltaTheta) &&
-               axisX.LengthSquared() > StrokeEpsilon * StrokeEpsilon &&
-               axisY.LengthSquared() > StrokeEpsilon * StrokeEpsilon &&
-               MathF.Abs(deltaTheta) > StrokeEpsilon;
     }
 
     private static void AppendStrokeSegmentJoinTriangles(

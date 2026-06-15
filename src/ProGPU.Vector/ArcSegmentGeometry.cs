@@ -4,6 +4,33 @@ using System.Numerics;
 
 namespace ProGPU.Vector;
 
+public readonly struct ArcShaderParameters
+{
+    public ArcShaderParameters(
+        Vector2 center,
+        Vector2 axisX,
+        Vector2 axisY,
+        float theta1,
+        float deltaTheta)
+    {
+        Center = center;
+        AxisX = axisX;
+        AxisY = axisY;
+        Theta1 = theta1;
+        DeltaTheta = deltaTheta;
+    }
+
+    public Vector2 Center { get; }
+
+    public Vector2 AxisX { get; }
+
+    public Vector2 AxisY { get; }
+
+    public float Theta1 { get; }
+
+    public float DeltaTheta { get; }
+}
+
 public static class ArcSegmentGeometry
 {
     public const float DefaultFlattenAngleRadians = MathF.PI / 8.0f;
@@ -273,6 +300,57 @@ public static class ArcSegmentGeometry
             arc.IsLargeArc,
             sweepDirection,
             arc.IsSmoothJoin);
+        return true;
+    }
+
+    public static bool TryCreateShaderParameters(
+        Vector2 start,
+        ArcSegment arc,
+        Matrix4x4 transform,
+        out ArcShaderParameters parameters)
+    {
+        parameters = default;
+
+        if (arc == null ||
+            !TryGetArcCenter(
+                start,
+                arc.Point,
+                arc.Size,
+                arc.RotationAngle,
+                arc.IsLargeArc,
+                arc.SweepDirection,
+                out Vector2 localCenter,
+                out float theta1,
+                out float deltaTheta,
+                out float radiusX,
+                out float radiusY))
+        {
+            return false;
+        }
+
+        float phi = arc.RotationAngle * MathF.PI / 180.0f;
+        float cosPhi = MathF.Cos(phi);
+        float sinPhi = MathF.Sin(phi);
+        var localAxisX = new Vector2(radiusX * cosPhi, radiusX * sinPhi);
+        var localAxisY = new Vector2(-radiusY * sinPhi, radiusY * cosPhi);
+
+        var center = Vector2.Transform(localCenter, transform);
+        var axisX = TransformDirection(localAxisX, transform);
+        var axisY = TransformDirection(localAxisY, transform);
+
+        if (!IsFinite(center) ||
+            !IsFinite(axisX) ||
+            !IsFinite(axisY) ||
+            !float.IsFinite(theta1) ||
+            !float.IsFinite(deltaTheta) ||
+            axisX.LengthSquared() <= Epsilon * Epsilon ||
+            axisY.LengthSquared() <= Epsilon * Epsilon ||
+            MathF.Abs(deltaTheta) <= Epsilon)
+        {
+            return false;
+        }
+
+        parameters = new ArcShaderParameters(center, axisX, axisY, theta1, deltaTheta);
         return true;
     }
 
