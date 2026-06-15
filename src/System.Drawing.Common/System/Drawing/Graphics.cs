@@ -118,7 +118,9 @@ public class Graphics : IDisposable
         float w = _bitmap != null ? _bitmap.Width : 100000f;
         float h = _bitmap != null ? _bitmap.Height : 100000f;
         var brush = new SolidBrush(color);
+        _context.PushBlendMode(GpuBlendMode.Src);
         _context.DrawRectangle(brush.ToProGpuBrush(), null, new Rect(0, 0, w, h));
+        _context.PopBlendMode();
     }
 
     public void DrawLine(Pen pen, PointF p1, PointF p2) => DrawLine(pen, p1.X, p1.Y, p2.X, p2.Y);

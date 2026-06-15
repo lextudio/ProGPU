@@ -4,6 +4,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using ProGPU.Backend;
 using ProGPU.Scene;
 using Xunit;
 
@@ -12,6 +13,29 @@ namespace ProGPU.Tests.Headless;
 [Collection("HeadlessTests")]
 public class GdiShimTests
 {
+    [Fact]
+    public void ClearUsesSourceBlendMode()
+    {
+        using var bitmap = new Bitmap(12, 34);
+        using var graphics = Graphics.FromImage(bitmap);
+
+        graphics.Clear(Color.FromArgb(128, 10, 20, 30));
+
+        Assert.Collection(
+            graphics.DrawingContext.Commands,
+            push =>
+            {
+                Assert.Equal(RenderCommandType.PushBlendMode, push.Type);
+                Assert.Equal((int)GpuBlendMode.Src, push.IntParam);
+            },
+            draw =>
+            {
+                Assert.Equal(RenderCommandType.DrawRect, draw.Type);
+                Assert.Equal(new Rect(0f, 0f, 12f, 34f), draw.Rect);
+            },
+            pop => Assert.Equal(RenderCommandType.PopBlendMode, pop.Type));
+    }
+
     [Fact]
     public void TestGdiDrawAndSave()
     {

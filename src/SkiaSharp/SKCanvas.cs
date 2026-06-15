@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Vector;
 
@@ -41,7 +42,7 @@ public class SKCanvas : IDisposable
     {
         var c = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
         var brush = new SolidColorBrush(c);
-        // Render large rect representing background clear
+        _context.PushBlendMode(GpuBlendMode.Src);
         _context.Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.DrawRect,
@@ -49,6 +50,7 @@ public class SKCanvas : IDisposable
             Brush = brush,
             Transform = Matrix4x4.Identity // Clear is always in identity screen space
         });
+        _context.PopBlendMode();
     }
 
     public void Save()

@@ -1,6 +1,8 @@
 using System;
 using System.Numerics;
+using ProGPU.Backend;
 using ProGPU.Scene;
+using ProGPU.Vector;
 using SkiaSharp;
 using Xunit;
 
@@ -8,6 +10,35 @@ namespace ProGPU.Tests;
 
 public sealed class SkCanvasStateTests
 {
+    [Fact]
+    public void ClearUsesSourceBlendMode()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 12f, 34f);
+
+        canvas.Clear(new SKColor(10, 20, 30, 128));
+
+        Assert.Collection(
+            context.Commands,
+            push =>
+            {
+                Assert.Equal(RenderCommandType.PushBlendMode, push.Type);
+                Assert.Equal((int)GpuBlendMode.Src, push.IntParam);
+            },
+            draw =>
+            {
+                Assert.Equal(RenderCommandType.DrawRect, draw.Type);
+                Assert.Equal(new Rect(0f, 0f, 12f, 34f), draw.Rect);
+                var brush = Assert.IsType<SolidColorBrush>(draw.Brush);
+                AssertNear(10f / 255f, brush.Color.X);
+                AssertNear(20f / 255f, brush.Color.Y);
+                AssertNear(30f / 255f, brush.Color.Z);
+                AssertNear(128f / 255f, brush.Color.W);
+                AssertMatrixNear(Matrix4x4.Identity, draw.Transform);
+            },
+            pop => Assert.Equal(RenderCommandType.PopBlendMode, pop.Type));
+    }
+
     [Fact]
     public void SaveLayerReturnsRestoreCountAndPushesRelativeOpacity()
     {
