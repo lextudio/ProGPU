@@ -95,6 +95,19 @@ public sealed class SkImageBitmapTests
     }
 
     [Fact]
+    public void EncodeUnpremultipliesPremultipliedPixels()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
+        WriteBytes(bitmap.GetPixels(), new byte[] { 128, 0, 0, 128 });
+        using var image = SKImage.FromBitmap(bitmap);
+
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var decoded = SKBitmap.Decode(data);
+
+        Assert.Equal(new byte[] { 255, 0, 0, 128 }, ReadBytes(decoded.GetPixels(), 4));
+    }
+
+    [Fact]
     public void DecodeCodecCopiesEncodedPixelsIntoBitmap()
     {
         using var codec = SKCodec.Create(new SKData(TwoPixelPngBytes()));

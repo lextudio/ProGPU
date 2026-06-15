@@ -120,6 +120,11 @@ public class SKImage : IDisposable
     public SKData Encode(SKEncodedImageFormat format, int quality)
     {
         byte[] pixels = Texture.ReadPixels();
+        if (Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied)
+        {
+            UnpremultiplyRgba8888(pixels);
+        }
+
         using (var ms = new MemoryStream())
         {
             var writer = new StbImageWriteSharp.ImageWriter();
@@ -133,6 +138,35 @@ public class SKImage : IDisposable
             }
             return new SKData(ms.ToArray());
         }
+    }
+
+    private static void UnpremultiplyRgba8888(byte[] pixels)
+    {
+        for (int i = 0; i + 3 < pixels.Length; i += 4)
+        {
+            int alpha = pixels[i + 3];
+            if (alpha == 0)
+            {
+                pixels[i] = 0;
+                pixels[i + 1] = 0;
+                pixels[i + 2] = 0;
+                continue;
+            }
+
+            if (alpha == 255)
+            {
+                continue;
+            }
+
+            pixels[i] = UnpremultiplyChannel(pixels[i], alpha);
+            pixels[i + 1] = UnpremultiplyChannel(pixels[i + 1], alpha);
+            pixels[i + 2] = UnpremultiplyChannel(pixels[i + 2], alpha);
+        }
+    }
+
+    private static byte UnpremultiplyChannel(byte value, int alpha)
+    {
+        return (byte)Math.Min(255, (value * 255 + alpha / 2) / alpha);
     }
 
     public void Dispose()

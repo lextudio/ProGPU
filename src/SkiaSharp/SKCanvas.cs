@@ -142,11 +142,7 @@ public class SKCanvas : IDisposable
     {
         _context = layerFrame.ParentContext;
 
-        var blendMode = MapBlendMode(layerFrame.Paint?.BlendMode ?? SKBlendMode.SrcOver);
-        if (blendMode != GpuBlendMode.SrcOver)
-        {
-            _context.PushBlendMode(blendMode);
-        }
+        var pushedBlendMode = PushPaintBlendMode(layerFrame.Paint);
 
         var opacity = layerFrame.Paint?.Color.A / 255f ?? 1f;
         if (opacity < 1f)
@@ -161,10 +157,7 @@ public class SKCanvas : IDisposable
             _context.PopOpacity();
         }
 
-        if (blendMode != GpuBlendMode.SrcOver)
-        {
-            _context.PopBlendMode();
-        }
+        PopPaintBlendMode(pushedBlendMode);
     }
 
     private static GpuBlendMode MapBlendMode(SKBlendMode blendMode)
@@ -180,6 +173,26 @@ public class SKCanvas : IDisposable
             SKBlendMode.Multiply => GpuBlendMode.Multiply,
             _ => GpuBlendMode.SrcOver
         };
+    }
+
+    private bool PushPaintBlendMode(SKPaint? paint)
+    {
+        var blendMode = MapBlendMode(paint?.BlendMode ?? SKBlendMode.SrcOver);
+        if (blendMode == GpuBlendMode.SrcOver)
+        {
+            return false;
+        }
+
+        _context.PushBlendMode(blendMode);
+        return true;
+    }
+
+    private void PopPaintBlendMode(bool pushedBlendMode)
+    {
+        if (pushedBlendMode)
+        {
+            _context.PopBlendMode();
+        }
     }
 
     public void Translate(float dx, float dy)
@@ -257,16 +270,24 @@ public class SKCanvas : IDisposable
 
     public void DrawRect(float x, float y, float w, float h, SKPaint paint)
     {
-        var brush = paint.ToBrush();
-        var pen = paint.ToPen();
-        _context.Commands.Add(new RenderCommand
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
         {
-            Type = RenderCommandType.DrawRect,
-            Rect = new Rect(x, y, w, h),
-            Brush = brush,
-            Pen = pen,
-            Transform = _currentMatrix.ToMatrix4x4()
-        });
+            var brush = paint.ToBrush();
+            var pen = paint.ToPen();
+            _context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawRect,
+                Rect = new Rect(x, y, w, h),
+                Brush = brush,
+                Pen = pen,
+                Transform = _currentMatrix.ToMatrix4x4()
+            });
+        }
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
+        }
     }
 
     public void DrawRect(SKRect rect, SKPaint paint) => DrawRect(rect.Left, rect.Top, rect.Width, rect.Height, paint);
@@ -281,18 +302,26 @@ public class SKCanvas : IDisposable
             return;
         }
 
-        var brush = paint.ToBrush();
-        var pen = paint.ToPen();
-        _context.Commands.Add(new RenderCommand
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
         {
-            Type = RenderCommandType.DrawRoundedRect,
-            Rect = new Rect(rect.Rect.Left, rect.Rect.Top, rect.Rect.Width, rect.Rect.Height),
-            RadiusX = radiusX,
-            RadiusY = radiusY,
-            Brush = brush,
-            Pen = pen,
-            Transform = _currentMatrix.ToMatrix4x4()
-        });
+            var brush = paint.ToBrush();
+            var pen = paint.ToPen();
+            _context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawRoundedRect,
+                Rect = new Rect(rect.Rect.Left, rect.Rect.Top, rect.Rect.Width, rect.Rect.Height),
+                RadiusX = radiusX,
+                RadiusY = radiusY,
+                Brush = brush,
+                Pen = pen,
+                Transform = _currentMatrix.ToMatrix4x4()
+            });
+        }
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
+        }
     }
 
     public void DrawRoundRect(SKRect rect, float rx, float ry, SKPaint paint)
@@ -318,57 +347,81 @@ public class SKCanvas : IDisposable
 
     public void DrawOval(SKRect rect, SKPaint paint)
     {
-        var brush = paint.ToBrush();
-        var pen = paint.ToPen();
-        _context.Commands.Add(new RenderCommand
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
         {
-            Type = RenderCommandType.DrawEllipse,
-            Position2 = new Vector2(rect.MidX, rect.MidY),
-            RadiusX = rect.Width / 2f,
-            RadiusY = rect.Height / 2f,
-            Brush = brush,
-            Pen = pen,
-            Transform = _currentMatrix.ToMatrix4x4()
-        });
+            var brush = paint.ToBrush();
+            var pen = paint.ToPen();
+            _context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawEllipse,
+                Position2 = new Vector2(rect.MidX, rect.MidY),
+                RadiusX = rect.Width / 2f,
+                RadiusY = rect.Height / 2f,
+                Brush = brush,
+                Pen = pen,
+                Transform = _currentMatrix.ToMatrix4x4()
+            });
+        }
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
+        }
     }
 
     public void DrawCircle(float cx, float cy, float radius, SKPaint paint)
     {
-        var brush = paint.ToBrush();
-        var pen = paint.ToPen();
-        _context.Commands.Add(new RenderCommand
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
         {
-            Type = RenderCommandType.DrawCircle,
-            Position2 = new Vector2(cx, cy),
-            RadiusX = radius,
-            Brush = brush,
-            Pen = pen,
-            Transform = _currentMatrix.ToMatrix4x4()
-        });
+            var brush = paint.ToBrush();
+            var pen = paint.ToPen();
+            _context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawCircle,
+                Position2 = new Vector2(cx, cy),
+                RadiusX = radius,
+                Brush = brush,
+                Pen = pen,
+                Transform = _currentMatrix.ToMatrix4x4()
+            });
+        }
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
+        }
     }
 
     public void DrawPath(SKPath path, SKPaint paint)
     {
-        var brush = paint.ToBrush();
-        var pen = paint.ToPen();
-
-        if (IsInverseFillType(path.FillType))
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
         {
-            if (brush != null)
+            var brush = paint.ToBrush();
+            var pen = paint.ToPen();
+
+            if (IsInverseFillType(path.FillType))
             {
-                var excluded = path.Geometry.CreateTransformed(_currentMatrix.ToMatrix4x4());
-                AddDrawPathCommand(CreateCanvasDifferenceGeometry(excluded), brush, null, Matrix4x4.Identity);
+                if (brush != null)
+                {
+                    var excluded = path.Geometry.CreateTransformed(_currentMatrix.ToMatrix4x4());
+                    AddDrawPathCommand(CreateCanvasDifferenceGeometry(excluded), brush, null, Matrix4x4.Identity);
+                }
+
+                if (pen != null)
+                {
+                    AddDrawPathCommand(path.Geometry, null, pen, _currentMatrix.ToMatrix4x4());
+                }
+
+                return;
             }
 
-            if (pen != null)
-            {
-                AddDrawPathCommand(path.Geometry, null, pen, _currentMatrix.ToMatrix4x4());
-            }
-
-            return;
+            AddDrawPathCommand(path.Geometry, brush, pen, _currentMatrix.ToMatrix4x4());
         }
-
-        AddDrawPathCommand(path.Geometry, brush, pen, _currentMatrix.ToMatrix4x4());
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
+        }
     }
 
     private void AddDrawPathCommand(PathGeometry path, Brush? brush, Pen? pen, Matrix4x4 transform)
@@ -418,24 +471,32 @@ public class SKCanvas : IDisposable
 
     public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint paint)
     {
+        var pushedBlendMode = PushPaintBlendMode(paint);
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
-        if (opacity < 1f)
+        try
         {
-            _context.PushOpacity(opacity);
+            if (opacity < 1f)
+            {
+                _context.PushOpacity(opacity);
+            }
+
+            _context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawTexture,
+                Texture = image.Texture,
+                Rect = new Rect(dest.Left, dest.Top, dest.Width, dest.Height),
+                SrcRect = new Rect(source.Left, source.Top, source.Width, source.Height),
+                Transform = _currentMatrix.ToMatrix4x4()
+            });
+
+            if (opacity < 1f)
+            {
+                _context.PopOpacity();
+            }
         }
-
-        _context.Commands.Add(new RenderCommand
+        finally
         {
-            Type = RenderCommandType.DrawTexture,
-            Texture = image.Texture,
-            Rect = new Rect(dest.Left, dest.Top, dest.Width, dest.Height),
-            SrcRect = new Rect(source.Left, source.Top, source.Width, source.Height),
-            Transform = _currentMatrix.ToMatrix4x4()
-        });
-
-        if (opacity < 1f)
-        {
-            _context.PopOpacity();
+            PopPaintBlendMode(pushedBlendMode);
         }
     }
 
@@ -452,23 +513,31 @@ public class SKCanvas : IDisposable
             return;
         }
 
-        foreach (var run in textBlob.Runs)
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
         {
-            var positions = new Vector2[run.GlyphPositions.Length];
-            for (int i = 0; i < positions.Length; i++)
+            foreach (var run in textBlob.Runs)
             {
-                positions[i] = new Vector2(run.GlyphPositions[i].X, run.GlyphPositions[i].Y);
-            }
+                var positions = new Vector2[run.GlyphPositions.Length];
+                for (int i = 0; i < positions.Length; i++)
+                {
+                    positions[i] = new Vector2(run.GlyphPositions[i].X, run.GlyphPositions[i].Y);
+                }
 
-            _context.DrawGlyphRun(
-                run.GlyphIndices,
-                positions,
-                run.Font.Typeface.Font,
-                run.Font.Size,
-                brush,
-                new Vector2(x, y),
-                _currentMatrix.ToMatrix4x4()
-            );
+                _context.DrawGlyphRun(
+                    run.GlyphIndices,
+                    positions,
+                    run.Font.Typeface.Font,
+                    run.Font.Size,
+                    brush,
+                    new Vector2(x, y),
+                    _currentMatrix.ToMatrix4x4()
+                );
+            }
+        }
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
         }
     }
 

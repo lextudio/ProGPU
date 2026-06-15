@@ -112,6 +112,30 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void DrawRectAppliesPaintBlendMode()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 100f, 100f);
+        using var paint = new SKPaint { BlendMode = SKBlendMode.Multiply };
+
+        canvas.DrawRect(new SKRect(10f, 20f, 40f, 60f), paint);
+
+        Assert.Collection(
+            context.Commands,
+            push =>
+            {
+                Assert.Equal(RenderCommandType.PushBlendMode, push.Type);
+                Assert.Equal((int)GpuBlendMode.Multiply, push.IntParam);
+            },
+            draw =>
+            {
+                Assert.Equal(RenderCommandType.DrawRect, draw.Type);
+                Assert.Equal(new Rect(10f, 20f, 30f, 40f), draw.Rect);
+            },
+            pop => Assert.Equal(RenderCommandType.PopBlendMode, pop.Type));
+    }
+
+    [Fact]
     public void ClipPathRecordsCurrentCanvasMatrix()
     {
         var context = new DrawingContext();
