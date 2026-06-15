@@ -76,24 +76,24 @@ public class SKTypeface : IDisposable
             {
                 // Fallback to standard system Arial or first available font
                 var systemFonts = FontApi.GetSystemFonts();
-                string path = string.Empty;
+                FontInfo? selectedFont = null;
                 foreach (var f in systemFonts)
                 {
                     if (f.FamilyName.Equals("Arial", StringComparison.OrdinalIgnoreCase) ||
                         f.FamilyName.Equals("Helvetica", StringComparison.OrdinalIgnoreCase) ||
                         f.FamilyName.Equals("Segoe UI", StringComparison.OrdinalIgnoreCase))
                     {
-                        path = f.FilePath;
+                        selectedFont = f;
                         break;
                     }
                 }
-                if (string.IsNullOrEmpty(path) && systemFonts.Count > 0)
+                if (selectedFont == null && systemFonts.Count > 0)
                 {
-                    path = systemFonts[0].FilePath;
+                    selectedFont = systemFonts[0];
                 }
-                if (!string.IsNullOrEmpty(path))
+                if (selectedFont != null && !string.IsNullOrEmpty(selectedFont.FilePath))
                 {
-                    _default = new SKTypeface(new TtfFont(path), "Default");
+                    _default = new SKTypeface(CreateFont(selectedFont), "Default");
                 }
                 else
                 {
@@ -127,7 +127,7 @@ public class SKTypeface : IDisposable
             {
                 try
                 {
-                    var ttf = new TtfFont(font.FilePath);
+                    var ttf = CreateFont(font);
                     bool isBold = style.Weight >= SKFontStyleWeight.SemiBold;
                     bool isItalic = style.Slant != SKFontStyleSlant.Upright;
                     return new SKTypeface(ttf, font.FamilyName, isBold, isItalic);
@@ -147,6 +147,11 @@ public class SKTypeface : IDisposable
     }
 
     public void Dispose() { }
+
+    internal static TtfFont CreateFont(FontInfo font)
+    {
+        return new TtfFont(font.FilePath, font.FaceIndex);
+    }
 }
 
 public class SKFontManager : IDisposable
@@ -187,7 +192,7 @@ public class SKFontManager : IDisposable
                 {
                     try
                     {
-                        var ttf = new TtfFont(font.FilePath);
+                        var ttf = SKTypeface.CreateFont(font);
                         if (ttf.GetGlyphIndex((uint)codepoint) != 0)
                         {
                             bool isBold = style.Weight >= SKFontStyleWeight.SemiBold;
@@ -205,7 +210,7 @@ public class SKFontManager : IDisposable
         {
             try
             {
-                var ttf = new TtfFont(font.FilePath);
+                var ttf = SKTypeface.CreateFont(font);
                 if (ttf.GetGlyphIndex((uint)codepoint) != 0)
                 {
                     bool isBold = style.Weight >= SKFontStyleWeight.SemiBold;
@@ -247,4 +252,5 @@ public class SKFontManager : IDisposable
     }
 
     public void Dispose() { }
+
 }

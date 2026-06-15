@@ -5,8 +5,10 @@ namespace System.Drawing;
 
 public class FontFamily : IDisposable
 {
-    private static readonly ConcurrentDictionary<string, string> s_fontCache = new(StringComparer.OrdinalIgnoreCase);
-    private static string? s_fallbackFontPath;
+    private readonly record struct FontCacheEntry(string FilePath, int FaceIndex);
+
+    private static readonly ConcurrentDictionary<string, FontCacheEntry> s_fontCache = new(StringComparer.OrdinalIgnoreCase);
+    private static FontCacheEntry? s_fallbackFont;
 
     static FontFamily()
     {
@@ -17,26 +19,26 @@ public class FontFamily : IDisposable
             {
                 if (!string.IsNullOrEmpty(font.FamilyName))
                 {
-                    s_fontCache.TryAdd(font.FamilyName, font.FilePath);
+                    s_fontCache.TryAdd(font.FamilyName, new FontCacheEntry(font.FilePath, font.FaceIndex));
                 }
                 if (!string.IsNullOrEmpty(font.Name))
                 {
-                    s_fontCache.TryAdd(font.Name, font.FilePath);
+                    s_fontCache.TryAdd(font.Name, new FontCacheEntry(font.FilePath, font.FaceIndex));
                 }
             }
 
             foreach (var key in new[] { "Arial", "Consolas", "Georgia", "Helvetica", "Roboto", "Courier New" })
             {
-                if (s_fontCache.TryGetValue(key, out var path))
+                if (s_fontCache.TryGetValue(key, out var entry))
                 {
-                    s_fallbackFontPath = path;
+                    s_fallbackFont = entry;
                     break;
                 }
             }
 
-            if (s_fallbackFontPath == null && systemFonts.Count > 0)
+            if (s_fallbackFont == null && systemFonts.Count > 0)
             {
-                s_fallbackFontPath = systemFonts[0].FilePath;
+                s_fallbackFont = new FontCacheEntry(systemFonts[0].FilePath, systemFonts[0].FaceIndex);
             }
         }
         catch (Exception ex)
@@ -47,17 +49,21 @@ public class FontFamily : IDisposable
 
     public string Name { get; }
     internal string FilePath { get; }
+    internal int FaceIndex { get; }
+    internal string CacheKey => $"{FilePath}\u001f{FaceIndex}";
 
     public FontFamily(string name)
     {
         Name = name;
-        if (s_fontCache.TryGetValue(name, out var path))
+        if (s_fontCache.TryGetValue(name, out var entry))
         {
-            FilePath = path;
+            FilePath = entry.FilePath;
+            FaceIndex = entry.FaceIndex;
         }
         else
         {
-            FilePath = s_fallbackFontPath ?? "";
+            FilePath = s_fallbackFont?.FilePath ?? "";
+            FaceIndex = s_fallbackFont?.FaceIndex ?? 0;
         }
     }
 

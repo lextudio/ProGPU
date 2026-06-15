@@ -55,6 +55,8 @@ public class TtfFont
     private readonly Dictionary<string, (uint offset, uint length)> _tables = new();
     private uint _baseOffset = 0;
 
+    public int FaceIndex { get; }
+
     // Font parameters
     public ushort UnitsPerEm { get; private set; }
     public short Ascender { get; private set; }
@@ -105,9 +107,17 @@ public class TtfFont
     private ushort _numLayerRecords;
 
     public TtfFont(byte[] fontData)
+        : this(fontData, 0)
     {
+    }
+
+    public TtfFont(byte[] fontData, int faceIndex)
+    {
+        ArgumentNullException.ThrowIfNull(fontData);
+        ArgumentOutOfRangeException.ThrowIfNegative(faceIndex);
         _data = fontData;
-        ParseTableDirectory();
+        FaceIndex = faceIndex;
+        ParseTableDirectory(faceIndex);
         ParseHeadTable();
         ParseHheaTable();
         ParseMaxpTable();
@@ -117,6 +127,10 @@ public class TtfFont
     }
 
     public TtfFont(string filePath) : this(File.ReadAllBytes(filePath))
+    {
+    }
+
+    public TtfFont(string filePath, int faceIndex) : this(File.ReadAllBytes(filePath), faceIndex)
     {
     }
 
@@ -140,11 +154,21 @@ public class TtfFont
     }
     #endregion
 
-    private void ParseTableDirectory()
+    private void ParseTableDirectory(int faceIndex)
     {
         if (_data.Length >= 16 && _data[0] == 0x74 && _data[1] == 0x74 && _data[2] == 0x63 && _data[3] == 0x66) // "ttcf"
         {
-            _baseOffset = ReadUInt(12); // First font in the TTC collection
+            uint faceCount = ReadUInt(8);
+            if ((uint)faceIndex >= faceCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(faceIndex));
+            }
+
+            _baseOffset = ReadUInt(12 + (uint)(faceIndex * 4));
+        }
+        else if (faceIndex != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(faceIndex));
         }
 
         uint numTables = ReadUShort(_baseOffset + 4);

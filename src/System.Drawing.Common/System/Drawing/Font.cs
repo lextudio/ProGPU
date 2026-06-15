@@ -54,7 +54,7 @@ public class Font : IDisposable
             throw new FileNotFoundException("No system font found for family " + family.Name);
         }
 
-        TtfFont = s_ttfCache.GetOrAdd(path, p => new TtfFont(p));
+        TtfFont = s_ttfCache.GetOrAdd(family.CacheKey, _ => new TtfFont(path, family.FaceIndex));
     }
 
     public void Dispose() {}

@@ -62,6 +62,21 @@ public class SfntFontFaceTests
     }
 
     [Fact]
+    public void TtfFontLoadsRequestedCollectionFace()
+    {
+        byte[] fontData = BuildMetricsTtc(1000, 2048);
+
+        var first = new TtfFont(fontData, 0);
+        var second = new TtfFont(fontData, 1);
+
+        Assert.Equal(0, first.FaceIndex);
+        Assert.Equal(1000, first.UnitsPerEm);
+        Assert.Equal(1, second.FaceIndex);
+        Assert.Equal(2048, second.UnitsPerEm);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new TtfFont(fontData, 2));
+    }
+
+    [Fact]
     public void ReadsCmapMetricsGlyphBoundsAndEmbeddingRights()
     {
         byte[] fontData = BuildMetricsSfnt();
@@ -174,6 +189,50 @@ public class SfntFontFaceTests
             ("OS/2", BuildOs2Table()));
     }
 
+    private static byte[] BuildMetricsTtc(params ushort[] unitsPerEmValues)
+    {
+        var faceTables = unitsPerEmValues
+            .Select(unitsPerEm => new (string Tag, byte[] Data)[]
+            {
+                ("head", BuildHeadTable(unitsPerEm)),
+                ("hhea", BuildHheaTable()),
+                ("maxp", BuildMaxpTable()),
+                ("hmtx", BuildHmtxTable()),
+                ("cmap", BuildCmapFormat4Table()),
+                ("loca", BuildLocaTable()),
+                ("glyf", BuildGlyfTable()),
+                ("OS/2", BuildOs2Table())
+            })
+            .ToArray();
+
+        uint[] faceOffsets = new uint[faceTables.Length];
+        uint offset = (uint)(12 + faceTables.Length * 4);
+        for (int i = 0; i < faceTables.Length; i++)
+        {
+            faceOffsets[i] = offset;
+            offset += GetSfntLength(faceTables[i]);
+        }
+
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+
+        WriteTag(writer, "ttcf");
+        WriteUInt(writer, 0x00010000);
+        WriteUInt(writer, (uint)faceTables.Length);
+        foreach (uint faceOffset in faceOffsets)
+        {
+            WriteUInt(writer, faceOffset);
+        }
+
+        for (int i = 0; i < faceTables.Length; i++)
+        {
+            stream.Position = faceOffsets[i];
+            WriteSfntWithTables(writer, faceOffsets[i], faceTables[i]);
+        }
+
+        return stream.ToArray();
+    }
+
     private static byte[] BuildSfntWithTables(params (string Tag, byte[] Data)[] tables)
     {
         using var stream = new MemoryStream();
@@ -203,7 +262,36 @@ public class SfntFontFaceTests
         return stream.ToArray();
     }
 
-    private static byte[] BuildHeadTable()
+    private static uint GetSfntLength((string Tag, byte[] Data)[] tables)
+    {
+        return (uint)(12 + tables.Length * 16 + tables.Sum(table => table.Data.Length));
+    }
+
+    private static void WriteSfntWithTables(BinaryWriter writer, uint faceOffset, (string Tag, byte[] Data)[] tables)
+    {
+        WriteUInt(writer, 0x00010000);
+        WriteUShort(writer, (ushort)tables.Length);
+        WriteUShort(writer, 0);
+        WriteUShort(writer, 0);
+        WriteUShort(writer, 0);
+
+        uint tableOffset = faceOffset + (uint)(12 + tables.Length * 16);
+        foreach ((string tag, byte[] data) in tables)
+        {
+            WriteTag(writer, tag);
+            WriteUInt(writer, 0);
+            WriteUInt(writer, tableOffset);
+            WriteUInt(writer, (uint)data.Length);
+            tableOffset += (uint)data.Length;
+        }
+
+        foreach ((_, byte[] data) in tables)
+        {
+            writer.Write(data);
+        }
+    }
+
+    private static byte[] BuildHeadTable(ushort unitsPerEm = 1000)
     {
         byte[] table = new byte[54];
         using var stream = new MemoryStream(table);
@@ -212,7 +300,7 @@ public class SfntFontFaceTests
         stream.Position = 4;
         WriteUInt(writer, 0x00010000);
         stream.Position = 18;
-        WriteUShort(writer, 1000);
+        WriteUShort(writer, unitsPerEm);
         stream.Position = 50;
         WriteShort(writer, 0);
         return table;
