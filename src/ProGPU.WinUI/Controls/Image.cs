@@ -372,7 +372,8 @@ public class Image : FrameworkElement
             (uint)absHeight,
             TextureFormat.Rgba8Unorm,
             TextureUsage.TextureBinding | TextureUsage.CopyDst,
-            Path.GetFileName(path)
+            Path.GetFileName(path),
+            alphaMode: GpuTextureAlphaMode.Straight
         );
 
         texture.WritePixels<byte>(rgbaPixels);

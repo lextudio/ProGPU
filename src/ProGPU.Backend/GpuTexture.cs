@@ -5,6 +5,12 @@ using Silk.NET.WebGPU;
 
 namespace ProGPU.Backend;
 
+public enum GpuTextureAlphaMode
+{
+    Straight = 0,
+    Premultiplied = 1
+}
+
 public unsafe class GpuTexture : IDisposable
 {
     private static long s_idCounter = 0;
@@ -24,10 +30,19 @@ public unsafe class GpuTexture : IDisposable
     public TextureFormat Format { get; private set; }
     public TextureUsage Usage { get; private set; }
     public uint SampleCount { get; private set; } = 1;
+    public GpuTextureAlphaMode AlphaMode { get; set; }
 
     private bool _isDisposed;
 
-    public GpuTexture(WgpuContext context, uint width, uint height, TextureFormat format, TextureUsage usage, string label = "GpuTexture", uint sampleCount = 1)
+    public GpuTexture(
+        WgpuContext context,
+        uint width,
+        uint height,
+        TextureFormat format,
+        TextureUsage usage,
+        string label = "GpuTexture",
+        uint sampleCount = 1,
+        GpuTextureAlphaMode alphaMode = GpuTextureAlphaMode.Premultiplied)
     {
         Id = (ulong)Interlocked.Increment(ref s_idCounter);
         _context = context;
@@ -37,6 +52,7 @@ public unsafe class GpuTexture : IDisposable
         Usage = usage;
         _label = label;
         SampleCount = sampleCount;
+        AlphaMode = alphaMode;
 
         Allocate();
     }
@@ -180,6 +196,7 @@ public unsafe class GpuTexture : IDisposable
         }
 
         WritePixelsSubRect(pixels.CopyCompactRows(), x, y, subWidth, subHeight);
+        AlphaMode = GpuTextureAlphaMode.Premultiplied;
     }
 
     public void WritePixelsSubRect<T>(ReadOnlySpan<T> pixels, uint x, uint y, uint subWidth, uint subHeight) where T : unmanaged

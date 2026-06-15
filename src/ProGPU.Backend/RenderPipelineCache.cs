@@ -90,7 +90,8 @@ public unsafe class RenderPipelineCache : IDisposable
         CompareFunction depthCompare = CompareFunction.Always,
         CullMode cullMode = CullMode.None,
         GpuBlendMode blendMode = GpuBlendMode.SrcOver,
-        PipelineLayout* pipelineLayout = null)
+        PipelineLayout* pipelineLayout = null,
+        GpuTextureAlphaMode sourceAlphaMode = GpuTextureAlphaMode.Straight)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(RenderPipelineCache));
         if (_renderPipelines.TryGetValue(key, out var cachedPipeline)) return (RenderPipeline*)cachedPipeline;
@@ -99,51 +100,7 @@ public unsafe class RenderPipelineCache : IDisposable
         var fsEntryPtr = SilkMarshal.StringToPtr(fragmentEntry);
         var labelPtr = SilkMarshal.StringToPtr($"Pipeline_{key}");
 
-        // Blending configuration for transparent/translucent UI components
-        var blendState = new BlendState();
-        switch (blendMode)
-        {
-            case GpuBlendMode.Src:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.Dst:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.DstOver:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.Multiply:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Dst, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.Screen:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.Plus:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.Clear:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
-                break;
-            case GpuBlendMode.SrcOver:
-            default:
-                if (key.Contains("Texture", StringComparison.OrdinalIgnoreCase))
-                {
-                    blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
-                }
-                else
-                {
-                    blendState.Color = new BlendComponent { SrcFactor = BlendFactor.SrcAlpha, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
-                }
-                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
-                break;
-        }
+        var blendState = CreateBlendState(blendMode, sourceAlphaMode);
 
         var colorTarget = new ColorTargetState
         {
@@ -247,6 +204,54 @@ public unsafe class RenderPipelineCache : IDisposable
 
         _renderPipelines[key] = (nint)pipeline;
         return pipeline;
+    }
+
+    internal static BlendState CreateBlendState(
+        GpuBlendMode blendMode,
+        GpuTextureAlphaMode sourceAlphaMode = GpuTextureAlphaMode.Straight)
+    {
+        var blendState = new BlendState();
+        switch (blendMode)
+        {
+            case GpuBlendMode.Src:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Dst:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.DstOver:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.OneMinusDstAlpha, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Multiply:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Dst, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Screen:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrc, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Plus:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.One, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.Clear:
+                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.Zero, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                break;
+            case GpuBlendMode.SrcOver:
+            default:
+                var colorSourceFactor = sourceAlphaMode == GpuTextureAlphaMode.Premultiplied
+                    ? BlendFactor.One
+                    : BlendFactor.SrcAlpha;
+                blendState.Color = new BlendComponent { SrcFactor = colorSourceFactor, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.OneMinusSrcAlpha, Operation = BlendOperation.Add };
+                break;
+        }
+
+        return blendState;
     }
 
     public ComputePipeline* GetOrCreateComputePipeline(string key, ShaderModule* shaderModule, string entryPoint = "main")

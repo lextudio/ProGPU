@@ -59,7 +59,8 @@ public class Bitmap : Image
             (uint)tempBitmap.Height,
             TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "GDI Bitmap Backing Texture from file"
+            "GDI Bitmap Backing Texture from file",
+            alphaMode: GpuTextureAlphaMode.Straight
         );
 
         unsafe
@@ -87,6 +88,7 @@ public class Bitmap : Image
             loadExistingContents: _hasDefinedPixels
         );
 
+        _texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
         _recordedContext.Commands.Clear();
         _hasDefinedPixels = true;
     }
@@ -110,6 +112,7 @@ public class Bitmap : Image
         Flush();
         byte[] rgba = new byte[] { color.R, color.G, color.B, color.A };
         _texture.WritePixelsSubRect(rgba.AsSpan(), (uint)x, (uint)y, 1, 1);
+        _texture.AlphaMode = GpuTextureAlphaMode.Straight;
         _hasDefinedPixels = true;
     }
 
@@ -216,6 +219,7 @@ public class Bitmap : Image
                 }
 
                 _texture.WritePixelsSubRect(new ReadOnlySpan<byte>(_lockedBytes), (uint)_lockedRect.X, (uint)_lockedRect.Y, (uint)_lockedRect.Width, (uint)_lockedRect.Height);
+                _texture.AlphaMode = GpuTextureAlphaMode.Straight;
                 _hasDefinedPixels = true;
             }
 

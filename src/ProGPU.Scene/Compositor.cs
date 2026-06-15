@@ -338,6 +338,7 @@ public unsafe class Compositor : IDisposable
         public GpuTexture? MaskTexture;
         public GpuBlendMode BlendMode;
         public TextureSamplingMode TextureSamplingMode;
+        public GpuTextureAlphaMode TextureAlphaMode;
 
         // Custom Extension properties
         public int ExtensionId;
@@ -756,7 +757,8 @@ public unsafe class Compositor : IDisposable
                 new[] { layoutDesc },
                 enableBlend: true,
                 sampleCount: 4,
-                pipelineLayout: _texturePipelineLayout
+                pipelineLayout: _texturePipelineLayout,
+                sourceAlphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             _vectorPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
@@ -782,7 +784,8 @@ public unsafe class Compositor : IDisposable
                 new[] { layoutDesc },
                 enableBlend: true,
                 sampleCount: 1,
-                pipelineLayout: _texturePipelineLayoutOffscreen
+                pipelineLayout: _texturePipelineLayoutOffscreen,
+                sourceAlphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             // Compile high performance Chart GPGPU pipelines (with MSAA 4x)
@@ -1480,7 +1483,11 @@ public unsafe class Compositor : IDisposable
             }
             else if (dc.Type == DrawCallType.Texture && dc.Texture != null)
             {
-                var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: false);
+                var activePipeline = GetPipeline(
+                    dc.Type,
+                    dc.BlendMode,
+                    isOffscreen: false,
+                    textureAlphaMode: dc.TextureAlphaMode);
                 var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: false);
 
                 _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
@@ -4837,7 +4844,8 @@ public unsafe class Compositor : IDisposable
             ClipRect = _activeClipRect,
             MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
             BlendMode = _activeBlendMode,
-            TextureSamplingMode = cmd.TextureSamplingMode
+            TextureSamplingMode = cmd.TextureSamplingMode,
+            TextureAlphaMode = cmd.Texture.AlphaMode
         });
     }
 
@@ -5668,7 +5676,11 @@ public unsafe class Compositor : IDisposable
             }
             else if (dc.Type == DrawCallType.Texture && dc.Texture != null)
             {
-                var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: true);
+                var activePipeline = GetPipeline(
+                    dc.Type,
+                    dc.BlendMode,
+                    isOffscreen: true,
+                    textureAlphaMode: dc.TextureAlphaMode);
                 var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: true);
 
                 _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
@@ -5785,6 +5797,7 @@ public unsafe class Compositor : IDisposable
 
         _context.Wgpu.CommandBufferRelease(cmdBuffer);
         _context.Wgpu.CommandEncoderRelease(encoder);
+        targetTexture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
 
         foreach (var tex in _masksToReturnToPool)
         {
@@ -7381,7 +7394,12 @@ public unsafe class Compositor : IDisposable
         return bg;
     }
 
-    private RenderPipeline* GetPipeline(DrawCallType type, GpuBlendMode blendMode, bool isOffscreen, TextureFormat? overrideFormat = null)
+    private RenderPipeline* GetPipeline(
+        DrawCallType type,
+        GpuBlendMode blendMode,
+        bool isOffscreen,
+        TextureFormat? overrideFormat = null,
+        GpuTextureAlphaMode textureAlphaMode = GpuTextureAlphaMode.Premultiplied)
     {
         string baseName;
         ShaderModule* shaderModule;
@@ -7477,9 +7495,10 @@ public unsafe class Compositor : IDisposable
                 throw new ArgumentException($"Unsupported pipeline draw call type: {type}");
             }
 
+            string alphaModeKey = type == DrawCallType.Texture ? $"_{textureAlphaMode}" : string.Empty;
             string pipelineKey = overrideFormat.HasValue
-                ? $"{baseName}_{blendMode}_{overrideFormat.Value}"
-                : $"{baseName}_{blendMode}";
+                ? $"{baseName}_{blendMode}_{overrideFormat.Value}{alphaModeKey}"
+                : $"{baseName}_{blendMode}{alphaModeKey}";
             
             return _pipelineCache.GetOrCreateRenderPipeline(
                 pipelineKey,
@@ -7493,7 +7512,8 @@ public unsafe class Compositor : IDisposable
                 enableDepthStencil: false,
                 sampleCount: sampleCount,
                 blendMode: blendMode,
-                pipelineLayout: pipelineLayout
+                pipelineLayout: pipelineLayout,
+                sourceAlphaMode: type == DrawCallType.Texture ? textureAlphaMode : GpuTextureAlphaMode.Straight
             );
         }
     }
@@ -7703,7 +7723,12 @@ public unsafe class Compositor : IDisposable
                 }
                 else if (dc.Type == DrawCallType.Texture && dc.Texture != null)
                 {
-                    var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: true, overrideFormat: TextureFormat.R8Unorm);
+                    var activePipeline = GetPipeline(
+                        dc.Type,
+                        dc.BlendMode,
+                        isOffscreen: true,
+                        overrideFormat: TextureFormat.R8Unorm,
+                        textureAlphaMode: dc.TextureAlphaMode);
                     _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                     fixed (BindGroup** pGrp = &_textureUniformBindGroupOffscreen)
                     {

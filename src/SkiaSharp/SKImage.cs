@@ -34,7 +34,10 @@ public class SKImage : IDisposable
             (uint)bitmap.Height,
             TextureFormat.Rgba8Unorm,
             TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
-            "SKImage Texture"
+            "SKImage Texture",
+            alphaMode: bitmap.AlphaType == SKAlphaType.Unpremul
+                ? GpuTextureAlphaMode.Straight
+                : GpuTextureAlphaMode.Premultiplied
         );
 
         byte[] buffer = bitmap.CopyRgba8888Rows();
@@ -244,7 +247,7 @@ public class SKBitmap : IDisposable
         using (var ms = new MemoryStream(data.Bytes))
         {
             var result = StbImageSharp.ImageResult.FromStream(ms, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
-            var bmp = new SKBitmap(result.Width, result.Height);
+            var bmp = new SKBitmap(new SKImageInfo(result.Width, result.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
             Marshal.Copy(result.Data, 0, bmp.GetPixels(), result.Data.Length);
             return bmp;
         }
@@ -278,20 +281,24 @@ public class SKBitmap : IDisposable
                             : Math.Clamp((int)((long)x * result.Width / targetInfo.Width), 0, result.Width - 1);
                         byte* srcPixel = src + (srcY * result.Width + srcX) * 4;
                         byte* dstPixel = dstRow + x * 4;
+                        byte alpha = srcPixel[3];
+                        byte red = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[0], alpha) : srcPixel[0];
+                        byte green = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[1], alpha) : srcPixel[1];
+                        byte blue = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[2], alpha) : srcPixel[2];
 
                         if (targetInfo.ColorType == SKColorType.Bgra8888)
                         {
-                            dstPixel[0] = srcPixel[2];
-                            dstPixel[1] = srcPixel[1];
-                            dstPixel[2] = srcPixel[0];
-                            dstPixel[3] = srcPixel[3];
+                            dstPixel[0] = blue;
+                            dstPixel[1] = green;
+                            dstPixel[2] = red;
+                            dstPixel[3] = alpha;
                         }
                         else
                         {
-                            dstPixel[0] = srcPixel[0];
-                            dstPixel[1] = srcPixel[1];
-                            dstPixel[2] = srcPixel[2];
-                            dstPixel[3] = srcPixel[3];
+                            dstPixel[0] = red;
+                            dstPixel[1] = green;
+                            dstPixel[2] = blue;
+                            dstPixel[3] = alpha;
                         }
                     }
                 }
@@ -388,6 +395,11 @@ public class SKBitmap : IDisposable
         {
             System.Buffer.MemoryCopy(src + y * sourceRowBytes, dst + y * destinationRowBytes, destinationRowBytes, rowBytes);
         }
+    }
+
+    private static byte Premultiply(byte color, byte alpha)
+    {
+        return (byte)((color * alpha + 127) / 255);
     }
 
     public void Dispose()

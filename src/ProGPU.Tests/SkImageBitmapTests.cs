@@ -84,6 +84,17 @@ public sealed class SkImageBitmapTests
     }
 
     [Fact]
+    public void FromBitmapMarksUnpremultipliedUploadsAsStraightAlpha()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        WriteBytes(bitmap.GetPixels(), new byte[] { 255, 0, 0, 128 });
+
+        using var image = SKImage.FromBitmap(bitmap);
+
+        Assert.Equal(GpuTextureAlphaMode.Straight, image.Texture.AlphaMode);
+    }
+
+    [Fact]
     public void DecodeCodecCopiesEncodedPixelsIntoBitmap()
     {
         using var codec = SKCodec.Create(new SKData(TwoPixelPngBytes()));
