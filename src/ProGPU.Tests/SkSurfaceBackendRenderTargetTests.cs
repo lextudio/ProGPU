@@ -33,6 +33,25 @@ public sealed class SkSurfaceBackendRenderTargetTests
     }
 
     [Fact]
+    public void RepeatedFlushesPreserveExistingGpuSurfaceContents()
+    {
+        using var surface = SKSurface.Create(new SKImageInfo(8, 4, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var red = new SKPaint { Color = SKColors.Red };
+        using var blue = new SKPaint { Color = SKColors.Blue };
+
+        surface.Canvas.DrawRect(0, 0, 4, 4, red);
+        surface.Flush();
+
+        surface.Canvas.DrawRect(4, 0, 4, 4, blue);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+        AssertPixel(pixels, 8, 1, 1, 255, 0, 0, 255);
+        AssertPixel(pixels, 8, 6, 1, 0, 0, 255, 255);
+    }
+
+    [Fact]
     public void CreateFromUnsupportedNativeBackendRenderTargetFailsExplicitly()
     {
         using var grContext = GRContext.CreateGl() ?? throw new InvalidOperationException("Failed to create GRContext.");
@@ -41,5 +60,14 @@ public sealed class SkSurfaceBackendRenderTargetTests
         var exception = Assert.Throws<NotSupportedException>(
             () => SKSurface.Create(grContext, renderTarget, GRSurfaceOrigin.TopLeft, SKColorType.Rgba8888));
         Assert.Contains("GpuTexture", exception.Message);
+    }
+
+    private static void AssertPixel(byte[] pixels, int width, int x, int y, byte r, byte g, byte b, byte a)
+    {
+        int index = ((y * width) + x) * 4;
+        Assert.Equal(r, pixels[index]);
+        Assert.Equal(g, pixels[index + 1]);
+        Assert.Equal(b, pixels[index + 2]);
+        Assert.Equal(a, pixels[index + 3]);
     }
 }

@@ -19,6 +19,7 @@ public class SKSurface : IDisposable
     private readonly int _height;
     private readonly bool _ownsTexture;
     private readonly SKColorType _colorType;
+    private bool _hasTextureContents;
 
     private static readonly Dictionary<WgpuContext, Compositor> _compositorCache = new();
 
@@ -50,6 +51,7 @@ public class SKSurface : IDisposable
 
         _drawingContext = new DrawingContext();
         Canvas = new SKCanvas(_drawingContext, width, height);
+        _hasTextureContents = _gpuTexture != null && !_ownsTexture;
 
         if (_pixels != IntPtr.Zero && _gpuTexture != null)
         {
@@ -85,6 +87,7 @@ public class SKSurface : IDisposable
                 }
             }
             _gpuTexture.WritePixels<byte>(temp);
+            _hasTextureContents = true;
         }
     }
 
@@ -187,8 +190,8 @@ public class SKSurface : IDisposable
         visual.Context.Append(_drawingContext);
 
         var compositor = GetCompositorForContext(_context);
-        bool loadExisting = _pixels != IntPtr.Zero;
-        compositor.RenderOffscreen(visual, (uint)_width, (uint)_height, _gpuTexture, 0f, 1f, null, loadExisting);
+        compositor.RenderOffscreen(visual, (uint)_width, (uint)_height, _gpuTexture, 0f, 1f, null, _hasTextureContents);
+        _hasTextureContents = true;
 
         // If CPU-backed surface, read pixels back and copy to memory pointer
         if (_pixels != IntPtr.Zero)
