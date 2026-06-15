@@ -65,6 +65,45 @@ public sealed class ImageEffectRenderTests
         }
     }
 
+    [Fact]
+    public void DrawImageWithEffectPreservesTextureCoordinatesWhenClipped()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(160, 90);
+
+        using var source = new GpuTexture(
+            window.Context,
+            2,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Image Effect Clip Source");
+        source.WritePixels(new byte[]
+        {
+            255, 0, 0, 255,
+            0, 255, 0, 255
+        });
+
+        window.Content = new ClippedImageEffectVisual(source);
+
+        try
+        {
+            window.Render();
+
+            var pixels = window.ReadPixels();
+            var clippedMiddle = ReadPixel(pixels, window.Width, x: 80, y: 45);
+
+            Assert.True(clippedMiddle.G >= 180, $"Expected clipped image effect to preserve right-half green UVs, found {clippedMiddle}.");
+            Assert.True(clippedMiddle.R <= 80, $"Expected clipped image effect not to stretch left red UVs, found {clippedMiddle}.");
+            Assert.True(clippedMiddle.B <= 35, $"Expected clipped image effect to keep blue low, found {clippedMiddle}.");
+            Assert.Equal(255, clippedMiddle.A);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)
     {
         var index = ((y * (int)width) + x) * 4;
@@ -98,6 +137,27 @@ public sealed class ImageEffectRenderTests
                 _source,
                 new Rect(20f, 25f, 40f, 40f),
                 maskTexture: _useExplicitMask ? _mask : null);
+        }
+    }
+
+    private sealed class ClippedImageEffectVisual : FrameworkElement
+    {
+        private readonly GpuTexture _source;
+
+        public ClippedImageEffectVisual(GpuTexture source)
+        {
+            _source = source;
+            Width = 160f;
+            Height = 90f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.PushClip(new Rect(60f, 25f, 40f, 40f));
+            context.DrawImageWithEffect(
+                _source,
+                new Rect(20f, 25f, 80f, 40f));
+            context.PopClip();
         }
     }
 }

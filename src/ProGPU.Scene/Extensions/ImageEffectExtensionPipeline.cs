@@ -272,16 +272,38 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             var v2 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y + r.Height), transform);
             var v3 = Vector2.Transform(new Vector2(r.X, r.Y + r.Height), transform);
 
+            var uv0 = new Vector2(0f, 0f);
+            var uv1 = new Vector2(1f, 0f);
+            var uv2 = new Vector2(1f, 1f);
+            var uv3 = new Vector2(0f, 1f);
+
+            if (compositor.ActiveClipRect.HasValue &&
+                !TryClipAxisAlignedQuad(
+                    compositor.ActiveClipRect.Value,
+                    ref v0,
+                    ref v1,
+                    ref v2,
+                    ref v3,
+                    ref uv0,
+                    ref uv1,
+                    ref uv2,
+                    ref uv3))
+            {
+                cmd.PointBufferOffset = compositor.VectorIndices.Count;
+                cmd.PointBufferCount = 0;
+                return;
+            }
+
             int startIndex = compositor.VectorIndices.Count;
 
             int originalVertexCount = compositor.VectorVertices.Count;
             CollectionsMarshal.SetCount(compositor.VectorVertices, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(compositor.VectorVertices).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(v0, color, new Vector2(0f, 0f));
-            vertexSpan[1] = new VectorVertex(v1, color, new Vector2(1f, 0f));
-            vertexSpan[2] = new VectorVertex(v2, color, new Vector2(1f, 1f));
-            vertexSpan[3] = new VectorVertex(v3, color, new Vector2(0f, 1f));
+            vertexSpan[0] = new VectorVertex(v0, color, uv0);
+            vertexSpan[1] = new VectorVertex(v1, color, uv1);
+            vertexSpan[2] = new VectorVertex(v2, color, uv2);
+            vertexSpan[3] = new VectorVertex(v3, color, uv3);
 
             int originalIndexCount = compositor.VectorIndices.Count;
             CollectionsMarshal.SetCount(compositor.VectorIndices, originalIndexCount + 6);
@@ -295,20 +317,73 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             indexSpan[4] = idxStart + 2;
             indexSpan[5] = idxStart + 3;
 
-            if (compositor.ActiveClipRect.HasValue)
-            {
-                var vertices = CollectionsMarshal.AsSpan(compositor.VectorVertices);
-                for (int i = originalVertexCount; i < vertices.Length; i++)
-                {
-                    var v = vertices[i];
-                    v.Position = compositor.ClampToClip(v.Position);
-                    vertices[i] = v;
-                }
-            }
-
             int indexCount = compositor.VectorIndices.Count - startIndex;
             cmd.PointBufferOffset = startIndex;
             cmd.PointBufferCount = indexCount;
+        }
+
+        private static bool TryClipAxisAlignedQuad(
+            Rect clip,
+            ref Vector2 v0,
+            ref Vector2 v1,
+            ref Vector2 v2,
+            ref Vector2 v3,
+            ref Vector2 uv0,
+            ref Vector2 uv1,
+            ref Vector2 uv2,
+            ref Vector2 uv3)
+        {
+            const float epsilon = 0.0001f;
+            if (MathF.Abs(v0.Y - v1.Y) > epsilon ||
+                MathF.Abs(v2.Y - v3.Y) > epsilon ||
+                MathF.Abs(v0.X - v3.X) > epsilon ||
+                MathF.Abs(v1.X - v2.X) > epsilon)
+            {
+                return true;
+            }
+
+            var left = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+            var right = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+            var top = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
+            var bottom = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
+
+            var clipLeft = MathF.Max(left, clip.X);
+            var clipTop = MathF.Max(top, clip.Y);
+            var clipRight = MathF.Min(right, clip.X + clip.Width);
+            var clipBottom = MathF.Min(bottom, clip.Y + clip.Height);
+            if (clipRight <= clipLeft || clipBottom <= clipTop)
+            {
+                return false;
+            }
+
+            var x0 = v0.X;
+            var x1 = v1.X;
+            var y0 = v0.Y;
+            var y1 = v3.Y;
+            if (MathF.Abs(x1 - x0) <= epsilon || MathF.Abs(y1 - y0) <= epsilon)
+            {
+                return false;
+            }
+
+            var nx0 = Math.Clamp(x0, clipLeft, clipRight);
+            var nx1 = Math.Clamp(x1, clipLeft, clipRight);
+            var ny0 = Math.Clamp(y0, clipTop, clipBottom);
+            var ny1 = Math.Clamp(y1, clipTop, clipBottom);
+
+            var u0 = (nx0 - x0) / (x1 - x0);
+            var u1 = (nx1 - x0) / (x1 - x0);
+            var tv0 = (ny0 - y0) / (y1 - y0);
+            var tv1 = (ny1 - y0) / (y1 - y0);
+
+            v0 = new Vector2(nx0, ny0);
+            v1 = new Vector2(nx1, ny0);
+            v2 = new Vector2(nx1, ny1);
+            v3 = new Vector2(nx0, ny1);
+            uv0 = new Vector2(u0, tv0);
+            uv1 = new Vector2(u1, tv0);
+            uv2 = new Vector2(u1, tv1);
+            uv3 = new Vector2(u0, tv1);
+            return true;
         }
 
         public void BeginFrame(Compositor compositor)
