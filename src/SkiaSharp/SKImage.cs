@@ -9,12 +9,19 @@ namespace SkiaSharp;
 public class SKImage : IDisposable
 {
     public GpuTexture Texture { get; }
+    private readonly bool _ownsTexture;
     public int Width => (int)Texture.Width;
     public int Height => (int)Texture.Height;
 
     public SKImage(GpuTexture texture)
+        : this(texture, ownsTexture: false)
+    {
+    }
+
+    private SKImage(GpuTexture texture, bool ownsTexture)
     {
         Texture = texture;
+        _ownsTexture = ownsTexture;
     }
 
     public static SKImage FromBitmap(SKBitmap bitmap)
@@ -30,17 +37,20 @@ public class SKImage : IDisposable
             "SKImage Texture"
         );
 
-        int size = bitmap.Width * bitmap.Height * 4;
-        byte[] buffer = new byte[size];
-        Marshal.Copy(bitmap.GetPixels(), buffer, 0, size);
+        byte[] buffer = bitmap.CopyRgba8888Rows();
         texture.WritePixels(new ReadOnlySpan<byte>(buffer));
 
-        return new SKImage(texture);
+        return new SKImage(texture, ownsTexture: true);
     }
 
     public static SKImage FromTexture(GpuTexture texture)
     {
         return new SKImage(texture);
+    }
+
+    internal static SKImage FromOwnedTexture(GpuTexture texture)
+    {
+        return new SKImage(texture, ownsTexture: true);
     }
 
     public void ScalePixels(SKPixmap dst, SKSamplingOptions sampling)
@@ -54,8 +64,12 @@ public class SKImage : IDisposable
         int srcWidth = Width;
         int srcHeight = Height;
         
-        int copyWidth = Math.Min(dstInfo.Width, srcWidth - srcX);
-        int copyHeight = Math.Min(dstInfo.Height, srcHeight - srcY);
+        int copySrcX = Math.Max(0, srcX);
+        int copySrcY = Math.Max(0, srcY);
+        int dstStartX = copySrcX - srcX;
+        int dstStartY = copySrcY - srcY;
+        int copyWidth = Math.Min(dstInfo.Width - dstStartX, srcWidth - copySrcX);
+        int copyHeight = Math.Min(dstInfo.Height - dstStartY, srcHeight - copySrcY);
         
         if (copyWidth <= 0 || copyHeight <= 0) return;
         
@@ -68,11 +82,9 @@ public class SKImage : IDisposable
                 byte* dst = (byte*)dstPixels;
                 for (int y = 0; y < copyHeight; y++)
                 {
-                    int srcRowY = srcY + y;
-                    if (srcRowY < 0 || srcRowY >= srcHeight) continue;
-                    
-                    byte* srcRow = src + (srcRowY * srcWidth + srcX) * 4;
-                    byte* dstRow = dst + y * actualDstRowBytes;
+                    int srcRowY = copySrcY + y;
+                    byte* srcRow = src + (srcRowY * srcWidth + copySrcX) * 4;
+                    byte* dstRow = dst + (dstStartY + y) * actualDstRowBytes + dstStartX * 4;
                     
                     if (dstInfo.ColorType == SKColorType.Bgra8888)
                     {
@@ -122,7 +134,10 @@ public class SKImage : IDisposable
 
     public void Dispose()
     {
-        // In this drop-in replacement, we let ProGPU's GpuTexture GC handle texture disposal
+        if (_ownsTexture)
+        {
+            Texture.Dispose();
+        }
     }
 }
 
@@ -146,6 +161,7 @@ public class SKBitmap : IDisposable
     private bool _ownsPixels;
     private int _width;
     private int _height;
+    private int _rowBytes;
     private SKImageInfo _info;
 
     public int Width => _width;
@@ -153,13 +169,14 @@ public class SKBitmap : IDisposable
     public SKImageInfo Info => _info;
     public SKColorType ColorType => _info.ColorType;
     public SKAlphaType AlphaType => _info.AlphaType;
-    public int RowBytes => _width * 4;
+    public int RowBytes => _rowBytes;
     public int BytesSize => RowBytes * _height;
 
     public SKBitmap()
     {
         _pixels = IntPtr.Zero;
         _ownsPixels = false;
+        _rowBytes = 0;
     }
 
     public SKBitmap(int width, int height, bool isOpaque = false)
@@ -167,6 +184,7 @@ public class SKBitmap : IDisposable
         _width = width;
         _height = height;
         _info = new SKImageInfo(width, height, SKColorType.Rgba8888, isOpaque ? SKAlphaType.Opaque : SKAlphaType.Premul);
+        _rowBytes = _info.RowBytes;
         _pixels = Marshal.AllocHGlobal(BytesSize);
         _ownsPixels = true;
         // Zero-initialize
@@ -179,6 +197,7 @@ public class SKBitmap : IDisposable
         _width = info.Width;
         _height = info.Height;
         _info = info;
+        _rowBytes = _info.RowBytes;
         _pixels = Marshal.AllocHGlobal(BytesSize);
         _ownsPixels = true;
         // Zero-initialize
@@ -190,6 +209,13 @@ public class SKBitmap : IDisposable
 
     public void InstallPixels(SKImageInfo info, IntPtr pixels, int rowBytes)
     {
+        int actualRowBytes = rowBytes > 0 ? rowBytes : info.RowBytes;
+        int minRowBytes = info.Width * 4;
+        if (info.Height > 0 && actualRowBytes < minRowBytes)
+        {
+            throw new ArgumentException("Row bytes must be large enough for one bitmap row.", nameof(rowBytes));
+        }
+
         if (_ownsPixels && _pixels != IntPtr.Zero)
         {
             Marshal.FreeHGlobal(_pixels);
@@ -197,6 +223,7 @@ public class SKBitmap : IDisposable
         _width = info.Width;
         _height = info.Height;
         _info = info;
+        _rowBytes = actualRowBytes;
         _pixels = pixels;
         _ownsPixels = false;
     }
@@ -204,9 +231,7 @@ public class SKBitmap : IDisposable
     public SKBitmap Copy()
     {
         var copy = new SKBitmap(_info);
-        byte[] buffer = new byte[BytesSize];
-        Marshal.Copy(_pixels, buffer, 0, BytesSize);
-        Marshal.Copy(buffer, 0, copy.GetPixels(), BytesSize);
+        CopyRows(_pixels, RowBytes, copy.GetPixels(), copy.RowBytes, _width, _height);
         return copy;
     }
 
@@ -257,7 +282,7 @@ public class SKBitmap : IDisposable
                 int srcX = (int)(x * xRatio);
                 srcX = Math.Clamp(srcX, 0, _width - 1);
 
-                int srcOffset = (srcY * _width + srcX) * 4;
+                int srcOffset = srcY * RowBytes + srcX * 4;
                 int dstOffset = (y * info.Width + x) * 4;
 
                 Array.Copy(src, srcOffset, dst, dstOffset, 4);
@@ -266,6 +291,58 @@ public class SKBitmap : IDisposable
 
         Marshal.Copy(dst, 0, resized.GetPixels(), dst.Length);
         return resized;
+    }
+
+    internal byte[] CopyRgba8888Rows()
+    {
+        byte[] buffer = new byte[_width * _height * 4];
+        if (_pixels == IntPtr.Zero || _width <= 0 || _height <= 0)
+        {
+            return buffer;
+        }
+
+        unsafe
+        {
+            byte* src = (byte*)_pixels;
+            fixed (byte* dst = buffer)
+            {
+                for (int y = 0; y < _height; y++)
+                {
+                    byte* srcRow = src + y * RowBytes;
+                    byte* dstRow = dst + y * _width * 4;
+
+                    if (ColorType == SKColorType.Bgra8888)
+                    {
+                        for (int x = 0; x < _width; x++)
+                        {
+                            int srcIdx = x * 4;
+                            int dstIdx = x * 4;
+                            dstRow[dstIdx] = srcRow[srcIdx + 2];
+                            dstRow[dstIdx + 1] = srcRow[srcIdx + 1];
+                            dstRow[dstIdx + 2] = srcRow[srcIdx];
+                            dstRow[dstIdx + 3] = srcRow[srcIdx + 3];
+                        }
+                    }
+                    else
+                    {
+                        System.Buffer.MemoryCopy(srcRow, dstRow, _width * 4, _width * 4);
+                    }
+                }
+            }
+        }
+
+        return buffer;
+    }
+
+    private static unsafe void CopyRows(IntPtr source, int sourceRowBytes, IntPtr destination, int destinationRowBytes, int width, int height)
+    {
+        byte* src = (byte*)source;
+        byte* dst = (byte*)destination;
+        int rowBytes = width * 4;
+        for (int y = 0; y < height; y++)
+        {
+            System.Buffer.MemoryCopy(src + y * sourceRowBytes, dst + y * destinationRowBytes, destinationRowBytes, rowBytes);
+        }
     }
 
     public void Dispose()

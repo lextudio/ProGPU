@@ -280,7 +280,7 @@ public class SKSurface : IDisposable
         wgpu.CommandBufferRelease(cmdBuffer);
         wgpu.CommandEncoderRelease(encoder);
 
-        return SKImage.FromTexture(snapshotTexture);
+        return SKImage.FromOwnedTexture(snapshotTexture);
     }
 
     public void Dispose()
