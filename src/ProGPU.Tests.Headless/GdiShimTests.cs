@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using ProGPU.Backend;
 using ProGPU.Scene;
+using SkiaSharp;
 using Xunit;
 
 namespace ProGPU.Tests.Headless;
@@ -94,6 +95,32 @@ public class GdiShimTests
         // Assert border pixel on the red rectangle is Red
         Color rectBorderColor = bitmap.GetPixel(10, 50);
         Assert.Equal(Color.Red.ToArgb(), rectBorderColor.ToArgb());
+    }
+
+    [Fact]
+    public void SaveUnpremultipliesPremultipliedBitmapPixels()
+    {
+        using var bitmap = new Bitmap(1, 1);
+        bitmap.GpuTexture.WritePixels(new byte[] { 128, 0, 0, 128 });
+        bitmap.GpuTexture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+
+        var outputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gdi_premultiplied_save.png");
+        if (File.Exists(outputPath))
+        {
+            File.Delete(outputPath);
+        }
+
+        bitmap.Save(outputPath);
+
+        using var stream = File.OpenRead(outputPath);
+        using var data = SKData.Create(stream);
+        using var decoded = SKBitmap.Decode(data);
+        var pixel = decoded.GetPixels();
+
+        Assert.Equal(255, Marshal.ReadByte(pixel, 0));
+        Assert.Equal(0, Marshal.ReadByte(pixel, 1));
+        Assert.Equal(0, Marshal.ReadByte(pixel, 2));
+        Assert.Equal(128, Marshal.ReadByte(pixel, 3));
     }
 
     [Theory]

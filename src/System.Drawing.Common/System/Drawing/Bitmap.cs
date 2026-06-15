@@ -120,7 +120,37 @@ public class Bitmap : Image
     {
         Flush();
         byte[] pixels = _texture.ReadPixels();
+        if (_texture.AlphaMode == GpuTextureAlphaMode.Premultiplied)
+        {
+            pixels = UnpremultiplyPixels(pixels);
+        }
+
         PngEncoder.SavePng(filename, pixels, (uint)Width, (uint)Height);
+    }
+
+    private static byte[] UnpremultiplyPixels(byte[] pixels)
+    {
+        var straightPixels = new byte[pixels.Length];
+        for (int offset = 0; offset < pixels.Length; offset += 4)
+        {
+            var alpha = pixels[offset + 3];
+            if (alpha == 0)
+            {
+                continue;
+            }
+
+            straightPixels[offset] = UnpremultiplyChannel(pixels[offset], alpha);
+            straightPixels[offset + 1] = UnpremultiplyChannel(pixels[offset + 1], alpha);
+            straightPixels[offset + 2] = UnpremultiplyChannel(pixels[offset + 2], alpha);
+            straightPixels[offset + 3] = alpha;
+        }
+
+        return straightPixels;
+    }
+
+    private static byte UnpremultiplyChannel(byte channel, byte alpha)
+    {
+        return (byte)Math.Min(255, (channel * 255 + alpha / 2) / alpha);
     }
 
     private byte[]? _lockedBytes;
