@@ -280,6 +280,27 @@ public class ArcPathCompilerTests
         Assert.Equal((uint)FillRule.Nonzero, record.FillRule);
     }
 
+    [Fact]
+    public void PathOperationDestinationSegmentLimitMatchesShaderSplitCapacity()
+    {
+        const int horizontalSegments = 12;
+        const int verticalSegments = 12;
+
+        uint maxDestSegments = PathOpGeometrySolver.ComputeMaxDestinationSegmentCount(horizontalSegments, verticalSegments);
+
+        Assert.Equal(
+            (uint)((horizontalSegments + verticalSegments) * PathOpGeometrySolver.MaxOutputSegmentsPerInputSegment),
+            maxDestSegments);
+    }
+
+    [Fact]
+    public void PathOperationDestinationSegmentLimitKeepsMinimumCapacity()
+    {
+        uint maxDestSegments = PathOpGeometrySolver.ComputeMaxDestinationSegmentCount(1, 1);
+
+        Assert.Equal(PathOpGeometrySolver.MinimumOutputSegments, maxDestSegments);
+    }
+
     private static PathGeometry CreatePartialCircleArcPath()
     {
         const float radius = 10f;

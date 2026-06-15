@@ -10,6 +10,45 @@ namespace ProGPU.Vector
 {
     public static unsafe class PathOpGeometrySolver
     {
+        public const uint MaxOutputSegmentsPerInputSegment = 15;
+        public const uint MinimumOutputSegments = 64;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PathOpDispatchUniforms
+        {
+            public uint Op;
+            public uint MaxDestSegments;
+            public uint Pad1;
+            public uint Pad2;
+        }
+
+        public static uint ComputeMaxDestinationSegmentCount(int segmentCountA, int segmentCountB)
+        {
+            if (segmentCountA < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(segmentCountA));
+            }
+
+            if (segmentCountB < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(segmentCountB));
+            }
+
+            ulong inputSegmentCount = (ulong)segmentCountA + (ulong)segmentCountB;
+            ulong requiredSegmentCount = inputSegmentCount * MaxOutputSegmentsPerInputSegment;
+            if (requiredSegmentCount < MinimumOutputSegments)
+            {
+                return MinimumOutputSegments;
+            }
+
+            if (requiredSegmentCount > uint.MaxValue)
+            {
+                throw new InvalidOperationException("Path operation output segment count exceeds the supported WebGPU buffer size.");
+            }
+
+            return (uint)requiredSegmentCount;
+        }
+
         public static PathGeometry Combine(PathGeometry pathA, PathGeometry pathB, int op)
         {
             var result = new PathGeometry();
@@ -99,8 +138,7 @@ namespace ProGPU.Vector
                 var segmentsBufferB = new GpuBuffer(context, (uint)(segsB.Length * Marshal.SizeOf<GpuPathSegment>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path B Segments Buffer");
                 segmentsBufferB.Write(new ReadOnlySpan<GpuPathSegment>(segsB));
 
-                uint maxDestSegments = (uint)((segsA.Length + segsB.Length) * 2 + 16);
-                if (maxDestSegments < 64) maxDestSegments = 64;
+                uint maxDestSegments = ComputeMaxDestinationSegmentCount(segsA.Length, segsB.Length);
 
                 var destRecordBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<GpuPathRecord>(), BufferUsage.Storage | BufferUsage.CopyDst | BufferUsage.CopySrc, "Dest Path Record Buffer");
                 
@@ -117,9 +155,13 @@ namespace ProGPU.Vector
                 var finalizerPipeline = cache.GetOrCreateComputePipeline("PathOpRecordFinalizer", finalizerModule, "cs_main");
 
                 // Write uniform buffer
-                var uniforms = new PathOpUniforms { Op = (uint)op };
-                var uniformBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<PathOpUniforms>(), BufferUsage.Uniform | BufferUsage.CopyDst, "Uniforms Buffer");
-                uniformBuffer.Write(new ReadOnlySpan<PathOpUniforms>(&uniforms, 1));
+                var uniforms = new PathOpDispatchUniforms
+                {
+                    Op = (uint)op,
+                    MaxDestSegments = maxDestSegments
+                };
+                var uniformBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<PathOpDispatchUniforms>(), BufferUsage.Uniform | BufferUsage.CopyDst, "Uniforms Buffer");
+                uniformBuffer.Write(new ReadOnlySpan<PathOpDispatchUniforms>(&uniforms, 1));
 
                 // Bind groups
                 var bindGroupLayoutGeom = context.Wgpu.ComputePipelineGetBindGroupLayout(geometryPipeline, 0);

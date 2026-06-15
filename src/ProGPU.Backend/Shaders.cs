@@ -1541,7 +1541,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     public const string PathOpGeometryShader = @"
 struct PathOpUniforms {
     op: u32,
-    _pad0: u32,
+    maxDestSegments: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -2171,7 +2171,9 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 finalSeg = reverse_segment(sub);
             }
             let destIdx = atomicAdd(&destSegments.count, 1u);
-            destSegments.segments[destIdx] = finalSeg;
+            if (destIdx < uniforms.maxDestSegments) {
+                destSegments.segments[destIdx] = finalSeg;
+            }
         }
     }
 }
@@ -2180,7 +2182,7 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     public const string PathOpRecordFinalizerShader = @"
 struct PathOpUniforms {
     op: u32,
-    _pad0: u32,
+    maxDestSegments: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -2212,7 +2214,7 @@ struct OutputSegments {
 @compute @workgroup_size(1)
 fn cs_main() {
     destRecord.startSegment = 0u;
-    destRecord.segmentCount = destSegments.count;
+    destRecord.segmentCount = min(destSegments.count, uniforms.maxDestSegments);
     destRecord.fillRule = 1u;
     destRecord._pad1 = 0u;
     
