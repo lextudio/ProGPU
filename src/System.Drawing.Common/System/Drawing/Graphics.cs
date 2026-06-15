@@ -303,7 +303,7 @@ public class Graphics : IDisposable
     public void DrawString(string s, Font font, Brush brush, PointF point) => DrawString(s, font, brush, point.X, point.Y);
     public void DrawString(string s, Font font, Brush brush, float x, float y)
     {
-        _context.DrawText(s, font.TtfFont, font.Size, brush.ToProGpuBrush(), new Vector2(x, y), CurrentTransform4x4());
+        _context.DrawText(s, font.TtfFont, GetFontPixelSize(font), brush.ToProGpuBrush(), new Vector2(x, y), CurrentTransform4x4());
     }
 
     public void DrawString(string s, Font font, Brush brush, RectangleF layoutRectangle)
@@ -313,8 +313,25 @@ public class Graphics : IDisposable
 
     public SizeF MeasureString(string text, Font font)
     {
-        var layout = new ProGPU.Text.TextLayout(text, font.TtfFont, font.Size);
+        var layout = new ProGPU.Text.TextLayout(text, font.TtfFont, GetFontPixelSize(font));
         return new SizeF(layout.MeasuredSize.X, layout.MeasuredSize.Y);
+    }
+
+    private float GetFontPixelSize(Font font)
+    {
+        return ConvertFontSizeToPixels(font.Size, font.Unit, DpiY);
+    }
+
+    private static float ConvertFontSizeToPixels(float size, GraphicsUnit unit, float dpi)
+    {
+        return unit switch
+        {
+            GraphicsUnit.Point => size * dpi / 72f,
+            GraphicsUnit.Inch => size * dpi,
+            GraphicsUnit.Document => size * dpi / 300f,
+            GraphicsUnit.Millimeter => size * dpi / 25.4f,
+            _ => size
+        };
     }
 
     public void DrawImage(Image image, PointF point) => DrawImage(image, point.X, point.Y);
