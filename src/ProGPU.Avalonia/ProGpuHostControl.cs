@@ -949,19 +949,76 @@ public class ProGpuHostControl : Control
 
         if (hasRoundedCorners && Bounds.Width > 0 && Bounds.Height > 0)
         {
-            double radius = Math.Max(cornerRadius.TopLeft, Math.Max(cornerRadius.TopRight, 
-                            Math.Max(cornerRadius.BottomLeft, cornerRadius.BottomRight)));
-            
-            Clip = new RectangleGeometry
-            {
-                Rect = new AvaloniaRect(0, 0, Bounds.Width, Bounds.Height),
-                RadiusX = radius,
-                RadiusY = radius
-            };
+            Clip = CreateRoundedRectangleClipGeometry(
+                new AvaloniaRect(0, 0, Bounds.Width, Bounds.Height),
+                cornerRadius);
         }
         else
         {
             Clip = null;
+        }
+    }
+
+    private static Geometry CreateRoundedRectangleClipGeometry(AvaloniaRect bounds, CornerRadius cornerRadius)
+    {
+        var width = Math.Max(0.0, bounds.Width);
+        var height = Math.Max(0.0, bounds.Height);
+        var topLeft = Math.Max(0.0, cornerRadius.TopLeft);
+        var topRight = Math.Max(0.0, cornerRadius.TopRight);
+        var bottomRight = Math.Max(0.0, cornerRadius.BottomRight);
+        var bottomLeft = Math.Max(0.0, cornerRadius.BottomLeft);
+
+        var scale = 1.0;
+        ScaleToFit(topLeft + topRight, width, ref scale);
+        ScaleToFit(bottomLeft + bottomRight, width, ref scale);
+        ScaleToFit(topLeft + bottomLeft, height, ref scale);
+        ScaleToFit(topRight + bottomRight, height, ref scale);
+
+        topLeft *= scale;
+        topRight *= scale;
+        bottomRight *= scale;
+        bottomLeft *= scale;
+
+        var left = bounds.X;
+        var top = bounds.Y;
+        var right = bounds.Right;
+        var bottom = bounds.Bottom;
+
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(new Point(left + topLeft, top), isFilled: true);
+            context.LineTo(new Point(right - topRight, top));
+            AddCornerArc(context, topRight, new Point(right, top + topRight));
+            context.LineTo(new Point(right, bottom - bottomRight));
+            AddCornerArc(context, bottomRight, new Point(right - bottomRight, bottom));
+            context.LineTo(new Point(left + bottomLeft, bottom));
+            AddCornerArc(context, bottomLeft, new Point(left, bottom - bottomLeft));
+            context.LineTo(new Point(left, top + topLeft));
+            AddCornerArc(context, topLeft, new Point(left + topLeft, top));
+            context.EndFigure(isClosed: true);
+        }
+
+        return geometry;
+    }
+
+    private static void ScaleToFit(double radiusSum, double sideLength, ref double scale)
+    {
+        if (radiusSum > sideLength && radiusSum > 0.0)
+        {
+            scale = Math.Min(scale, sideLength / radiusSum);
+        }
+    }
+
+    private static void AddCornerArc(StreamGeometryContext context, double radius, Point endPoint)
+    {
+        if (radius > 0.0)
+        {
+            context.ArcTo(endPoint, new Size(radius, radius), 0.0, isLargeArc: false, SweepDirection.Clockwise);
+        }
+        else
+        {
+            context.LineTo(endPoint);
         }
     }
 
