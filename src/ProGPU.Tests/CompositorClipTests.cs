@@ -45,6 +45,29 @@ public sealed class CompositorClipTests
         }
     }
 
+    [Fact]
+    public void GeometryClipMaskDoesNotInheritActiveOpacity()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(180, 110);
+        window.Content = new OpacityGeometryClipVisual();
+
+        try
+        {
+            window.Render();
+
+            var pixels = window.ReadPixels();
+            var unclipped = ReadPixel(pixels, window.Width, x: 45, y: 55);
+            var clipped = ReadPixel(pixels, window.Width, x: 125, y: 55);
+
+            AssertColorNear(unclipped, clipped, tolerance: 10);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private static Rect ComputeTransformedBounds(Rect rect, Matrix4x4 transform)
     {
         var p0 = Vector2.Transform(new Vector2(rect.X, rect.Y), transform);
@@ -91,6 +114,24 @@ public sealed class CompositorClipTests
             $"Expected painted clip probe at ({x}, {y}), found RGBA({r}, {g}, {b}, {a}).");
     }
 
+    private static Vector4 ReadPixel(byte[] pixels, uint width, int x, int y)
+    {
+        var index = ((y * (int)width) + x) * 4;
+        return new Vector4(
+            pixels[index + 0],
+            pixels[index + 1],
+            pixels[index + 2],
+            pixels[index + 3]);
+    }
+
+    private static void AssertColorNear(Vector4 expected, Vector4 actual, int tolerance)
+    {
+        Assert.InRange(MathF.Abs(expected.X - actual.X), 0, tolerance);
+        Assert.InRange(MathF.Abs(expected.Y - actual.Y), 0, tolerance);
+        Assert.InRange(MathF.Abs(expected.Z - actual.Z), 0, tolerance);
+        Assert.InRange(MathF.Abs(expected.W - actual.W), 0, tolerance);
+    }
+
     private sealed class RotatedClipVisual : FrameworkElement
     {
         public Rect ClipRect { get; } = new(30f, 25f, 80f, 35f);
@@ -113,6 +154,31 @@ public sealed class CompositorClipTests
                 new SolidColorBrush(new Vector4(0.1f, 0.6f, 0.9f, 1f)),
                 null,
                 new Rect(-200f, -200f, 500f, 500f));
+        }
+    }
+
+    private sealed class OpacityGeometryClipVisual : FrameworkElement
+    {
+        private readonly PathGeometry _clip = PrimitivePathGeometry.CreateRectangle(100f, 30f, 50f, 50f);
+        private readonly SolidColorBrush _brush = new(new Vector4(0.1f, 0.8f, 0.25f, 1f));
+
+        public OpacityGeometryClipVisual()
+        {
+            Width = 180f;
+            Height = 110f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.PushOpacity(0.5f);
+            context.DrawRectangle(_brush, null, new Rect(20f, 30f, 50f, 50f));
+            context.PopOpacity();
+
+            context.PushOpacity(0.5f);
+            context.PushGeometryClip(_clip);
+            context.DrawRectangle(_brush, null, new Rect(100f, 30f, 50f, 50f));
+            context.PopGeometryClip();
+            context.PopOpacity();
         }
     }
 }

@@ -7450,15 +7450,23 @@ public unsafe class Compositor : IDisposable
     {
         CommitPendingDrawCalls();
         int preDrawCallCount = _drawCalls.Count;
+        var savedOpacityStack = ResetOpacityForMaskCompilation(out var savedActiveOpacity);
 
-        var cmd = new RenderCommand
+        try
         {
-            Type = RenderCommandType.DrawPath,
-            Path = geometry,
-            Brush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f))
-        };
-        CompilePathCommand(cmd, transform);
-        CommitPendingDrawCalls();
+            var cmd = new RenderCommand
+            {
+                Type = RenderCommandType.DrawPath,
+                Path = geometry,
+                Brush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f))
+            };
+            CompilePathCommand(cmd, transform);
+            CommitPendingDrawCalls();
+        }
+        finally
+        {
+            RestoreOpacityAfterMaskCompilation(savedActiveOpacity, savedOpacityStack);
+        }
 
         var maskDrawCalls = new List<CompositorDrawCall>();
         for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
@@ -7484,15 +7492,23 @@ public unsafe class Compositor : IDisposable
     {
         CommitPendingDrawCalls();
         int preDrawCallCount = _drawCalls.Count;
+        var savedOpacityStack = ResetOpacityForMaskCompilation(out var savedActiveOpacity);
 
-        var cmd = new RenderCommand
+        try
         {
-            Type = RenderCommandType.DrawRect,
-            Rect = bounds,
-            Brush = brush
-        };
-        CompileRectCommand(cmd, transform);
-        CommitPendingDrawCalls();
+            var cmd = new RenderCommand
+            {
+                Type = RenderCommandType.DrawRect,
+                Rect = bounds,
+                Brush = brush
+            };
+            CompileRectCommand(cmd, transform);
+            CommitPendingDrawCalls();
+        }
+        finally
+        {
+            RestoreOpacityAfterMaskCompilation(savedActiveOpacity, savedOpacityStack);
+        }
 
         var maskDrawCalls = new List<CompositorDrawCall>();
         for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
@@ -7512,6 +7528,25 @@ public unsafe class Compositor : IDisposable
         });
 
         _maskStack.Push(maskTex);
+    }
+
+    private float[] ResetOpacityForMaskCompilation(out float savedActiveOpacity)
+    {
+        savedActiveOpacity = _activeOpacity;
+        var savedOpacityStack = _opacityStack.ToArray();
+        _activeOpacity = 1.0f;
+        _opacityStack.Clear();
+        return savedOpacityStack;
+    }
+
+    private void RestoreOpacityAfterMaskCompilation(float savedActiveOpacity, float[] savedOpacityStack)
+    {
+        _activeOpacity = savedActiveOpacity;
+        _opacityStack.Clear();
+        for (int i = savedOpacityStack.Length - 1; i >= 0; i--)
+        {
+            _opacityStack.Push(savedOpacityStack[i]);
+        }
     }
 
     private void PopGeometryMask()
