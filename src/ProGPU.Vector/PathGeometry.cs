@@ -80,6 +80,18 @@ public class ArcSegment : PathSegment
     }
 }
 
+public readonly struct ArcDashSegment
+{
+    public ArcDashSegment(Vector2 start, ArcSegment arc)
+    {
+        Start = start;
+        Arc = arc ?? throw new ArgumentNullException(nameof(arc));
+    }
+
+    public Vector2 Start { get; }
+    public ArcSegment Arc { get; }
+}
+
 public class PathFigure
 {
     public Vector2 StartPoint { get; set; }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 
 namespace ProGPU.Vector;
@@ -403,6 +404,176 @@ public static class ArcSegmentGeometry
             arc.SweepDirection,
             arc.IsSmoothJoin);
         return true;
+    }
+
+    public static bool TryCreateDashedArcSegments(
+        Vector2 start,
+        ArcSegment arc,
+        ReadOnlySpan<float> dashPattern,
+        int patternIndex,
+        float distanceInPattern,
+        out ArcDashSegment[] dashSegments,
+        out int finalPatternIndex,
+        out float finalDistanceInPattern,
+        float maxAngleRadians = MathF.PI / 64.0f)
+    {
+        dashSegments = Array.Empty<ArcDashSegment>();
+        finalPatternIndex = patternIndex;
+        finalDistanceInPattern = distanceInPattern;
+
+        if (arc == null ||
+            dashPattern.IsEmpty ||
+            patternIndex < 0 ||
+            patternIndex >= dashPattern.Length ||
+            !float.IsFinite(distanceInPattern) ||
+            distanceInPattern < 0.0f ||
+            !TryBuildArcLengthTable(start, arc, maxAngleRadians, out var cumulativeLengths, out var totalLength))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < dashPattern.Length; i++)
+        {
+            if (!float.IsFinite(dashPattern[i]) || dashPattern[i] <= Epsilon)
+            {
+                return false;
+            }
+        }
+
+        while (distanceInPattern >= dashPattern[patternIndex])
+        {
+            distanceInPattern -= dashPattern[patternIndex];
+            patternIndex = (patternIndex + 1) % dashPattern.Length;
+        }
+
+        var segments = new List<ArcDashSegment>();
+        var distance = 0.0f;
+        while (distance < totalLength - Epsilon)
+        {
+            var remainingInElement = dashPattern[patternIndex] - distanceInPattern;
+            var step = MathF.Min(remainingInElement, totalLength - distance);
+            if ((patternIndex % 2) == 0 && step > Epsilon)
+            {
+                var startParameter = GetArcParameterAtDistance(cumulativeLengths, distance);
+                var endParameter = GetArcParameterAtDistance(cumulativeLengths, distance + step);
+                if (TryCreateSubArcSegment(
+                        start,
+                        arc,
+                        startParameter,
+                        endParameter,
+                        out var dashStart,
+                        out var dashArc))
+                {
+                    segments.Add(new ArcDashSegment(dashStart, dashArc));
+                }
+            }
+
+            AdvanceDashPattern(dashPattern, ref patternIndex, ref distanceInPattern, remainingInElement, step);
+            distance += step;
+        }
+
+        dashSegments = segments.ToArray();
+        finalPatternIndex = patternIndex;
+        finalDistanceInPattern = distanceInPattern;
+        return true;
+    }
+
+    private static bool TryBuildArcLengthTable(
+        Vector2 start,
+        ArcSegment arc,
+        float maxAngleRadians,
+        out float[] cumulativeLengths,
+        out float totalLength)
+    {
+        cumulativeLengths = Array.Empty<float>();
+        totalLength = 0.0f;
+
+        if (arc == null ||
+            !TryGetArcCenter(
+                start,
+                arc.Point,
+                arc.Size,
+                arc.RotationAngle,
+                arc.IsLargeArc,
+                arc.SweepDirection,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        var points = FlattenArc(start, arc, maxAngleRadians);
+        if (points.Length < 2)
+        {
+            return false;
+        }
+
+        cumulativeLengths = new float[points.Length];
+        for (var i = 1; i < points.Length; i++)
+        {
+            totalLength += Vector2.Distance(points[i - 1], points[i]);
+            cumulativeLengths[i] = totalLength;
+        }
+
+        return totalLength > Epsilon;
+    }
+
+    private static float GetArcParameterAtDistance(float[] cumulativeLengths, float distance)
+    {
+        if (cumulativeLengths.Length <= 1)
+        {
+            return 0.0f;
+        }
+
+        if (distance <= 0.0f)
+        {
+            return 0.0f;
+        }
+
+        var totalLength = cumulativeLengths[^1];
+        if (distance >= totalLength)
+        {
+            return 1.0f;
+        }
+
+        for (var i = 1; i < cumulativeLengths.Length; i++)
+        {
+            var segmentEnd = cumulativeLengths[i];
+            if (distance > segmentEnd)
+            {
+                continue;
+            }
+
+            var segmentStart = cumulativeLengths[i - 1];
+            var segmentLength = segmentEnd - segmentStart;
+            var local = segmentLength > Epsilon
+                ? (distance - segmentStart) / segmentLength
+                : 0.0f;
+            return (i - 1 + local) / (cumulativeLengths.Length - 1);
+        }
+
+        return 1.0f;
+    }
+
+    private static void AdvanceDashPattern(
+        ReadOnlySpan<float> dashPattern,
+        ref int patternIndex,
+        ref float distanceInPattern,
+        float remainingInElement,
+        float step)
+    {
+        if (step >= remainingInElement - Epsilon)
+        {
+            distanceInPattern = 0.0f;
+            patternIndex = (patternIndex + 1) % dashPattern.Length;
+        }
+        else
+        {
+            distanceInPattern += step;
+        }
     }
 
     private static int CountArcSegments(float deltaTheta, float maxAngleRadians)

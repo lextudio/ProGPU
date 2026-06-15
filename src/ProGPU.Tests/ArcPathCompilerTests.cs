@@ -85,6 +85,68 @@ public class ArcPathCompilerTests
     }
 
     [Fact]
+    public void DashedArcSegmentsPreserveNativeArcSpansAndAdvanceDashState()
+    {
+        var start = new Vector2(10f, 0f);
+        var arc = new ArcSegment(
+            new Vector2(-10f, 0f),
+            new Vector2(10f, 10f),
+            rotationAngle: 0f,
+            isLargeArc: false,
+            SweepDirection.Clockwise);
+        var pattern = new[] { 10f, 10f };
+
+        Assert.True(ArcSegmentGeometry.TryCreateDashedArcSegments(
+            start,
+            arc,
+            pattern,
+            patternIndex: 0,
+            distanceInPattern: 0f,
+            out var segments,
+            out var finalPatternIndex,
+            out var finalDistanceInPattern));
+
+        Assert.Equal(2, segments.Length);
+        AssertClose(start, segments[0].Start);
+        foreach (var segment in segments)
+        {
+            AssertClose(10f, segment.Arc.Size.X);
+            AssertClose(10f, segment.Arc.Size.Y);
+            AssertClose(0f, segment.Arc.RotationAngle);
+            Assert.False(segment.Arc.IsLargeArc);
+            Assert.Equal(SweepDirection.Clockwise, segment.Arc.SweepDirection);
+        }
+
+        Assert.Equal(1, finalPatternIndex);
+        Assert.InRange(finalDistanceInPattern, 1.3f, 1.5f);
+    }
+
+    [Fact]
+    public void DashedArcSegmentsRejectDegenerateArcsWithoutAdvancingDashState()
+    {
+        var pattern = new[] { 5f, 5f };
+
+        Assert.False(ArcSegmentGeometry.TryCreateDashedArcSegments(
+            new Vector2(10f, 0f),
+            new ArcSegment(
+                new Vector2(20f, 0f),
+                Vector2.Zero,
+                rotationAngle: 0f,
+                isLargeArc: false,
+                SweepDirection.Clockwise),
+            pattern,
+            patternIndex: 1,
+            distanceInPattern: 2f,
+            out var segments,
+            out var finalPatternIndex,
+            out var finalDistanceInPattern));
+
+        Assert.Empty(segments);
+        Assert.Equal(1, finalPatternIndex);
+        Assert.Equal(2f, finalDistanceInPattern);
+    }
+
+    [Fact]
     public void PathAtlasCompilerPreservesNativeArcSegmentAndExactBounds()
     {
         var (records, segments) = PathAtlas.CompilePath(
