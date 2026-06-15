@@ -88,12 +88,27 @@ struct Brush {
     gradientCenter: vec2<f32>,
     gradientRadius: f32,
     stopCount: u32,
-    _pad: u32,
+    gradientRadiusY: f32,
+    spreadMethod: u32,
+    colorInterpolationMode: u32,
+    stopOffset: u32,
     stopColors0: vec4<f32>,
     stopColors1: vec4<f32>,
     stopColors2: vec4<f32>,
     stopColors3: vec4<f32>,
-    stopOffsets: vec4<f32>,
+    stopColors4: vec4<f32>,
+    stopColors5: vec4<f32>,
+    stopColors6: vec4<f32>,
+    stopColors7: vec4<f32>,
+    stopOffsets0: vec4<f32>,
+    stopOffsets1: vec4<f32>,
+    coordinateTransform0: vec4<f32>,
+    coordinateTransform1: vec4<f32>,
+};
+
+struct GradientStop {
+    color: vec4<f32>,
+    offset: f32,
 };
 
 struct Uniforms {
@@ -106,6 +121,7 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read> brushes: array<Brush>;
+@group(0) @binding(2) var<storage, read> gradientStops: array<GradientStop>;
 @group(1) @binding(0) var pathAtlasSampler: sampler;
 @group(1) @binding(1) var pathAtlasTexture: texture_2d<f32>;
 @group(2) @binding(0) var maskSampler: sampler;
@@ -134,19 +150,122 @@ struct VertexOutput {
     @location(7) gridIndex: f32,
 };
 
+fn apply_gradient_spread(t: f32, spreadMethod: u32) -> f32 {
+    if (spreadMethod == 1u) {
+        let period = fract(t * 0.5) * 2.0;
+        return select(period, 2.0 - period, period > 1.0);
+    }
+
+    if (spreadMethod == 2u) {
+        return fract(t);
+    }
+
+    return clamp(t, 0.0, 1.0);
+}
+
+fn get_gradient_stop_color(brush: Brush, index: u32) -> vec4<f32> {
+    return gradientStops[brush.stopOffset + index].color;
+}
+
+fn get_gradient_stop_offset(brush: Brush, index: u32) -> f32 {
+    return gradientStops[brush.stopOffset + index].offset;
+}
+
+fn srgb_to_linear_component(value: f32) -> f32 {
+    if (value <= 0.04045) {
+        return value / 12.92;
+    }
+
+    return pow((value + 0.055) / 1.055, 2.4);
+}
+
+fn linear_to_srgb_component(value: f32) -> f32 {
+    let clamped = max(value, 0.0);
+    if (clamped <= 0.0031308) {
+        return clamped * 12.92;
+    }
+
+    return (1.055 * pow(clamped, 1.0 / 2.4)) - 0.055;
+}
+
+fn srgb_to_linear_color(color: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        srgb_to_linear_component(color.r),
+        srgb_to_linear_component(color.g),
+        srgb_to_linear_component(color.b));
+}
+
+fn linear_to_srgb_color(color: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        linear_to_srgb_component(color.r),
+        linear_to_srgb_component(color.g),
+        linear_to_srgb_component(color.b));
+}
+
+fn interpolate_gradient_color(brush: Brush, startColor: vec4<f32>, endColor: vec4<f32>, factor: f32) -> vec4<f32> {
+    if (brush.colorInterpolationMode == 1u) {
+        let linearColor = mix(srgb_to_linear_color(startColor), srgb_to_linear_color(endColor), factor);
+        return vec4<f32>(linear_to_srgb_color(linearColor), mix(startColor.a, endColor.a, factor));
+    }
+
+    return mix(startColor, endColor, factor);
+}
+
+fn sample_gradient_color(brush: Brush, t: f32) -> vec4<f32> {
+    let stopCount = brush.stopCount;
+    if (stopCount == 0u) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    var previousColor = get_gradient_stop_color(brush, 0u);
+    var previousOffset = get_gradient_stop_offset(brush, 0u);
+    var i = 1u;
+    loop {
+        if (i >= stopCount) {
+            break;
+        }
+
+        let currentColor = get_gradient_stop_color(brush, i);
+        let currentOffset = get_gradient_stop_offset(brush, i);
+        if (t <= currentOffset) {
+            let factor = (t - previousOffset) / max(currentOffset - previousOffset, 0.0001);
+            return interpolate_gradient_color(brush, previousColor, currentColor, clamp(factor, 0.0, 1.0));
+        }
+
+        previousColor = currentColor;
+        previousOffset = currentOffset;
+        i = i + 1u;
+    }
+
+    return previousColor;
+}
+
+fn transform_brush_coordinate(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
+    let p = vec3<f32>(coord, 1.0);
+    return vec2<f32>(
+        dot(p, brush.coordinateTransform0.xyz),
+        dot(p, brush.coordinateTransform1.xyz));
+}
+
 @vertex
 fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
     var output: VertexOutput;
     
-    var sType = u32(round(input.shapeType));
+    var encodedShapeType = input.shapeType;
+    let aliasedEdge = encodedShapeType >= 1000.0;
+    if (aliasedEdge) {
+        encodedShapeType = encodedShapeType - 1000.0;
+    }
+
+    var sType = u32(round(encodedShapeType));
     var isStatic = false;
     var useGpuTransforms = false;
-    if (input.shapeType >= 195.0) {
+    if (encodedShapeType >= 195.0) {
         isStatic = true;
-        sType = u32(round(input.shapeType - 200.0));
-    } else if (input.shapeType >= 95.0) {
+        sType = u32(round(encodedShapeType - 200.0));
+    } else if (encodedShapeType >= 95.0) {
         useGpuTransforms = true;
-        sType = u32(round(input.shapeType - 100.0));
+        sType = u32(round(encodedShapeType - 100.0));
     }
     
 
@@ -317,7 +436,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     output.shapeSize = inShapeSize;
     output.cornerRadius = input.cornerRadius;
     output.strokeThickness = input.strokeThickness;
-    output.shapeType = f32(sType);
+    output.shapeType = select(f32(sType), f32(sType) + 1000.0, aliasedEdge);
     output.gridIndex = gridIndex;
     return output;
 }
@@ -326,7 +445,13 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let sType = u32(round(input.shapeType));
+    var encodedShapeType = input.shapeType;
+    let aliasedEdge = encodedShapeType >= 1000.0;
+    if (aliasedEdge) {
+        encodedShapeType = encodedShapeType - 1000.0;
+    }
+
+    let sType = u32(round(encodedShapeType));
     var d: f32 = -1.0;
 
     var evalCoord = input.texCoord;
@@ -365,15 +490,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             d_shape = d;
         }
         let fw = max(fwidth(d_shape), 0.0001);
-        shapeAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
+        let antialiasedAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
+        let aliasedAlpha = select(0.0, 1.0, d_shape <= 0.0);
+        shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
     } else if (sType == 3u || sType == 5u || sType == 6u) {
         // Line, Quadratic & Cubic Bezier curves anti-aliasing via signed pixel distance
         let d_pixels = abs(input.gridIndex);
         let d_shape = d_pixels - input.strokeThickness * 0.5;
-        shapeAlpha = 1.0 - smoothstep(-0.5, 0.5, d_shape);
+        let antialiasedAlpha = 1.0 - smoothstep(-0.5, 0.5, d_shape);
+        let aliasedAlpha = select(0.0, 1.0, d_shape <= 0.0);
+        shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
     } else if (sType == 4u) {
         // Path rendering: sample coverage directly from PathAtlas
-        shapeAlpha = textureSample(pathAtlasTexture, pathAtlasSampler, input.texCoord).r;
+        let coverage = textureSample(pathAtlasTexture, pathAtlasSampler, input.texCoord).r;
+        shapeAlpha = select(coverage, select(0.0, 1.0, coverage >= 0.5), aliasedEdge);
     } else if (sType == 7u) {
         // Direct solid fill
         shapeAlpha = 1.0;
@@ -389,7 +519,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     var finalColor = input.color;
     if (brush.brushType == 0u) {
-        let sType = u32(round(input.shapeType));
         if (sType == 5u || sType == 6u) {
             finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
         } else {
@@ -397,37 +526,39 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
 
     } else {
+        let brushCoord = transform_brush_coordinate(brush, evalCoord);
         var t: f32 = 0.0;
         if (brush.brushType == 1u) {
             // Linear Gradient
             let gradVec = brush.gradientEnd - brush.gradientStart;
             let lenSq = dot(gradVec, gradVec);
             if (lenSq > 0.0001) {
-                t = dot(evalCoord - brush.gradientStart, gradVec) / lenSq;
+                t = dot(brushCoord - brush.gradientStart, gradVec) / lenSq;
             }
         } else if (brush.brushType == 2u) {
             // Radial Gradient
-            let dist = distance(evalCoord, brush.gradientCenter);
-            if (brush.gradientRadius > 0.0001) {
-                t = dist / brush.gradientRadius;
+            let rx = brush.gradientRadius;
+            let ry = max(brush.gradientRadiusY, brush.gradientRadius);
+            if (rx > 0.0001 || ry > 0.0001) {
+                let radii = vec2<f32>(max(rx, 0.0001), max(ry, 0.0001));
+                let point = (brushCoord - brush.gradientCenter) / radii;
+                let origin = (brush.gradientStart - brush.gradientCenter) / radii;
+                let direction = point - origin;
+                let a = dot(direction, direction);
+                if (a > 0.0001) {
+                    let b = 2.0 * dot(origin, direction);
+                    let c = dot(origin, origin) - 1.0;
+                    let discriminant = max((b * b) - (4.0 * a * c), 0.0);
+                    let boundary = (-b + sqrt(discriminant)) / (2.0 * a);
+                    if (boundary > 0.0001) {
+                        t = 1.0 / boundary;
+                    }
+                }
             }
         }
-        t = clamp(t, 0.0, 1.0);
+        t = apply_gradient_spread(t, brush.spreadMethod);
 
-        // Interpolate colors based on stops
-        var gradColor = brush.stopColors0;
-        if (brush.stopCount > 1u) {
-            if (t <= brush.stopOffsets.y) {
-                let factor = (t - brush.stopOffsets.x) / max(brush.stopOffsets.y - brush.stopOffsets.x, 0.0001);
-                gradColor = mix(brush.stopColors0, brush.stopColors1, clamp(factor, 0.0, 1.0));
-            } else if (t <= brush.stopOffsets.z) {
-                let factor = (t - brush.stopOffsets.y) / max(brush.stopOffsets.z - brush.stopOffsets.y, 0.0001);
-                gradColor = mix(brush.stopColors1, brush.stopColors2, clamp(factor, 0.0, 1.0));
-            } else {
-                let factor = (t - brush.stopOffsets.z) / max(brush.stopOffsets.w - brush.stopOffsets.z, 0.0001);
-                gradColor = mix(brush.stopColors2, brush.stopColors3, clamp(factor, 0.0, 1.0));
-            }
-        }
+        let gradColor = sample_gradient_color(brush, t);
         finalColor = vec4<f32>(gradColor.rgb, gradColor.a * brush.opacity);
     }
 
@@ -497,7 +628,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let scaleRatio = input.scaleBoldItalicUseMvp.x;
     let boldOffset = input.scaleBoldItalicUseMvp.y;
     let italicSkew = input.scaleBoldItalicUseMvp.z;
-    let useMvp = input.scaleBoldItalicUseMvp.w;
+    let encodedTextFlags = input.scaleBoldItalicUseMvp.w;
+    let aliasedText = encodedTextFlags < -0.5;
+    let useMvp = select(encodedTextFlags, -encodedTextFlags - 1.0, aliasedText);
 
     let lx0 = bear.x * scaleRatio + boldOffset;
     let ly0 = bear.y * scaleRatio;
@@ -530,7 +663,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.position = uniforms.projection * vec4<f32>(finalPosLogical, 0.0, 1.0);
     output.color = input.color;
     output.texCoord = mix(texCoordMin, texCoordMax, local_uv);
-    output.cornerRadius = 1.43; // DefaultTextGamma
+    output.cornerRadius = select(1.43, -1.43, aliasedText); // DefaultTextGamma, sign encodes aliased text
     output.strokeThickness = 1.15; // DefaultTextContrast
     return output;
 }
@@ -544,7 +677,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureSample(atlasTexture, atlasSampler, input.texCoord).r;
     let dilated = clamp(alpha * input.strokeThickness, 0.0, 1.0);
-    let finalAlpha = pow(dilated, input.cornerRadius);
+    let aliasedText = input.cornerRadius < 0.0;
+    let finalAlpha = select(pow(dilated, abs(input.cornerRadius)), select(0.0, 1.0, alpha >= 0.5), aliasedText);
     let screen_uv = input.position.xy / uniforms.canvasSize;
     let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
     return vec4<f32>(input.color.rgb, input.color.a * finalAlpha * maskAlpha);
@@ -588,12 +722,60 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @group(2) @binding(0) var maskSampler: sampler;
 @group(2) @binding(1) var maskTexture: texture_2d<f32>;
 
+fn cubic_weight(x: f32) -> f32 {
+    let a = -0.5;
+    let ax = abs(x);
+    let ax2 = ax * ax;
+    let ax3 = ax2 * ax;
+
+    if (ax <= 1.0) {
+        return ((a + 2.0) * ax3) - ((a + 3.0) * ax2) + 1.0;
+    }
+
+    if (ax < 2.0) {
+        return (a * ax3) - (5.0 * a * ax2) + (8.0 * a * ax) - (4.0 * a);
+    }
+
+    return 0.0;
+}
+
+fn sample_bicubic(uv: vec2<f32>) -> vec4<f32> {
+    let size = textureDimensions(texTexture);
+    let sizef = vec2<f32>(f32(size.x), f32(size.y));
+    let texel = uv * sizef - vec2<f32>(0.5, 0.5);
+    let base = floor(texel);
+    let f = texel - base;
+    let maxCoord = vec2<i32>(i32(size.x) - 1, i32(size.y) - 1);
+    var color = vec4<f32>(0.0);
+    var total = 0.0;
+
+    for (var y: i32 = -1; y <= 2; y = y + 1) {
+        let wy = cubic_weight(f.y - f32(y));
+        for (var x: i32 = -1; x <= 2; x = x + 1) {
+            let wx = cubic_weight(f.x - f32(x));
+            let weight = wx * wy;
+            let coord = clamp(
+                vec2<i32>(i32(base.x) + x, i32(base.y) + y),
+                vec2<i32>(0, 0),
+                maxCoord);
+            color = color + textureLoad(texTexture, coord, 0) * weight;
+            total = total + weight;
+        }
+    }
+
+    return color / max(total, 0.0001);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let texColor = textureSample(texTexture, texSampler, input.texCoord);
+    var texColor = textureSample(texTexture, texSampler, input.texCoord);
+    if (input.color.a < 0.0) {
+        texColor = sample_bicubic(input.texCoord);
+    }
+    let drawColor = vec4<f32>(input.color.rgb, abs(input.color.a));
     let screen_uv = input.position.xy / uniforms.canvasSize;
     let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
-    return texColor * input.color * maskAlpha;
+    return texColor * drawColor * maskAlpha;
 }
 ";
 
@@ -1939,4 +2121,3 @@ fn cs_main() {
 ";
 
 }
-

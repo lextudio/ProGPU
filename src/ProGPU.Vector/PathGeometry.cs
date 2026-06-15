@@ -7,15 +7,17 @@ namespace ProGPU.Vector;
 
 public abstract class PathSegment
 {
+    public bool IsSmoothJoin { get; set; }
 }
 
 public class LineSegment : PathSegment
 {
     public Vector2 Point { get; set; }
 
-    public LineSegment(Vector2 point)
+    public LineSegment(Vector2 point, bool isSmoothJoin = false)
     {
         Point = point;
+        IsSmoothJoin = isSmoothJoin;
     }
 }
 
@@ -24,10 +26,11 @@ public class QuadraticBezierSegment : PathSegment
     public Vector2 ControlPoint { get; set; }
     public Vector2 Point { get; set; }
 
-    public QuadraticBezierSegment(Vector2 controlPoint, Vector2 point)
+    public QuadraticBezierSegment(Vector2 controlPoint, Vector2 point, bool isSmoothJoin = false)
     {
         ControlPoint = controlPoint;
         Point = point;
+        IsSmoothJoin = isSmoothJoin;
     }
 }
 
@@ -37,11 +40,12 @@ public class CubicBezierSegment : PathSegment
     public Vector2 ControlPoint2 { get; set; }
     public Vector2 Point { get; set; }
 
-    public CubicBezierSegment(Vector2 controlPoint1, Vector2 controlPoint2, Vector2 point)
+    public CubicBezierSegment(Vector2 controlPoint1, Vector2 controlPoint2, Vector2 point, bool isSmoothJoin = false)
     {
         ControlPoint1 = controlPoint1;
         ControlPoint2 = controlPoint2;
         Point = point;
+        IsSmoothJoin = isSmoothJoin;
     }
 }
 
@@ -59,13 +63,20 @@ public class ArcSegment : PathSegment
     public bool IsLargeArc { get; set; }
     public SweepDirection SweepDirection { get; set; }
 
-    public ArcSegment(Vector2 point, Vector2 size, float rotationAngle, bool isLargeArc, SweepDirection sweepDirection)
+    public ArcSegment(
+        Vector2 point,
+        Vector2 size,
+        float rotationAngle,
+        bool isLargeArc,
+        SweepDirection sweepDirection,
+        bool isSmoothJoin = false)
     {
         Point = point;
         Size = size;
         RotationAngle = rotationAngle;
         IsLargeArc = isLargeArc;
         SweepDirection = sweepDirection;
+        IsSmoothJoin = isSmoothJoin;
     }
 }
 

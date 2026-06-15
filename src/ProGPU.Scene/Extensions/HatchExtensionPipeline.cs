@@ -19,12 +19,27 @@ struct Brush {
     gradientCenter: vec2<f32>,
     gradientRadius: f32,
     stopCount: u32,
-    _pad: u32,
+    gradientRadiusY: f32,
+    spreadMethod: u32,
+    colorInterpolationMode: u32,
+    stopOffset: u32,
     stopColors0: vec4<f32>,
     stopColors1: vec4<f32>,
     stopColors2: vec4<f32>,
     stopColors3: vec4<f32>,
-    stopOffsets: vec4<f32>,
+    stopColors4: vec4<f32>,
+    stopColors5: vec4<f32>,
+    stopColors6: vec4<f32>,
+    stopColors7: vec4<f32>,
+    stopOffsets0: vec4<f32>,
+    stopOffsets1: vec4<f32>,
+    coordinateTransform0: vec4<f32>,
+    coordinateTransform1: vec4<f32>,
+};
+
+struct GradientStop {
+    color: vec4<f32>,
+    offset: f32,
 };
 
 struct VSUniforms {
@@ -59,6 +74,7 @@ struct GpuHatchSegment {
 @group(0) @binding(1) var<storage, read> brushes: array<Brush>;
 @group(0) @binding(2) var<storage, read> hatchRecords: array<GpuHatchRecord>;
 @group(0) @binding(3) var<storage, read> hatchSegments: array<GpuHatchSegment>;
+@group(0) @binding(4) var<storage, read> gradientStops: array<GradientStop>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -82,6 +98,103 @@ struct VertexOutput {
     @location(6) shapeType: f32,
     @location(7) gridIndex: f32,
 };
+
+fn apply_gradient_spread(t: f32, spreadMethod: u32) -> f32 {
+    if (spreadMethod == 1u) {
+        let period = fract(t * 0.5) * 2.0;
+        return select(period, 2.0 - period, period > 1.0);
+    }
+
+    if (spreadMethod == 2u) {
+        return fract(t);
+    }
+
+    return clamp(t, 0.0, 1.0);
+}
+
+fn get_gradient_stop_color(brush: Brush, index: u32) -> vec4<f32> {
+    return gradientStops[brush.stopOffset + index].color;
+}
+
+fn get_gradient_stop_offset(brush: Brush, index: u32) -> f32 {
+    return gradientStops[brush.stopOffset + index].offset;
+}
+
+fn srgb_to_linear_component(value: f32) -> f32 {
+    if (value <= 0.04045) {
+        return value / 12.92;
+    }
+
+    return pow((value + 0.055) / 1.055, 2.4);
+}
+
+fn linear_to_srgb_component(value: f32) -> f32 {
+    let clamped = max(value, 0.0);
+    if (clamped <= 0.0031308) {
+        return clamped * 12.92;
+    }
+
+    return (1.055 * pow(clamped, 1.0 / 2.4)) - 0.055;
+}
+
+fn srgb_to_linear_color(color: vec4<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        srgb_to_linear_component(color.r),
+        srgb_to_linear_component(color.g),
+        srgb_to_linear_component(color.b));
+}
+
+fn linear_to_srgb_color(color: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        linear_to_srgb_component(color.r),
+        linear_to_srgb_component(color.g),
+        linear_to_srgb_component(color.b));
+}
+
+fn interpolate_gradient_color(brush: Brush, startColor: vec4<f32>, endColor: vec4<f32>, factor: f32) -> vec4<f32> {
+    if (brush.colorInterpolationMode == 1u) {
+        let linearColor = mix(srgb_to_linear_color(startColor), srgb_to_linear_color(endColor), factor);
+        return vec4<f32>(linear_to_srgb_color(linearColor), mix(startColor.a, endColor.a, factor));
+    }
+
+    return mix(startColor, endColor, factor);
+}
+
+fn sample_gradient_color(brush: Brush, t: f32) -> vec4<f32> {
+    let stopCount = brush.stopCount;
+    if (stopCount == 0u) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    var previousColor = get_gradient_stop_color(brush, 0u);
+    var previousOffset = get_gradient_stop_offset(brush, 0u);
+    var i = 1u;
+    loop {
+        if (i >= stopCount) {
+            break;
+        }
+
+        let currentColor = get_gradient_stop_color(brush, i);
+        let currentOffset = get_gradient_stop_offset(brush, i);
+        if (t <= currentOffset) {
+            let factor = (t - previousOffset) / max(currentOffset - previousOffset, 0.0001);
+            return interpolate_gradient_color(brush, previousColor, currentColor, clamp(factor, 0.0, 1.0));
+        }
+
+        previousColor = currentColor;
+        previousOffset = currentOffset;
+        i = i + 1u;
+    }
+
+    return previousColor;
+}
+
+fn transform_brush_coordinate(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
+    let p = vec3<f32>(coord, 1.0);
+    return vec2<f32>(
+        dot(p, brush.coordinateTransform0.xyz),
+        dot(p, brush.coordinateTransform1.xyz));
+}
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
@@ -327,34 +440,37 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             discard;
         }
     } else {
+        let brushCoord = transform_brush_coordinate(brush, evalCoord);
         var t: f32 = 0.0;
         if (brush.brushType == 1u) {
             let gradVec = brush.gradientEnd - brush.gradientStart;
             let lenSq = dot(gradVec, gradVec);
             if (lenSq > 0.0001) {
-                t = dot(evalCoord - brush.gradientStart, gradVec) / lenSq;
+                t = dot(brushCoord - brush.gradientStart, gradVec) / lenSq;
             }
         } else if (brush.brushType == 2u) {
-            let dist = distance(evalCoord, brush.gradientCenter);
-            if (brush.gradientRadius > 0.0001) {
-                t = dist / brush.gradientRadius;
+            let rx = brush.gradientRadius;
+            let ry = max(brush.gradientRadiusY, brush.gradientRadius);
+            if (rx > 0.0001 || ry > 0.0001) {
+                let radii = vec2<f32>(max(rx, 0.0001), max(ry, 0.0001));
+                let point = (brushCoord - brush.gradientCenter) / radii;
+                let origin = (brush.gradientStart - brush.gradientCenter) / radii;
+                let direction = point - origin;
+                let a = dot(direction, direction);
+                if (a > 0.0001) {
+                    let b = 2.0 * dot(origin, direction);
+                    let c = dot(origin, origin) - 1.0;
+                    let discriminant = max((b * b) - (4.0 * a * c), 0.0);
+                    let boundary = (-b + sqrt(discriminant)) / (2.0 * a);
+                    if (boundary > 0.0001) {
+                        t = 1.0 / boundary;
+                    }
+                }
             }
         }
-        t = clamp(t, 0.0, 1.0);
+        t = apply_gradient_spread(t, brush.spreadMethod);
 
-        var gradColor = brush.stopColors0;
-        if (brush.stopCount > 1u) {
-            if (t <= brush.stopOffsets.y) {
-                let factor = (t - brush.stopOffsets.x) / max(brush.stopOffsets.y - brush.stopOffsets.x, 0.0001);
-                gradColor = mix(brush.stopColors0, brush.stopColors1, clamp(factor, 0.0, 1.0));
-            } else if (t <= brush.stopOffsets.z) {
-                let factor = (t - brush.stopOffsets.y) / max(brush.stopOffsets.z - brush.stopOffsets.y, 0.0001);
-                gradColor = mix(brush.stopColors1, brush.stopColors2, clamp(factor, 0.0, 1.0));
-            } else {
-                let factor = (t - brush.stopOffsets.z) / max(brush.stopOffsets.w - brush.stopOffsets.z, 0.0001);
-                gradColor = mix(brush.stopColors2, brush.stopColors3, clamp(factor, 0.0, 1.0));
-            }
-        }
+        let gradColor = sample_gradient_color(brush, t);
         finalColor = vec4<f32>(gradColor.rgb, gradColor.a * brush.opacity);
     }
 
@@ -666,6 +782,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             GpuBuffer indexBuffer;
             GpuBuffer uniformBuffer;
             GpuBuffer brushesBuf;
+            GpuBuffer gradientStopsBuf;
             GpuBuffer hatchRecordsBuf;
             GpuBuffer hatchSegmentsBuf;
 
@@ -675,6 +792,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 indexBuffer = sb.IndexBuffer!;
                 uniformBuffer = sb.UniformBuffer!;
                 brushesBuf = sb.BrushesBuffer!;
+                gradientStopsBuf = sb.GradientStopsBuffer!;
                 hatchRecordsBuf = staticState.RecordsBuffer;
                 hatchSegmentsBuf = staticState.SegmentsBuffer;
             }
@@ -684,6 +802,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 indexBuffer = compositor.VectorIndexBuffer;
                 uniformBuffer = compositor.VectorUniformBuffer;
                 brushesBuf = compositor.BrushesStorageBuffer;
+                gradientStopsBuf = compositor.GradientStopsStorageBuffer;
 
                 EnsureDynamicBuffers(compositor.Context);
 
@@ -711,13 +830,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 hatchSegmentsBuf = _dynamicSegmentsBuffer!;
             }
 
-            int currentGen = hatchRecordsBuf.GetHashCode();
+            int currentGen = HashCode.Combine(hatchRecordsBuf.GetHashCode(), brushesBuf.GetHashCode(), gradientStopsBuf.GetHashCode());
             var activeBg = isOffscreen ? _cachedBindGroupOffscreen : _cachedBindGroup;
             if (activeBg == null || currentGen != _cachedRecordGen)
             {
                 _cachedRecordGen = currentGen;
 
-                var bgEntries = stackalloc BindGroupEntry[4];
+                var bgEntries = stackalloc BindGroupEntry[5];
                 bgEntries[0] = new BindGroupEntry
                 {
                     Binding = 0,
@@ -746,13 +865,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     Offset = 0,
                     Size = hatchSegmentsBuf.Size
                 };
+                bgEntries[4] = new BindGroupEntry
+                {
+                    Binding = 4,
+                    Buffer = gradientStopsBuf.BufferPtr,
+                    Offset = 0,
+                    Size = gradientStopsBuf.Size
+                };
 
                 var pipelineLayout = wgpu.RenderPipelineGetBindGroupLayout(activePipeline, 0);
 
                 var bgDesc = new BindGroupDescriptor
                 {
                     Layout = pipelineLayout,
-                    EntryCount = 4,
+                    EntryCount = 5,
                     Entries = bgEntries,
                     Label = (byte*)SilkMarshal.StringToPtr("Hatch BindGroup")
                 };

@@ -56,7 +56,7 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
     public override void LineTo(Point point, bool isStroked, bool isSmoothJoin)
     {
         if (_currentFigure == null) throw new InvalidOperationException("No current figure.");
-        _currentFigure.Segments.Add(new LineSegment(new Vector2((float)point.X, (float)point.Y)));
+        _currentFigure.Segments.Add(new LineSegment(new Vector2((float)point.X, (float)point.Y), isSmoothJoin));
     }
 
     public override void QuadraticBezierTo(Point point1, Point point2, bool isStroked, bool isSmoothJoin)
@@ -64,7 +64,8 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
         if (_currentFigure == null) throw new InvalidOperationException("No current figure.");
         _currentFigure.Segments.Add(new QuadraticBezierSegment(
             new Vector2((float)point1.X, (float)point1.Y),
-            new Vector2((float)point2.X, (float)point2.Y)));
+            new Vector2((float)point2.X, (float)point2.Y),
+            isSmoothJoin));
     }
 
     public override void BezierTo(Point point1, Point point2, Point point3, bool isStroked, bool isSmoothJoin)
@@ -73,7 +74,8 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
         _currentFigure.Segments.Add(new BezierSegment(
             new Vector2((float)point1.X, (float)point1.Y),
             new Vector2((float)point2.X, (float)point2.Y),
-            new Vector2((float)point3.X, (float)point3.Y)));
+            new Vector2((float)point3.X, (float)point3.Y),
+            isSmoothJoin));
     }
 
     public override void PolyLineTo(IList<Point> points, bool isStroked, bool isSmoothJoin)
@@ -81,7 +83,7 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
         if (_currentFigure == null) throw new InvalidOperationException("No current figure.");
         foreach (var pt in points)
         {
-            _currentFigure.Segments.Add(new LineSegment(new Vector2((float)pt.X, (float)pt.Y)));
+            _currentFigure.Segments.Add(new LineSegment(new Vector2((float)pt.X, (float)pt.Y), isSmoothJoin));
         }
     }
 
@@ -92,7 +94,8 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
         {
             _currentFigure.Segments.Add(new QuadraticBezierSegment(
                 new Vector2((float)points[i].X, (float)points[i].Y),
-                new Vector2((float)points[i + 1].X, (float)points[i + 1].Y)));
+                new Vector2((float)points[i + 1].X, (float)points[i + 1].Y),
+                isSmoothJoin));
         }
     }
 
@@ -104,7 +107,8 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
             _currentFigure.Segments.Add(new BezierSegment(
                 new Vector2((float)points[i].X, (float)points[i].Y),
                 new Vector2((float)points[i + 1].X, (float)points[i + 1].Y),
-                new Vector2((float)points[i + 2].X, (float)points[i + 2].Y)));
+                new Vector2((float)points[i + 2].X, (float)points[i + 2].Y),
+                isSmoothJoin));
         }
     }
 
@@ -117,7 +121,8 @@ internal class StreamGeometryContextImpl : StreamGeometryContext
             Size = new Vector2((float)size.Width, (float)size.Height),
             RotationAngle = (float)rotationAngle,
             IsLargeArc = isLargeArc,
-            SweepDirection = sweepDirection
+            SweepDirection = sweepDirection,
+            IsSmoothJoin = isSmoothJoin
         });
     }
 

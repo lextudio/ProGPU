@@ -23,6 +23,7 @@ public unsafe class DxfStaticBuffer : IDisposable
     private GpuBuffer? _textVertexBufferBack;
     
     public GpuBuffer? BrushesBuffer { get; private set; }
+    public GpuBuffer? GradientStopsBuffer { get; private set; }
     
     private readonly Dictionary<int, object> _extensionStates = new();
     
@@ -51,6 +52,7 @@ public unsafe class DxfStaticBuffer : IDisposable
         uint[] indices,
         GlyphInstance[] textVertices,
         GpuBrush[] brushes,
+        GpuGradientStop[] gradientStops,
         Compositor.CompositorDrawCall[] drawCalls)
     {
         _context = context;
@@ -88,6 +90,17 @@ public unsafe class DxfStaticBuffer : IDisposable
         {
             var dummy = new GpuBrush();
             BrushesBuffer.WriteSingle(dummy);
+        }
+
+        uint gradientStopsSize = (uint)Math.Max(1, gradientStops.Length) * (uint)Marshal.SizeOf<GpuGradientStop>();
+        GradientStopsBuffer = new GpuBuffer(context, gradientStopsSize, BufferUsage.Storage | BufferUsage.CopyDst, "Static DXF Gradient Stops Buffer");
+        if (gradientStops.Length > 0)
+        {
+            GradientStopsBuffer.Write(new ReadOnlySpan<GpuGradientStop>(gradientStops));
+        }
+        else
+        {
+            GradientStopsBuffer.WriteSingle(new GpuGradientStop());
         }
         
         // 4. Custom uniforms buffer (needs custom model-to-screen matrix)
@@ -149,14 +162,23 @@ public unsafe class DxfStaticBuffer : IDisposable
             Size = BrushesBuffer.Size
         };
 
-        var vectorEntries = stackalloc BindGroupEntry[2];
+        var gradientStopsEntry = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = GradientStopsBuffer!.BufferPtr,
+            Offset = 0,
+            Size = GradientStopsBuffer.Size
+        };
+
+        var vectorEntries = stackalloc BindGroupEntry[3];
         vectorEntries[0] = uBufferEntryVector;
         vectorEntries[1] = brushesEntry;
+        vectorEntries[2] = gradientStopsEntry;
 
         var uDescVector = new BindGroupDescriptor
         {
             Layout = layout,
-            EntryCount = 2,
+            EntryCount = 3,
             Entries = vectorEntries
         };
         UniformBindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVector);
@@ -164,7 +186,7 @@ public unsafe class DxfStaticBuffer : IDisposable
         var uDescVectorOffscreen = new BindGroupDescriptor
         {
             Layout = layoutOffscreen,
-            EntryCount = 2,
+            EntryCount = 3,
             Entries = vectorEntries
         };
         UniformBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVectorOffscreen);
@@ -227,6 +249,7 @@ public unsafe class DxfStaticBuffer : IDisposable
             TextVertexBuffer?.Dispose();
             _textVertexBufferBack?.Dispose();
             BrushesBuffer?.Dispose();
+            GradientStopsBuffer?.Dispose();
             UniformBuffer?.Dispose();
             
             foreach (var state in _extensionStates.Values)

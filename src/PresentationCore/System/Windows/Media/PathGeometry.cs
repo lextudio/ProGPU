@@ -6,6 +6,7 @@ namespace System.Windows.Media;
 
 public abstract class PathSegment
 {
+    public bool IsSmoothJoin { get; set; }
 }
 
 public class LineSegment : PathSegment
@@ -13,7 +14,11 @@ public class LineSegment : PathSegment
     public Vector2 Point { get; set; }
 
     public LineSegment() { }
-    public LineSegment(Vector2 point) { Point = point; }
+    public LineSegment(Vector2 point, bool isSmoothJoin = false)
+    {
+        Point = point;
+        IsSmoothJoin = isSmoothJoin;
+    }
 }
 
 public class QuadraticBezierSegment : PathSegment
@@ -22,10 +27,11 @@ public class QuadraticBezierSegment : PathSegment
     public Vector2 Point2 { get; set; }
 
     public QuadraticBezierSegment() { }
-    public QuadraticBezierSegment(Vector2 point1, Vector2 point2)
+    public QuadraticBezierSegment(Vector2 point1, Vector2 point2, bool isSmoothJoin = false)
     {
         Point1 = point1;
         Point2 = point2;
+        IsSmoothJoin = isSmoothJoin;
     }
 }
 
@@ -36,11 +42,12 @@ public class BezierSegment : PathSegment
     public Vector2 Point3 { get; set; }
 
     public BezierSegment() { }
-    public BezierSegment(Vector2 point1, Vector2 point2, Vector2 point3)
+    public BezierSegment(Vector2 point1, Vector2 point2, Vector2 point3, bool isSmoothJoin = false)
     {
         Point1 = point1;
         Point2 = point2;
         Point3 = point3;
+        IsSmoothJoin = isSmoothJoin;
     }
 }
 
@@ -98,20 +105,22 @@ public class PathGeometry : Geometry
             {
                 if (seg is ProGPU.Vector.LineSegment line)
                 {
-                    figure.Segments.Add(new LineSegment(new Vector2(line.Point.X, line.Point.Y)));
+                    figure.Segments.Add(new LineSegment(new Vector2(line.Point.X, line.Point.Y), line.IsSmoothJoin));
                 }
                 else if (seg is ProGPU.Vector.QuadraticBezierSegment quad)
                 {
                     figure.Segments.Add(new QuadraticBezierSegment(
                         new Vector2(quad.ControlPoint.X, quad.ControlPoint.Y),
-                        new Vector2(quad.Point.X, quad.Point.Y)));
+                        new Vector2(quad.Point.X, quad.Point.Y),
+                        quad.IsSmoothJoin));
                 }
                 else if (seg is ProGPU.Vector.CubicBezierSegment cubic)
                 {
                     figure.Segments.Add(new BezierSegment(
                         new Vector2(cubic.ControlPoint1.X, cubic.ControlPoint1.Y),
                         new Vector2(cubic.ControlPoint2.X, cubic.ControlPoint2.Y),
-                        new Vector2(cubic.Point.X, cubic.Point.Y)));
+                        new Vector2(cubic.Point.X, cubic.Point.Y),
+                        cubic.IsSmoothJoin));
                 }
             }
             geom.Figures.Add(figure);
@@ -136,24 +145,26 @@ public class PathGeometry : Geometry
             {
                 if (seg is LineSegment line)
                 {
-                    figure.Segments.Add(new ProGPU.Vector.LineSegment(Vector2.Transform(line.Point, mat)));
+                    figure.Segments.Add(new ProGPU.Vector.LineSegment(Vector2.Transform(line.Point, mat), line.IsSmoothJoin));
                 }
                 else if (seg is QuadraticBezierSegment quad)
                 {
                     figure.Segments.Add(new ProGPU.Vector.QuadraticBezierSegment(
                         Vector2.Transform(quad.Point1, mat),
-                        Vector2.Transform(quad.Point2, mat)));
+                        Vector2.Transform(quad.Point2, mat),
+                        quad.IsSmoothJoin));
                 }
                 else if (seg is BezierSegment cubic)
                 {
                     figure.Segments.Add(new ProGPU.Vector.CubicBezierSegment(
                         Vector2.Transform(cubic.Point1, mat),
                         Vector2.Transform(cubic.Point2, mat),
-                        Vector2.Transform(cubic.Point3, mat)));
+                        Vector2.Transform(cubic.Point3, mat),
+                        cubic.IsSmoothJoin));
                 }
                 else if (seg is ArcSegment arc)
                 {
-                    figure.Segments.Add(new ProGPU.Vector.LineSegment(Vector2.Transform(arc.Point, mat)));
+                    figure.Segments.Add(new ProGPU.Vector.LineSegment(Vector2.Transform(arc.Point, mat), arc.IsSmoothJoin));
                 }
             }
             internalGeom.Figures.Add(figure);

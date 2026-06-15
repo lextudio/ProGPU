@@ -288,10 +288,10 @@ namespace ProGPU.Vector
                 var newFigure = new PathFigure(figure.StartPoint, figure.IsClosed) { IsFilled = figure.IsFilled };
                 foreach (var seg in figure.Segments)
                 {
-                    if (seg is LineSegment line) newFigure.Segments.Add(new LineSegment(line.Point));
-                    else if (seg is QuadraticBezierSegment quad) newFigure.Segments.Add(new QuadraticBezierSegment(quad.ControlPoint, quad.Point));
-                    else if (seg is CubicBezierSegment cubic) newFigure.Segments.Add(new CubicBezierSegment(cubic.ControlPoint1, cubic.ControlPoint2, cubic.Point));
-                    else if (seg is ArcSegment arc) newFigure.Segments.Add(new ArcSegment(arc.Point, arc.Size, arc.RotationAngle, arc.IsLargeArc, arc.SweepDirection));
+                    if (seg is LineSegment line) newFigure.Segments.Add(new LineSegment(line.Point, line.IsSmoothJoin));
+                    else if (seg is QuadraticBezierSegment quad) newFigure.Segments.Add(new QuadraticBezierSegment(quad.ControlPoint, quad.Point, quad.IsSmoothJoin));
+                    else if (seg is CubicBezierSegment cubic) newFigure.Segments.Add(new CubicBezierSegment(cubic.ControlPoint1, cubic.ControlPoint2, cubic.Point, cubic.IsSmoothJoin));
+                    else if (seg is ArcSegment arc) newFigure.Segments.Add(new ArcSegment(arc.Point, arc.Size, arc.RotationAngle, arc.IsLargeArc, arc.SweepDirection, arc.IsSmoothJoin));
                 }
                 dest.Add(newFigure);
             }
@@ -440,10 +440,25 @@ namespace ProGPU.Vector
                     }
                     else if (segment is ArcSegment arc)
                     {
-                        CalculateArcCenter(
+                        if (!ArcSegmentGeometry.TryGetArcCenter(
                             currentPoint, arc.Point, arc.Size, arc.RotationAngle, arc.IsLargeArc, arc.SweepDirection,
                             out Vector2 center, out float theta1, out float deltaTheta, out float rx, out float ry
-                        );
+                        ))
+                        {
+                            if (currentPoint != arc.Point)
+                            {
+                                segments.Add(new GpuPathSegment
+                                {
+                                    P0 = currentPoint,
+                                    P1 = arc.Point,
+                                    SegmentType = 0
+                                });
+                            }
+
+                            UpdateBounds(arc.Point);
+                            currentPoint = arc.Point;
+                            continue;
+                        }
                         
                         segments.Add(new GpuPathSegment
                         {
@@ -459,20 +474,10 @@ namespace ProGPU.Vector
                         
                         UpdateBounds(currentPoint);
                         UpdateBounds(arc.Point);
-                        float phi = arc.RotationAngle * MathF.PI / 180.0f;
-                        float cosPhi = MathF.Cos(phi);
-                        float sinPhi = MathF.Sin(phi);
                         for (int step = 1; step < 8; step++)
                         {
                             float t = (float)step / 8.0f;
-                            float theta = theta1 + t * deltaTheta;
-                            float cosT = MathF.Cos(theta);
-                            float sinT = MathF.Sin(theta);
-                            var p = new Vector2(
-                                rx * cosT * cosPhi - ry * sinT * sinPhi + center.X,
-                                rx * cosT * sinPhi + ry * sinT * cosPhi + center.Y
-                            );
-                            UpdateBounds(p);
+                            UpdateBounds(ArcSegmentGeometry.EvaluatePoint(center, rx, ry, arc.RotationAngle, theta1 + t * deltaTheta));
                         }
                         
                         currentPoint = arc.Point;
@@ -516,66 +521,5 @@ namespace ProGPU.Vector
             return (records, segments.ToArray());
         }
 
-        private static void CalculateArcCenter(
-            Vector2 start, Vector2 end, Vector2 radii, float rotationAngleDegrees, bool isLargeArc, SweepDirection sweepDirection,
-            out Vector2 center, out float theta1, out float deltaTheta, out float rx, out float ry)
-        {
-            rx = MathF.Abs(radii.X);
-            ry = MathF.Abs(radii.Y);
-            
-            float phi = rotationAngleDegrees * MathF.PI / 180.0f;
-            float cosPhi = MathF.Cos(phi);
-            float sinPhi = MathF.Sin(phi);
-            
-            float dx = (start.X - end.X) * 0.5f;
-            float dy = (start.Y - end.Y) * 0.5f;
-            float x1p = cosPhi * dx + sinPhi * dy;
-            float y1p = -sinPhi * dx + cosPhi * dy;
-            
-            float prx = rx * rx;
-            float pry = ry * ry;
-            float px1p = x1p * x1p;
-            float py1p = y1p * y1p;
-            
-            float radiiCheck = px1p / prx + py1p / pry;
-            if (radiiCheck > 1.0f)
-            {
-                float sq = MathF.Sqrt(radiiCheck);
-                rx *= sq;
-                ry *= sq;
-                prx = rx * rx;
-                pry = ry * ry;
-            }
-            
-            float sign = (isLargeArc == (sweepDirection == SweepDirection.Clockwise)) ? -1.0f : 1.0f;
-            float sqTerm = (prx * pry - prx * py1p - pry * px1p) / (prx * py1p + pry * px1p);
-            if (sqTerm < 0.0f) sqTerm = 0.0f;
-            float coef = sign * MathF.Sqrt(sqTerm);
-            float cxp = coef * ((rx * y1p) / ry);
-            float cyp = coef * -((ry * x1p) / rx);
-            
-            center = new Vector2(
-                cosPhi * cxp - sinPhi * cyp + (start.X + end.X) * 0.5f,
-                sinPhi * cxp + cosPhi * cyp + (start.Y + end.Y) * 0.5f
-            );
-            
-            float ux = (x1p - cxp) / rx;
-            float uy = (y1p - cyp) / ry;
-            float vx = (-x1p - cxp) / rx;
-            float vy = (-y1p - cyp) / ry;
-            
-            theta1 = MathF.Atan2(uy, ux);
-            float theta2 = MathF.Atan2(vy, vx);
-            
-            deltaTheta = theta2 - theta1;
-            if (sweepDirection == SweepDirection.Clockwise)
-            {
-                if (deltaTheta < 0) deltaTheta += 2.0f * MathF.PI;
-            }
-            else
-            {
-                if (deltaTheta > 0) deltaTheta -= 2.0f * MathF.PI;
-            }
-        }
     }
 }

@@ -46,6 +46,13 @@ public enum RenderCommandType
     DrawGlyphRun
 }
 
+public enum TextureSamplingMode
+{
+    Linear,
+    Nearest,
+    Cubic
+}
+
 public struct Line3D
 {
     public Vector3 Start;
@@ -144,10 +151,15 @@ public struct RenderCommand
     public bool IsBold;
     public bool IsItalic;
     public float Rotation;
+    public bool IsTextAliased;
 
     // Texture properties
     public GpuTexture? Texture;
     public Rect SrcRect;
+    public TextureSamplingMode TextureSamplingMode;
+
+    // Vector render options
+    public bool IsEdgeAliased;
 
     // Advanced geometries
     public Vector2 Position2;
@@ -368,7 +380,16 @@ public class DrawingContext : IRenderDataProvider
         });
     }
 
-    public void DrawGlyphRun(ushort[] glyphIndices, Vector2[] glyphPositions, TtfFont font, float fontSize, Brush brush, Vector2 position, Matrix4x4 transform = default)
+    public void DrawGlyphRun(
+        ushort[] glyphIndices,
+        Vector2[] glyphPositions,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        Matrix4x4 transform = default,
+        bool isBold = false,
+        bool isItalic = false)
     {
         Commands.Add(new RenderCommand
         {
@@ -379,7 +400,9 @@ public class DrawingContext : IRenderDataProvider
             FontSize = fontSize,
             Brush = brush,
             Position = position,
-            Transform = transform
+            Transform = transform,
+            IsBold = isBold,
+            IsItalic = isItalic
         });
     }
 
@@ -389,7 +412,8 @@ public class DrawingContext : IRenderDataProvider
         {
             Type = RenderCommandType.DrawTexture,
             Rect = rect,
-            Texture = texture
+            Texture = texture,
+            TextureSamplingMode = TextureSamplingMode.Linear
         });
     }
 

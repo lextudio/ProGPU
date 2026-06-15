@@ -143,7 +143,9 @@ public class DrawingContext : IDisposable
             glyphRun.FontSize,
             nativeBrush,
             glyphRun.Position,
-            glyphRun.Transform
+            glyphRun.Transform,
+            glyphRun.IsBold,
+            glyphRun.IsItalic
         );
         ApplyContextStateToLastCommands(start);
     }

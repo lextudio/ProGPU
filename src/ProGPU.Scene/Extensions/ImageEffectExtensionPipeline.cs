@@ -364,7 +364,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             });
 
             // 2. Texture & Sampler BindGroup (Group 2)
-            var textureCacheKey = new Compositor.TextureCacheKey(p.Texture.Id, p.Texture.Generation, isOffscreen);
+            var textureCacheKey = new Compositor.TextureCacheKey(
+                p.Texture.Id,
+                p.Texture.Generation,
+                isOffscreen,
+                TextureSamplingMode.Linear);
             Compositor.CachedBindGroup? cachedBg;
             lock (_textureBindGroups)
             {

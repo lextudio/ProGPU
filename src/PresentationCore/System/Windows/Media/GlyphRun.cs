@@ -11,6 +11,8 @@ public class GlyphRun
     public float FontSize { get; set; }
     public Vector2 Position { get; set; } = Vector2.Zero;
     public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
+    public bool IsBold { get; set; }
+    public bool IsItalic { get; set; }
 
     public GlyphRun(TtfFont font, float fontSize, ushort[] glyphIndices, Vector2[] glyphPositions)
     {

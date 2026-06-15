@@ -245,6 +245,11 @@ public class SKCanvas : IDisposable
     public void DrawTextBlob(SKTextBlob textBlob, float x, float y, SKPaint paint)
     {
         var brush = paint.ToBrush();
+        if (brush == null)
+        {
+            return;
+        }
+
         // Convert positions from SKPoint to Vector2
         var positions = new Vector2[textBlob.GlyphPositions.Length];
         for (int i = 0; i < positions.Length; i++)
