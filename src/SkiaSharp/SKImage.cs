@@ -150,6 +150,9 @@ public class SKImage : IDisposable
         if (copyWidth <= 0 || copyHeight <= 0) return;
         
         int actualDstRowBytes = dstRowBytes > 0 ? dstRowBytes : dstInfo.Width * 4;
+        bool convertAlpha = Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied
+            ? dstInfo.AlphaType == SKAlphaType.Unpremul
+            : dstInfo.AlphaType == SKAlphaType.Premul;
         
         unsafe
         {
@@ -162,16 +165,46 @@ public class SKImage : IDisposable
                     byte* srcRow = src + (srcRowY * srcWidth + copySrcX) * 4;
                     byte* dstRow = dst + (dstStartY + y) * actualDstRowBytes + dstStartX * 4;
                     
-                    if (dstInfo.ColorType == SKColorType.Bgra8888)
+                    if (dstInfo.ColorType == SKColorType.Bgra8888 || convertAlpha)
                     {
                         for (int x = 0; x < copyWidth; x++)
                         {
                             int srcIdx = x * 4;
                             int dstIdx = x * 4;
-                            dstRow[dstIdx] = srcRow[srcIdx + 2];     // B
-                            dstRow[dstIdx + 1] = srcRow[srcIdx + 1]; // G
-                            dstRow[dstIdx + 2] = srcRow[srcIdx];     // R
-                            dstRow[dstIdx + 3] = srcRow[srcIdx + 3]; // A
+                            byte alpha = srcRow[srcIdx + 3];
+                            byte red = srcRow[srcIdx];
+                            byte green = srcRow[srcIdx + 1];
+                            byte blue = srcRow[srcIdx + 2];
+
+                            if (Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied
+                                && dstInfo.AlphaType == SKAlphaType.Unpremul)
+                            {
+                                red = UnpremultiplyChannel(red, alpha);
+                                green = UnpremultiplyChannel(green, alpha);
+                                blue = UnpremultiplyChannel(blue, alpha);
+                            }
+                            else if (Texture.AlphaMode == GpuTextureAlphaMode.Straight
+                                && dstInfo.AlphaType == SKAlphaType.Premul)
+                            {
+                                red = PremultiplyChannel(red, alpha);
+                                green = PremultiplyChannel(green, alpha);
+                                blue = PremultiplyChannel(blue, alpha);
+                            }
+
+                            if (dstInfo.ColorType == SKColorType.Bgra8888)
+                            {
+                                dstRow[dstIdx] = blue;
+                                dstRow[dstIdx + 1] = green;
+                                dstRow[dstIdx + 2] = red;
+                                dstRow[dstIdx + 3] = alpha;
+                            }
+                            else
+                            {
+                                dstRow[dstIdx] = red;
+                                dstRow[dstIdx + 1] = green;
+                                dstRow[dstIdx + 2] = blue;
+                                dstRow[dstIdx + 3] = alpha;
+                            }
                         }
                     }
                     else

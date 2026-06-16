@@ -200,6 +200,31 @@ public sealed class SkImageBitmapTests
     }
 
     [Fact]
+    public void ReadPixelsUnpremultipliesWhenDestinationRequestsUnpremul()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
+        WriteBytes(bitmap.GetPixels(), new byte[] { 128, 0, 0, 128 });
+        using var image = SKImage.FromBitmap(bitmap);
+        var dst = Marshal.AllocHGlobal(4);
+        try
+        {
+            image.ReadPixels(
+                new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Unpremul),
+                dst,
+                dstRowBytes: 4,
+                srcX: 0,
+                srcY: 0,
+                SKImageCachingHint.Allow);
+
+            Assert.Equal(new byte[] { 255, 0, 0, 128 }, ReadBytes(dst, 4));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(dst);
+        }
+    }
+
+    [Fact]
     public unsafe void DisposeDisposesOwnedImagesButLeavesBorrowedTexturesAlive()
     {
         using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
