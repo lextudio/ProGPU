@@ -45,6 +45,39 @@ public sealed class TextureBlendRenderTests
         }
     }
 
+    [Fact]
+    public void PremultipliedTextureScalesRgbWhenOpacityIsApplied()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(32, 32);
+        using var texture = new GpuTexture(
+            window.Context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Premultiplied Texture Opacity Test",
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
+        texture.WritePixels<byte>(new byte[] { 128, 0, 0, 128 });
+        window.Content = new PremultipliedOpacityTextureVisual(texture);
+
+        try
+        {
+            window.Render();
+
+            var pixel = ReadPixel(window.ReadPixels(), window.Width, x: 16, y: 16);
+
+            Assert.InRange(pixel.R, 58, 70);
+            Assert.InRange(pixel.G, 0, 8);
+            Assert.InRange(pixel.B, 0, 8);
+            Assert.Equal(255, pixel.A);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)
     {
         var index = ((y * (int)width) + x) * 4;
@@ -75,6 +108,29 @@ public sealed class TextureBlendRenderTests
                 null,
                 new Rect(0f, 0f, 32f, 32f));
             context.DrawTexture(_texture, new Rect(0f, 0f, 32f, 32f));
+        }
+    }
+
+    private sealed class PremultipliedOpacityTextureVisual : FrameworkElement
+    {
+        private readonly GpuTexture _texture;
+
+        public PremultipliedOpacityTextureVisual(GpuTexture texture)
+        {
+            _texture = texture;
+            Width = 32f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(0f, 0f, 0f, 1f)),
+                null,
+                new Rect(0f, 0f, 32f, 32f));
+            context.PushOpacity(0.5f);
+            context.DrawTexture(_texture, new Rect(0f, 0f, 32f, 32f));
+            context.PopOpacity();
         }
     }
 }

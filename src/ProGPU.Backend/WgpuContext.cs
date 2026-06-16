@@ -475,31 +475,10 @@ public unsafe class WgpuContext : IDisposable
             alphaMode = capabilities.AlphaModes[0];
         }
 
-        PresentMode presentMode = PresentMode.Fifo;
-        if (!_vsync)
-        {
-            // Prefer Immediate mode directly for truly uncapped framerates (tearing allowed),
-            // which bypasses driver and OS compositor presentation queuing / mailbox locks.
-            bool foundImmediate = false;
-            if (capabilities.PresentModeCount > 0 && capabilities.PresentModes != null)
-            {
-                for (uint i = 0; i < capabilities.PresentModeCount; i++)
-                {
-                    if (capabilities.PresentModes[i] == PresentMode.Immediate)
-                    {
-                        presentMode = PresentMode.Immediate;
-                        foundImmediate = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!foundImmediate)
-            {
-                // Force Immediate when VSync is off to guarantee uncapped framerates
-                presentMode = PresentMode.Immediate;
-            }
-        }
+        ReadOnlySpan<PresentMode> presentModes = capabilities.PresentModeCount > 0 && capabilities.PresentModes != null
+            ? new ReadOnlySpan<PresentMode>(capabilities.PresentModes, checked((int)capabilities.PresentModeCount))
+            : ReadOnlySpan<PresentMode>.Empty;
+        PresentMode presentMode = ChoosePresentMode(_vsync, presentModes);
 
         Console.WriteLine($"[WebGPU Context] Configuring SwapChain: {width}x{height}, VSync: {_vsync}, Selected Mode: {presentMode}");
 
@@ -518,6 +497,35 @@ public unsafe class WgpuContext : IDisposable
         };
 
         Wgpu.SurfaceConfigure(Surface, &config);
+    }
+
+    public static PresentMode ChoosePresentMode(bool vsync, ReadOnlySpan<PresentMode> presentModes)
+    {
+        if (presentModes.IsEmpty)
+        {
+            return PresentMode.Fifo;
+        }
+
+        if (!vsync)
+        {
+            for (int i = 0; i < presentModes.Length; i++)
+            {
+                if (presentModes[i] == PresentMode.Immediate)
+                {
+                    return PresentMode.Immediate;
+                }
+            }
+        }
+
+        for (int i = 0; i < presentModes.Length; i++)
+        {
+            if (presentModes[i] == PresentMode.Fifo)
+            {
+                return PresentMode.Fifo;
+            }
+        }
+
+        return presentModes[0];
     }
 
     public void ReconfigureIfNeeded(uint width, uint height)

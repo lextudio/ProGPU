@@ -214,7 +214,10 @@ public unsafe class RenderPipelineCache : IDisposable
         switch (blendMode)
         {
             case GpuBlendMode.Src:
-                blendState.Color = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
+                var sourceColorFactor = sourceAlphaMode == GpuTextureAlphaMode.Premultiplied
+                    ? BlendFactor.One
+                    : BlendFactor.SrcAlpha;
+                blendState.Color = new BlendComponent { SrcFactor = sourceColorFactor, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
                 blendState.Alpha = new BlendComponent { SrcFactor = BlendFactor.One, DstFactor = BlendFactor.Zero, Operation = BlendOperation.Add };
                 break;
             case GpuBlendMode.Dst:

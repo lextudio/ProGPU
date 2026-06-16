@@ -29,6 +29,28 @@ public sealed class RenderPipelineCacheTests
         Assert.Equal(BlendFactor.OneMinusSrcAlpha, blend.Alpha.DstFactor);
     }
 
+    [Fact]
+    public void SrcBlendPremultipliesStraightAlphaColorWrites()
+    {
+        var blend = CreateBlendState(GpuBlendMode.Src, GpuTextureAlphaMode.Straight);
+
+        Assert.Equal(BlendFactor.SrcAlpha, blend.Color.SrcFactor);
+        Assert.Equal(BlendFactor.Zero, blend.Color.DstFactor);
+        Assert.Equal(BlendFactor.One, blend.Alpha.SrcFactor);
+        Assert.Equal(BlendFactor.Zero, blend.Alpha.DstFactor);
+    }
+
+    [Fact]
+    public void SrcBlendUsesOneForPremultipliedColorWrites()
+    {
+        var blend = CreateBlendState(GpuBlendMode.Src, GpuTextureAlphaMode.Premultiplied);
+
+        Assert.Equal(BlendFactor.One, blend.Color.SrcFactor);
+        Assert.Equal(BlendFactor.Zero, blend.Color.DstFactor);
+        Assert.Equal(BlendFactor.One, blend.Alpha.SrcFactor);
+        Assert.Equal(BlendFactor.Zero, blend.Alpha.DstFactor);
+    }
+
     private static BlendState CreateBlendState(GpuBlendMode blendMode, GpuTextureAlphaMode sourceAlphaMode)
     {
         var method = typeof(RenderPipelineCache).GetMethod(
