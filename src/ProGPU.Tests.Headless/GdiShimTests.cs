@@ -359,6 +359,38 @@ public class GdiShimTests
     }
 
     [Fact]
+    public void FlushPremultipliesLoadedStraightPixelsBeforePreservingContents()
+    {
+        var inputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gdi_straight_loaded_source.png");
+        PngEncoder.SavePng(
+            inputPath,
+            new byte[]
+            {
+                255, 0, 0, 128,
+                0, 0, 0, 0
+            },
+            2,
+            1);
+
+        using var bitmap = new Bitmap(inputPath);
+
+        using (var graphics = Graphics.FromImage(bitmap))
+        using (var brush = new SolidBrush(Color.Blue))
+        {
+            graphics.FillRectangle(brush, 1, 0, 1, 1);
+        }
+
+        bitmap.Flush();
+        var pixels = bitmap.GpuTexture.ReadPixels();
+
+        Assert.Equal(GpuTextureAlphaMode.Premultiplied, bitmap.GpuTexture.AlphaMode);
+        Assert.InRange(pixels[0], 120, 136);
+        Assert.InRange(pixels[1], 0, 8);
+        Assert.InRange(pixels[2], 0, 8);
+        Assert.InRange(pixels[3], 120, 136);
+    }
+
+    [Fact]
     public void FirstFlushClearsUndefinedBitmapPixels()
     {
         using var bitmap = new Bitmap(4, 4);

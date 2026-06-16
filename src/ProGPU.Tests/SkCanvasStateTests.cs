@@ -504,6 +504,54 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void SkPaintToBrushAppliesBlendModeColorFilter()
+    {
+        using var paint = new SKPaint
+        {
+            Color = SKColors.Red,
+            ColorFilter = SKColorFilter.CreateBlendMode(SKColors.Blue, SKBlendMode.Src)
+        };
+
+        var brush = Assert.IsType<SolidColorBrush>(paint.ToBrush());
+
+        AssertNear(0f, brush.Color.X);
+        AssertNear(0f, brush.Color.Y);
+        AssertNear(1f, brush.Color.Z);
+        AssertNear(1f, brush.Color.W);
+    }
+
+    [Fact]
+    public void SkPaintToPenAppliesBlendModeColorFilter()
+    {
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = SKColors.Red,
+            ColorFilter = SKColorFilter.CreateBlendMode(SKColors.Green, SKBlendMode.Src)
+        };
+
+        var pen = Assert.IsType<Pen>(paint.ToPen());
+        var brush = Assert.IsType<SolidColorBrush>(pen.Brush);
+
+        AssertNear(0f, brush.Color.X);
+        AssertNear(1f, brush.Color.Y);
+        AssertNear(0f, brush.Color.Z);
+        AssertNear(1f, brush.Color.W);
+    }
+
+    [Fact]
+    public void SkPaintRejectsShaderColorFilterCombination()
+    {
+        using var paint = new SKPaint
+        {
+            Shader = SKShader.CreateColor(SKColors.Red),
+            ColorFilter = SKColorFilter.CreateBlendMode(SKColors.Blue, SKBlendMode.Src)
+        };
+
+        Assert.Throws<NotSupportedException>(() => paint.ToBrush());
+    }
+
+    [Fact]
     public void SkShaderMapsTileModesToGradientSpreadMethods()
     {
         using var repeatShader = SKShader.CreateLinearGradient(

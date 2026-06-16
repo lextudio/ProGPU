@@ -77,6 +77,8 @@ public class Bitmap : Image
         if (_isDisposed) return;
         if (_recordedContext.Commands.Count == 0) return;
 
+        NormalizeExistingContentsForPremultipliedRenderTarget();
+
         var visual = new GraphicsVisual(_recordedContext);
         GpuProvider.Compositor.RenderOffscreen(
             visual,
@@ -167,6 +169,30 @@ public class Bitmap : Image
         }
 
         return straightPixels;
+    }
+
+    private void NormalizeExistingContentsForPremultipliedRenderTarget()
+    {
+        if (!_hasDefinedPixels || _texture.AlphaMode != GpuTextureAlphaMode.Straight)
+        {
+            return;
+        }
+
+        var pixels = _texture.ReadPixels();
+        PremultiplyPixelsInPlace(pixels);
+        _texture.WritePixels(pixels);
+        _texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+    }
+
+    private static void PremultiplyPixelsInPlace(byte[] pixels)
+    {
+        for (int offset = 0; offset < pixels.Length; offset += 4)
+        {
+            var alpha = pixels[offset + 3];
+            pixels[offset] = PremultiplyChannel(pixels[offset], alpha);
+            pixels[offset + 1] = PremultiplyChannel(pixels[offset + 1], alpha);
+            pixels[offset + 2] = PremultiplyChannel(pixels[offset + 2], alpha);
+        }
     }
 
     private static byte UnpremultiplyChannel(byte channel, byte alpha)

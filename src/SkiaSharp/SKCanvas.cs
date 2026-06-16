@@ -625,6 +625,7 @@ public class SKCanvas : IDisposable
 
     public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint paint)
     {
+        paint?.ThrowIfImageColorFilter();
         var pushedBlendMode = PushPaintBlendMode(paint);
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
         try

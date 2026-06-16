@@ -55,10 +55,12 @@ public class SKPaint : IDisposable
 
         if (Shader != null)
         {
+            ThrowIfShaderColorFilter();
             return Shader.ToBrush();
         }
-        
-        var c = new Vector4(Color.R / 255.0f, Color.G / 255.0f, Color.B / 255.0f, Color.A / 255.0f);
+
+        var color = GetFilteredColor();
+        var c = new Vector4(color.R / 255.0f, color.G / 255.0f, color.B / 255.0f, color.A / 255.0f);
         return new SolidColorBrush(c);
     }
 
@@ -69,11 +71,13 @@ public class SKPaint : IDisposable
         Brush penBrush;
         if (Shader != null)
         {
+            ThrowIfShaderColorFilter();
             penBrush = Shader.ToBrush();
         }
         else
         {
-            var c = new Vector4(Color.R / 255.0f, Color.G / 255.0f, Color.B / 255.0f, Color.A / 255.0f);
+            var color = GetFilteredColor();
+            var c = new Vector4(color.R / 255.0f, color.G / 255.0f, color.B / 255.0f, color.A / 255.0f);
             penBrush = new SolidColorBrush(c);
         }
         var (dashArray, dashOffset) = MapDashEffect(PathEffect, StrokeWidth);
@@ -91,6 +95,27 @@ public class SKPaint : IDisposable
     }
 
     public void Dispose() { }
+
+    public void ThrowIfImageColorFilter()
+    {
+        if (ColorFilter != null)
+        {
+            throw new NotSupportedException("SKPaint.ColorFilter on image draws requires a native texture color-filter pipeline.");
+        }
+    }
+
+    private SKColor GetFilteredColor()
+    {
+        return ColorFilter?.Apply(Color) ?? Color;
+    }
+
+    private void ThrowIfShaderColorFilter()
+    {
+        if (ColorFilter != null)
+        {
+            throw new NotSupportedException("SKPaint.ColorFilter combined with SKShader requires a native shader color-filter pipeline.");
+        }
+    }
 
     private static PenLineCap MapStrokeCap(SKStrokeCap cap)
     {
@@ -262,7 +287,96 @@ public class SKColorFilter : IDisposable
         return new SKColorFilter(color, mode);
     }
 
+    public SKColor Apply(SKColor destination)
+    {
+        var source = ToPremultiplied(Color);
+        var dest = ToPremultiplied(destination);
+        var result = Mode switch
+        {
+            SKBlendMode.Clear => Vector4.Zero,
+            SKBlendMode.Src => source,
+            SKBlendMode.Dst => dest,
+            SKBlendMode.SrcOver => SourceOver(source, dest),
+            SKBlendMode.DstOver => SourceOver(dest, source),
+            SKBlendMode.SrcIn => source * dest.W,
+            SKBlendMode.DstIn => dest * source.W,
+            SKBlendMode.SrcOut => source * (1f - dest.W),
+            SKBlendMode.DstOut => dest * (1f - source.W),
+            SKBlendMode.SrcATop => (source * dest.W) + (dest * (1f - source.W)),
+            SKBlendMode.DstATop => (dest * source.W) + (source * (1f - dest.W)),
+            SKBlendMode.Xor => (source * (1f - dest.W)) + (dest * (1f - source.W)),
+            SKBlendMode.Plus => Vector4.Min(source + dest, Vector4.One),
+            SKBlendMode.Modulate => source * dest,
+            SKBlendMode.Multiply => BlendSeparable(source, dest, static (s, d) => s * d),
+            SKBlendMode.Screen => BlendSeparable(source, dest, static (s, d) => s + d - (s * d)),
+            _ => throw new NotSupportedException($"SKColorFilter blend mode '{Mode}' is not supported.")
+        };
+
+        return FromPremultiplied(result);
+    }
+
     public void Dispose() { }
+
+    private static Vector4 ToPremultiplied(SKColor color)
+    {
+        var alpha = color.A / 255f;
+        return new Vector4(
+            color.R / 255f * alpha,
+            color.G / 255f * alpha,
+            color.B / 255f * alpha,
+            alpha);
+    }
+
+    private static SKColor FromPremultiplied(Vector4 color)
+    {
+        var alpha = Clamp01(color.W);
+        if (alpha <= 0f)
+        {
+            return SKColor.Empty;
+        }
+
+        return new SKColor(
+            ToByte(color.X / alpha),
+            ToByte(color.Y / alpha),
+            ToByte(color.Z / alpha),
+            ToByte(alpha));
+    }
+
+    private static Vector4 SourceOver(Vector4 source, Vector4 dest)
+    {
+        return source + (dest * (1f - source.W));
+    }
+
+    private static Vector4 BlendSeparable(Vector4 source, Vector4 dest, Func<float, float, float> blend)
+    {
+        var sourceAlpha = source.W;
+        var destAlpha = dest.W;
+        var alpha = sourceAlpha + destAlpha - (sourceAlpha * destAlpha);
+        var rgb = new Vector3(
+            BlendComponent(source.X, dest.X, sourceAlpha, destAlpha, blend),
+            BlendComponent(source.Y, dest.Y, sourceAlpha, destAlpha, blend),
+            BlendComponent(source.Z, dest.Z, sourceAlpha, destAlpha, blend));
+        return new Vector4(rgb, alpha);
+    }
+
+    private static float BlendComponent(float source, float dest, float sourceAlpha, float destAlpha, Func<float, float, float> blend)
+    {
+        var straightSource = sourceAlpha > 0f ? source / sourceAlpha : 0f;
+        var straightDest = destAlpha > 0f ? dest / destAlpha : 0f;
+        return (source * (1f - destAlpha))
+            + (dest * (1f - sourceAlpha))
+            + (sourceAlpha * destAlpha * blend(straightSource, straightDest));
+    }
+
+    private static byte ToByte(float value)
+    {
+        return (byte)Math.Clamp(MathF.Round(Clamp01(value) * 255f), 0f, 255f);
+    }
+
+    private static float Clamp01(float value)
+    {
+        return Math.Clamp(value, 0f, 1f);
+    }
 }
 
 public class SKImageFilter : IDisposable

@@ -7671,7 +7671,7 @@ public unsafe class Compositor : IDisposable
 
     private static bool BlendModeRequiresPremultipliedSource(GpuBlendMode blendMode)
     {
-        return blendMode is GpuBlendMode.Multiply or GpuBlendMode.Screen;
+        return blendMode is GpuBlendMode.DstOver or GpuBlendMode.Multiply or GpuBlendMode.Screen;
     }
 
     private static string GetFragmentEntryPoint(
