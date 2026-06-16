@@ -126,16 +126,41 @@ fn wpf_constant(index: u32) -> vec4<f32> {
         return builder.ToString();
     }
 
-    private const string FragmentWrapperShader = @"
+    private static string CreateFragmentWrapperShader(GpuTextureAlphaMode sourceAlphaMode)
+    {
+        var sourceIsPremultiplied = sourceAlphaMode == GpuTextureAlphaMode.Premultiplied;
+        return sourceIsPremultiplied ? PremultipliedFragmentWrapperShader : StraightFragmentWrapperShader;
+    }
+
+    private const string PremultipliedFragmentWrapperShader = @"
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let inputColor = wpf_sample_source(input.texCoord);
     let shaded = wpf_effect_main(input.texCoord, inputColor);
-    var color = clamp(shaded, vec4<f32>(0.0), vec4<f32>(1.0)) * input.color;
+    let shadedColor = clamp(shaded, vec4<f32>(0.0), vec4<f32>(1.0));
+    var maskAlpha = 1.0;
     if (wpf_has_active_mask()) {
-        color = color * wpf_active_mask_alpha(input.position);
+        maskAlpha = wpf_active_mask_alpha(input.position);
     }
-    return color;
+
+    let coverage = input.color.a * maskAlpha;
+    return vec4<f32>(shadedColor.rgb * input.color.rgb * coverage, shadedColor.a * coverage);
+}
+";
+
+    private const string StraightFragmentWrapperShader = @"
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let inputColor = wpf_sample_source(input.texCoord);
+    let shaded = wpf_effect_main(input.texCoord, inputColor);
+    let shadedColor = clamp(shaded, vec4<f32>(0.0), vec4<f32>(1.0));
+    var maskAlpha = 1.0;
+    if (wpf_has_active_mask()) {
+        maskAlpha = wpf_active_mask_alpha(input.position);
+    }
+
+    let coverage = input.color.a * maskAlpha;
+    return vec4<f32>(shadedColor.rgb * input.color.rgb, shadedColor.a * coverage);
 }
 ";
 
@@ -611,7 +636,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 + "\n"
                 + parameters.GetShaderSourceOrDefault()
                 + "\n"
-                + FragmentWrapperShader;
+                + CreateFragmentWrapperShader(sourceAlphaMode);
             var shaderModule = compositor.PipelineCache.GetOrCreateShader(
                 shaderKey,
                 fullShaderCode,

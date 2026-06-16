@@ -347,6 +347,51 @@ fn wpf_effect_main(uv: vec2<f32>, inputColor: vec4<f32>) -> vec4<f32> {
         }
     }
 
+    [Fact]
+    public void WpfShaderEffectAppliesOpacityOnceForStraightAlphaSource()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(32, 32);
+
+        using var texture = new GpuTexture(
+            window.Context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "WPF Shader Effect Straight Opacity Source",
+            alphaMode: GpuTextureAlphaMode.Straight);
+        texture.WritePixels(new byte[] { 255, 0, 0, 255 });
+
+        var effect = new WpfShaderEffectParams
+        {
+            Texture = texture,
+            Rect = new Rect(0f, 0f, 32f, 32f),
+            ShaderKey = $"test_wpf_native_shader_effect_straight_opacity_{Guid.NewGuid():N}",
+            SamplingMode = TextureSamplingMode.Nearest
+        };
+
+        window.Content = new StraightOpacityShaderEffectVisual(effect);
+
+        try
+        {
+            window.Render();
+
+            Assert.False(effect.IsFailed, effect.LastError);
+
+            var pixel = ReadPixel(window.ReadPixels(), window.Width, x: 16, y: 16);
+
+            Assert.InRange(pixel.R, 120, 136);
+            Assert.InRange(pixel.G, 0, 8);
+            Assert.InRange(pixel.B, 0, 8);
+            Assert.Equal(255, pixel.A);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private sealed class ShaderEffectVisual : FrameworkElement
     {
         private readonly WpfShaderEffectParams _effect;
@@ -361,6 +406,29 @@ fn wpf_effect_main(uv: vec2<f32>, inputColor: vec4<f32>) -> vec4<f32> {
         public override void OnRender(DrawingContext context)
         {
             context.DrawWpfShaderEffect(_effect);
+        }
+    }
+
+    private sealed class StraightOpacityShaderEffectVisual : FrameworkElement
+    {
+        private readonly WpfShaderEffectParams _effect;
+
+        public StraightOpacityShaderEffectVisual(WpfShaderEffectParams effect)
+        {
+            _effect = effect;
+            Width = 32f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(0f, 0f, 0f, 1f)),
+                null,
+                new Rect(0f, 0f, 32f, 32f));
+            context.PushOpacity(0.5f);
+            context.DrawWpfShaderEffect(_effect);
+            context.PopOpacity();
         }
     }
 
