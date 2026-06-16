@@ -192,6 +192,11 @@ public unsafe class WgpuContext : IDisposable
                 WaitIdle();
             }
 
+            foreach (var bg in bindGroups)
+            {
+                Wgpu.BindGroupRelease((BindGroup*)bg);
+            }
+
             foreach (var view in views)
             {
                 Wgpu.TextureViewRelease((TextureView*)view);
@@ -207,11 +212,6 @@ public unsafe class WgpuContext : IDisposable
             {
                 Wgpu.BufferDestroy((Silk.NET.WebGPU.Buffer*)buf);
                 Wgpu.BufferRelease((Silk.NET.WebGPU.Buffer*)buf);
-            }
-
-            foreach (var bg in bindGroups)
-            {
-                Wgpu.BindGroupRelease((BindGroup*)bg);
             }
 
             foreach (var layout in layouts)

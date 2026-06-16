@@ -1715,10 +1715,7 @@ public unsafe class Compositor : IDisposable
             {
                 if (_frameNumber - kvp.Value.LastUsedFrame > 60)
                 {
-                    if (kvp.Value.BindGroupPtr != 0 && !_context.IsDisposed)
-                    {
-                        _context.Wgpu.BindGroupRelease((BindGroup*)kvp.Value.BindGroupPtr);
-                    }
+                    QueueBindGroupRelease(kvp.Value.BindGroupPtr);
                     keysToRemove ??= new List<TextureCacheKey>();
                     keysToRemove.Add(kvp.Key);
                 }
@@ -1754,10 +1751,7 @@ public unsafe class Compositor : IDisposable
                 {
                     if (_persistentTextureBindGroups.TryGetValue(key, out var cachedBg))
                     {
-                        if (cachedBg.BindGroupPtr != 0 && !_context.IsDisposed)
-                        {
-                            _context.Wgpu.BindGroupRelease((BindGroup*)cachedBg.BindGroupPtr);
-                        }
+                        QueueBindGroupRelease(cachedBg.BindGroupPtr);
                         _persistentTextureBindGroups.Remove(key);
                     }
                 }
@@ -1777,10 +1771,7 @@ public unsafe class Compositor : IDisposable
             }
             if (maskKeyToRemove != null)
             {
-                if (!_context.IsDisposed)
-                {
-                    _context.Wgpu.BindGroupRelease((BindGroup*)_maskBindGroups[maskKeyToRemove]);
-                }
+                QueueBindGroupRelease(_maskBindGroups[maskKeyToRemove]);
                 _maskBindGroups.Remove(maskKeyToRemove);
             }
         }
@@ -1798,12 +1789,17 @@ public unsafe class Compositor : IDisposable
             }
             if (maskKeyToRemoveOff != null)
             {
-                if (!_context.IsDisposed)
-                {
-                    _context.Wgpu.BindGroupRelease((BindGroup*)_maskBindGroupsOffscreen[maskKeyToRemoveOff]);
-                }
+                QueueBindGroupRelease(_maskBindGroupsOffscreen[maskKeyToRemoveOff]);
                 _maskBindGroupsOffscreen.Remove(maskKeyToRemoveOff);
             }
+        }
+    }
+
+    private void QueueBindGroupRelease(nint bindGroupPtr)
+    {
+        if (bindGroupPtr != 0 && !_context.IsDisposed)
+        {
+            _context.QueueBindGroupDisposal((IntPtr)bindGroupPtr);
         }
     }
 

@@ -141,6 +141,39 @@ public sealed class CompositorReviewRegressionTests
         Assert.NotEmpty(GetPathAtlasTempBuffers(window.Compositor));
     }
 
+    [Fact]
+    public void CachedTextureBindGroupsAreQueuedWhenSourceTextureIsDisposed()
+    {
+        using var window = new HeadlessWindow(16, 16);
+        using var texture = new GpuTexture(
+            window.Context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Texture BindGroup Disposal Queue Test");
+        texture.WritePixels<byte>(new byte[] { 255, 0, 0, 255 });
+        window.Content = new TextureCacheVisual(texture);
+
+        window.Render();
+
+        var textureId = texture.Id;
+        var textureBindGroups = GetPersistentTextureBindGroups(window.Compositor);
+        Assert.Contains(textureBindGroups.Keys, key => key.TextureId == textureId);
+        Assert.Empty(window.Context.PendingBindGroups);
+
+        texture.Dispose();
+        window.Content = null;
+
+        Assert.DoesNotContain(textureBindGroups.Keys, key => key.TextureId == textureId);
+        lock (window.Context.DisposalLock)
+        {
+            Assert.Contains(window.Context.PendingBindGroups, ptr => ptr != IntPtr.Zero);
+        }
+
+        window.Context.CleanupPendingResources();
+    }
+
     private static void AssertMixedColorGlyphDrawCalls(Compositor compositor)
     {
         Compositor.CompositorDrawCall[] drawCalls = GetDrawCalls(compositor);
@@ -170,6 +203,13 @@ public sealed class CompositorReviewRegressionTests
         var tempBuffersField = pathAtlas.GetType().GetField("_tempBuffers", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(tempBuffersField);
         return Assert.IsAssignableFrom<IList>(tempBuffersField.GetValue(pathAtlas));
+    }
+
+    private static Dictionary<Compositor.TextureCacheKey, Compositor.CachedBindGroup> GetPersistentTextureBindGroups(Compositor compositor)
+    {
+        var field = typeof(Compositor).GetField("_persistentTextureBindGroups", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsType<Dictionary<Compositor.TextureCacheKey, Compositor.CachedBindGroup>>(field.GetValue(compositor));
     }
 
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)
@@ -203,6 +243,23 @@ public sealed class CompositorReviewRegressionTests
             ("glyf", glyf),
             ("COLR", BuildColrTable()),
             ("CPAL", BuildCpalTable()));
+    }
+
+    private sealed class TextureCacheVisual : FrameworkElement
+    {
+        private readonly GpuTexture _texture;
+
+        public TextureCacheVisual(GpuTexture texture)
+        {
+            _texture = texture;
+            Width = 16f;
+            Height = 16f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawTexture(_texture, new Rect(0f, 0f, 16f, 16f));
+        }
     }
 
     private static byte[] BuildRectangleGlyph(short xMin, short yMin, short xMax, short yMax)
