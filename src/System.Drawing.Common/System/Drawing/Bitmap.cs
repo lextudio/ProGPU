@@ -221,6 +221,10 @@ public class Bitmap : Image
     public BitmapData LockBits(Rectangle rect, ImageLockMode flags, PixelFormat format)
     {
         ValidateLockBitsRectangle(rect);
+        if (_lockedBytes != null || _lockedHandle.IsAllocated)
+        {
+            throw new InvalidOperationException("Bitmap already has an active lock. Call UnlockBits before LockBits again.");
+        }
 
         Flush();
         byte[] fullPixels = _texture.ReadPixels();

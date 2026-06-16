@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using Microsoft.UI.Xaml;
+using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Scene.Extensions;
 using ProGPU.Tests.Headless;
@@ -104,12 +105,79 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         }
     }
 
+    [Fact]
+    public void ShaderToy_HonorsActiveBlendModeAfterSrcOverPipelineReuse()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(72, 32);
+
+        var shaderKey = $"test_shadertoy_blend_{Guid.NewGuid():N}";
+        var srcOver = CreateSolidRedParams(new Rect(0f, 0f, 32f, 32f), "src_over", shaderKey);
+        var clear = CreateSolidRedParams(new Rect(40f, 0f, 32f, 32f), "clear", shaderKey);
+
+        window.Content = new ClearBlendShaderToyVisual(srcOver, clear);
+
+        try
+        {
+            window.Render();
+
+            Assert.False(srcOver.IsFailed);
+            Assert.False(clear.IsFailed);
+
+            var pixels = window.ReadPixels();
+            var srcOverPixel = ReadPixel(pixels, window.Width, x: 16, y: 16);
+            var clearedPixel = ReadPixel(pixels, window.Width, x: 56, y: 16);
+
+            Assert.True(srcOverPixel.R >= 220, $"Expected SrcOver ShaderToy to render red, found {srcOverPixel}.");
+            Assert.True(srcOverPixel.G <= 35, $"Expected SrcOver ShaderToy to keep green low, found {srcOverPixel}.");
+            Assert.True(srcOverPixel.B <= 35, $"Expected SrcOver ShaderToy to keep blue low, found {srcOverPixel}.");
+            Assert.Equal(255, srcOverPixel.A);
+            AssertTransparent(clearedPixel);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void ShaderToy_AppliesPartialOpacityMaskOnce()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(32, 32);
+
+        var shader = CreateSolidRedParams(new Rect(0f, 0f, 32f, 32f), "partial_mask");
+        window.Content = new PartialMaskShaderToyVisual(shader);
+
+        try
+        {
+            window.Render();
+
+            Assert.False(shader.IsFailed);
+
+            var pixel = ReadPixel(window.ReadPixels(), window.Width, x: 16, y: 16);
+
+            Assert.InRange(pixel.R, 110, 150);
+            Assert.InRange(pixel.G, 0, 16);
+            Assert.InRange(pixel.B, 0, 16);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private static ShaderToyParams CreateSolidRedParams(Rect rect, string name)
+    {
+        return CreateSolidRedParams(rect, name, $"test_shadertoy_mask_{name}_{Guid.NewGuid():N}");
+    }
+
+    private static ShaderToyParams CreateSolidRedParams(Rect rect, string name, string shaderKey)
     {
         return new ShaderToyParams
         {
             Rect = rect,
-            ShaderKey = $"test_shadertoy_mask_{name}_{Guid.NewGuid():N}",
+            ShaderKey = shaderKey,
             ShaderSource = SolidRedShader,
             Resolution = new Vector3(rect.Width, rect.Height, 1f),
             Time = 0f,
@@ -137,6 +205,14 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.InRange(Math.Abs(expected.G - actual.G), 0, tolerance);
         Assert.InRange(Math.Abs(expected.B - actual.B), 0, tolerance);
         Assert.InRange(Math.Abs(expected.A - actual.A), 0, tolerance);
+    }
+
+    private static void AssertTransparent(RgbaPixel actual)
+    {
+        Assert.InRange(actual.R, 0, 8);
+        Assert.InRange(actual.G, 0, 8);
+        Assert.InRange(actual.B, 0, 8);
+        Assert.InRange(actual.A, 0, 8);
     }
 
     private readonly record struct RgbaPixel(byte R, byte G, byte B, byte A);
@@ -188,6 +264,61 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 CompositorBuiltInExtensions.ShaderToy,
                 dataParam: _shader);
             context.PopClip();
+        }
+    }
+
+    private sealed class ClearBlendShaderToyVisual : FrameworkElement
+    {
+        private readonly ShaderToyParams _srcOver;
+        private readonly ShaderToyParams _clear;
+
+        public ClearBlendShaderToyVisual(ShaderToyParams srcOver, ShaderToyParams clear)
+        {
+            _srcOver = srcOver;
+            _clear = clear;
+            Width = 72f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(0f, 0f, 1f, 1f)),
+                null,
+                new Rect(0f, 0f, 72f, 32f));
+
+            context.DrawExtension(
+                CompositorBuiltInExtensions.ShaderToy,
+                dataParam: _srcOver);
+
+            context.PushBlendMode(GpuBlendMode.Clear);
+            context.DrawExtension(
+                CompositorBuiltInExtensions.ShaderToy,
+                dataParam: _clear);
+            context.PopBlendMode();
+        }
+    }
+
+    private sealed class PartialMaskShaderToyVisual : FrameworkElement
+    {
+        private readonly ShaderToyParams _shader;
+
+        public PartialMaskShaderToyVisual(ShaderToyParams shader)
+        {
+            _shader = shader;
+            Width = 32f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.PushOpacityMask(
+                new SolidColorBrush(new Vector4(0.5f, 0.5f, 0.5f, 1f)),
+                new Rect(0f, 0f, 32f, 32f));
+            context.DrawExtension(
+                CompositorBuiltInExtensions.ShaderToy,
+                dataParam: _shader);
+            context.PopOpacityMask();
         }
     }
 }

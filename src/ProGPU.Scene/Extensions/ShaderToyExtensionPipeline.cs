@@ -89,14 +89,28 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 }
 ";
 
-        private const string FragmentWrapperShader = @"
+        private const string StraightFragmentWrapperShader = @"
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fragCoord = vec2<f32>(input.texCoord.x * inputs.iResolution.x, (1.0 - input.texCoord.y) * inputs.iResolution.y);
     let maskSize = max(vec2<f32>(textureDimensions(activeMaskTexture)), vec2<f32>(1.0));
     let screenUv = input.position.xy / maskSize;
     let maskAlpha = textureSample(activeMaskTexture, activeMaskSampler, screenUv).r;
-    return mainImage(fragCoord) * input.color * maskAlpha;
+    let shaderColor = mainImage(fragCoord);
+    return vec4<f32>(shaderColor.rgb * input.color.rgb, shaderColor.a * input.color.a * maskAlpha);
+}
+";
+
+        private const string PremultipliedFragmentWrapperShader = @"
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let fragCoord = vec2<f32>(input.texCoord.x * inputs.iResolution.x, (1.0 - input.texCoord.y) * inputs.iResolution.y);
+    let maskSize = max(vec2<f32>(textureDimensions(activeMaskTexture)), vec2<f32>(1.0));
+    let screenUv = input.position.xy / maskSize;
+    let maskAlpha = textureSample(activeMaskTexture, activeMaskSampler, screenUv).r;
+    let shaderColor = mainImage(fragCoord);
+    let coverage = input.color.a * maskAlpha;
+    return vec4<f32>(shaderColor.rgb * shaderColor.a * input.color.rgb * coverage, shaderColor.a * coverage);
 }
 ";
 
@@ -113,6 +127,36 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         private BindGroupLayout* _toyBindGroupLayout = null;
         private PipelineLayout* _onscreenPipelineLayout = null;
         private PipelineLayout* _offscreenPipelineLayout = null;
+
+        private static bool BlendModeRequiresPremultipliedSource(GpuBlendMode blendMode)
+        {
+            return blendMode is GpuBlendMode.DstOver or GpuBlendMode.Multiply or GpuBlendMode.Screen;
+        }
+
+        private static GpuTextureAlphaMode GetPipelineSourceAlphaMode(GpuBlendMode blendMode)
+        {
+            return BlendModeRequiresPremultipliedSource(blendMode)
+                ? GpuTextureAlphaMode.Premultiplied
+                : GpuTextureAlphaMode.Straight;
+        }
+
+        private static string GetFragmentWrapperShader(GpuTextureAlphaMode pipelineSourceAlphaMode)
+        {
+            return pipelineSourceAlphaMode == GpuTextureAlphaMode.Premultiplied
+                ? PremultipliedFragmentWrapperShader
+                : StraightFragmentWrapperShader;
+        }
+
+        private static string GetShaderKey(string shaderKey, GpuTextureAlphaMode pipelineSourceAlphaMode)
+        {
+            return $"{shaderKey}_{pipelineSourceAlphaMode}";
+        }
+
+        private static string GetPipelineKey(string shaderKey, bool isOffscreen, GpuBlendMode blendMode, GpuTextureAlphaMode pipelineSourceAlphaMode)
+        {
+            var target = isOffscreen ? "offscreen" : "onscreen";
+            return $"{shaderKey}_{target}_{blendMode}_{pipelineSourceAlphaMode}";
+        }
 
         private void EnsureLayouts(Compositor compositor)
         {
@@ -278,14 +322,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             // 1. Check for dynamic recompiles and release old pipeline
             if (!string.IsNullOrEmpty(p.OldShaderKey))
             {
+                foreach (GpuBlendMode blendMode in Enum.GetValues<GpuBlendMode>())
+                {
+                    var oldPipelineSourceAlphaMode = GetPipelineSourceAlphaMode(blendMode);
+                    compositor.PipelineCache.ReleaseRenderPipeline(GetPipelineKey(p.OldShaderKey, isOffscreen: false, blendMode, oldPipelineSourceAlphaMode));
+                    compositor.PipelineCache.ReleaseRenderPipeline(GetPipelineKey(p.OldShaderKey, isOffscreen: true, blendMode, oldPipelineSourceAlphaMode));
+                }
+
                 compositor.PipelineCache.ReleaseRenderPipeline(p.OldShaderKey + "_offscreen");
                 compositor.PipelineCache.ReleaseRenderPipeline(p.OldShaderKey + "_onscreen");
                 compositor.PipelineCache.ReleaseShader(p.OldShaderKey);
+                compositor.PipelineCache.ReleaseShader(GetShaderKey(p.OldShaderKey, GpuTextureAlphaMode.Straight));
+                compositor.PipelineCache.ReleaseShader(GetShaderKey(p.OldShaderKey, GpuTextureAlphaMode.Premultiplied));
                 p.OldShaderKey = string.Empty;
             }
 
             // 2. Fetch or Compile Shader module & Pipeline
-            string pipelineKey = isOffscreen ? p.ShaderKey + "_offscreen" : p.ShaderKey + "_onscreen";
+            var pipelineSourceAlphaMode = GetPipelineSourceAlphaMode(dc.BlendMode);
+            string shaderKey = GetShaderKey(p.ShaderKey, pipelineSourceAlphaMode);
+            string pipelineKey = GetPipelineKey(p.ShaderKey, isOffscreen, dc.BlendMode, pipelineSourceAlphaMode);
             RenderPipeline* activePipeline = null;
 
             var cache = compositor.PipelineCache;
@@ -319,8 +374,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                             Console.WriteLine($"[ShaderToy Transpiler] Transpilation failed: {ex.Message}");
                         }
                     }
-                    string fullShaderCode = VertexAndHeaderShader + "\n" + userSource + "\n" + FragmentWrapperShader;
-                    var shaderModule = compositor.PipelineCache.GetOrCreateShader(p.ShaderKey, fullShaderCode, $"ShaderToy_{p.ShaderKey}");
+                    string fullShaderCode = VertexAndHeaderShader + "\n" + userSource + "\n" + GetFragmentWrapperShader(pipelineSourceAlphaMode);
+                    var shaderModule = compositor.PipelineCache.GetOrCreateShader(shaderKey, fullShaderCode, $"ShaderToy_{shaderKey}");
 
                     string errors = "";
                     if (shaderModule == null || !compositor.Context.VerifyShaderModule(shaderModule, out errors))
@@ -331,7 +386,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                         {
                             WgpuContext.RaiseWebGpuError(ErrorType.Validation, errors);
                         }
-                        compositor.PipelineCache.ReleaseShader(p.ShaderKey);
+                        compositor.PipelineCache.ReleaseShader(shaderKey);
                         return;
                     }
 
@@ -368,7 +423,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                                 topology: PrimitiveTopology.TriangleList,
                                 targetFormat: compositor.RenderFormat,
                                 sampleCount: isOffscreen ? 1u : 4u,
-                                pipelineLayout: isOffscreen ? _offscreenPipelineLayout : _onscreenPipelineLayout
+                                pipelineLayout: isOffscreen ? _offscreenPipelineLayout : _onscreenPipelineLayout,
+                                blendMode: dc.BlendMode,
+                                sourceAlphaMode: pipelineSourceAlphaMode
                             );
                         }
                         finally
@@ -388,9 +445,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     {
                         Console.WriteLine("[ShaderToy Render] Pipeline creation failed, aborting.");
                         p.IsFailed = true;
-                        compositor.PipelineCache.ReleaseRenderPipeline(p.ShaderKey + "_onscreen");
-                        compositor.PipelineCache.ReleaseRenderPipeline(p.ShaderKey + "_offscreen");
-                        compositor.PipelineCache.ReleaseShader(p.ShaderKey);
+                        compositor.PipelineCache.ReleaseRenderPipeline(pipelineKey);
+                        compositor.PipelineCache.ReleaseShader(shaderKey);
                         activePipeline = null;
                         return;
                     }

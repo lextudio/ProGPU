@@ -227,6 +227,30 @@ public class GdiShimTests
     }
 
     [Fact]
+    public void LockBitsRejectsNestedLocks()
+    {
+        using var bitmap = new Bitmap(10, 10);
+
+        BitmapData data = bitmap.LockBits(
+            new Rectangle(0, 0, 1, 1),
+            ImageLockMode.ReadWrite,
+            PixelFormat.Format32bppArgb);
+
+        try
+        {
+            Assert.Throws<InvalidOperationException>(
+                () => bitmap.LockBits(
+                    new Rectangle(1, 1, 1, 1),
+                    ImageLockMode.ReadWrite,
+                    PixelFormat.Format32bppArgb));
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+    }
+
+    [Fact]
     public void LockBitsUsesRequested24BppRgbLayout()
     {
         using var bitmap = new Bitmap(2, 1);
