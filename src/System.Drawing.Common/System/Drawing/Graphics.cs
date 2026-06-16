@@ -187,6 +187,12 @@ public class Graphics : IDisposable
 
     public void FillRectangle(Brush brush, float x, float y, float width, float height)
     {
+        if (brush is TextureBrush textureBrush)
+        {
+            FillTextureRectangle(textureBrush, new RectangleF(x, y, width, height));
+            return;
+        }
+
         if (HasRotationOrShear)
         {
             using var path = new GraphicsPath();
@@ -197,6 +203,65 @@ public class Graphics : IDisposable
         {
             var rect = TxRect(new RectangleF(x, y, width, height));
             _context.DrawRectangle(brush.ToProGpuBrush(), null, rect);
+        }
+    }
+
+    private void FillTextureRectangle(TextureBrush brush, RectangleF rect)
+    {
+        if (rect.Width <= 0f || rect.Height <= 0f)
+        {
+            return;
+        }
+
+        if (brush.Image is not Bitmap bitmap)
+        {
+            throw new NotSupportedException("Only bitmap-backed TextureBrush fills are supported.");
+        }
+
+        bitmap.Flush();
+        var tileWidth = bitmap.Width;
+        var tileHeight = bitmap.Height;
+        if (tileWidth <= 0 || tileHeight <= 0)
+        {
+            return;
+        }
+
+        var transform = CurrentTransform4x4();
+        var right = rect.Right;
+        var bottom = rect.Bottom;
+        var startX = MathF.Floor(rect.X / tileWidth) * tileWidth;
+        var startY = MathF.Floor(rect.Y / tileHeight) * tileHeight;
+
+        for (var tileY = startY; tileY < bottom; tileY += tileHeight)
+        {
+            var destY = MathF.Max(tileY, rect.Y);
+            var destBottom = MathF.Min(tileY + tileHeight, bottom);
+            var destHeight = destBottom - destY;
+            if (destHeight <= 0f)
+            {
+                continue;
+            }
+
+            for (var tileX = startX; tileX < right; tileX += tileWidth)
+            {
+                var destX = MathF.Max(tileX, rect.X);
+                var destRight = MathF.Min(tileX + tileWidth, right);
+                var destWidth = destRight - destX;
+                if (destWidth <= 0f)
+                {
+                    continue;
+                }
+
+                _context.Commands.Add(new RenderCommand
+                {
+                    Type = RenderCommandType.DrawTexture,
+                    Texture = bitmap.GpuTexture,
+                    Rect = new Rect(destX, destY, destWidth, destHeight),
+                    SrcRect = new Rect(destX - tileX, destY - tileY, destWidth, destHeight),
+                    Transform = transform,
+                    TextureSamplingMode = TextureSamplingMode.Linear
+                });
+            }
         }
     }
 

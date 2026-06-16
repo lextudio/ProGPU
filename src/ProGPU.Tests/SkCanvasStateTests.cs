@@ -102,6 +102,27 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void SaveLayerWithDefaultPaintStillRendersIsolatedTexture()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 100f, 100f);
+        using var layerPaint = new SKPaint();
+        using var fill = new SKPaint { Color = SKColors.Red };
+
+        var restoreCount = canvas.SaveLayer(layerPaint);
+        canvas.DrawRect(new SKRect(10f, 10f, 40f, 40f), fill);
+
+        Assert.Empty(context.Commands);
+
+        canvas.RestoreToCount(restoreCount);
+
+        var command = Assert.Single(context.Commands);
+        Assert.Equal(RenderCommandType.DrawTexture, command.Type);
+        Assert.Equal(new Rect(0f, 0f, 100f, 100f), command.Rect);
+        Assert.NotNull(command.Texture);
+    }
+
+    [Fact]
     public void ClipRectRecordsCurrentCanvasMatrix()
     {
         var context = new DrawingContext();

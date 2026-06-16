@@ -1,3 +1,5 @@
+using System;
+
 namespace System.Drawing;
 
 public class TextureBrush : Brush
@@ -6,11 +8,11 @@ public class TextureBrush : Brush
 
     public TextureBrush(Image image)
     {
-        Image = image;
+        Image = image ?? throw new ArgumentNullException(nameof(image));
     }
 
     public override ProGPU.Vector.Brush ToProGpuBrush()
     {
-        return new ProGPU.Vector.SolidColorBrush(new System.Numerics.Vector4(0f, 0f, 0f, 1f));
+        throw new NotSupportedException("TextureBrush cannot be converted to a vector brush; use a texture-aware Graphics fill path.");
     }
 }

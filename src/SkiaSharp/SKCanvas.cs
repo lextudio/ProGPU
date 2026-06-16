@@ -156,54 +156,36 @@ public class SKCanvas : IDisposable
 
         try
         {
-            if (RequiresLayerIsolation(layerFrame.Paint))
+            var pushedOpacity = false;
+            if (opacity < 1f)
             {
-                var pushedOpacity = false;
-                if (opacity < 1f)
-                {
-                    _context.PushOpacity(opacity);
-                    pushedOpacity = true;
-                }
-
-                try
-                {
-                    _context.Commands.Add(new RenderCommand
-                    {
-                        Type = RenderCommandType.DrawTexture,
-                        Texture = RenderLayerToTexture(layerFrame.LayerContext),
-                        Rect = new Rect(0f, 0f, _width, _height),
-                        Transform = Matrix4x4.Identity,
-                        TextureSamplingMode = TextureSamplingMode.Linear
-                    });
-                }
-                finally
-                {
-                    if (pushedOpacity)
-                    {
-                        _context.PopOpacity();
-                    }
-                }
-
-
-                return;
+                _context.PushOpacity(opacity);
+                pushedOpacity = true;
             }
 
-            _context.Append(layerFrame.LayerContext);
+            try
+            {
+                _context.Commands.Add(new RenderCommand
+                {
+                    Type = RenderCommandType.DrawTexture,
+                    Texture = RenderLayerToTexture(layerFrame.LayerContext),
+                    Rect = new Rect(0f, 0f, _width, _height),
+                    Transform = Matrix4x4.Identity,
+                    TextureSamplingMode = TextureSamplingMode.Linear
+                });
+            }
+            finally
+            {
+                if (pushedOpacity)
+                {
+                    _context.PopOpacity();
+                }
+            }
         }
         finally
         {
             PopPaintBlendMode(pushedBlendMode);
         }
-    }
-
-    private static bool RequiresLayerIsolation(SKPaint? paint)
-    {
-        if (paint == null)
-        {
-            return false;
-        }
-
-        return paint.Color.A < 255 || MapBlendMode(paint.BlendMode) != GpuBlendMode.SrcOver;
     }
 
     private GpuTexture RenderLayerToTexture(DrawingContext layerContext)

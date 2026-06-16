@@ -374,6 +374,49 @@ public class GdiShimTests
     }
 
     [Fact]
+    public void TextureBrushFillRectangleRecordsTextureTiles()
+    {
+        using var source = new Bitmap(2, 2);
+        using var target = new Bitmap(8, 8);
+        using var graphics = Graphics.FromImage(target);
+        using var brush = new TextureBrush(source);
+
+        graphics.FillRectangle(brush, 1, 1, 5, 3);
+
+        var commands = graphics.DrawingContext.Commands;
+        Assert.Equal(6, commands.Count);
+        Assert.All(
+            commands,
+            command =>
+            {
+                Assert.Equal(RenderCommandType.DrawTexture, command.Type);
+                Assert.Same(source.GpuTexture, command.Texture);
+                Assert.Equal(TextureSamplingMode.Linear, command.TextureSamplingMode);
+            });
+
+        Assert.Equal(new Rect(1f, 1f, 1f, 1f), commands[0].Rect);
+        Assert.Equal(new Rect(1f, 1f, 1f, 1f), commands[0].SrcRect);
+        Assert.Equal(new Rect(2f, 2f, 2f, 2f), commands[4].Rect);
+        Assert.Equal(new Rect(0f, 0f, 2f, 2f), commands[4].SrcRect);
+    }
+
+    [Fact]
+    public void TextureBrushFillPathFailsExplicitly()
+    {
+        using var source = new Bitmap(2, 2);
+        using var target = new Bitmap(8, 8);
+        using var graphics = Graphics.FromImage(target);
+        using var brush = new TextureBrush(source);
+        using var path = new GraphicsPath();
+        path.AddEllipse(0, 0, 4, 4);
+
+        var exception = Assert.Throws<NotSupportedException>(() => graphics.FillPath(brush, path));
+
+        Assert.Contains("TextureBrush", exception.Message);
+        Assert.Empty(graphics.DrawingContext.Commands);
+    }
+
+    [Fact]
     public void DrawImageRecordsFullTransformForRotatedImages()
     {
         using var source = new Bitmap(4, 6);
