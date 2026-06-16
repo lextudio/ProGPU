@@ -451,6 +451,15 @@ public unsafe class Compositor : IDisposable
         Vector,
         Text
     }
+
+    [Flags]
+    private enum VisualCompositeScope
+    {
+        None = 0,
+        Clip = 1,
+        Opacity = 2
+    }
+
     private BatchType _currentBatchType = BatchType.None;
     private uint _pendingVectorStart = 0;
     private uint _pendingTextStart = 0;
@@ -1969,9 +1978,16 @@ public unsafe class Compositor : IDisposable
         CompileVisualTree(node, parentTransform, offsetOverride: null);
     }
 
-    private void CompileVisualTree(Visual node, Matrix4x4 parentTransform, Vector2? offsetOverride, bool includeLocalTransform = true)
+    private void CompileVisualTree(
+        Visual node,
+        Matrix4x4 parentTransform,
+        Vector2? offsetOverride,
+        bool includeLocalTransform = true,
+        bool includeLocalVisualState = true)
     {
-        if (!node.IsVisible || node.Opacity <= 0.0001f || _activeOpacity <= 0.0001f)
+        if (!node.IsVisible
+            || (includeLocalVisualState && node.Opacity <= 0.0001f)
+            || _activeOpacity <= 0.0001f)
         {
             node.IsDirty = false;
             return;
@@ -1998,14 +2014,14 @@ public unsafe class Compositor : IDisposable
         var globalTransform = localTransform * parentTransform;
 
         bool pushedClip = false;
-        if (node.ClipBounds.HasValue)
+        if (includeLocalVisualState && node.ClipBounds.HasValue)
         {
             PushClipRect(node.ClipBounds.Value, globalTransform);
             pushedClip = true;
         }
 
         bool pushedOpacity = false;
-        if (node.Opacity < 1.0f)
+        if (includeLocalVisualState && node.Opacity < 1.0f)
         {
             PushOpacityValue(node.Opacity);
             pushedOpacity = true;
@@ -5529,7 +5545,15 @@ public unsafe class Compositor : IDisposable
             try
             {
                 // 1. Render the subtree of fe offscreen centered into textures.Source (offset by padding)
-                RenderOffscreen(fe, w, h, textures.Source, padding, 1.0f, includeRootTransform: false);
+                RenderOffscreen(
+                    fe,
+                    w,
+                    h,
+                    textures.Source,
+                    padding,
+                    1.0f,
+                    includeRootTransform: false,
+                    includeRootVisualState: false);
             }
             finally
             {
@@ -5553,36 +5577,43 @@ public unsafe class Compositor : IDisposable
             _effectCacheKeys[fe] = effectCacheKey;
         }
 
-        // Draw the cached texture onto the main swapchain
         var compositeTransform = fe.GetLocalTransform() * parentTransform;
         var paddedRect = new Rect(-padding, -padding, w, h);
-        if (fe.Effect is BlurEffect bEff)
+        var compositeScope = PushVisualCompositeScope(fe, compositeTransform);
+        try
         {
-            if (bEff.BlurRadius <= 0.01f)
+            // Draw the cached texture onto the main swapchain.
+            if (fe.Effect is BlurEffect bEff)
             {
-                // Draw original source directly (no blur!)
+                if (bEff.BlurRadius <= 0.01f)
+                {
+                    // Draw original source directly (no blur!)
+                    DrawTextureOnMain(textures.Source, paddedRect, compositeTransform);
+                }
+                else
+                {
+                    // Draw the blurred result back onto the main screen (shifted back by padding)
+                    DrawTextureOnMain(textures.Destination, paddedRect, compositeTransform);
+                }
+            }
+            else if (fe.Effect is DropShadowEffect sEff)
+            {
+                // Draw blurred shadow first (at offset, shifted back by padding)
+                var shadowRect = new Rect(sEff.Offset - new Vector2(padding, padding), new Vector2(w, h));
+                DrawTextureOnMain(textures.Destination, shadowRect, compositeTransform);
+
+                // Draw original source on top (shifted back by padding)
                 DrawTextureOnMain(textures.Source, paddedRect, compositeTransform);
             }
-            else
+            else if (fe.Effect is WpfShaderEffect shaderEffect)
             {
-                // Draw the blurred result back onto the main screen (shifted back by padding)
-                DrawTextureOnMain(textures.Destination, paddedRect, compositeTransform);
+                DrawWpfShaderEffectOnMain(fe, shaderEffect, textures.Source, paddedRect, compositeTransform);
             }
         }
-        else if (fe.Effect is DropShadowEffect sEff)
+        finally
         {
-            // Draw blurred shadow first (at offset, shifted back by padding)
-            var shadowRect = new Rect(sEff.Offset - new Vector2(padding, padding), new Vector2(w, h));
-            DrawTextureOnMain(textures.Destination, shadowRect, compositeTransform);
-            
-            // Draw original source on top (shifted back by padding)
-            DrawTextureOnMain(textures.Source, paddedRect, compositeTransform);
+            PopVisualCompositeScope(compositeScope);
         }
-        else if (fe.Effect is WpfShaderEffect shaderEffect)
-        {
-            DrawWpfShaderEffectOnMain(fe, shaderEffect, textures.Source, paddedRect, compositeTransform);
-        }
-
 
         fe.IsDirty = false;
     }
@@ -5616,7 +5647,15 @@ public unsafe class Compositor : IDisposable
             try
             {
                 // Render the subtree of node offscreen centered with 0 padding into node.LayerTexture
-                RenderOffscreen(node, (uint)node.Size.X, (uint)node.Size.Y, node.LayerTexture, 0f, dpiScale, includeRootTransform: false);
+                RenderOffscreen(
+                    node,
+                    (uint)node.Size.X,
+                    (uint)node.Size.Y,
+                    node.LayerTexture,
+                    0f,
+                    dpiScale,
+                    includeRootTransform: false,
+                    includeRootVisualState: false);
             }
             finally
             {
@@ -5624,11 +5663,51 @@ public unsafe class Compositor : IDisposable
             }
         }
 
-        // Draw the cached layer texture onto the main swapchain
         var controlRect = new Rect(Vector2.Zero, node.Size);
-        DrawTextureOnMain(node.LayerTexture!, controlRect, node.GetLocalTransform() * parentTransform);
+        var compositeTransform = node.GetLocalTransform() * parentTransform;
+        var compositeScope = PushVisualCompositeScope(node, compositeTransform);
+        try
+        {
+            // Draw the cached layer texture onto the main swapchain.
+            DrawTextureOnMain(node.LayerTexture!, controlRect, compositeTransform);
+        }
+        finally
+        {
+            PopVisualCompositeScope(compositeScope);
+        }
 
         node.IsDirty = false;
+    }
+
+    private VisualCompositeScope PushVisualCompositeScope(Visual node, Matrix4x4 compositeTransform)
+    {
+        var scope = VisualCompositeScope.None;
+        if (node.ClipBounds.HasValue)
+        {
+            PushClipRect(node.ClipBounds.Value, compositeTransform);
+            scope |= VisualCompositeScope.Clip;
+        }
+
+        if (node.Opacity < 1.0f)
+        {
+            PushOpacityValue(node.Opacity);
+            scope |= VisualCompositeScope.Opacity;
+        }
+
+        return scope;
+    }
+
+    private void PopVisualCompositeScope(VisualCompositeScope scope)
+    {
+        if ((scope & VisualCompositeScope.Opacity) != 0)
+        {
+            PopOpacityValue();
+        }
+
+        if ((scope & VisualCompositeScope.Clip) != 0)
+        {
+            PopClipRect();
+        }
     }
 
     private void DrawTextureOnMain(GpuTexture texture, Rect localRect, Matrix4x4 parentTransform)
@@ -5713,7 +5792,17 @@ public unsafe class Compositor : IDisposable
         _pendingTextStart = (uint)_textVerticesList.Count;
     }
 
-    public void RenderOffscreen(Visual node, uint width, uint height, GpuTexture targetTexture, float padding, float dpiScale, Vector4? clearColor = null, bool loadExistingContents = false, bool includeRootTransform = true)
+    public void RenderOffscreen(
+        Visual node,
+        uint width,
+        uint height,
+        GpuTexture targetTexture,
+        float padding,
+        float dpiScale,
+        Vector4? clearColor = null,
+        bool loadExistingContents = false,
+        bool includeRootTransform = true,
+        bool includeRootVisualState = true)
     {
         using var currentContextScope = WgpuContext.PushCurrent(_context);
 
@@ -5792,7 +5881,12 @@ public unsafe class Compositor : IDisposable
         _pendingVectorStart = 0;
         _pendingTextStart = 0;
 
-        CompileVisualTree(node, Matrix4x4.Identity, new Vector2(padding, padding), includeRootTransform);
+        CompileVisualTree(
+            node,
+            Matrix4x4.Identity,
+            new Vector2(padding, padding),
+            includeRootTransform,
+            includeRootVisualState);
 
         CommitPendingDrawCalls();
 
