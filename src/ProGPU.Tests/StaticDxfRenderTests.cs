@@ -79,6 +79,31 @@ public sealed class StaticDxfRenderTests
     }
 
     [Fact]
+    public void DrawStaticDxfSplineHonorsActiveBlendMode()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(48, 48);
+
+        using var buffer = CreateStaticSpline(window.Compositor);
+
+        window.Content = new ClearBlendStaticDxfSplineVisual(buffer);
+
+        try
+        {
+            window.Render();
+
+            var pixels = window.ReadPixels();
+            var cleared = ReadPixel(pixels, window.Width, x: 24, y: 24);
+
+            AssertTransparent(cleared);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
     public void CompileStaticDxfIncludesGlyphRunCommands()
     {
         var font = TryLoadTestFont();
@@ -104,6 +129,23 @@ public sealed class StaticDxfRenderTests
             new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
             null,
             rect);
+
+        return compositor.CompileStaticDxf(context);
+    }
+
+    private static DxfStaticBuffer CreateStaticSpline(Compositor compositor)
+    {
+        var context = new DrawingContext();
+        var pen = new Pen(new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)), 12f);
+        var controlPoints = new[]
+        {
+            new Vector2(6f, 24f),
+            new Vector2(24f, 24f),
+            new Vector2(42f, 24f)
+        };
+        var knots = new double[] { 0, 0, 0, 1, 1, 1 };
+
+        context.DrawSpline(pen, controlPoints, knots, degree: 2);
 
         return compositor.CompileStaticDxf(context);
     }
@@ -253,6 +295,30 @@ public sealed class StaticDxfRenderTests
                 Type = RenderCommandType.DrawStaticDxf,
                 StaticBuffer = _commandBuffer
             });
+            context.PopBlendMode();
+        }
+    }
+
+    private sealed class ClearBlendStaticDxfSplineVisual : FrameworkElement
+    {
+        private readonly DxfStaticBuffer _buffer;
+
+        public ClearBlendStaticDxfSplineVisual(DxfStaticBuffer buffer)
+        {
+            _buffer = buffer;
+            Width = 48f;
+            Height = 48f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(0f, 0f, 1f, 1f)),
+                null,
+                new Rect(0f, 0f, 48f, 48f));
+
+            context.PushBlendMode(GpuBlendMode.Clear);
+            context.DrawStaticDxf(_buffer);
             context.PopBlendMode();
         }
     }

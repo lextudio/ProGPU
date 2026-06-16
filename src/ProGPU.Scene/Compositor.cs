@@ -7152,7 +7152,7 @@ public unsafe class Compositor : IDisposable
                     {
                         if (currentType != DrawCallType.Vector)
                         {
-                            var vectorPipeline = isOffscreen ? _vectorPipelineOffscreen : _vectorPipeline;
+                            var vectorPipeline = GetPipeline(DrawCallType.Vector, blendMode, isOffscreen);
                             var uniformBg = isOffscreen ? sb.UniformBindGroupOffscreen : sb.UniformBindGroup;
                             var pathAtlasBg = isOffscreen ? _pathAtlasBindGroupOffscreen : _pathAtlasBindGroup;
                             

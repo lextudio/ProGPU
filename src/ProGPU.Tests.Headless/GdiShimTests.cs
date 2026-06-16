@@ -508,12 +508,15 @@ public class GdiShimTests
 
         var commands = graphics.DrawingContext.Commands;
         Assert.Equal(6, commands.Count);
+        var retainedTexture = commands[0].Texture;
+        Assert.NotSame(source.GpuTexture, retainedTexture);
+        Assert.Equal(1, graphics.DrawingContext.RetainedResourceCount);
         Assert.All(
             commands,
             command =>
             {
                 Assert.Equal(RenderCommandType.DrawTexture, command.Type);
-                Assert.Same(source.GpuTexture, command.Texture);
+                Assert.Same(retainedTexture, command.Texture);
                 Assert.Equal(TextureSamplingMode.Linear, command.TextureSamplingMode);
             });
 
@@ -521,6 +524,44 @@ public class GdiShimTests
         Assert.Equal(new Rect(1f, 1f, 1f, 1f), commands[0].SrcRect);
         Assert.Equal(new Rect(2f, 2f, 2f, 2f), commands[4].Rect);
         Assert.Equal(new Rect(0f, 0f, 2f, 2f), commands[4].SrcRect);
+    }
+
+    [Fact]
+    public void TextureBrushFillRectangleRetainsSourceTextureForDeferredBitmapFlush()
+    {
+        var source = new Bitmap(1, 1);
+        using var target = new Bitmap(2, 2);
+        using var graphics = Graphics.FromImage(target);
+        using var brush = new TextureBrush(source);
+        source.SetPixel(0, 0, Color.Red);
+
+        graphics.FillRectangle(brush, 0, 0, 1, 1);
+        var retainedTexture = Assert.Single(graphics.DrawingContext.Commands).Texture!;
+        Assert.NotSame(source.GpuTexture, retainedTexture);
+        Assert.Equal(1, graphics.DrawingContext.RetainedResourceCount);
+
+        var retainedTextureDisposed = false;
+        void OnTextureDisposed(ulong id)
+        {
+            if (id == retainedTexture.Id)
+            {
+                retainedTextureDisposed = true;
+            }
+        }
+
+        GpuTexture.OnDisposedWithId += OnTextureDisposed;
+        try
+        {
+            source.Dispose();
+
+            Assert.Equal(Color.Red.ToArgb(), target.GetPixel(0, 0).ToArgb());
+            Assert.True(retainedTextureDisposed);
+            Assert.Equal(0, graphics.DrawingContext.RetainedResourceCount);
+        }
+        finally
+        {
+            GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+        }
     }
 
     [Fact]

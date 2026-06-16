@@ -452,11 +452,58 @@ public sealed class SkCanvasStateTests
             draw =>
             {
                 Assert.Equal(RenderCommandType.DrawTexture, draw.Type);
-                Assert.Same(image.Texture, draw.Texture);
+                Assert.NotSame(image.Texture, draw.Texture);
                 Assert.Equal(new Rect(10f, 20f, 20f, 20f), draw.Rect);
                 Assert.Equal(new Rect(1f, 2f, 2f, 2f), draw.SrcRect);
             },
             pop => Assert.Equal(RenderCommandType.PopOpacity, pop.Type));
+        Assert.Equal(1, context.RetainedResourceCount);
+    }
+
+    [Fact]
+    public void DrawImageRetainsSourceTextureForDeferredFlush()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 16f, 16f);
+        using var bitmap = new SKBitmap(1, 1);
+        var image = SKImage.FromBitmap(bitmap);
+
+        canvas.DrawImage(
+            image,
+            new SKRect(0f, 0f, 1f, 1f),
+            new SKRect(0f, 0f, 1f, 1f),
+            null!);
+
+        var command = Assert.Single(context.Commands);
+        var retainedTexture = command.Texture!;
+        Assert.NotSame(image.Texture, retainedTexture);
+        Assert.Equal(1, context.RetainedResourceCount);
+
+        var retainedTextureDisposed = false;
+        void OnTextureDisposed(ulong id)
+        {
+            if (id == retainedTexture.Id)
+            {
+                retainedTextureDisposed = true;
+            }
+        }
+
+        GpuTexture.OnDisposedWithId += OnTextureDisposed;
+        try
+        {
+            image.Dispose();
+
+            Assert.False(retainedTextureDisposed);
+
+            context.Clear();
+
+            Assert.True(retainedTextureDisposed);
+            Assert.Equal(0, context.RetainedResourceCount);
+        }
+        finally
+        {
+            GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+        }
     }
 
     [Fact]

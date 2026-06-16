@@ -265,7 +265,6 @@ public class Graphics : IDisposable
             throw new NotSupportedException("Only bitmap-backed TextureBrush fills are supported.");
         }
 
-        bitmap.Flush();
         var tileWidth = bitmap.Width;
         var tileHeight = bitmap.Height;
         if (tileWidth <= 0 || tileHeight <= 0)
@@ -273,6 +272,7 @@ public class Graphics : IDisposable
             return;
         }
 
+        var retainedTexture = RetainBitmapTexture(bitmap);
         var transform = CurrentTransform4x4();
         var right = rect.Right;
         var bottom = rect.Bottom;
@@ -302,7 +302,7 @@ public class Graphics : IDisposable
                 _context.Commands.Add(new RenderCommand
                 {
                     Type = RenderCommandType.DrawTexture,
-                    Texture = bitmap.GpuTexture,
+                    Texture = retainedTexture,
                     Rect = new Rect(destX, destY, destWidth, destHeight),
                     SrcRect = new Rect(destX - tileX, destY - tileY, destWidth, destHeight),
                     Transform = transform,

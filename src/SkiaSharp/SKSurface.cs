@@ -247,8 +247,8 @@ public class SKSurface : IDisposable
             }
         }
 
-        // Clear recorded commands so we don't redraw them next flush
-        _drawingContext.Commands.Clear();
+        // Clear recorded commands and dispose command-retained source textures.
+        _drawingContext.Clear();
         Canvas.ReleaseLayerTexturesAfterFlush();
     }
 

@@ -628,6 +628,7 @@ public class SKCanvas : IDisposable
         paint?.ThrowIfImageColorFilter();
         var pushedBlendMode = PushPaintBlendMode(paint);
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
+        var retainedTexture = RetainImageTexture(image);
         try
         {
             if (opacity < 1f)
@@ -638,7 +639,7 @@ public class SKCanvas : IDisposable
             _context.Commands.Add(new RenderCommand
             {
                 Type = RenderCommandType.DrawTexture,
-                Texture = image.Texture,
+                Texture = retainedTexture,
                 Rect = new Rect(dest.Left, dest.Top, dest.Width, dest.Height),
                 SrcRect = new Rect(source.Left, source.Top, source.Width, source.Height),
                 Transform = _currentMatrix.ToMatrix4x4()
@@ -658,6 +659,22 @@ public class SKCanvas : IDisposable
     public void DrawImage(SKImage image, float x, float y, SKPaint paint)
     {
         DrawImage(image, new SKRect(0, 0, image.Width, image.Height), new SKRect(x, y, x + image.Width, y + image.Height), paint);
+    }
+
+    private GpuTexture RetainImageTexture(SKImage image)
+    {
+        var source = image.Texture;
+        var retainedTexture = new GpuTexture(
+            source.Context,
+            source.Width,
+            source.Height,
+            source.Format,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
+            "SKCanvas DrawImage Retained Source Texture",
+            alphaMode: source.AlphaMode);
+        retainedTexture.CopyFrom(source);
+        _context.RetainResource(retainedTexture);
+        return retainedTexture;
     }
 
     public void DrawTextBlob(SKTextBlob textBlob, float x, float y, SKPaint paint)
