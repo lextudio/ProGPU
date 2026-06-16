@@ -109,6 +109,27 @@ public class RadialGradientBrush : Brush
     }
 }
 
+public class TwoPointConicalGradientBrush : Brush
+{
+    public Vector2 StartCenter { get; set; }
+    public float StartRadius { get; set; }
+    public Vector2 EndCenter { get; set; }
+    public float EndRadius { get; set; }
+    public Matrix4x4 CoordinateTransform { get; set; } = Matrix4x4.Identity;
+    public GradientSpreadMethod SpreadMethod { get; set; } = GradientSpreadMethod.Pad;
+    public GradientColorInterpolationMode ColorInterpolationMode { get; set; } = GradientColorInterpolationMode.SRgbLinearInterpolation;
+    public GradientStop[] Stops { get; set; }
+
+    public TwoPointConicalGradientBrush(Vector2 startCenter, float startRadius, Vector2 endCenter, float endRadius, GradientStop[] stops)
+    {
+        StartCenter = startCenter;
+        StartRadius = startRadius;
+        EndCenter = endCenter;
+        EndRadius = endRadius;
+        Stops = stops;
+    }
+}
+
 public enum PenLineJoin
 {
     Miter = 0,

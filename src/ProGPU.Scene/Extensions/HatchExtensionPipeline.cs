@@ -196,6 +196,49 @@ fn transform_brush_coordinate(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
         dot(p, brush.coordinateTransform1.xyz));
 }
 
+fn solve_two_point_conical_gradient_t(brush: Brush, coord: vec2<f32>) -> f32 {
+    let centerDelta = brush.gradientCenter - brush.gradientStart;
+    let radiusDelta = brush.gradientRadiusY - brush.gradientRadius;
+    let point = coord - brush.gradientStart;
+    let a = dot(centerDelta, centerDelta) - radiusDelta * radiusDelta;
+    let b = -2.0 * (dot(point, centerDelta) + brush.gradientRadius * radiusDelta);
+    let c = dot(point, point) - brush.gradientRadius * brush.gradientRadius;
+
+    if (abs(a) < 0.00001) {
+        if (abs(b) > 0.00001) {
+            return -c / b;
+        }
+
+        return 0.0;
+    }
+
+    let discriminant = (b * b) - (4.0 * a * c);
+    if (discriminant < 0.0) {
+        return 0.0;
+    }
+
+    let sqrtDiscriminant = sqrt(discriminant);
+    let denominator = 2.0 * a;
+    let root0 = (-b - sqrtDiscriminant) / denominator;
+    let root1 = (-b + sqrtDiscriminant) / denominator;
+    let root0Valid = root0 >= -0.00001;
+    let root1Valid = root1 >= -0.00001;
+
+    if (root0Valid && root1Valid) {
+        return min(root0, root1);
+    }
+
+    if (root0Valid) {
+        return root0;
+    }
+
+    if (root1Valid) {
+        return root1;
+    }
+
+    return max(root0, root1);
+}
+
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
@@ -467,6 +510,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     }
                 }
             }
+        } else if (brush.brushType == 5u) {
+            t = solve_two_point_conical_gradient_t(brush, brushCoord);
         }
         t = apply_gradient_spread(t, brush.spreadMethod);
 

@@ -168,19 +168,26 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
-    public void CreateTwoPointConicalGradientRejectsUnsupportedCentersOrRadii()
+    public void CreateTwoPointConicalGradientCreatesNativeBrush()
     {
-        var exception = Assert.Throws<NotSupportedException>(
-            () => SKShader.CreateTwoPointConicalGradient(
-                new SKPoint(0f, 0f),
-                4f,
-                new SKPoint(10f, 0f),
-                8f,
-                new[] { SKColors.Red, SKColors.Blue },
-                null,
-                SKShaderTileMode.Clamp));
+        using var shader = SKShader.CreateTwoPointConicalGradient(
+            new SKPoint(1f, 2f),
+            4f,
+            new SKPoint(10f, 20f),
+            8f,
+            new[] { SKColors.Red, SKColors.Blue },
+            new[] { 0.25f, 0.75f },
+            SKShaderTileMode.Repeat);
 
-        Assert.Contains("Two-point conical gradients", exception.Message);
+        var brush = Assert.IsType<TwoPointConicalGradientBrush>(shader.ToBrush());
+        Assert.Equal(new Vector2(1f, 2f), brush.StartCenter);
+        Assert.Equal(4f, brush.StartRadius);
+        Assert.Equal(new Vector2(10f, 20f), brush.EndCenter);
+        Assert.Equal(8f, brush.EndRadius);
+        Assert.Equal(GradientSpreadMethod.Repeat, brush.SpreadMethod);
+        Assert.Equal(2, brush.Stops.Length);
+        Assert.Equal(0.25f, brush.Stops[0].Offset);
+        Assert.Equal(0.75f, brush.Stops[1].Offset);
     }
 
     [Fact]

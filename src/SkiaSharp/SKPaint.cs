@@ -252,22 +252,30 @@ public class SKShader : IDisposable
         float[]? colorPos,
         SKShaderTileMode mode)
     {
-        if (!NearlyEqual(start.X, end.X) ||
-            !NearlyEqual(start.Y, end.Y) ||
-            !NearlyEqual(startRadius, endRadius))
+        var spreadMethod = MapTileMode(mode);
+        return new SKShader(() =>
         {
-            throw new NotSupportedException("Two-point conical gradients with different centers or radii are not supported by ProGPU Skia gradients.");
-        }
+            var stops = new GradientStop[colors.Length];
+            for (int i = 0; i < colors.Length; i++)
+            {
+                var c = new Vector4(colors[i].R / 255.0f, colors[i].G / 255.0f, colors[i].B / 255.0f, colors[i].A / 255.0f);
+                float offset = colorPos != null ? colorPos[i] : (float)i / (colors.Length - 1);
+                stops[i] = new GradientStop(c, offset);
+            }
 
-        return CreateRadialGradient(start, startRadius, colors, colorPos, mode);
+            return new TwoPointConicalGradientBrush(
+                new Vector2(start.X, start.Y),
+                startRadius,
+                new Vector2(end.X, end.Y),
+                endRadius,
+                stops)
+            {
+                SpreadMethod = spreadMethod
+            };
+        });
     }
 
     public void Dispose() { }
-
-    private static bool NearlyEqual(float left, float right)
-    {
-        return Math.Abs(left - right) <= 1e-5f;
-    }
 
     private static GradientSpreadMethod MapTileMode(SKShaderTileMode mode)
     {

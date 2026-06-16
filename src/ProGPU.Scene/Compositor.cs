@@ -16,7 +16,7 @@ namespace ProGPU.Scene;
 [StructLayout(LayoutKind.Explicit, Size = 256)]
 public struct GpuBrush
 {
-    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial
+    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial, 5 = Two-point conical
     [FieldOffset(4)] public float Opacity;
     [FieldOffset(8)] public Vector2 StartPoint;
     [FieldOffset(16)] public Vector2 EndPoint;
@@ -4488,6 +4488,18 @@ public unsafe class Compositor : IDisposable
             gpuBrush.ColorInterpolationMode = (uint)radial.ColorInterpolationMode;
             ApplyGradientStops(ref gpuBrush, radial.Stops);
         }
+        else if (brush is TwoPointConicalGradientBrush conical)
+        {
+            gpuBrush.Type = 5;
+            gpuBrush.StartPoint = conical.StartCenter;
+            gpuBrush.Center = conical.EndCenter;
+            gpuBrush.Radius = conical.StartRadius;
+            gpuBrush.RadiusY = conical.EndRadius;
+            SetBrushCoordinateTransform(ref gpuBrush, conical.CoordinateTransform);
+            gpuBrush.SpreadMethod = (uint)conical.SpreadMethod;
+            gpuBrush.ColorInterpolationMode = (uint)conical.ColorInterpolationMode;
+            ApplyGradientStops(ref gpuBrush, conical.Stops);
+        }
         else if (brush is HatchPatternBrush hatch)
         {
             gpuBrush.Type = 3;
@@ -4580,7 +4592,7 @@ public unsafe class Compositor : IDisposable
 
     private static bool IsGradientBrushType(uint brushType)
     {
-        return brushType == 1 || brushType == 2;
+        return brushType == 1 || brushType == 2 || brushType == 5;
     }
 
     private static void SetBrushCoordinateTransform(ref GpuBrush gpuBrush, Matrix4x4 transform)
