@@ -154,34 +154,34 @@ public unsafe class WgpuContext : IDisposable
 
             lock (DisposalLock)
             {
-                buffers = PendingBuffers.ToArray();
+                buffers = SnapshotPendingResourcePointers(PendingBuffers);
                 PendingBuffers.Clear();
 
-                textures = PendingTextures.ToArray();
+                textures = SnapshotPendingResourcePointers(PendingTextures);
                 PendingTextures.Clear();
 
-                views = PendingTextureViews.ToArray();
+                views = SnapshotPendingResourcePointers(PendingTextureViews);
                 PendingTextureViews.Clear();
 
-                bindGroups = PendingBindGroups.ToArray();
+                bindGroups = SnapshotPendingResourcePointers(PendingBindGroups);
                 PendingBindGroups.Clear();
 
-                layouts = PendingBindGroupLayouts.ToArray();
+                layouts = SnapshotPendingResourcePointers(PendingBindGroupLayouts);
                 PendingBindGroupLayouts.Clear();
 
-                pipeLayouts = PendingPipelineLayouts.ToArray();
+                pipeLayouts = SnapshotPendingResourcePointers(PendingPipelineLayouts);
                 PendingPipelineLayouts.Clear();
 
-                renderPipes = PendingRenderPipelines.ToArray();
+                renderPipes = SnapshotPendingResourcePointers(PendingRenderPipelines);
                 PendingRenderPipelines.Clear();
 
-                computePipes = PendingComputePipelines.ToArray();
+                computePipes = SnapshotPendingResourcePointers(PendingComputePipelines);
                 PendingComputePipelines.Clear();
 
-                samplers = PendingSamplers.ToArray();
+                samplers = SnapshotPendingResourcePointers(PendingSamplers);
                 PendingSamplers.Clear();
 
-                shaders = PendingShaderModules.ToArray();
+                shaders = SnapshotPendingResourcePointers(PendingShaderModules);
                 PendingShaderModules.Clear();
             }
 
@@ -244,6 +244,26 @@ public unsafe class WgpuContext : IDisposable
                 Wgpu.ShaderModuleRelease((ShaderModule*)shader);
             }
         }
+    }
+
+    private static IntPtr[] SnapshotPendingResourcePointers(List<IntPtr> pending)
+    {
+        if (pending.Count == 0)
+        {
+            return Array.Empty<IntPtr>();
+        }
+
+        var seen = new HashSet<IntPtr>();
+        var snapshot = new List<IntPtr>(pending.Count);
+        foreach (var ptr in pending)
+        {
+            if (ptr != IntPtr.Zero && seen.Add(ptr))
+            {
+                snapshot.Add(ptr);
+            }
+        }
+
+        return snapshot.ToArray();
     }
     
     private bool _isDisposed;

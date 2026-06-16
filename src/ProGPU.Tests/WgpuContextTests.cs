@@ -1,5 +1,6 @@
 using ProGPU.Backend;
 using Silk.NET.WebGPU;
+using System.Reflection;
 using Xunit;
 
 namespace ProGPU.Tests;
@@ -56,5 +57,28 @@ public sealed class WgpuContextTests
             maxBindGroups);
 
         Assert.Equal(expected, canBind);
+    }
+
+    [Fact]
+    public void PendingResourceSnapshotDropsDuplicateAndZeroPointers()
+    {
+        var method = typeof(WgpuContext).GetMethod(
+            "SnapshotPendingResourcePointers",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var pending = new List<IntPtr>
+        {
+            new(1),
+            new(2),
+            IntPtr.Zero,
+            new(1),
+            new(3),
+            new(2)
+        };
+
+        var snapshot = Assert.IsType<IntPtr[]>(method.Invoke(null, new object[] { pending }));
+
+        Assert.Equal(new[] { new IntPtr(1), new IntPtr(2), new IntPtr(3) }, snapshot);
     }
 }
