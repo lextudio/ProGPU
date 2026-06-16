@@ -66,7 +66,7 @@ public sealed class SkSurfaceBackendRenderTargetTests
     }
 
     [Fact]
-    public void CreateFromBottomLeftBackendRenderTargetFailsExplicitly()
+    public void CreateFromBottomLeftBackendRenderTargetFlipsIntoWrappedTexture()
     {
         using var grContext = GRContext.CreateGl() ?? throw new InvalidOperationException("Failed to create GRContext.");
         using var texture = new GpuTexture(
@@ -77,10 +77,15 @@ public sealed class SkSurfaceBackendRenderTargetTests
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
             "SKSurface bottom-left render target test");
         using var renderTarget = new GRBackendRenderTarget(4, 4, texture);
+        using var surface = SKSurface.Create(grContext, renderTarget, GRSurfaceOrigin.BottomLeft, SKColorType.Rgba8888);
+        using var paint = new SKPaint { Color = SKColors.Red };
 
-        var exception = Assert.Throws<NotSupportedException>(
-            () => SKSurface.Create(grContext, renderTarget, GRSurfaceOrigin.BottomLeft, SKColorType.Rgba8888));
-        Assert.Contains("BottomLeft", exception.Message);
+        surface.Canvas.DrawRect(0f, 0f, 4f, 1f, paint);
+        surface.Flush();
+
+        var pixels = texture.ReadPixels();
+        AssertPixel(pixels, 4, 1, 0, 0, 0, 0, 0);
+        AssertPixel(pixels, 4, 1, 3, 255, 0, 0, 255);
     }
 
     [Fact]

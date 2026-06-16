@@ -20,6 +20,7 @@ public class SKSurface : IDisposable
     private readonly bool _ownsTexture;
     private readonly SKColorType _colorType;
     private readonly SKAlphaType _alphaType;
+    private readonly GRSurfaceOrigin _origin;
     private bool _hasTextureContents;
 
     private static readonly Dictionary<WgpuContext, Compositor> _compositorCache = new();
@@ -58,7 +59,7 @@ public class SKSurface : IDisposable
         compositor?.Dispose();
     }
 
-    private SKSurface(WgpuContext context, int width, int height, GpuTexture? texture, bool ownsTexture, IntPtr pixels, int rowBytes, SKColorType colorType, SKAlphaType alphaType)
+    private SKSurface(WgpuContext context, int width, int height, GpuTexture? texture, bool ownsTexture, IntPtr pixels, int rowBytes, SKColorType colorType, SKAlphaType alphaType, GRSurfaceOrigin origin = GRSurfaceOrigin.TopLeft)
     {
         _context = context;
         _width = width;
@@ -69,6 +70,7 @@ public class SKSurface : IDisposable
         _rowBytes = rowBytes;
         _colorType = colorType;
         _alphaType = alphaType;
+        _origin = origin;
 
         _drawingContext = new DrawingContext();
         Canvas = new SKCanvas(_drawingContext, width, height, context);
@@ -148,11 +150,6 @@ public class SKSurface : IDisposable
         ArgumentNullException.ThrowIfNull(grContext);
         ArgumentNullException.ThrowIfNull(renderTarget);
 
-        if (origin == GRSurfaceOrigin.BottomLeft)
-        {
-            throw new NotSupportedException("GRSurfaceOrigin.BottomLeft is not supported by ProGPU-backed SKSurface render targets yet.");
-        }
-
         var texture = renderTarget.BackendTexture
             ?? throw new NotSupportedException("This WebGPU-backed Skia shim can only wrap ProGPU GpuTexture render targets. GL, Vulkan, and Metal backend handles cannot be rendered through this context.");
 
@@ -166,7 +163,7 @@ public class SKSurface : IDisposable
             throw new InvalidOperationException("The backend render target texture must include TextureUsage.RenderAttachment.");
         }
 
-        return new SKSurface(grContext.Context, renderTarget.Width, renderTarget.Height, texture, false, IntPtr.Zero, 0, colorType, SKAlphaType.Premul);
+        return new SKSurface(grContext.Context, renderTarget.Width, renderTarget.Height, texture, false, IntPtr.Zero, 0, colorType, SKAlphaType.Premul, origin);
     }
 
     public static SKSurface Create(GRContext grContext, GRBackendRenderTarget renderTarget, GRSurfaceOrigin origin, SKColorType colorType, SKColorSpace colorSpace)
@@ -201,6 +198,11 @@ public class SKSurface : IDisposable
 
         var visual = new DrawingVisual();
         visual.Size = new Vector2(_width, _height);
+        if (_origin == GRSurfaceOrigin.BottomLeft)
+        {
+            visual.Transform = Matrix4x4.CreateScale(1f, -1f, 1f) * Matrix4x4.CreateTranslation(0f, _height, 0f);
+        }
+
         visual.Context.Append(_drawingContext);
 
         var compositor = GetCompositorForContext(_context);
