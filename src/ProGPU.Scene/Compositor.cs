@@ -5532,9 +5532,9 @@ public unsafe class Compositor : IDisposable
         {
             if (!hasCached)
             {
-                var source = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Effect Source");
-                var temp = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Temp");
-                var destination = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Destination");
+                var source = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Effect Source", alphaMode: GpuTextureAlphaMode.Premultiplied);
+                var temp = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Temp", alphaMode: GpuTextureAlphaMode.Premultiplied);
+                var destination = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Destination", alphaMode: GpuTextureAlphaMode.Premultiplied);
                 
                 textures = (source, temp, destination);
                 _effectTextures[fe] = textures;
@@ -5640,7 +5640,7 @@ public unsafe class Compositor : IDisposable
         {
             if (node.LayerTexture == null)
             {
-                node.LayerTexture = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Layer Cache Texture");
+                node.LayerTexture = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Layer Cache Texture", alphaMode: GpuTextureAlphaMode.Premultiplied);
                 _allocatedLayerTextures.Add(node.LayerTexture);
             }
             else if (node.LayerTexture.Width != w || node.LayerTexture.Height != h)

@@ -42,7 +42,7 @@ public unsafe class GpuTexture : IDisposable
         TextureUsage usage,
         string label = "GpuTexture",
         uint sampleCount = 1,
-        GpuTextureAlphaMode alphaMode = GpuTextureAlphaMode.Premultiplied)
+        GpuTextureAlphaMode alphaMode = GpuTextureAlphaMode.Straight)
     {
         Id = (ulong)Interlocked.Increment(ref s_idCounter);
         _context = context;

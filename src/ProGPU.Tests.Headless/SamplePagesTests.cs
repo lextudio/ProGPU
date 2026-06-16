@@ -372,13 +372,17 @@ public class SamplePagesTests : IDisposable
         AppState._compute = new ProGPU.Compute.ComputeAccelerator(context);
         
         AppState._canvasSourceTexture = new ProGPU.Backend.GpuTexture(context, 600, 600, Silk.NET.WebGPU.TextureFormat.Rgba8Unorm, 
-            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding);
+            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding,
+            alphaMode: ProGPU.Backend.GpuTextureAlphaMode.Premultiplied);
         AppState._canvasTempTexture = new ProGPU.Backend.GpuTexture(context, 600, 600, Silk.NET.WebGPU.TextureFormat.Rgba8Unorm, 
-            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding);
+            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding,
+            alphaMode: ProGPU.Backend.GpuTextureAlphaMode.Premultiplied);
         AppState._canvasBlurTexture = new ProGPU.Backend.GpuTexture(context, 600, 600, Silk.NET.WebGPU.TextureFormat.Rgba8Unorm, 
-            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding);
+            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding,
+            alphaMode: ProGPU.Backend.GpuTextureAlphaMode.Premultiplied);
         AppState._canvasShadowTexture = new ProGPU.Backend.GpuTexture(context, 600, 600, Silk.NET.WebGPU.TextureFormat.Rgba8Unorm, 
-            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding);
+            Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.TextureBinding | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.StorageBinding,
+            alphaMode: ProGPU.Backend.GpuTextureAlphaMode.Premultiplied);
 
         // Render Page
         var page = ComputeFxPage.Create();
@@ -2122,5 +2126,4 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
         window.Content = null;
     }
 }
-
 

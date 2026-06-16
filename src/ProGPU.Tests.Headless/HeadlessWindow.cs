@@ -114,7 +114,8 @@ public unsafe class HeadlessWindow : IDisposable
                 _height,
                 TextureFormat.Rgba8Unorm,
                 TextureUsage.RenderAttachment | TextureUsage.CopySrc,
-                "Headless Offscreen Target"
+                "Headless Offscreen Target",
+                alphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             // Dispose old readback buffer

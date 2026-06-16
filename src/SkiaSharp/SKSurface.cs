@@ -128,7 +128,8 @@ public class SKSurface : IDisposable
             (uint)info.Height,
             TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "SKSurface Backing Texture"
+            "SKSurface Backing Texture",
+            alphaMode: GpuTextureAlphaMode.Premultiplied
         );
         return new SKSurface(ctx, info.Width, info.Height, texture, true, IntPtr.Zero, 0, info.ColorType, info.AlphaType);
     }
@@ -148,7 +149,8 @@ public class SKSurface : IDisposable
             (uint)info.Height,
             TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "SKSurface CPU-backed Backing Texture"
+            "SKSurface CPU-backed Backing Texture",
+            alphaMode: GpuTextureAlphaMode.Premultiplied
         );
         return new SKSurface(ctx, info.Width, info.Height, texture, true, pixels, actualRowBytes, info.ColorType, info.AlphaType);
     }
@@ -197,7 +199,8 @@ public class SKSurface : IDisposable
             (uint)imageInfo.Height,
             TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "SKSurface Offscreen Texture"
+            "SKSurface Offscreen Texture",
+            alphaMode: GpuTextureAlphaMode.Premultiplied
         );
         return new SKSurface(grContext.Context, imageInfo.Width, imageInfo.Height, texture, true, IntPtr.Zero, 0, imageInfo.ColorType, imageInfo.AlphaType);
     }

@@ -94,7 +94,8 @@ namespace System.Windows.Media.Imaging
                 (uint)pixelHeight,
                 Silk.NET.WebGPU.TextureFormat.Bgra8Unorm,
                 Silk.NET.WebGPU.TextureUsage.RenderAttachment | Silk.NET.WebGPU.TextureUsage.CopySrc | Silk.NET.WebGPU.TextureUsage.CopyDst | Silk.NET.WebGPU.TextureUsage.TextureBinding,
-                "WPF WriteableBitmap Backing Texture"
+                "WPF WriteableBitmap Backing Texture",
+                alphaMode: GpuTextureAlphaMode.Premultiplied
             );
         }
 

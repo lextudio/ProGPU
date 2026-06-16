@@ -43,7 +43,8 @@ public class Bitmap : Image
             (uint)height,
             TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "GDI Bitmap Backing Texture"
+            "GDI Bitmap Backing Texture",
+            alphaMode: GpuTextureAlphaMode.Premultiplied
         );
     }
 

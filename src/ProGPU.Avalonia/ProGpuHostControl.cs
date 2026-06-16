@@ -565,7 +565,8 @@ public class ProGpuHostControl : Control
                 height,
                 TextureFormat.Bgra8Unorm,
                 TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.TextureBinding,
-                $"Shared Zero-Copy Target {i}"
+                $"Shared Zero-Copy Target {i}",
+                alphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             // Setup staging buffer
@@ -1113,7 +1114,8 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
                 height, 
                 TextureFormat.Bgra8Unorm, 
                 TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.TextureBinding, 
-                "Avalonia Host Offscreen Target"
+                "Avalonia Host Offscreen Target",
+                alphaMode: GpuTextureAlphaMode.Premultiplied
             );
         }
         else

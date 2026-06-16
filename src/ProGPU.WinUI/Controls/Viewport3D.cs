@@ -502,10 +502,10 @@ namespace Microsoft.UI.Xaml.Controls
             if (_colorTexture == null || _colorTexture.Width != width || _colorTexture.Height != height)
             {
                 _colorTexture?.Dispose();
-                _colorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Viewport3D Color Texture");
+                _colorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Viewport3D Color Texture", alphaMode: GpuTextureAlphaMode.Premultiplied);
 
                 _msaaColorTexture?.Dispose();
-                _msaaColorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment, "Viewport3D MSAA Color Texture", sampleCount: 4u);
+                _msaaColorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment, "Viewport3D MSAA Color Texture", sampleCount: 4u, alphaMode: GpuTextureAlphaMode.Premultiplied);
 
                 _depthTexture?.Dispose();
                 _depthTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Depth24PlusStencil8, TextureUsage.RenderAttachment, "Viewport3D Depth Texture", sampleCount: 4u);

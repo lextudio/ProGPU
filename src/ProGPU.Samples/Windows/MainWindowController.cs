@@ -74,13 +74,17 @@ public static unsafe class MainWindowController
         else AppState._fontComic = AppState._font;
 
         AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc);
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasTempTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasBlurTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasShadowTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
 
         AppState.GenerateLogItems();
 
@@ -147,13 +151,17 @@ public static unsafe class MainWindowController
         else AppState._fontComic = AppState._font;
 
         AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc);
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasTempTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasBlurTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasShadowTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
 
         AppState.GenerateLogItems();
 

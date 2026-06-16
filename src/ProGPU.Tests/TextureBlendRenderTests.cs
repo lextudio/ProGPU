@@ -13,7 +13,7 @@ namespace ProGPU.Tests;
 public sealed class TextureBlendRenderTests
 {
     [Fact]
-    public void StraightAlphaTextureUsesSourceAlphaForColorBlend()
+    public void DefaultUploadedTextureUsesSourceAlphaForColorBlend()
     {
         var window = HeadlessWindow.Shared;
         window.Resize(32, 32);
@@ -23,8 +23,9 @@ public sealed class TextureBlendRenderTests
             1,
             TextureFormat.Rgba8Unorm,
             TextureUsage.TextureBinding | TextureUsage.CopyDst,
-            "Straight Alpha Texture Blend Test",
-            alphaMode: GpuTextureAlphaMode.Straight);
+            "Default Straight Alpha Texture Blend Test");
+        Assert.Equal(GpuTextureAlphaMode.Straight, texture.AlphaMode);
+
         texture.WritePixels<byte>(new byte[] { 200, 80, 20, 128 });
         window.Content = new TextureBlendVisual(texture);
 
