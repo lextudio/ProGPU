@@ -53,6 +53,13 @@ public class SKImage : IDisposable
 
     public static SKImage FromTexture(GpuTexture texture)
     {
+        ArgumentNullException.ThrowIfNull(texture);
+        if (!texture.Usage.HasFlag(TextureUsage.CopySrc))
+        {
+            throw new InvalidOperationException(
+                "Textures wrapped by SKImage.FromTexture must include TextureUsage.CopySrc so SKCanvas.DrawImage can retain a copy for deferred rendering.");
+        }
+
         return new SKImage(texture);
     }
 

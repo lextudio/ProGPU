@@ -290,6 +290,23 @@ public sealed class SkImageBitmapTests
         Assert.True(borrowedTexture.TexturePtr != null);
     }
 
+    [Fact]
+    public void FromTextureRequiresCopySrcForDeferredDrawImageRetention()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+        using var texture = new GpuTexture(
+            context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Borrowed SKImage Missing CopySrc Test Texture");
+
+        var exception = Assert.Throws<InvalidOperationException>(() => SKImage.FromTexture(texture));
+        Assert.Contains("CopySrc", exception.Message, StringComparison.Ordinal);
+    }
+
     private static void WriteBytes(IntPtr destination, byte[] bytes)
     {
         Marshal.Copy(bytes, 0, destination, bytes.Length);
