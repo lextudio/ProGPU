@@ -523,8 +523,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
 
 
 
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn vector_fs_main(input: VertexOutput) -> vec4<f32> {
     var encodedShapeType = input.shapeType;
     let aliasedEdge = encodedShapeType >= 1000.0;
     if (aliasedEdge) {
@@ -676,6 +675,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
     return vec4<f32>(finalColor.rgb, finalColor.a * shapeAlpha * maskAlpha);
 }
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return vector_fs_main(input);
+}
+
+@fragment
+fn fs_main_premultiplied(input: VertexOutput) -> @location(0) vec4<f32> {
+    let color = vector_fs_main(input);
+    return vec4<f32>(color.rgb * color.a, color.a);
+}
 ";
 
     public const string TextShader = @"
@@ -794,8 +804,7 @@ fn text_coverage_to_alpha(alpha: f32, contrast: f32, gamma: f32, aliasedText: bo
     return select(pow(dilated, gamma), select(0.0, 1.0, alpha >= 0.5), aliasedText);
 }
 
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn text_fs_main(input: VertexOutput) -> vec4<f32> {
     let alpha = textureSample(atlasTexture, atlasSampler, input.texCoord).r;
     let aliasedText = input.cornerRadius < 0.0;
     let screen_uv = input.position.xy / uniforms.canvasSize;
@@ -823,6 +832,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(input.color.rgb, input.color.a * grayscaleAlpha * maskAlpha);
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return text_fs_main(input);
+}
+
+@fragment
+fn fs_main_premultiplied(input: VertexOutput) -> @location(0) vec4<f32> {
+    let color = text_fs_main(input);
+    return vec4<f32>(color.rgb * color.a, color.a);
 }
 ";
 
@@ -907,8 +927,7 @@ fn sample_bicubic(uv: vec2<f32>) -> vec4<f32> {
     return color / max(total, 0.0001);
 }
 
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn texture_fs_main(input: VertexOutput) -> vec4<f32> {
     var texColor = textureSample(texTexture, texSampler, input.texCoord);
     if (input.color.a < 0.0) {
         texColor = sample_bicubic(input.texCoord);
@@ -924,6 +943,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(texColor.rgb * rgbScale, texColor.a * coverage);
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return texture_fs_main(input);
+}
+
+@fragment
+fn fs_main_premultiplied(input: VertexOutput) -> @location(0) vec4<f32> {
+    let color = texture_fs_main(input);
+    return vec4<f32>(color.rgb * color.a, color.a);
 }
 ";
 

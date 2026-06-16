@@ -7669,6 +7669,41 @@ public unsafe class Compositor : IDisposable
         return bg;
     }
 
+    private static bool BlendModeRequiresPremultipliedSource(GpuBlendMode blendMode)
+    {
+        return blendMode is GpuBlendMode.Multiply or GpuBlendMode.Screen;
+    }
+
+    private static string GetFragmentEntryPoint(
+        DrawCallType type,
+        GpuBlendMode blendMode,
+        GpuTextureAlphaMode textureAlphaMode)
+    {
+        if (!BlendModeRequiresPremultipliedSource(blendMode))
+        {
+            return "fs_main";
+        }
+
+        return type == DrawCallType.Texture && textureAlphaMode == GpuTextureAlphaMode.Premultiplied
+            ? "fs_main"
+            : "fs_main_premultiplied";
+    }
+
+    private static GpuTextureAlphaMode GetPipelineSourceAlphaMode(
+        DrawCallType type,
+        GpuBlendMode blendMode,
+        GpuTextureAlphaMode textureAlphaMode)
+    {
+        if (BlendModeRequiresPremultipliedSource(blendMode))
+        {
+            return GpuTextureAlphaMode.Premultiplied;
+        }
+
+        return type == DrawCallType.Texture
+            ? textureAlphaMode
+            : GpuTextureAlphaMode.Straight;
+    }
+
     private RenderPipeline* GetPipeline(
         DrawCallType type,
         GpuBlendMode blendMode,
@@ -7739,15 +7774,18 @@ public unsafe class Compositor : IDisposable
                         Attributes = textAttribsPtr
                     };
 
+                    var textFragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, GpuTextureAlphaMode.Straight);
+                    var textSourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, GpuTextureAlphaMode.Straight);
+                    string textFragmentKey = textFragmentEntryPoint == "fs_main" ? string.Empty : $"_{textFragmentEntryPoint}";
                     string textPipelineKey = overrideFormat.HasValue
-                        ? $"{baseName}_{blendMode}_{overrideFormat.Value}"
-                        : $"{baseName}_{blendMode}";
+                        ? $"{baseName}_{blendMode}_{overrideFormat.Value}{textFragmentKey}"
+                        : $"{baseName}_{blendMode}{textFragmentKey}";
 
                     return _pipelineCache.GetOrCreateRenderPipeline(
                         textPipelineKey,
                         shaderModule,
                         "vs_main",
-                        "fs_main",
+                        textFragmentEntryPoint,
                         overrideFormat ?? RenderFormat,
                         PrimitiveTopology.TriangleList,
                         new[] { textLayoutDesc },
@@ -7755,7 +7793,8 @@ public unsafe class Compositor : IDisposable
                         enableDepthStencil: false,
                         sampleCount: sampleCount,
                         blendMode: blendMode,
-                        pipelineLayout: pipelineLayout
+                        pipelineLayout: pipelineLayout,
+                        sourceAlphaMode: textSourceAlphaMode
                     );
                 }
             }
@@ -7770,16 +7809,19 @@ public unsafe class Compositor : IDisposable
                 throw new ArgumentException($"Unsupported pipeline draw call type: {type}");
             }
 
+            var fragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, textureAlphaMode);
+            var sourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, textureAlphaMode);
             string alphaModeKey = type == DrawCallType.Texture ? $"_{textureAlphaMode}" : string.Empty;
+            string fragmentKey = fragmentEntryPoint == "fs_main" ? string.Empty : $"_{fragmentEntryPoint}";
             string pipelineKey = overrideFormat.HasValue
-                ? $"{baseName}_{blendMode}_{overrideFormat.Value}{alphaModeKey}"
-                : $"{baseName}_{blendMode}{alphaModeKey}";
+                ? $"{baseName}_{blendMode}_{overrideFormat.Value}{alphaModeKey}{fragmentKey}"
+                : $"{baseName}_{blendMode}{alphaModeKey}{fragmentKey}";
             
             return _pipelineCache.GetOrCreateRenderPipeline(
                 pipelineKey,
                 shaderModule,
                 "vs_main",
-                "fs_main",
+                fragmentEntryPoint,
                 overrideFormat ?? RenderFormat,
                 PrimitiveTopology.TriangleList,
                 layouts,
@@ -7788,7 +7830,7 @@ public unsafe class Compositor : IDisposable
                 sampleCount: sampleCount,
                 blendMode: blendMode,
                 pipelineLayout: pipelineLayout,
-                sourceAlphaMode: type == DrawCallType.Texture ? textureAlphaMode : GpuTextureAlphaMode.Straight
+                sourceAlphaMode: sourceAlphaMode
             );
         }
     }
