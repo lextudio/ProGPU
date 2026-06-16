@@ -5,6 +5,8 @@ using WpfFillRule = System.Windows.Media.FillRule;
 using VectorPen = ProGPU.Vector.Pen;
 using VectorSolidColorBrush = ProGPU.Vector.SolidColorBrush;
 using WpfLineSegment = System.Windows.Media.LineSegment;
+using WpfMatrix = System.Windows.Media.Matrix;
+using WpfMatrixTransform = System.Windows.Media.MatrixTransform;
 using WpfPathFigure = System.Windows.Media.PathFigure;
 using WpfPathGeometry = System.Windows.Media.PathGeometry;
 using WpfPoint = System.Windows.Point;
@@ -113,6 +115,34 @@ public sealed class WpfPathGeometryDrawTests
         var figure = Assert.Single(command.Path!.Figures);
         var segment = Assert.IsType<ProGPU.Vector.LineSegment>(Assert.Single(figure.Segments));
         Assert.False(segment.IsStroked);
+    }
+
+    [Fact]
+    public void StreamGeometryBoundsApplyOwnTransformBeforeDraw()
+    {
+        var transform = new WpfMatrix
+        {
+            M11 = 1,
+            M22 = 1,
+            OffsetX = 3,
+            OffsetY = 4
+        };
+        var geometry = new WpfStreamGeometry
+        {
+            Transform = new WpfMatrixTransform(transform)
+        };
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(new WpfPoint(0, 0), isFilled: true, isClosed: false);
+            context.LineTo(new WpfPoint(10, 5), isStroked: true, isSmoothJoin: false);
+        }
+
+        var bounds = geometry.Bounds;
+
+        Assert.Equal(3, bounds.X, 3);
+        Assert.Equal(4, bounds.Y, 3);
+        Assert.Equal(10, bounds.Width, 3);
+        Assert.Equal(5, bounds.Height, 3);
     }
 
     private static WpfPathFigure CreateTriangle(Vector2 origin, bool isFilled)
