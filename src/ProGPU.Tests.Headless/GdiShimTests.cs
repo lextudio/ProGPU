@@ -551,13 +551,50 @@ public class GdiShimTests
 
         var command = Assert.Single(graphics.DrawingContext.Commands);
         Assert.Equal(RenderCommandType.DrawTexture, command.Type);
-        Assert.Same(source.GpuTexture, command.Texture);
+        Assert.NotSame(source.GpuTexture, command.Texture);
         Assert.Equal(new Rect(2f, 3f, 4f, 5f), command.Rect);
         Assert.Equal(TextureSamplingMode.Linear, command.TextureSamplingMode);
         AssertNear(0f, command.Transform.M11);
         AssertNear(1f, command.Transform.M12);
         AssertNear(-1f, command.Transform.M21);
         AssertNear(0f, command.Transform.M22);
+    }
+
+    [Fact]
+    public void DrawImageRetainsSourceTextureForDeferredBitmapFlush()
+    {
+        var source = new Bitmap(1, 1);
+        using var target = new Bitmap(2, 2);
+        using var graphics = Graphics.FromImage(target);
+        source.SetPixel(0, 0, Color.Red);
+
+        graphics.DrawImage(source, new RectangleF(0f, 0f, 1f, 1f));
+        var retainedTexture = Assert.Single(graphics.DrawingContext.Commands).Texture!;
+        Assert.NotSame(source.GpuTexture, retainedTexture);
+        Assert.Equal(1, graphics.DrawingContext.RetainedResourceCount);
+
+        var retainedTextureDisposed = false;
+        void OnTextureDisposed(ulong id)
+        {
+            if (id == retainedTexture.Id)
+            {
+                retainedTextureDisposed = true;
+            }
+        }
+
+        GpuTexture.OnDisposedWithId += OnTextureDisposed;
+        try
+        {
+            source.Dispose();
+
+            Assert.Equal(Color.Red.ToArgb(), target.GetPixel(0, 0).ToArgb());
+            Assert.True(retainedTextureDisposed);
+            Assert.Equal(0, graphics.DrawingContext.RetainedResourceCount);
+        }
+        finally
+        {
+            GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+        }
     }
 
     [Fact]

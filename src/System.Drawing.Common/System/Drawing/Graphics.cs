@@ -5,6 +5,7 @@ using System;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Numerics;
+using Silk.NET.WebGPU;
 
 namespace System.Drawing;
 
@@ -480,15 +481,32 @@ public class Graphics : IDisposable
 
     private void DrawBitmap(Bitmap bitmap, RectangleF rect)
     {
-        bitmap.Flush();
+        var retainedTexture = RetainBitmapTexture(bitmap);
         _context.Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.DrawTexture,
-            Texture = bitmap.GpuTexture,
+            Texture = retainedTexture,
             Rect = new Rect(rect.X, rect.Y, rect.Width, rect.Height),
             Transform = CurrentTransform4x4(),
             TextureSamplingMode = TextureSamplingMode.Linear
         });
+    }
+
+    private GpuTexture RetainBitmapTexture(Bitmap bitmap)
+    {
+        bitmap.Flush();
+        var source = bitmap.GpuTexture;
+        var retainedTexture = new GpuTexture(
+            source.Context,
+            source.Width,
+            source.Height,
+            source.Format,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
+            "GDI DrawImage Retained Source Texture",
+            alphaMode: source.AlphaMode);
+        retainedTexture.CopyFrom(source);
+        _context.RetainResource(retainedTexture);
+        return retainedTexture;
     }
 
     public void Dispose()

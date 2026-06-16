@@ -314,12 +314,21 @@ public class GpuPictureRecorder
 public class DrawingContext : IRenderDataProvider
 {
     public List<RenderCommand> Commands { get; } = new();
+    private readonly List<IDisposable> _retainedResources = new();
 
     // Reusable continuous pools to eliminate heap array allocations
     public List<Vector2> PointBuffer { get; } = new();
     public List<double> DoubleBuffer { get; } = new();
     public List<Line3D> Line3DBuffer { get; } = new();
     public List<float> FloatBuffer { get; } = new();
+
+    public int RetainedResourceCount => _retainedResources.Count;
+
+    public void RetainResource(IDisposable resource)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        _retainedResources.Add(resource);
+    }
 
     public ReadOnlySpan<Vector2> GetPoints(int offset, int count) => 
         CollectionsMarshal.AsSpan(PointBuffer).Slice(offset, count);
@@ -1066,5 +1075,16 @@ public class DrawingContext : IRenderDataProvider
         DoubleBuffer.Clear();
         Line3DBuffer.Clear();
         FloatBuffer.Clear();
+        DisposeRetainedResources();
+    }
+
+    private void DisposeRetainedResources()
+    {
+        foreach (var resource in _retainedResources)
+        {
+            resource.Dispose();
+        }
+
+        _retainedResources.Clear();
     }
 }

@@ -91,7 +91,7 @@ public class Bitmap : Image
         );
 
         _texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
-        _recordedContext.Commands.Clear();
+        _recordedContext.Clear();
         _hasDefinedPixels = true;
     }
 

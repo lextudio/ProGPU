@@ -245,6 +245,75 @@ public unsafe class GpuTexture : IDisposable
         }
     }
 
+    public void CopyFrom(GpuTexture source)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
+        ArgumentNullException.ThrowIfNull(source);
+        if (source._isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
+        if (source.Context != _context)
+        {
+            throw new ArgumentException("Source texture must belong to the same WebGPU context.", nameof(source));
+        }
+
+        if (source.Width != Width
+            || source.Height != Height
+            || source.Format != Format
+            || source.SampleCount != SampleCount)
+        {
+            throw new ArgumentException("Source texture dimensions, format, and sample count must match the destination texture.", nameof(source));
+        }
+
+        if (!source.Usage.HasFlag(TextureUsage.CopySrc))
+        {
+            throw new InvalidOperationException("Source texture was not created with CopySrc usage.");
+        }
+
+        if (!Usage.HasFlag(TextureUsage.CopyDst))
+        {
+            throw new InvalidOperationException("Destination texture was not created with CopyDst usage.");
+        }
+
+        var encoderDesc = new CommandEncoderDescriptor();
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        if (encoder == null)
+        {
+            throw new InvalidOperationException("Failed to create command encoder for texture copy.");
+        }
+
+        var copySource = new ImageCopyTexture
+        {
+            Texture = source.TexturePtr,
+            MipLevel = 0,
+            Origin = new Origin3D(),
+            Aspect = TextureAspect.All
+        };
+
+        var copyDestination = new ImageCopyTexture
+        {
+            Texture = TexturePtr,
+            MipLevel = 0,
+            Origin = new Origin3D(),
+            Aspect = TextureAspect.All
+        };
+
+        var copySize = new Extent3D
+        {
+            Width = Width,
+            Height = Height,
+            DepthOrArrayLayers = 1
+        };
+
+        _context.Wgpu.CommandEncoderCopyTextureToTexture(encoder, &copySource, &copyDestination, &copySize);
+
+        var commandBufferDesc = new CommandBufferDescriptor();
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandBufferDesc);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+
+        AlphaMode = source.AlphaMode;
+    }
+
     private void EnsurePbgra32CompatibleFormat()
     {
         if (Format is not (TextureFormat.Bgra8Unorm or TextureFormat.Bgra8UnormSrgb))
