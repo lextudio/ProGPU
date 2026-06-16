@@ -1,6 +1,7 @@
 using ProGPU.Text;
 using System.Globalization;
 using System.Numerics;
+using System.Windows;
 
 namespace System.Windows.Media;
 
@@ -10,6 +11,8 @@ public class FormattedText
     public TtfFont Font { get; }
     public double FontSize { get; }
     public Brush Foreground { get; }
+    public bool IsBold { get; }
+    public bool IsItalic { get; }
 
     public FormattedText(
         string textToFormat,
@@ -23,6 +26,8 @@ public class FormattedText
         Font = typeface?.FontFamily?.NativeFont ?? new FontFamily("Arial").NativeFont!;
         FontSize = emSize;
         Foreground = foreground;
+        IsBold = typeface?.Weight.IsBold ?? false;
+        IsItalic = typeface?.Style.IsSlanted ?? false;
     }
 
     public FormattedText(
@@ -70,6 +75,6 @@ public class FormattedText
         if (Font == null) return;
         var nativeBrush = Foreground?.ToNative() ?? new ProGPU.Vector.SolidColorBrush(Vector4.One);
         var pos = new Vector2((float)origin.X, (float)(origin.Y + Height * 0.8)); // Baseline adjustment
-        dc.NativeContext.DrawText(Text, Font, (float)FontSize, nativeBrush, pos);
+        dc.NativeContext.DrawText(Text, Font, (float)FontSize, nativeBrush, pos, IsBold, IsItalic);
     }
 }

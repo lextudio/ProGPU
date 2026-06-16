@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using ProGPU.Text;
+using System.Windows;
 
 namespace System.Windows.Media;
 
@@ -77,23 +78,6 @@ public class FontFamily
             FaceIndex = s_fallbackFont?.FaceIndex ?? 0;
         }
     }
-}
-
-public struct FontWeight
-{
-    public static FontWeight Bold => new FontWeight();
-    public static FontWeight Normal => new FontWeight();
-}
-
-public struct FontStyle
-{
-    public static FontStyle Italic => new FontStyle();
-    public static FontStyle Normal => new FontStyle();
-}
-
-public struct FontStretch
-{
-    public static FontStretch Normal => new FontStretch();
 }
 
 public class Typeface
