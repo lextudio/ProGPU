@@ -24,6 +24,11 @@ public class SKSurface : IDisposable
 
     private static readonly Dictionary<WgpuContext, Compositor> _compositorCache = new();
 
+    static SKSurface()
+    {
+        WgpuContext.Disposing += RemoveCachedCompositor;
+    }
+
     public SKCanvas Canvas { get; }
 
     private static Compositor GetCompositorForContext(WgpuContext context)
@@ -37,6 +42,20 @@ public class SKSurface : IDisposable
             }
             return compositor;
         }
+    }
+
+    private static void RemoveCachedCompositor(WgpuContext context)
+    {
+        Compositor? compositor = null;
+        lock (_compositorCache)
+        {
+            if (_compositorCache.TryGetValue(context, out compositor))
+            {
+                _compositorCache.Remove(context);
+            }
+        }
+
+        compositor?.Dispose();
     }
 
     private SKSurface(WgpuContext context, int width, int height, GpuTexture? texture, bool ownsTexture, IntPtr pixels, int rowBytes, SKColorType colorType, SKAlphaType alphaType)

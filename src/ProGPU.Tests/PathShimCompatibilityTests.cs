@@ -167,6 +167,41 @@ public sealed class PathShimCompatibilityTests
     }
 
     [Fact]
+    public void SkRegionSetPathAcceptsRectangularPath()
+    {
+        using var path = new SKPath();
+        path.AddRect(new SKRect(1f, 2f, 11f, 12f));
+        using var region = new SKRegion();
+
+        Assert.True(region.SetPath(path));
+
+        Assert.True(region.Contains(1, 2));
+        Assert.True(region.Contains(10, 11));
+        Assert.False(region.Contains(11, 11));
+        Assert.Equal(1, region.Bounds.Left);
+        Assert.Equal(2, region.Bounds.Top);
+        Assert.Equal(11, region.Bounds.Right);
+        Assert.Equal(12, region.Bounds.Bottom);
+    }
+
+    [Fact]
+    public void SkRegionSetPathRejectsNonRectangularPathInsteadOfBoundingBox()
+    {
+        using var path = new SKPath();
+        path.MoveTo(0f, 0f);
+        path.LineTo(10f, 0f);
+        path.LineTo(0f, 10f);
+        path.Close();
+        using var region = new SKRegion();
+
+        Assert.False(region.SetPath(path));
+
+        Assert.True(region.IsEmpty);
+        Assert.False(region.Contains(8, 8));
+        Assert.Equal(SKRectI.Empty, region.Bounds);
+    }
+
+    [Fact]
     public void WpfPathGeometryParseHonorsFillRulePrefix()
     {
         var evenOdd = WpfPathGeometry.Parse("F0 M 0 0 L 10 0 L 10 10 Z");

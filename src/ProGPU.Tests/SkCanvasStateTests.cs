@@ -123,6 +123,36 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void SaveLayerBoundsClipRestoredLayerComposition()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 100f, 100f);
+        using var layerPaint = new SKPaint();
+        using var fill = new SKPaint { Color = SKColors.Red };
+
+        var restoreCount = canvas.SaveLayer(new SKRect(5f, 6f, 25f, 26f), layerPaint);
+        canvas.DrawRect(new SKRect(50f, 50f, 60f, 60f), fill);
+
+        canvas.RestoreToCount(restoreCount);
+
+        Assert.Collection(
+            context.Commands,
+            push =>
+            {
+                Assert.Equal(RenderCommandType.PushClip, push.Type);
+                Assert.Equal(new Rect(5f, 6f, 20f, 20f), push.Rect);
+                AssertMatrixNear(Matrix4x4.Identity, push.Transform);
+            },
+            draw =>
+            {
+                Assert.Equal(RenderCommandType.DrawTexture, draw.Type);
+                Assert.Equal(new Rect(0f, 0f, 100f, 100f), draw.Rect);
+                Assert.NotNull(draw.Texture);
+            },
+            pop => Assert.Equal(RenderCommandType.PopClip, pop.Type));
+    }
+
+    [Fact]
     public void ClipRectRecordsCurrentCanvasMatrix()
     {
         var context = new DrawingContext();

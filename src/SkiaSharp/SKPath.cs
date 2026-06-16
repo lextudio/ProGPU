@@ -388,8 +388,14 @@ public class SKRegion : IDisposable
 
     public bool SetPath(SKPath path)
     {
-        var b = path.Bounds;
-        SetSingleRect(new SKRectI((int)Math.Floor(b.Left), (int)Math.Floor(b.Top), (int)Math.Ceiling(b.Right), (int)Math.Ceiling(b.Bottom)));
+        if (!TryGetSingleAxisAlignedRect(path, out var rect))
+        {
+            _rects.Clear();
+            _bounds = SKRectI.Empty;
+            return false;
+        }
+
+        SetSingleRect(rect);
         return !IsEmpty;
     }
 
@@ -595,6 +601,100 @@ public class SKRegion : IDisposable
     private static bool IsValid(SKRectI rect)
     {
         return rect.Width > 0 && rect.Height > 0;
+    }
+
+    private static bool TryGetSingleAxisAlignedRect(SKPath path, out SKRectI rect)
+    {
+        rect = SKRectI.Empty;
+        if (path.Geometry.Figures.Count != 1)
+        {
+            return false;
+        }
+
+        var figure = path.Geometry.Figures[0];
+        if (!figure.IsClosed || figure.Segments.Count != 3)
+        {
+            return false;
+        }
+
+        Span<Vector2> points = stackalloc Vector2[4];
+        points[0] = figure.StartPoint;
+        for (int i = 0; i < figure.Segments.Count; i++)
+        {
+            if (figure.Segments[i] is not LineSegment line)
+            {
+                return false;
+            }
+
+            points[i + 1] = line.Point;
+        }
+
+        float left = points[0].X;
+        float right = points[0].X;
+        float top = points[0].Y;
+        float bottom = points[0].Y;
+        for (int i = 1; i < points.Length; i++)
+        {
+            left = MathF.Min(left, points[i].X);
+            right = MathF.Max(right, points[i].X);
+            top = MathF.Min(top, points[i].Y);
+            bottom = MathF.Max(bottom, points[i].Y);
+        }
+
+        if (!float.IsFinite(left) ||
+            !float.IsFinite(right) ||
+            !float.IsFinite(top) ||
+            !float.IsFinite(bottom) ||
+            right <= left ||
+            bottom <= top)
+        {
+            return false;
+        }
+
+        bool hasTopLeft = false;
+        bool hasTopRight = false;
+        bool hasBottomRight = false;
+        bool hasBottomLeft = false;
+        foreach (var point in points)
+        {
+            if (Near(point.X, left) && Near(point.Y, top))
+            {
+                hasTopLeft = true;
+            }
+            else if (Near(point.X, right) && Near(point.Y, top))
+            {
+                hasTopRight = true;
+            }
+            else if (Near(point.X, right) && Near(point.Y, bottom))
+            {
+                hasBottomRight = true;
+            }
+            else if (Near(point.X, left) && Near(point.Y, bottom))
+            {
+                hasBottomLeft = true;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        if (!hasTopLeft || !hasTopRight || !hasBottomRight || !hasBottomLeft)
+        {
+            return false;
+        }
+
+        rect = new SKRectI(
+            (int)MathF.Floor(left),
+            (int)MathF.Floor(top),
+            (int)MathF.Ceiling(right),
+            (int)MathF.Ceiling(bottom));
+        return IsValid(rect);
+    }
+
+    private static bool Near(float left, float right)
+    {
+        return MathF.Abs(left - right) <= 0.0001f;
     }
 
     public void Dispose() { }

@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using ProGPU.Backend;
 using Silk.NET.WebGPU;
 using SkiaSharp;
@@ -95,6 +97,69 @@ public sealed class SkSurfaceBackendRenderTargetTests
         finally
         {
             Marshal.FreeHGlobal(pixels);
+        }
+    }
+
+    [Fact]
+    public void SurfaceCompositorDisposingHandlerClearsContextCache()
+    {
+        var context = new WgpuContext();
+        context.Initialize(null);
+        DetachActiveContextForTest(context);
+        try
+        {
+            using var grContext = new GRContext(context);
+            using var surface = SKSurface.Create(
+                grContext,
+                false,
+                new SKImageInfo(2, 2, SKColorType.Rgba8888, SKAlphaType.Premul),
+                new SKSurfaceProperties(SKPixelGeometry.RgbHorizontal));
+
+            surface.Canvas.Clear(SKColors.Red);
+            surface.Flush();
+
+            Assert.True(SurfaceCompositorCacheContains(context));
+
+            RemoveSurfaceCachedCompositor(context);
+
+            Assert.False(SurfaceCompositorCacheContains(context));
+        }
+        finally
+        {
+            context.Dispose();
+        }
+    }
+
+    private static void DetachActiveContextForTest(WgpuContext context)
+    {
+        WgpuContext.Current = null;
+        var field = typeof(WgpuContext).GetField(
+            "_activeContexts",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        var activeContexts = (IList)field!.GetValue(null)!;
+        lock (activeContexts)
+        {
+            activeContexts.Remove(context);
+        }
+    }
+
+    private static void RemoveSurfaceCachedCompositor(WgpuContext context)
+    {
+        var method = typeof(SKSurface).GetMethod(
+            "RemoveCachedCompositor",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        method!.Invoke(null, new object[] { context });
+    }
+
+    private static bool SurfaceCompositorCacheContains(WgpuContext context)
+    {
+        var field = typeof(SKSurface).GetField(
+            "_compositorCache",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        var cache = (IDictionary)field!.GetValue(null)!;
+        lock (cache)
+        {
+            return cache.Contains(context);
         }
     }
 

@@ -19,6 +19,11 @@ public class SKCanvas : IDisposable
     private readonly List<GpuTexture> _ownedLayerTextures = new();
     private static readonly Dictionary<WgpuContext, Compositor> s_compositorCache = new();
 
+    static SKCanvas()
+    {
+        WgpuContext.Disposing += RemoveCachedCompositor;
+    }
+
     public enum PushKind
     {
         RectClip,
@@ -32,18 +37,28 @@ public class SKCanvas : IDisposable
 
     private sealed class LayerFrame
     {
-        public LayerFrame(DrawingContext parentContext, DrawingContext layerContext, SKPaint? paint, int stateDepth)
+        public LayerFrame(
+            DrawingContext parentContext,
+            DrawingContext layerContext,
+            SKPaint? paint,
+            int stateDepth,
+            SKRect bounds,
+            SKMatrix boundsMatrix)
         {
             ParentContext = parentContext;
             LayerContext = layerContext;
             Paint = paint;
             StateDepth = stateDepth;
+            Bounds = bounds;
+            BoundsMatrix = boundsMatrix;
         }
 
         public DrawingContext ParentContext { get; }
         public DrawingContext LayerContext { get; }
         public SKPaint? Paint { get; }
         public int StateDepth { get; }
+        public SKRect Bounds { get; }
+        public SKMatrix BoundsMatrix { get; }
     }
 
     public SKMatrix TotalMatrix
@@ -87,7 +102,7 @@ public class SKCanvas : IDisposable
 
         var parentContext = _context;
         var layerContext = new DrawingContext();
-        _layerStack.Push(new LayerFrame(parentContext, layerContext, paint?.Clone(), _stateStack.Count));
+        _layerStack.Push(new LayerFrame(parentContext, layerContext, paint?.Clone(), _stateStack.Count, bounds, _currentMatrix));
         _context = layerContext;
 
         return restoreCount;
@@ -146,7 +161,7 @@ public class SKCanvas : IDisposable
     private void RestoreLayer(LayerFrame layerFrame)
     {
         _context = layerFrame.ParentContext;
-        if (layerFrame.LayerContext.Commands.Count == 0)
+        if (layerFrame.LayerContext.Commands.Count == 0 || !IsValidLayerBounds(layerFrame.Bounds))
         {
             return;
         }
@@ -165,14 +180,25 @@ public class SKCanvas : IDisposable
 
             try
             {
-                _context.Commands.Add(new RenderCommand
+                var pushedLayerBoundsClip = PushLayerBoundsClip(_context, layerFrame);
+                try
                 {
-                    Type = RenderCommandType.DrawTexture,
-                    Texture = RenderLayerToTexture(layerFrame.LayerContext),
-                    Rect = new Rect(0f, 0f, _width, _height),
-                    Transform = Matrix4x4.Identity,
-                    TextureSamplingMode = TextureSamplingMode.Linear
-                });
+                    _context.Commands.Add(new RenderCommand
+                    {
+                        Type = RenderCommandType.DrawTexture,
+                        Texture = RenderLayerToTexture(layerFrame),
+                        Rect = new Rect(0f, 0f, _width, _height),
+                        Transform = Matrix4x4.Identity,
+                        TextureSamplingMode = TextureSamplingMode.Linear
+                    });
+                }
+                finally
+                {
+                    if (pushedLayerBoundsClip)
+                    {
+                        _context.PopClip();
+                    }
+                }
             }
             finally
             {
@@ -188,7 +214,7 @@ public class SKCanvas : IDisposable
         }
     }
 
-    private GpuTexture RenderLayerToTexture(DrawingContext layerContext)
+    private GpuTexture RenderLayerToTexture(LayerFrame layerFrame)
     {
         var context = _gpuContext != null && !_gpuContext.IsDisposed
             ? _gpuContext
@@ -203,7 +229,12 @@ public class SKCanvas : IDisposable
             alphaMode: GpuTextureAlphaMode.Premultiplied);
 
         var visual = new DrawingVisual { Size = new Vector2(_width, _height) };
-        visual.Context.Append(layerContext);
+        var pushedLayerBoundsClip = PushLayerBoundsClip(visual.Context, layerFrame);
+        visual.Context.Append(layerFrame.LayerContext);
+        if (pushedLayerBoundsClip)
+        {
+            visual.Context.PopClip();
+        }
 
         GetCompositorForContext(context).RenderOffscreen(
             visual,
@@ -215,6 +246,44 @@ public class SKCanvas : IDisposable
 
         _ownedLayerTextures.Add(texture);
         return texture;
+    }
+
+    private bool PushLayerBoundsClip(DrawingContext context, LayerFrame layerFrame)
+    {
+        if (IsFullCanvasLayerBounds(layerFrame.Bounds))
+        {
+            return false;
+        }
+
+        context.Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushClip,
+            Rect = new Rect(
+                layerFrame.Bounds.Left,
+                layerFrame.Bounds.Top,
+                layerFrame.Bounds.Width,
+                layerFrame.Bounds.Height),
+            Transform = layerFrame.BoundsMatrix.ToMatrix4x4()
+        });
+        return true;
+    }
+
+    private static bool IsValidLayerBounds(SKRect bounds)
+    {
+        return float.IsFinite(bounds.Left) &&
+            float.IsFinite(bounds.Top) &&
+            float.IsFinite(bounds.Right) &&
+            float.IsFinite(bounds.Bottom) &&
+            bounds.Width > 0f &&
+            bounds.Height > 0f;
+    }
+
+    private bool IsFullCanvasLayerBounds(SKRect bounds)
+    {
+        return MathF.Abs(bounds.Left) < 0.0001f &&
+            MathF.Abs(bounds.Top) < 0.0001f &&
+            MathF.Abs(bounds.Width - _width) < 0.0001f &&
+            MathF.Abs(bounds.Height - _height) < 0.0001f;
     }
 
     private static Compositor GetCompositorForContext(WgpuContext context)
@@ -229,6 +298,20 @@ public class SKCanvas : IDisposable
 
             return compositor;
         }
+    }
+
+    private static void RemoveCachedCompositor(WgpuContext context)
+    {
+        Compositor? compositor = null;
+        lock (s_compositorCache)
+        {
+            if (s_compositorCache.TryGetValue(context, out compositor))
+            {
+                s_compositorCache.Remove(context);
+            }
+        }
+
+        compositor?.Dispose();
     }
 
     private static GpuBlendMode MapBlendMode(SKBlendMode blendMode)
