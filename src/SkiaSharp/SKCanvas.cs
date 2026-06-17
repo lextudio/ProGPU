@@ -183,14 +183,7 @@ public class SKCanvas : IDisposable
                 var pushedLayerBoundsClip = PushLayerBoundsClip(_context, layerFrame);
                 try
                 {
-                    _context.Commands.Add(new RenderCommand
-                    {
-                        Type = RenderCommandType.DrawTexture,
-                        Texture = RenderLayerToTexture(layerFrame),
-                        Rect = new Rect(0f, 0f, _width, _height),
-                        Transform = Matrix4x4.Identity,
-                        TextureSamplingMode = TextureSamplingMode.Linear
-                    });
+                    DrawRestoredLayerTexture(layerFrame, RenderLayerToTexture(layerFrame));
                 }
                 finally
                 {
@@ -212,6 +205,86 @@ public class SKCanvas : IDisposable
         {
             PopPaintBlendMode(pushedBlendMode);
         }
+    }
+
+    private void DrawRestoredLayerTexture(LayerFrame layerFrame, GpuTexture texture)
+    {
+        var rect = new Rect(0f, 0f, _width, _height);
+        var imageFilter = layerFrame.Paint?.ImageFilter;
+        if (imageFilter is { IsBlur: true })
+        {
+            _context.DrawImageWithEffect(
+                texture,
+                rect,
+                blurSigma: MathF.Max(imageFilter.SigmaX, imageFilter.SigmaY));
+            return;
+        }
+
+        if (imageFilter is { IsDropShadow: true })
+        {
+            texture = RenderFilteredLayerToTexture(
+                texture,
+                new DropShadowEffect(
+                    MathF.Max(imageFilter.SigmaX, imageFilter.SigmaY),
+                    new Vector2(imageFilter.Dx, imageFilter.Dy),
+                    ToVector4(imageFilter.ShadowColor)));
+        }
+
+        DrawRestoredLayerTexture(texture, rect);
+    }
+
+    private void DrawRestoredLayerTexture(GpuTexture texture, Rect rect)
+    {
+        _context.Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawTexture,
+            Texture = texture,
+            Rect = rect,
+            Transform = Matrix4x4.Identity,
+            TextureSamplingMode = TextureSamplingMode.Linear
+        });
+    }
+
+    private GpuTexture RenderFilteredLayerToTexture(GpuTexture sourceTexture, EffectBase effect)
+    {
+        var context = _gpuContext != null && !_gpuContext.IsDisposed
+            ? _gpuContext
+            : SKContextHelper.GetContext();
+        var texture = new GpuTexture(
+            context,
+            (uint)_width,
+            (uint)_height,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
+            "SKCanvas SaveLayer Filtered Texture",
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
+
+        var visual = new DrawingVisual
+        {
+            Size = new Vector2(_width, _height),
+            Effect = effect
+        };
+        visual.Context.DrawTexture(sourceTexture, new Rect(0f, 0f, _width, _height));
+
+        GetCompositorForContext(context).RenderOffscreen(
+            visual,
+            (uint)_width,
+            (uint)_height,
+            texture,
+            padding: 0f,
+            dpiScale: 1f);
+
+        _ownedLayerTextures.Add(texture);
+        return texture;
+    }
+
+    private static Vector4 ToVector4(SKColor color)
+    {
+        return new Vector4(
+            color.R / 255f,
+            color.G / 255f,
+            color.B / 255f,
+            color.A / 255f);
     }
 
     private GpuTexture RenderLayerToTexture(LayerFrame layerFrame)

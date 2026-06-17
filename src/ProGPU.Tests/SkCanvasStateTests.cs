@@ -155,6 +155,51 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void SaveLayerAppliesBlurImageFilterWhenLayerIsRestored()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 100f, 100f);
+        using var layerPaint = new SKPaint { ImageFilter = SKImageFilter.CreateBlur(3f, 4f) };
+        using var fill = new SKPaint { Color = SKColors.Red };
+
+        var restoreCount = canvas.SaveLayer(layerPaint);
+        canvas.DrawRect(new SKRect(10f, 10f, 40f, 40f), fill);
+
+        canvas.RestoreToCount(restoreCount);
+
+        var command = Assert.Single(context.Commands);
+        Assert.Equal(RenderCommandType.DrawExtension, command.Type);
+        Assert.Equal(CompositorBuiltInExtensions.ImageEffect, command.ExtensionId);
+        var parameters = Assert.IsType<ImageEffectParams>(command.DataParam);
+        Assert.NotNull(parameters.Texture);
+        Assert.Equal(new Rect(0f, 0f, 100f, 100f), parameters.Rect);
+        Assert.Equal(4f, parameters.BlurSigma);
+    }
+
+    [Fact]
+    public void SaveLayerAppliesDropShadowImageFilterWithNativeEffectTexture()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 100f, 100f);
+        using var layerPaint = new SKPaint
+        {
+            ImageFilter = SKImageFilter.CreateDropShadow(2f, 3f, 4f, 4f, SKColors.Black)
+        };
+        using var fill = new SKPaint { Color = SKColors.Red };
+
+        var restoreCount = canvas.SaveLayer(layerPaint);
+        canvas.DrawRect(new SKRect(10f, 10f, 40f, 40f), fill);
+
+        canvas.RestoreToCount(restoreCount);
+
+        var command = Assert.Single(context.Commands);
+        Assert.Equal(RenderCommandType.DrawTexture, command.Type);
+        Assert.NotNull(command.Texture);
+        Assert.Equal(new Rect(0f, 0f, 100f, 100f), command.Rect);
+        Assert.Equal(2, GetOwnedLayerTextures(canvas).Count);
+    }
+
+    [Fact]
     public void SurfaceFlushReleasesSaveLayerTexturesAfterConsumingCommands()
     {
         using var surface = SKSurface.Create(new SKImageInfo(32, 32, SKColorType.Rgba8888, SKAlphaType.Premul));
