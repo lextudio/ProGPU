@@ -243,31 +243,44 @@ public unsafe class Compositor : IDisposable
             return false;
         }
 
-        lock (_registeredExtensions)
-        {
-            foreach (var ext in _registeredExtensions)
-            {
-                ext.BeginFrame(this);
-            }
-        }
-
-        return true;
-    }
-
-    private void EndExtensionFrame(bool ownsFrame)
-    {
-        if (ownsFrame)
+        try
         {
             lock (_registeredExtensions)
             {
                 foreach (var ext in _registeredExtensions)
                 {
-                    ext.EndFrame(this);
+                    ext.BeginFrame(this);
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            _extensionFrameDepth--;
+            throw;
+        }
+    }
+
+    private void EndExtensionFrame(bool ownsFrame)
+    {
+        try
+        {
+            if (ownsFrame)
+            {
+                lock (_registeredExtensions)
+                {
+                    foreach (var ext in _registeredExtensions)
+                    {
+                        ext.EndFrame(this);
+                    }
                 }
             }
         }
-
-        _extensionFrameDepth--;
+        finally
+        {
+            _extensionFrameDepth--;
+        }
     }
 
     // Decoupled hooks to remove hard dependency on UI layer
@@ -537,6 +550,8 @@ public unsafe class Compositor : IDisposable
     internal uint CurrentHeight => _currentHeight;
     internal float CurrentCanvasPixelWidth => MathF.Max(1f, _currentWidth * (_currentDpiScale > 0f ? _currentDpiScale : 1f));
     internal float CurrentCanvasPixelHeight => MathF.Max(1f, _currentHeight * (_currentDpiScale > 0f ? _currentDpiScale : 1f));
+    private uint CurrentCanvasPixelWidthUInt => Math.Max(1u, (uint)Math.Round(CurrentCanvasPixelWidth));
+    private uint CurrentCanvasPixelHeightUInt => Math.Max(1u, (uint)Math.Round(CurrentCanvasPixelHeight));
     public float CurrentDpiScale => _currentDpiScale;
     internal Matrix4x4 CurrentProjection => _currentProjection;
     internal System.Runtime.CompilerServices.ConditionalWeakTable<object, GpuSeriesBuffer> DynamicGpuBufferCache => _dynamicGpuBufferCache;
@@ -1193,6 +1208,13 @@ public unsafe class Compositor : IDisposable
         _masksToReturnToPool.Clear();
 
         var extensionFrame = BeginExtensionFrame();
+        CommandEncoder* encoder = null;
+        IReadOnlyList<Visual>? externalLayers = null;
+        Visual? activeToolTip = null;
+        System.Diagnostics.Stopwatch uploadSw = null!;
+        System.Diagnostics.Stopwatch passSw = null!;
+        try
+        {
 
         // 3. Compile Layer 0: Root Visual Scene
         _pendingVectorStart = (uint)_vectorIndicesList.Count;
@@ -1201,7 +1223,7 @@ public unsafe class Compositor : IDisposable
         CommitPendingDrawCalls();
 
         // 4. Compile Layer 1: Active Popups / External Layers (in proper Z-order)
-        var externalLayers = GetExternalLayers?.Invoke();
+        externalLayers = GetExternalLayers?.Invoke();
         if (externalLayers != null && externalLayers.Count > 0)
         {
             var savedActiveClipRect = _activeClipRect;
@@ -1242,7 +1264,7 @@ public unsafe class Compositor : IDisposable
         }
 
         // 5. Compile Layer 2: Tooltips
-        var activeToolTip = GetTooltip?.Invoke();
+        activeToolTip = GetTooltip?.Invoke();
         if (activeToolTip != null)
         {
             var savedActiveClipRect = _activeClipRect;
@@ -1399,7 +1421,7 @@ public unsafe class Compositor : IDisposable
         }
 
         compileSw.Stop();
-        var uploadSw = System.Diagnostics.Stopwatch.StartNew();
+        uploadSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Dynamic buffer writing will happen after uploads to keep logic clear
 
@@ -1468,7 +1490,7 @@ public unsafe class Compositor : IDisposable
         _pathAtlas.RasterizePendingPaths();
 
         uploadSw.Stop();
-        var passSw = System.Diagnostics.Stopwatch.StartNew();
+        passSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Recreate MSAA resources if needed (handles initialization and window resizing)
         if (_msaaTexture == null || _msaaWidth != renderWidth || _msaaHeight != renderHeight)
@@ -1479,7 +1501,7 @@ public unsafe class Compositor : IDisposable
 
         // 5. WebGPU Command Encoder and Render Pass Execution
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compositor Command Encoder") };
-        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
 
         // Run mask render passes first!
@@ -1691,8 +1713,11 @@ public unsafe class Compositor : IDisposable
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
         _context.Wgpu.RenderPassEncoderRelease(pass);
-
-        EndExtensionFrame(extensionFrame);
+        }
+        finally
+        {
+            EndExtensionFrame(extensionFrame);
+        }
 
         // Submit to queue
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compositor Command Buffer") };
@@ -5470,8 +5495,8 @@ public unsafe class Compositor : IDisposable
 
     private unsafe void ApplyDrawCallScissor(RenderPassEncoder* pass, CompositorDrawCall dc)
     {
-        uint targetWidth = (uint)Math.Round(_currentWidth * _currentDpiScale);
-        uint targetHeight = (uint)Math.Round(_currentHeight * _currentDpiScale);
+        uint targetWidth = CurrentCanvasPixelWidthUInt;
+        uint targetHeight = CurrentCanvasPixelHeightUInt;
 
         if (dc.ClipRect.HasValue)
         {
@@ -5915,6 +5940,9 @@ public unsafe class Compositor : IDisposable
         _pendingTextStart = 0;
 
         var extensionFrame = BeginExtensionFrame();
+        CommandEncoder* encoder = null;
+        try
+        {
 
         CompileVisualTree(
             node,
@@ -5978,7 +6006,7 @@ public unsafe class Compositor : IDisposable
 
         // Render pass for offscreen (1x MSAA)
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Offscreen Compositor Encoder") };
-        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
 
         // Run mask render passes first!
@@ -6196,8 +6224,11 @@ public unsafe class Compositor : IDisposable
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
         _context.Wgpu.RenderPassEncoderRelease(pass);
-
-        EndExtensionFrame(extensionFrame);
+        }
+        finally
+        {
+            EndExtensionFrame(extensionFrame);
+        }
 
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Offscreen Compositor Command Buffer") };
         var cmdBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
@@ -8015,7 +8046,7 @@ public unsafe class Compositor : IDisposable
         }
         _drawCalls.RemoveRange(preDrawCallCount, _drawCalls.Count - preDrawCallCount);
 
-        var maskTex = GetMaskTexture(_currentWidth, _currentHeight);
+        var maskTex = GetMaskTexture(CurrentCanvasPixelWidthUInt, CurrentCanvasPixelHeightUInt);
         var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
 
         _maskRenderPasses.Add(new MaskRenderPassInfo
@@ -8057,7 +8088,7 @@ public unsafe class Compositor : IDisposable
         }
         _drawCalls.RemoveRange(preDrawCallCount, _drawCalls.Count - preDrawCallCount);
 
-        var maskTex = GetMaskTexture(_currentWidth, _currentHeight);
+        var maskTex = GetMaskTexture(CurrentCanvasPixelWidthUInt, CurrentCanvasPixelHeightUInt);
         var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
 
         _maskRenderPasses.Add(new MaskRenderPassInfo

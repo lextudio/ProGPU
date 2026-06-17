@@ -649,7 +649,7 @@ public unsafe class WgpuContext : IDisposable
     {
         if (Device != null && !_isDisposed)
         {
-            wgpuDevicePoll(Device, false, null);
+            wgpuDevicePoll(Device, true, null);
         }
     }
 

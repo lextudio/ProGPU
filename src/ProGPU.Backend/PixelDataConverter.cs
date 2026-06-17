@@ -74,15 +74,28 @@ public static class PixelDataConverter
             return false;
         }
 
-        int requiredLength = checked(sourceStride * height);
+        if (!TryGetSourceByteLength(width, height, sourceStride, format, out var requiredLength))
+        {
+            return false;
+        }
+
         if (source.Length < requiredLength)
         {
             return false;
         }
 
-        stride = checked(width * 4);
-        pixels = ConvertToPbgra32(source, width, height, sourceStride, format, palette);
-        return true;
+        try
+        {
+            stride = checked(width * 4);
+            pixels = ConvertToPbgra32(source, width, height, sourceStride, format, palette);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            pixels = Array.Empty<byte>();
+            stride = 0;
+            return false;
+        }
     }
 
     public static byte[] ConvertToPbgra32(

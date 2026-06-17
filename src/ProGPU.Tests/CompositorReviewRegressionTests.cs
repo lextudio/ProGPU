@@ -177,6 +177,69 @@ public sealed class CompositorReviewRegressionTests
     }
 
     [Fact]
+    public void RenderSceneEndsExtensionFrameWhenCompilationThrows()
+    {
+        using var window = new HeadlessWindow(32, 32);
+        var extension = new CountingExtension();
+        window.Compositor.RegisterExtension(9002, extension);
+        window.Content = new ThrowingVisual();
+
+        Assert.Throws<InvalidOperationException>(() => window.Render());
+        Assert.Equal(1, extension.BeginFrameCount);
+        Assert.Equal(1, extension.EndFrameCount);
+    }
+
+    [Fact]
+    public void RenderOffscreenEndsExtensionFrameWhenCompilationThrows()
+    {
+        using var window = new HeadlessWindow(32, 32);
+        using var target = new GpuTexture(
+            window.Context,
+            32,
+            32,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "RenderOffscreen Extension Frame Exception Test");
+        var extension = new CountingExtension();
+        window.Compositor.RegisterExtension(9003, extension);
+
+        Assert.Throws<InvalidOperationException>(() => window.Compositor.RenderOffscreen(
+            new ThrowingVisual(),
+            width: 32,
+            height: 32,
+            targetTexture: target,
+            padding: 0f,
+            dpiScale: 1f));
+        Assert.Equal(1, extension.BeginFrameCount);
+        Assert.Equal(1, extension.EndFrameCount);
+    }
+
+    [Fact]
+    public void RenderOffscreenAllocatesOpacityMaskTextureAtPhysicalSize()
+    {
+        using var window = new HeadlessWindow(32, 32);
+        using var target = new GpuTexture(
+            window.Context,
+            64,
+            64,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "RenderOffscreen Physical Mask Target");
+        var visual = new OpacityMaskedVisual();
+
+        window.Compositor.RenderOffscreen(
+            visual,
+            width: 32,
+            height: 32,
+            targetTexture: target,
+            padding: 0f,
+            dpiScale: 2f);
+
+        var maskTexturePool = GetMaskTexturePool(window.Compositor);
+        Assert.Contains(maskTexturePool, texture => texture.Width == 64 && texture.Height == 64);
+    }
+
+    [Fact]
     public void CachedTextureBindGroupsAreQueuedWhenSourceTextureIsDisposed()
     {
         using var window = new HeadlessWindow(16, 16);
@@ -245,6 +308,13 @@ public sealed class CompositorReviewRegressionTests
         var field = typeof(Compositor).GetField("_persistentTextureBindGroups", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
         return Assert.IsType<Dictionary<Compositor.TextureCacheKey, Compositor.CachedBindGroup>>(field.GetValue(compositor));
+    }
+
+    private static List<GpuTexture> GetMaskTexturePool(Compositor compositor)
+    {
+        var field = typeof(Compositor).GetField("_maskTexturePool", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsType<List<GpuTexture>>(field.GetValue(compositor));
     }
 
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)
@@ -562,6 +632,41 @@ public sealed class CompositorReviewRegressionTests
         public void EndFrame(Compositor compositor)
         {
             EndFrameCount++;
+        }
+    }
+
+    private sealed class ThrowingVisual : FrameworkElement
+    {
+        public ThrowingVisual()
+        {
+            Width = 32f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            throw new InvalidOperationException("Synthetic render failure.");
+        }
+    }
+
+    private sealed class OpacityMaskedVisual : FrameworkElement
+    {
+        public OpacityMaskedVisual()
+        {
+            Width = 32f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.PushOpacityMask(
+                new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)),
+                new Rect(0f, 0f, 32f, 32f));
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+                pen: null,
+                new Rect(0f, 0f, 32f, 32f));
+            context.PopOpacityMask();
         }
     }
 

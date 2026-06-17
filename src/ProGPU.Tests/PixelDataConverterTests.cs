@@ -162,6 +162,23 @@ public class PixelDataConverterTests
     }
 
     [Fact]
+    public void TryConvertToPbgra32ReturnsFalseWhenSourceByteLengthOverflows()
+    {
+        Assert.False(PixelDataConverter.TryConvertToPbgra32(
+            Array.Empty<byte>(),
+            width: 1,
+            height: int.MaxValue,
+            sourceStride: int.MaxValue,
+            PixelDataFormat.Pbgra32,
+            ReadOnlySpan<Pbgra32Color>.Empty,
+            out byte[] pixels,
+            out int stride));
+
+        Assert.Empty(pixels);
+        Assert.Equal(0, stride);
+    }
+
+    [Fact]
     public void PixelDataBufferConvertsToPbgra32UploadBuffer()
     {
         var source = new PixelDataBuffer(
