@@ -758,9 +758,9 @@ public class ProGpuHostControl : Control
         _wgpuContext.Wgpu.CommandEncoderRelease(encoder);
     }
 
-    private unsafe void CopyMappedToSharedTexture(SwapchainImage image, uint renderWidth, uint renderHeight)
+    private unsafe void CopyMappedToSharedTexture(WgpuContext context, SwapchainImage image, uint renderWidth, uint renderHeight)
     {
-        void* mappedPtr = _wgpuContext!.Wgpu.BufferGetConstMappedRange((GpuBuffer*)image.StagingBuffer, 0, (nuint)image.StagingBufferSize);
+        void* mappedPtr = context.Wgpu.BufferGetConstMappedRange((GpuBuffer*)image.StagingBuffer, 0, (nuint)image.StagingBufferSize);
         if (mappedPtr != null)
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -784,11 +784,11 @@ public class ProGpuHostControl : Control
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                GpuSharingInterop.COMHelper.CallGetImmediateContext(image.WinD3DDevice, out IntPtr context);
-                if (context != IntPtr.Zero)
+                GpuSharingInterop.COMHelper.CallGetImmediateContext(image.WinD3DDevice, out IntPtr d3dContext);
+                if (d3dContext != IntPtr.Zero)
                 {
                     GpuSharingInterop.COMHelper.CallUpdateSubresource(
-                        context,
+                        d3dContext,
                         image.WinTexture2D,
                         0,
                         IntPtr.Zero,
@@ -796,12 +796,45 @@ public class ProGpuHostControl : Control
                         image.BytesPerRow,
                         0
                     );
-                    GpuSharingInterop.COMHelper.CallRelease(context);
+                    GpuSharingInterop.COMHelper.CallRelease(d3dContext);
                 }
             }
 
-            _wgpuContext.Wgpu.BufferUnmap((GpuBuffer*)image.StagingBuffer);
+            context.Wgpu.BufferUnmap((GpuBuffer*)image.StagingBuffer);
         }
+    }
+
+    private unsafe void TryUnmapStagingBuffer(WgpuContext context, SwapchainImage image)
+    {
+        if (context.IsDisposed || image.StagingBuffer == IntPtr.Zero)
+        {
+            return;
+        }
+
+        context.Wgpu.BufferUnmap((GpuBuffer*)image.StagingBuffer);
+    }
+
+    private bool IsCurrentZeroCopyFrame(
+        SwapchainImage[] swapchainImages,
+        int imageIndex,
+        SwapchainImage image,
+        ICompositionImportedGpuImage importedImage,
+        CompositionDrawingSurface drawingSurface,
+        WgpuContext context)
+    {
+        return _isInitialized &&
+            _isZeroCopySupported &&
+            ReferenceEquals(_wgpuContext, context) &&
+            !context.IsDisposed &&
+            ReferenceEquals(_drawingSurface, drawingSurface) &&
+            ReferenceEquals(_swapchainImages, swapchainImages) &&
+            imageIndex >= 0 &&
+            imageIndex < swapchainImages.Length &&
+            _currentWriteImageIndex == imageIndex &&
+            ReferenceEquals(swapchainImages[imageIndex], image) &&
+            ReferenceEquals(image.ImportedImage, importedImage) &&
+            image.WgpuTexture is { IsDisposed: false } &&
+            image.StagingBuffer != IntPtr.Zero;
     }
 
     private async Task RenderFrameAsync()
@@ -828,10 +861,20 @@ public class ProGpuHostControl : Control
                 return;
             }
 
-            if (_swapchainImages != null)
+            if (_swapchainImages != null && _wgpuContext != null && _drawingSurface != null)
             {
-                var image = _swapchainImages[_currentWriteImageIndex];
-                if (image != null && image.ImportedImage != null && image.WgpuTexture != null)
+                var swapchainImages = _swapchainImages;
+                var imageIndex = _currentWriteImageIndex;
+                if (imageIndex < 0 || imageIndex >= swapchainImages.Length)
+                {
+                    return;
+                }
+
+                var image = swapchainImages[imageIndex];
+                var context = _wgpuContext;
+                var drawingSurface = _drawingSurface;
+                var importedImage = image?.ImportedImage;
+                if (image != null && importedImage != null && image.WgpuTexture != null)
                 {
                     // Render directly to WebGPU offscreen target
                     float logicalWidth = (float)(renderWidth / dpi);
@@ -852,11 +895,27 @@ public class ProGpuHostControl : Control
                     // Asynchronously map buffer - non-blocking!
                     await MapBufferAsync(image.StagingBuffer, MapMode.Read, (nuint)image.StagingBufferSize);
 
+                    if (!IsCurrentZeroCopyFrame(swapchainImages, imageIndex, image, importedImage, drawingSurface, context))
+                    {
+                        TryUnmapStagingBuffer(context, image);
+                        return;
+                    }
+
                     // Copy staging buffer to shared texture and unmap
-                    CopyMappedToSharedTexture(image, renderWidth, renderHeight);
+                    CopyMappedToSharedTexture(context, image, renderWidth, renderHeight);
+
+                    if (!IsCurrentZeroCopyFrame(swapchainImages, imageIndex, image, importedImage, drawingSurface, context))
+                    {
+                        return;
+                    }
 
                     // Asynchronously update drawing surface directly from imported GPU image
-                    await _drawingSurface.UpdateAsync(image.ImportedImage);
+                    await drawingSurface.UpdateAsync(importedImage);
+
+                    if (!IsCurrentZeroCopyFrame(swapchainImages, imageIndex, image, importedImage, drawingSurface, context))
+                    {
+                        return;
+                    }
 
                     // Swap the write buffer index
                     _currentWriteImageIndex = (_currentWriteImageIndex + 1) % 2;

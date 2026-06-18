@@ -1,5 +1,7 @@
 using System.Reflection;
+using Avalonia.Rendering.Composition;
 using ProGPU.Avalonia;
+using ProGPU.Backend;
 using Xunit;
 
 namespace ProGPU.Tests;
@@ -28,5 +30,44 @@ public class ProGpuHostControlTests
         Assert.Equal(typeof(bool), resizeMethod.ReturnType);
         Assert.NotNull(fallbackMethod);
         Assert.Equal(typeof(bool), fallbackMethod.ReturnType);
+    }
+
+    [Fact]
+    public void HostControlRechecksZeroCopyFrameAfterAsyncMap()
+    {
+        var guardMethod = typeof(ProGpuHostControl).GetMethod(
+            "IsCurrentZeroCopyFrame",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var unmapMethod = typeof(ProGpuHostControl).GetMethod(
+            "TryUnmapStagingBuffer",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var copyMethod = typeof(ProGpuHostControl).GetMethod(
+            "CopyMappedToSharedTexture",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(guardMethod);
+        Assert.Equal(typeof(bool), guardMethod.ReturnType);
+
+        var guardParameters = guardMethod.GetParameters();
+        Assert.Equal(6, guardParameters.Length);
+        Assert.Equal("swapchainImages", guardParameters[0].Name);
+        Assert.Equal("imageIndex", guardParameters[1].Name);
+        Assert.Equal("image", guardParameters[2].Name);
+        Assert.Equal("importedImage", guardParameters[3].Name);
+        Assert.Equal(typeof(ICompositionImportedGpuImage), guardParameters[3].ParameterType);
+        Assert.Equal("drawingSurface", guardParameters[4].Name);
+        Assert.Equal(typeof(CompositionDrawingSurface), guardParameters[4].ParameterType);
+        Assert.Equal("context", guardParameters[5].Name);
+        Assert.Equal(typeof(WgpuContext), guardParameters[5].ParameterType);
+
+        Assert.NotNull(unmapMethod);
+        var unmapParameters = unmapMethod.GetParameters();
+        Assert.Equal(2, unmapParameters.Length);
+        Assert.Equal(typeof(WgpuContext), unmapParameters[0].ParameterType);
+
+        Assert.NotNull(copyMethod);
+        var copyParameters = copyMethod.GetParameters();
+        Assert.Equal(4, copyParameters.Length);
+        Assert.Equal(typeof(WgpuContext), copyParameters[0].ParameterType);
     }
 }
