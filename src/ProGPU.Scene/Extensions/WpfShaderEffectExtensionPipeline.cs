@@ -12,6 +12,9 @@ namespace ProGPU.Scene.Extensions;
 
 public sealed unsafe class WpfShaderEffectExtensionPipeline : ICompositorExtension, IDisposable
 {
+    private const string MaskSamplerLimitError =
+        "WPF shader effects that use all 16 sampler registers cannot also bind an active mask on this WebGPU device.";
+
     private const string VertexAndHeaderShaderPrefix = @"
 struct VSUniforms {
     projection: mat4x4<f32>,
@@ -494,9 +497,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         var sourceLayout = GetOrCreateSourceLayout(compositor, activeRegisters);
         if (dc.MaskTexture != null && !sourceLayout.IncludeMask)
         {
-            p.IsFailed = true;
-            p.LastError = "WPF shader effects that use all 16 sampler registers cannot also bind an active mask on this WebGPU device.";
+            p.LastError = MaskSamplerLimitError;
             return;
+        }
+
+        if (string.Equals(p.LastError, MaskSamplerLimitError, StringComparison.Ordinal))
+        {
+            p.LastError = null;
         }
 
         var sourceAlphaMode = primaryTexture.AlphaMode;

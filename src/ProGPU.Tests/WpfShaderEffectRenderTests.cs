@@ -237,17 +237,31 @@ fn wpf_effect_main(uv: vec2<f32>, inputColor: vec4<f32>) -> vec4<f32> {
 
             if (!canBindMaskedAllRegisters)
             {
-                Assert.True(masked.IsFailed);
+                Assert.False(masked.IsFailed, masked.LastError);
                 Assert.Contains("cannot also bind an active mask", masked.LastError);
-                return;
+            }
+            else
+            {
+                Assert.False(masked.IsFailed, masked.LastError);
+                var maskedPixels = window.ReadPixels();
+                var hidden = ReadPixel(maskedPixels, window.Width, x: 110, y: 45);
+                var background = ReadPixel(maskedPixels, window.Width, x: 10, y: 10);
+
+                AssertColorNear(background, hidden, tolerance: 12);
             }
 
-            Assert.False(masked.IsFailed, masked.LastError);
-            var pixels = window.ReadPixels();
-            var hidden = ReadPixel(pixels, window.Width, x: 110, y: 45);
-            var background = ReadPixel(pixels, window.Width, x: 10, y: 10);
+            window.Content = new ShaderEffectVisual(masked);
+            window.Render();
 
-            AssertColorNear(background, hidden, tolerance: 12);
+            Assert.False(masked.IsFailed, masked.LastError);
+            Assert.Null(masked.LastError);
+
+            var unmaskedPixels = window.ReadPixels();
+            var visible = ReadPixel(unmaskedPixels, window.Width, x: 110, y: 45);
+            Assert.True(visible.R <= 35, $"Expected recovered unmasked shader effect to keep red low, found {visible}.");
+            Assert.True(visible.G >= 180, $"Expected recovered unmasked shader effect to render green, found {visible}.");
+            Assert.True(visible.B >= 45 && visible.B <= 90, $"Expected recovered unmasked shader effect to render blue, found {visible}.");
+            Assert.Equal(255, visible.A);
         }
         finally
         {
