@@ -206,11 +206,21 @@ public sealed class PathShimCompatibilityTests
     {
         var evenOdd = WpfPathGeometry.Parse("F0 M 0 0 L 10 0 L 10 10 Z");
         var nonzero = WpfPathGeometry.Parse("F1 M 0 0 L 10 0 L 10 10 Z");
+        var spacedEvenOdd = WpfPathGeometry.Parse("F 0 M 0 0 L 10 0 L 10 10 Z");
+        var spacedNonzero = WpfPathGeometry.Parse("F,1 M 0 0 L 10 0 L 10 10 Z");
+        var vectorEvenOdd = ProGPU.Vector.PathGeometry.Parse("F0 M 0 0 L 10 0 L 10 10 Z");
+        var vectorNonzero = ProGPU.Vector.PathGeometry.Parse("F 1 M 0 0 L 10 0 L 10 10 Z");
 
         Assert.Equal(WpfFillRule.EvenOdd, evenOdd.FillRule);
         Assert.Equal(WpfFillRule.Nonzero, nonzero.FillRule);
+        Assert.Equal(WpfFillRule.EvenOdd, spacedEvenOdd.FillRule);
+        Assert.Equal(WpfFillRule.Nonzero, spacedNonzero.FillRule);
         Assert.Single(evenOdd.Figures);
         Assert.Single(nonzero.Figures);
+        Assert.Equal(FillRule.EvenOdd, vectorEvenOdd.FillRule);
+        Assert.Equal(FillRule.Nonzero, vectorNonzero.FillRule);
+        Assert.Single(vectorEvenOdd.Figures);
+        Assert.Single(vectorNonzero.Figures);
     }
 
     [Fact]

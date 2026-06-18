@@ -449,6 +449,14 @@ public class PathGeometry
 
             switch (cmdUpper)
             {
+                case 'F': // WPF path fill rule prefix: F0/F1 or F 0/F 1
+                    {
+                        var fillRuleValue = ReadFloat(tokens, ref index);
+                        geometry.FillRule = fillRuleValue == 0f ? FillRule.EvenOdd : FillRule.Nonzero;
+                        lastCommand = '\0';
+                    }
+                    break;
+
                 case 'M': // MoveTo
                     {
                         var pt = ReadVector2(tokens, ref index);

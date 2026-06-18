@@ -220,18 +220,30 @@ public class PathGeometry : Geometry
         fillRule = default;
         geometryData = pathData;
 
-        if (pathData.Length < 2 || (pathData[0] != 'F' && pathData[0] != 'f') || (pathData[1] != '0' && pathData[1] != '1'))
+        if (pathData.Length < 2 || (pathData[0] != 'F' && pathData[0] != 'f'))
         {
             return false;
         }
 
-        if (pathData.Length > 2 && !char.IsWhiteSpace(pathData[2]) && pathData[2] != ',')
+        var ruleIndex = 1;
+        while (ruleIndex < pathData.Length && (char.IsWhiteSpace(pathData[ruleIndex]) || pathData[ruleIndex] == ','))
+        {
+            ruleIndex++;
+        }
+
+        if (ruleIndex >= pathData.Length || (pathData[ruleIndex] != '0' && pathData[ruleIndex] != '1'))
         {
             return false;
         }
 
-        fillRule = pathData[1] == '1' ? FillRule.Nonzero : FillRule.EvenOdd;
-        geometryData = pathData[2..].TrimStart(' ', '\t', '\r', '\n', ',');
+        var afterRuleIndex = ruleIndex + 1;
+        if (pathData.Length > afterRuleIndex && !char.IsWhiteSpace(pathData[afterRuleIndex]) && pathData[afterRuleIndex] != ',')
+        {
+            return false;
+        }
+
+        fillRule = pathData[ruleIndex] == '1' ? FillRule.Nonzero : FillRule.EvenOdd;
+        geometryData = pathData[afterRuleIndex..].TrimStart(' ', '\t', '\r', '\n', ',');
         return true;
     }
 
