@@ -97,22 +97,22 @@ namespace ProGPU.Backend
 
             if (LineBindGroup != 0)
             {
-                context.Wgpu.BindGroupRelease((BindGroup*)LineBindGroup);
+                context.QueueBindGroupDisposal((IntPtr)LineBindGroup);
                 LineBindGroup = 0;
             }
             if (ScatterBindGroup != 0)
             {
-                context.Wgpu.BindGroupRelease((BindGroup*)ScatterBindGroup);
+                context.QueueBindGroupDisposal((IntPtr)ScatterBindGroup);
                 ScatterBindGroup = 0;
             }
             if (LineBindGroupOffscreen != 0)
             {
-                context.Wgpu.BindGroupRelease((BindGroup*)LineBindGroupOffscreen);
+                context.QueueBindGroupDisposal((IntPtr)LineBindGroupOffscreen);
                 LineBindGroupOffscreen = 0;
             }
             if (ScatterBindGroupOffscreen != 0)
             {
-                context.Wgpu.BindGroupRelease((BindGroup*)ScatterBindGroupOffscreen);
+                context.QueueBindGroupDisposal((IntPtr)ScatterBindGroupOffscreen);
                 ScatterBindGroupOffscreen = 0;
             }
         }

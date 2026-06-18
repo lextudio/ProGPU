@@ -272,6 +272,58 @@ public sealed class CompositorReviewRegressionTests
         window.Context.CleanupPendingResources();
     }
 
+    [Fact]
+    public void GpuSeriesBufferReleaseBindGroupsQueuesCachedChartBindGroups()
+    {
+        using var window = new HeadlessWindow(16, 16);
+        var previous = WgpuContext.Current;
+        WgpuContext.Current = window.Context;
+
+        using var seriesBuffer = new GpuSeriesBuffer();
+        var lineBindGroup = (nint)0x1010;
+        var scatterBindGroup = (nint)0x2020;
+        var lineOffscreenBindGroup = (nint)0x3030;
+        var scatterOffscreenBindGroup = (nint)0x4040;
+
+        try
+        {
+            seriesBuffer.Upload(Array.Empty<float>(), pointsCount: 0);
+            seriesBuffer.LineBindGroup = lineBindGroup;
+            seriesBuffer.ScatterBindGroup = scatterBindGroup;
+            seriesBuffer.LineBindGroupOffscreen = lineOffscreenBindGroup;
+            seriesBuffer.ScatterBindGroupOffscreen = scatterOffscreenBindGroup;
+
+            Assert.Empty(window.Context.PendingBindGroups);
+
+            seriesBuffer.ReleaseBindGroups();
+
+            Assert.Equal(0, seriesBuffer.LineBindGroup);
+            Assert.Equal(0, seriesBuffer.ScatterBindGroup);
+            Assert.Equal(0, seriesBuffer.LineBindGroupOffscreen);
+            Assert.Equal(0, seriesBuffer.ScatterBindGroupOffscreen);
+
+            lock (window.Context.DisposalLock)
+            {
+                Assert.Contains((IntPtr)lineBindGroup, window.Context.PendingBindGroups);
+                Assert.Contains((IntPtr)scatterBindGroup, window.Context.PendingBindGroups);
+                Assert.Contains((IntPtr)lineOffscreenBindGroup, window.Context.PendingBindGroups);
+                Assert.Contains((IntPtr)scatterOffscreenBindGroup, window.Context.PendingBindGroups);
+            }
+        }
+        finally
+        {
+            lock (window.Context.DisposalLock)
+            {
+                window.Context.PendingBindGroups.RemoveAll(ptr =>
+                    ptr == (IntPtr)lineBindGroup ||
+                    ptr == (IntPtr)scatterBindGroup ||
+                    ptr == (IntPtr)lineOffscreenBindGroup ||
+                    ptr == (IntPtr)scatterOffscreenBindGroup);
+            }
+            WgpuContext.Current = previous;
+        }
+    }
+
     private static void AssertMixedColorGlyphDrawCalls(Compositor compositor)
     {
         Compositor.CompositorDrawCall[] drawCalls = GetDrawCalls(compositor);
