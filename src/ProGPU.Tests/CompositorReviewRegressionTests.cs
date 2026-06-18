@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Reflection;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Tests.Headless;
@@ -166,6 +167,108 @@ public sealed class CompositorReviewRegressionTests
         Assert.Equal(126u, visual.LayerTexture.Width);
         Assert.Equal(26u, visual.LayerTexture.Height);
         Assert.False(visual.IsDirty);
+    }
+
+    [Fact]
+    public void CachedLayerRecreatesTextureForCurrentWebGpuContext()
+    {
+        using var firstWindow = new HeadlessWindow(64, 64);
+        using var secondWindow = new HeadlessWindow(64, 64);
+        using var firstTarget = new GpuTexture(
+            firstWindow.Context,
+            32,
+            16,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "First Context Layer Target");
+        using var secondTarget = new GpuTexture(
+            secondWindow.Context,
+            32,
+            16,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "Second Context Layer Target");
+        var visual = new CachedLayerResizeVisual();
+
+        firstWindow.Compositor.RenderOffscreen(
+            visual,
+            width: 32,
+            height: 16,
+            targetTexture: firstTarget,
+            padding: 0f,
+            dpiScale: 1f);
+
+        GpuTexture? firstLayer = visual.LayerTexture;
+        Assert.NotNull(firstLayer);
+        Assert.Same(firstWindow.Context, firstLayer.Context);
+        Assert.False(firstLayer.IsDisposed);
+
+        secondWindow.Compositor.RenderOffscreen(
+            visual,
+            width: 32,
+            height: 16,
+            targetTexture: secondTarget,
+            padding: 0f,
+            dpiScale: 1f);
+
+        GpuTexture? secondLayer = visual.LayerTexture;
+        Assert.NotNull(secondLayer);
+        Assert.NotSame(firstLayer, secondLayer);
+        Assert.Same(secondWindow.Context, secondLayer.Context);
+        Assert.True(firstLayer.IsDisposed);
+        Assert.False(secondLayer.IsDisposed);
+    }
+
+    [Fact]
+    public void CachedLayerTextureIsReleasedWhenVisualLeavesActiveTree()
+    {
+        using var window = new HeadlessWindow(64, 64);
+        var root = new StackPanel
+        {
+            Width = 64f,
+            Height = 64f
+        };
+        var visual = new CachedLayerResizeVisual();
+        root.AddChild(visual);
+        window.Content = root;
+
+        window.Render();
+
+        GpuTexture? layer = visual.LayerTexture;
+        Assert.NotNull(layer);
+        Assert.False(layer.IsDisposed);
+
+        root.RemoveChild(visual);
+        window.Render();
+
+        Assert.True(layer.IsDisposed);
+        Assert.Null(visual.LayerTexture);
+    }
+
+    [Fact]
+    public void CachedLayerTextureIsReleasedWhenCacheAsLayerIsDisabled()
+    {
+        using var window = new HeadlessWindow(64, 64);
+        var root = new StackPanel
+        {
+            Width = 64f,
+            Height = 64f
+        };
+        var visual = new CachedLayerResizeVisual();
+        root.AddChild(visual);
+        window.Content = root;
+
+        window.Render();
+
+        GpuTexture? layer = visual.LayerTexture;
+        Assert.NotNull(layer);
+        Assert.False(layer.IsDisposed);
+
+        visual.CacheAsLayer = false;
+        window.Render();
+
+        Assert.True(layer.IsDisposed);
+        Assert.Null(visual.LayerTexture);
     }
 
     [Fact]

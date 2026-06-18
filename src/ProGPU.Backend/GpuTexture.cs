@@ -33,6 +33,7 @@ public unsafe class GpuTexture : IDisposable
     public GpuTextureAlphaMode AlphaMode { get; set; }
 
     private bool _isDisposed;
+    public bool IsDisposed => _isDisposed;
 
     public GpuTexture(
         WgpuContext context,

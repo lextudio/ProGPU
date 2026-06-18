@@ -519,7 +519,8 @@ public unsafe class Compositor : IDisposable
     private readonly Dictionary<Visual, WpfShaderEffectParams> _wpfShaderEffectDrawParams = new();
     private readonly HashSet<Visual> _elementsRenderingEffects = new();
     private readonly HashSet<Visual> _elementsRenderingLayers = new();
-    private readonly HashSet<GpuTexture> _allocatedLayerTextures = new();
+    private readonly Dictionary<Visual, GpuTexture> _allocatedLayerTextures = new();
+    private readonly HashSet<Visual> _activeLayerTextureOwners = new();
 
     private bool _isDisposed;
     public bool IsDisposed => _isDisposed;
@@ -1162,6 +1163,7 @@ public unsafe class Compositor : IDisposable
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var compileSw = System.Diagnostics.Stopwatch.StartNew();
         _pathAtlas.CleanupFrame();
+        _activeLayerTextureOwners.Clear();
 
         if (_atlas.IsAlmostFull)
         {
@@ -1748,7 +1750,9 @@ public unsafe class Compositor : IDisposable
         _frameNumber++;
         _totalTime += 1f / 60f;
         EvictUnusedBindGroups();
+        SweepUnusedLayerTextures(root, externalLayers, activeToolTip);
         SweepUnusedEffectTextures(root, externalLayers, activeToolTip);
+        _activeLayerTextureOwners.Clear();
 
         passSw.Stop();
         totalSw.Stop();
@@ -1910,6 +1914,61 @@ public unsafe class Compositor : IDisposable
                 }
             }
         }
+    }
+
+    private void SweepUnusedLayerTextures(Visual mainRoot, IReadOnlyList<Visual>? externalLayers, Visual? activeToolTip)
+    {
+        if (_allocatedLayerTextures.Count == 0)
+        {
+            return;
+        }
+
+        List<Visual>? stale = null;
+        foreach (var entry in _allocatedLayerTextures)
+        {
+            var owner = entry.Key;
+            var texture = entry.Value;
+            if (texture.IsDisposed
+                || !ReferenceEquals(owner.LayerTexture, texture)
+                || !_activeLayerTextureOwners.Contains(owner)
+                || !owner.IsVisible
+                || !owner.CacheAsLayer
+                || !IsCacheAsLayerEnabled
+                || !IsAttachedToAnyActiveRoot(owner, mainRoot, externalLayers, activeToolTip))
+            {
+                stale ??= new List<Visual>();
+                stale.Add(owner);
+            }
+        }
+
+        if (stale == null)
+        {
+            return;
+        }
+
+        foreach (var owner in stale)
+        {
+            if (_allocatedLayerTextures.TryGetValue(owner, out var texture))
+            {
+                ReleaseLayerTexture(owner, texture);
+            }
+        }
+    }
+
+    private void ReleaseLayerTexture(Visual owner, GpuTexture texture)
+    {
+        if (_allocatedLayerTextures.TryGetValue(owner, out var allocated)
+            && ReferenceEquals(allocated, texture))
+        {
+            _allocatedLayerTextures.Remove(owner);
+        }
+
+        if (ReferenceEquals(owner.LayerTexture, texture))
+        {
+            owner.LayerTexture = null;
+        }
+
+        texture.Dispose();
     }
 
     private void PushClipRect(Rect localClip, Matrix4x4 transform)
@@ -5337,11 +5396,17 @@ public unsafe class Compositor : IDisposable
             }
             _effectTextures.Clear();
 
-            foreach (var tex in _allocatedLayerTextures)
+            foreach (var entry in _allocatedLayerTextures)
             {
-                tex.Dispose();
+                if (ReferenceEquals(entry.Key.LayerTexture, entry.Value))
+                {
+                    entry.Key.LayerTexture = null;
+                }
+
+                entry.Value.Dispose();
             }
             _allocatedLayerTextures.Clear();
+            _activeLayerTextureOwners.Clear();
 
             if (!_context.IsDisposed)
             {
@@ -5703,6 +5768,14 @@ public unsafe class Compositor : IDisposable
         uint w = (uint)MathF.Max(1f, MathF.Ceiling(node.Size.X * dpiScale));
         uint h = (uint)MathF.Max(1f, MathF.Ceiling(node.Size.Y * dpiScale));
 
+        if (node.LayerTexture != null
+            && (node.LayerTexture.IsDisposed || !ReferenceEquals(node.LayerTexture.Context, _context)))
+        {
+            ReleaseLayerTexture(node, node.LayerTexture);
+        }
+
+        _activeLayerTextureOwners.Add(node);
+
         bool hasCached = node.LayerTexture != null;
         bool cachedTextureSizeChanged = hasCached
             && (node.LayerTexture!.Width != w || node.LayerTexture.Height != h);
@@ -5713,11 +5786,12 @@ public unsafe class Compositor : IDisposable
             if (node.LayerTexture == null)
             {
                 node.LayerTexture = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Layer Cache Texture", alphaMode: GpuTextureAlphaMode.Premultiplied);
-                _allocatedLayerTextures.Add(node.LayerTexture);
+                _allocatedLayerTextures[node] = node.LayerTexture;
             }
             else if (node.LayerTexture.Width != w || node.LayerTexture.Height != h)
             {
                 node.LayerTexture.Resize(w, h);
+                _allocatedLayerTextures[node] = node.LayerTexture;
             }
 
             _elementsRenderingLayers.Add(node);
