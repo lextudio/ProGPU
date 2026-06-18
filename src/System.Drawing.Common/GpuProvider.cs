@@ -13,9 +13,14 @@ internal static class GpuProvider
     {
         get
         {
-            if (WgpuContext.ActiveContexts.Count > 0)
+            var current = WgpuContext.Current;
+            if (current != null && !current.IsDisposed)
             {
-                var active = WgpuContext.ActiveContexts[0];
+                return current;
+            }
+
+            foreach (var active in WgpuContext.ActiveContexts)
+            {
                 if (!active.IsDisposed)
                 {
                     return active;

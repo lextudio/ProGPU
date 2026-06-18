@@ -708,14 +708,16 @@ public class SKCanvas : IDisposable
     public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint paint)
     {
         paint?.ThrowIfImageColorFilter();
-        var pushedBlendMode = PushPaintBlendMode(paint);
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
         var retainedTexture = RetainImageTexture(image);
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        var pushedOpacity = false;
         try
         {
             if (opacity < 1f)
             {
                 _context.PushOpacity(opacity);
+                pushedOpacity = true;
             }
 
             _context.Commands.Add(new RenderCommand
@@ -727,13 +729,14 @@ public class SKCanvas : IDisposable
                 Transform = _currentMatrix.ToMatrix4x4()
             });
 
-            if (opacity < 1f)
-            {
-                _context.PopOpacity();
-            }
         }
         finally
         {
+            if (pushedOpacity)
+            {
+                _context.PopOpacity();
+            }
+
             PopPaintBlendMode(pushedBlendMode);
         }
     }

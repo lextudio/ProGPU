@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Reflection;
+using GdiBitmap = System.Drawing.Bitmap;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using ProGPU.Backend;
@@ -10,12 +11,49 @@ using ProGPU.Tests.Headless;
 using ProGPU.Text;
 using ProGPU.Vector;
 using Silk.NET.WebGPU;
+using WpfPixelFormats = System.Windows.Media.Imaging.PixelFormats;
+using WpfWriteableBitmap = System.Windows.Media.Imaging.WriteableBitmap;
 using Xunit;
 
 namespace ProGPU.Tests;
 
 public sealed class CompositorReviewRegressionTests
 {
+    [Fact]
+    public void ShimGpuProvidersPreferCurrentContextOverFirstActiveContext()
+    {
+        var previous = WgpuContext.Current;
+        using var firstActiveContext = new WgpuContext();
+        firstActiveContext.Initialize(null);
+        using var currentContext = new WgpuContext();
+        currentContext.Initialize(null);
+        WpfWriteableBitmap? wpfBitmap = null;
+
+        try
+        {
+            WgpuContext.Current = currentContext;
+
+            using var gdiBitmap = new GdiBitmap(1, 1);
+            wpfBitmap = new WpfWriteableBitmap(
+                1,
+                1,
+                96d,
+                96d,
+                WpfPixelFormats.Pbgra32,
+                palette: null);
+
+            Assert.Same(currentContext, gdiBitmap.GpuTexture.Context);
+            Assert.Same(currentContext, wpfBitmap.GpuTexture.Context);
+            Assert.NotSame(firstActiveContext, gdiBitmap.GpuTexture.Context);
+            Assert.NotSame(firstActiveContext, wpfBitmap.GpuTexture.Context);
+        }
+        finally
+        {
+            wpfBitmap?.GpuTexture.Dispose();
+            WgpuContext.Current = previous;
+        }
+    }
+
     [Fact]
     public void DrawGlyphRunFlushesActualTextCountBeforeColorLayerPaths()
     {

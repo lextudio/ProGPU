@@ -769,6 +769,37 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void DrawImageDoesNotLeakBlendModeWhenImageRetentionFails()
+    {
+        using var sourceContext = new WgpuContext();
+        sourceContext.Initialize(null);
+        using var targetContext = new WgpuContext();
+        targetContext.Initialize(null);
+        using var sourceTexture = new GpuTexture(
+            sourceContext,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
+            "Cross-context SKImage blend failure source");
+        using var image = SKImage.FromTexture(sourceTexture);
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 16f, 16f, targetContext);
+        using var paint = new SKPaint { BlendMode = SKBlendMode.Multiply };
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            canvas.DrawImage(
+                image,
+                new SKRect(0f, 0f, 1f, 1f),
+                new SKRect(0f, 0f, 1f, 1f),
+                paint));
+
+        Assert.Contains("different WebGPU context", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(context.Commands);
+        Assert.Equal(0, context.RetainedResourceCount);
+    }
+
+    [Fact]
     public void TranslateAppliesFullLinearMatrix()
     {
         var context = new DrawingContext();
