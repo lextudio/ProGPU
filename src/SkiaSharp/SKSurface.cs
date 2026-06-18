@@ -121,6 +121,8 @@ public class SKSurface : IDisposable
 
     public static SKSurface Create(SKImageInfo info, SKSurfaceProperties properties)
     {
+        ValidateImageInfoDimensions(info, nameof(info));
+
         var ctx = SKContextHelper.GetContext();
         var texture = new GpuTexture(
             ctx,
@@ -141,6 +143,8 @@ public class SKSurface : IDisposable
 
     public static SKSurface Create(SKImageInfo info, IntPtr pixels, int rowBytes, SKSurfaceProperties properties)
     {
+        ValidateImageInfoDimensions(info, nameof(info));
+
         int actualRowBytes = pixels != IntPtr.Zero ? ResolveCpuSurfaceRowBytes(info.Width, info.Height, rowBytes, nameof(rowBytes)) : rowBytes;
         var ctx = SKContextHelper.GetContext();
         var texture = new GpuTexture(
@@ -203,6 +207,9 @@ public class SKSurface : IDisposable
 
     public static SKSurface Create(GRContext grContext, bool useMips, SKImageInfo imageInfo, SKSurfaceProperties properties)
     {
+        ArgumentNullException.ThrowIfNull(grContext);
+        ValidateImageInfoDimensions(imageInfo, nameof(imageInfo));
+
         var texture = new GpuTexture(
             grContext.Context,
             (uint)imageInfo.Width,
@@ -282,6 +289,19 @@ public class SKSurface : IDisposable
         }
 
         return actualRowBytes;
+    }
+
+    private static void ValidateImageInfoDimensions(SKImageInfo info, string parameterName)
+    {
+        if (info.Width <= 0)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, info.Width, "SKImageInfo width must be positive.");
+        }
+
+        if (info.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, info.Height, "SKImageInfo height must be positive.");
+        }
     }
 
     public unsafe SKImage Snapshot()

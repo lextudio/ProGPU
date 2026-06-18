@@ -87,6 +87,16 @@ namespace System.Windows.Media.Imaging
 
         public WriteableBitmap(int pixelWidth, int pixelHeight, double dpiX, double dpiY, PixelFormat pixelFormat, BitmapPalette? palette)
         {
+            if (pixelWidth <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pixelWidth), pixelWidth, "WriteableBitmap pixel width must be positive.");
+            }
+
+            if (pixelHeight <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pixelHeight), pixelHeight, "WriteableBitmap pixel height must be positive.");
+            }
+
             _pixelFormat = pixelFormat;
             _texture = new GpuTexture(
                 GpuProvider.Context,

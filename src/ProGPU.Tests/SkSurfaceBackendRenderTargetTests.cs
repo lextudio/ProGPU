@@ -148,6 +148,35 @@ public sealed class SkSurfaceBackendRenderTargetTests
         AssertPixel(pixels, 8, 6, 1, 0, 0, 255, 255);
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(1, 0)]
+    [InlineData(1, -1)]
+    public void CreateRejectsInvalidImageInfoDimensions(int width, int height)
+    {
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => SKSurface.Create(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul)));
+
+        Assert.Equal("info", exception.ParamName);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(1, 0)]
+    [InlineData(1, -1)]
+    public void CpuBackedCreateRejectsInvalidImageInfoDimensions(int width, int height)
+    {
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => SKSurface.Create(
+                new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul),
+                IntPtr.Zero,
+                rowBytes: 0));
+
+        Assert.Equal("info", exception.ParamName);
+    }
+
     [Fact]
     public void CreateFromUnsupportedNativeBackendRenderTargetFailsExplicitly()
     {

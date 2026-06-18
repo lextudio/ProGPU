@@ -16,6 +16,19 @@ public class WriteableBitmapTests
         Assert.Equal("Pbgra32", PixelFormats.Pbgra32.ToString());
     }
 
+    [Theory]
+    [InlineData(0, 1, "pixelWidth")]
+    [InlineData(-1, 1, "pixelWidth")]
+    [InlineData(1, 0, "pixelHeight")]
+    [InlineData(1, -1, "pixelHeight")]
+    public void ConstructorRejectsNonPositiveDimensions(int pixelWidth, int pixelHeight, string parameterName)
+    {
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => new WriteableBitmap(pixelWidth, pixelHeight, 96.0, 96.0, PixelFormats.Pbgra32, null));
+
+        Assert.Equal(parameterName, exception.ParamName);
+    }
+
     [Fact]
     public void WritePixelsUploadBufferKeepsPbgraStrideForPaddedRows()
     {
