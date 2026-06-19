@@ -330,6 +330,9 @@ public unsafe class Compositor : IDisposable
     private Matrix4x4 _cameraViewMatrix;
     private bool _hasGpuTransformsInFrame;
     private Matrix4x4 _gpuTransformsCameraView;
+    private uint? _explicitRenderTargetWidth;
+    private uint? _explicitRenderTargetHeight;
+    private float? _explicitDpiScale;
 
     // Sampler & Texture Bind Group for Typography
     private Sampler* _atlasSampler;
@@ -1145,6 +1148,34 @@ public unsafe class Compositor : IDisposable
         _dummyMaskBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDescMaskOffscreen);
     }
 
+    public void RenderScene(
+        Visual root,
+        uint logicalWidth,
+        uint logicalHeight,
+        uint renderTargetWidth,
+        uint renderTargetHeight,
+        float dpiScale,
+        TextureView* targetView)
+    {
+        var previousRenderTargetWidth = _explicitRenderTargetWidth;
+        var previousRenderTargetHeight = _explicitRenderTargetHeight;
+        var previousDpiScale = _explicitDpiScale;
+        _explicitRenderTargetWidth = Math.Max(1, renderTargetWidth);
+        _explicitRenderTargetHeight = Math.Max(1, renderTargetHeight);
+        _explicitDpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
+
+        try
+        {
+            RenderScene(root, logicalWidth, logicalHeight, targetView);
+        }
+        finally
+        {
+            _explicitRenderTargetWidth = previousRenderTargetWidth;
+            _explicitRenderTargetHeight = previousRenderTargetHeight;
+            _explicitDpiScale = previousDpiScale;
+        }
+    }
+
     public void RenderScene(Visual root, uint width, uint height, TextureView* targetView)
     {
         if (_isDisposed) return;
@@ -1155,8 +1186,11 @@ public unsafe class Compositor : IDisposable
         
         _currentWidth = width;
         _currentHeight = height;
-        _currentDpiScale = 1.0f;
-        if (_context.Window != null && width == (uint)_context.Window.Size.X && height == (uint)_context.Window.Size.Y)
+        _currentDpiScale = _explicitDpiScale ?? 1.0f;
+        if (!_explicitDpiScale.HasValue &&
+            _context.Window != null &&
+            width == (uint)_context.Window.Size.X &&
+            height == (uint)_context.Window.Size.Y)
         {
             _currentDpiScale = (float)_context.Window.FramebufferSize.X / _context.Window.Size.X;
         }
@@ -1467,9 +1501,12 @@ public unsafe class Compositor : IDisposable
         }
 
         // Determine physical render target size for MSAA matching the physical FramebufferSize.
-        uint renderWidth = width;
-        uint renderHeight = height;
-        if (_context.Window != null && width == (uint)_context.Window.Size.X && height == (uint)_context.Window.Size.Y)
+        uint renderWidth = _explicitRenderTargetWidth ?? width;
+        uint renderHeight = _explicitRenderTargetHeight ?? height;
+        if (!_explicitRenderTargetWidth.HasValue &&
+            _context.Window != null &&
+            width == (uint)_context.Window.Size.X &&
+            height == (uint)_context.Window.Size.Y)
         {
             renderWidth = (uint)_context.Window.FramebufferSize.X;
             renderHeight = (uint)_context.Window.FramebufferSize.Y;
