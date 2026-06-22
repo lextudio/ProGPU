@@ -12,6 +12,20 @@ namespace ProGPU.Tests;
 public sealed class WpfPenShimTests
 {
     [Fact]
+    public void PresentationCorePenDefaultConstructorUsesWpfThickness()
+    {
+        var pen = new WpfPen
+        {
+            Brush = WpfBrushes.Black
+        };
+
+        var nativePen = pen.ToNative();
+        Assert.NotNull(nativePen);
+
+        Assert.Equal(1, nativePen!.Thickness);
+    }
+
+    [Fact]
     public void PresentationCorePenToNativePreservesDashAndLineMetadata()
     {
         var pen = new WpfPen(WpfBrushes.Black, 2)

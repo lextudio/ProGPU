@@ -42,7 +42,7 @@ public class DashStyle
 public class Pen
 {
     public Brush? Brush { get; set; }
-    public double Thickness { get; set; }
+    public double Thickness { get; set; } = 1.0;
     public PenLineJoin LineJoin { get; set; } = PenLineJoin.Miter;
     public double MiterLimit { get; set; } = 10.0;
     public PenLineCap StartLineCap { get; set; } = PenLineCap.Flat;
