@@ -181,9 +181,11 @@ public class SKImage : IDisposable
             throw new ArgumentException("Destination row bytes must cover the copied pixel range.", nameof(dstRowBytes));
         }
 
-        bool convertAlpha = Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied
+        bool forceOpaqueAlpha = dstInfo.AlphaType == SKAlphaType.Opaque;
+        bool convertAlpha = forceOpaqueAlpha
+            || (Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied
             ? dstInfo.AlphaType == SKAlphaType.Unpremul
-            : dstInfo.AlphaType == SKAlphaType.Premul;
+            : dstInfo.AlphaType == SKAlphaType.Premul);
         
         unsafe
         {
@@ -220,6 +222,11 @@ public class SKImage : IDisposable
                                 red = PremultiplyChannel(red, alpha);
                                 green = PremultiplyChannel(green, alpha);
                                 blue = PremultiplyChannel(blue, alpha);
+                            }
+
+                            if (forceOpaqueAlpha)
+                            {
+                                alpha = 255;
                             }
 
                             if (dstInfo.ColorType == SKColorType.Bgra8888)

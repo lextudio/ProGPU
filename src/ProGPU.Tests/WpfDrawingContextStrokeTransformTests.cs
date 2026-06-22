@@ -86,6 +86,33 @@ public sealed class WpfDrawingContextStrokeTransformTests
         AssertMatrixNear(Matrix4x4.CreateScale(4f, 4f, 1f), command.Transform);
     }
 
+    [Fact]
+    public void NestedPushTransformAppendsNewTransformInWpfOrder()
+    {
+        var nativeContext = new DrawingContext();
+        using var context = new WpfDrawingContext(nativeContext);
+        var scale = new WpfMatrix
+        {
+            M11 = 2,
+            M22 = 2
+        };
+        var translate = WpfMatrix.Identity;
+        translate.Translate(10, 5);
+
+        context.PushTransform(new WpfMatrixTransform(scale));
+        context.PushTransform(new WpfMatrixTransform(translate));
+        context.DrawLine(
+            new WpfPen(WpfBrushes.Black, 1),
+            new WpfPoint(0, 0),
+            new WpfPoint(10, 0));
+
+        var command = Assert.Single(nativeContext.Commands);
+        Assert.Equal(RenderCommandType.DrawLine, command.Type);
+        AssertMatrixNear(
+            Matrix4x4.CreateScale(2f, 2f, 1f) * Matrix4x4.CreateTranslation(10f, 5f, 0f),
+            command.Transform);
+    }
+
     private static Matrix4x4 ToMatrix4x4(WpfMatrix matrix)
     {
         return new Matrix4x4(

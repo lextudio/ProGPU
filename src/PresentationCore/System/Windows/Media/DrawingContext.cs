@@ -205,7 +205,7 @@ public class DrawingContext : IDisposable
     {
         if (transform == null) return;
         var current = _transformStack.Peek();
-        var next = transform.Value * current;
+        var next = current * transform.Value;
         _transformStack.Push(next);
         _pushStack.Push(PushType.Transform);
     }
