@@ -125,201 +125,245 @@ namespace ProGPU.Vector
                     return result;
                 }
 
-                // Setup buffers
-                var recordsBufferA = new GpuBuffer(context, (uint)(recsA.Length * Marshal.SizeOf<GpuPathRecord>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path A Records Buffer");
-                recordsBufferA.Write(new ReadOnlySpan<GpuPathRecord>(recsA));
+                GpuBuffer? recordsBufferA = null;
+                GpuBuffer? segmentsBufferA = null;
+                GpuBuffer? recordsBufferB = null;
+                GpuBuffer? segmentsBufferB = null;
+                GpuBuffer? destRecordBuffer = null;
+                GpuBuffer? destSegmentsBuffer = null;
+                GpuBuffer? uniformBuffer = null;
+                RenderPipelineCache? cache = null;
+                BindGroupLayout* bindGroupLayoutGeom = null;
+                BindGroup* bgGeom = null;
+                BindGroupLayout* bindGroupLayoutFinal = null;
+                BindGroup* bgFinal = null;
+                CommandEncoder* encoder = null;
+                CommandBuffer* cmdBuffer = null;
+                Silk.NET.WebGPU.Buffer* stagingBuffer = null;
+                bool stagingBufferMapped = false;
 
-                var segmentsBufferA = new GpuBuffer(context, (uint)(segsA.Length * Marshal.SizeOf<GpuPathSegment>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path A Segments Buffer");
-                segmentsBufferA.Write(new ReadOnlySpan<GpuPathSegment>(segsA));
-
-                var recordsBufferB = new GpuBuffer(context, (uint)(recsB.Length * Marshal.SizeOf<GpuPathRecord>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path B Records Buffer");
-                recordsBufferB.Write(new ReadOnlySpan<GpuPathRecord>(recsB));
-
-                var segmentsBufferB = new GpuBuffer(context, (uint)(segsB.Length * Marshal.SizeOf<GpuPathSegment>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path B Segments Buffer");
-                segmentsBufferB.Write(new ReadOnlySpan<GpuPathSegment>(segsB));
-
-                uint maxDestSegments = ComputeMaxDestinationSegmentCount(segsA.Length, segsB.Length);
-
-                var destRecordBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<GpuPathRecord>(), BufferUsage.Storage | BufferUsage.CopyDst | BufferUsage.CopySrc, "Dest Path Record Buffer");
-                
-                uint destSegmentsSize = (uint)(16 + maxDestSegments * Marshal.SizeOf<GpuPathSegment>());
-                var destSegmentsBuffer = new GpuBuffer(context, destSegmentsSize, BufferUsage.Storage | BufferUsage.CopyDst | BufferUsage.CopySrc, "Dest Path Segments Buffer");
-                uint zero = 0;
-                context.Wgpu.QueueWriteBuffer(context.Queue, destSegmentsBuffer.BufferPtr, 0, &zero, 4);
-
-                // Compile shaders using pipeline cache
-                var cache = new RenderPipelineCache(context);
-                var geometryModule = cache.GetOrCreateShader("PathOpGeometry", Shaders.PathOpGeometryShader, "PathOpGeometryShader");
-                var geometryPipeline = cache.GetOrCreateComputePipeline("PathOpGeometry", geometryModule, "cs_main");
-                var finalizerModule = cache.GetOrCreateShader("PathOpRecordFinalizer", Shaders.PathOpRecordFinalizerShader, "PathOpRecordFinalizerShader");
-                var finalizerPipeline = cache.GetOrCreateComputePipeline("PathOpRecordFinalizer", finalizerModule, "cs_main");
-
-                // Write uniform buffer
-                var uniforms = new PathOpDispatchUniforms
+                try
                 {
-                    Op = (uint)op,
-                    MaxDestSegments = maxDestSegments
-                };
-                var uniformBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<PathOpDispatchUniforms>(), BufferUsage.Uniform | BufferUsage.CopyDst, "Uniforms Buffer");
-                uniformBuffer.Write(new ReadOnlySpan<PathOpDispatchUniforms>(&uniforms, 1));
+                    // Setup buffers
+                    recordsBufferA = new GpuBuffer(context, (uint)(recsA.Length * Marshal.SizeOf<GpuPathRecord>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path A Records Buffer");
+                    recordsBufferA.Write(new ReadOnlySpan<GpuPathRecord>(recsA));
 
-                // Bind groups
-                var bindGroupLayoutGeom = context.Wgpu.ComputePipelineGetBindGroupLayout(geometryPipeline, 0);
-                var entriesGeom = stackalloc BindGroupEntry[7];
-                entriesGeom[0] = new BindGroupEntry { Binding = 0, Buffer = uniformBuffer.BufferPtr, Offset = 0, Size = uniformBuffer.Size };
-                entriesGeom[1] = new BindGroupEntry { Binding = 1, Buffer = recordsBufferA.BufferPtr, Offset = 0, Size = recordsBufferA.Size };
-                entriesGeom[2] = new BindGroupEntry { Binding = 2, Buffer = segmentsBufferA.BufferPtr, Offset = 0, Size = segmentsBufferA.Size };
-                entriesGeom[3] = new BindGroupEntry { Binding = 3, Buffer = recordsBufferB.BufferPtr, Offset = 0, Size = recordsBufferB.Size };
-                entriesGeom[4] = new BindGroupEntry { Binding = 4, Buffer = segmentsBufferB.BufferPtr, Offset = 0, Size = segmentsBufferB.Size };
-                entriesGeom[5] = new BindGroupEntry { Binding = 5, Buffer = destRecordBuffer.BufferPtr, Offset = 0, Size = destRecordBuffer.Size };
-                entriesGeom[6] = new BindGroupEntry { Binding = 6, Buffer = destSegmentsBuffer.BufferPtr, Offset = 0, Size = destSegmentsBuffer.Size };
+                    segmentsBufferA = new GpuBuffer(context, (uint)(segsA.Length * Marshal.SizeOf<GpuPathSegment>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path A Segments Buffer");
+                    segmentsBufferA.Write(new ReadOnlySpan<GpuPathSegment>(segsA));
 
-                var bgDescGeom = new BindGroupDescriptor
-                {
-                    Layout = bindGroupLayoutGeom,
-                    EntryCount = 7,
-                    Entries = entriesGeom
-                };
-                var bgGeom = context.Wgpu.DeviceCreateBindGroup(context.Device, &bgDescGeom);
+                    recordsBufferB = new GpuBuffer(context, (uint)(recsB.Length * Marshal.SizeOf<GpuPathRecord>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path B Records Buffer");
+                    recordsBufferB.Write(new ReadOnlySpan<GpuPathRecord>(recsB));
 
-                var bindGroupLayoutFinal = context.Wgpu.ComputePipelineGetBindGroupLayout(finalizerPipeline, 0);
-                var entriesFinal = stackalloc BindGroupEntry[5];
-                entriesFinal[0] = new BindGroupEntry { Binding = 0, Buffer = uniformBuffer.BufferPtr, Offset = 0, Size = uniformBuffer.Size };
-                entriesFinal[1] = new BindGroupEntry { Binding = 1, Buffer = recordsBufferA.BufferPtr, Offset = 0, Size = recordsBufferA.Size };
-                entriesFinal[2] = new BindGroupEntry { Binding = 2, Buffer = recordsBufferB.BufferPtr, Offset = 0, Size = recordsBufferB.Size };
-                entriesFinal[3] = new BindGroupEntry { Binding = 3, Buffer = destRecordBuffer.BufferPtr, Offset = 0, Size = destRecordBuffer.Size };
-                entriesFinal[4] = new BindGroupEntry { Binding = 4, Buffer = destSegmentsBuffer.BufferPtr, Offset = 0, Size = 16 };
+                    segmentsBufferB = new GpuBuffer(context, (uint)(segsB.Length * Marshal.SizeOf<GpuPathSegment>()), BufferUsage.Storage | BufferUsage.CopyDst, "Path B Segments Buffer");
+                    segmentsBufferB.Write(new ReadOnlySpan<GpuPathSegment>(segsB));
 
-                var bgDescFinal = new BindGroupDescriptor
-                {
-                    Layout = bindGroupLayoutFinal,
-                    EntryCount = 5,
-                    Entries = entriesFinal
-                };
-                var bgFinal = context.Wgpu.DeviceCreateBindGroup(context.Device, &bgDescFinal);
+                    uint maxDestSegments = ComputeMaxDestinationSegmentCount(segsA.Length, segsB.Length);
 
-                // Encoder
-                var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Path Op Solver Geometry Encoder") };
-                var encoder = context.Wgpu.DeviceCreateCommandEncoder(context.Device, &encoderDesc);
-                SilkMarshal.Free((nint)encoderDesc.Label);
+                    destRecordBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<GpuPathRecord>(), BufferUsage.Storage | BufferUsage.CopyDst | BufferUsage.CopySrc, "Dest Path Record Buffer");
 
-                // Pass 1
-                var passDesc = new ComputePassDescriptor();
-                var pass = context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDesc);
-                context.Wgpu.ComputePassEncoderSetPipeline(pass, geometryPipeline);
-                context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bgGeom, 0, null);
-                uint workgroups = (uint)((segsA.Length + segsB.Length + 63) / 64);
-                if (workgroups == 0) workgroups = 1;
-                context.Wgpu.ComputePassEncoderDispatchWorkgroups(pass, workgroups, 1, 1);
-                context.Wgpu.ComputePassEncoderEnd(pass);
-                context.Wgpu.ComputePassEncoderRelease(pass);
+                    uint destSegmentsSize = (uint)(16 + maxDestSegments * Marshal.SizeOf<GpuPathSegment>());
+                    destSegmentsBuffer = new GpuBuffer(context, destSegmentsSize, BufferUsage.Storage | BufferUsage.CopyDst | BufferUsage.CopySrc, "Dest Path Segments Buffer");
+                    uint zero = 0;
+                    context.Wgpu.QueueWriteBuffer(context.Queue, destSegmentsBuffer.BufferPtr, 0, &zero, 4);
 
-                // Pass 2
-                var passDescFinal = new ComputePassDescriptor();
-                var passFinal = context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescFinal);
-                context.Wgpu.ComputePassEncoderSetPipeline(passFinal, finalizerPipeline);
-                context.Wgpu.ComputePassEncoderSetBindGroup(passFinal, 0, bgFinal, 0, null);
-                context.Wgpu.ComputePassEncoderDispatchWorkgroups(passFinal, 1, 1, 1);
-                context.Wgpu.ComputePassEncoderEnd(passFinal);
-                context.Wgpu.ComputePassEncoderRelease(passFinal);
+                    // Compile shaders using pipeline cache
+                    cache = new RenderPipelineCache(context);
+                    var geometryModule = cache.GetOrCreateShader("PathOpGeometry", Shaders.PathOpGeometryShader, "PathOpGeometryShader");
+                    var geometryPipeline = cache.GetOrCreateComputePipeline("PathOpGeometry", geometryModule, "cs_main");
+                    var finalizerModule = cache.GetOrCreateShader("PathOpRecordFinalizer", Shaders.PathOpRecordFinalizerShader, "PathOpRecordFinalizerShader");
+                    var finalizerPipeline = cache.GetOrCreateComputePipeline("PathOpRecordFinalizer", finalizerModule, "cs_main");
 
-                // Create staging buffer to read segments back to CPU
-                var stagingBufferDesc = new BufferDescriptor
-                {
-                    Size = destSegmentsSize,
-                    Usage = BufferUsage.MapRead | BufferUsage.CopyDst
-                };
-                var stagingBuffer = context.Wgpu.DeviceCreateBuffer(context.Device, &stagingBufferDesc);
-
-                // Copy output segments to staging buffer
-                context.Wgpu.CommandEncoderCopyBufferToBuffer(encoder, destSegmentsBuffer.BufferPtr, 0, stagingBuffer, 0, destSegmentsSize);
-
-                // Submit
-                var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Path Op Solver Submit") };
-                var cmdBuffer = context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
-                SilkMarshal.Free((nint)cmdDesc.Label);
-
-                context.Wgpu.QueueSubmit(context.Queue, 1, &cmdBuffer);
-                context.Wgpu.CommandBufferRelease(cmdBuffer);
-                context.Wgpu.CommandEncoderRelease(encoder);
-
-                // Map staging buffer to read back count and segments
-                var mapSignal = new System.Threading.ManualResetEventSlim(false);
-                BufferMapAsyncStatus mapStatus = BufferMapAsyncStatus.ValidationError;
-
-                var onMapped = PfnBufferMapCallback.From((status, userData) =>
-                {
-                    mapStatus = status;
-                    mapSignal.Set();
-                });
-
-                context.Wgpu.BufferMapAsync(stagingBuffer, MapMode.Read, 0, destSegmentsSize, onMapped, null);
-
-                // Poll
-                var swTimeout = System.Diagnostics.Stopwatch.StartNew();
-                while (!mapSignal.IsSet)
-                {
-                    context.WaitIdle();
-                    System.Threading.Thread.Sleep(1);
-                    if (swTimeout.ElapsedMilliseconds > 5000)
+                    // Write uniform buffer
+                    var uniforms = new PathOpDispatchUniforms
                     {
+                        Op = (uint)op,
+                        MaxDestSegments = maxDestSegments
+                    };
+                    uniformBuffer = new GpuBuffer(context, (uint)Marshal.SizeOf<PathOpDispatchUniforms>(), BufferUsage.Uniform | BufferUsage.CopyDst, "Uniforms Buffer");
+                    uniformBuffer.Write(new ReadOnlySpan<PathOpDispatchUniforms>(&uniforms, 1));
+
+                    // Bind groups
+                    bindGroupLayoutGeom = context.Wgpu.ComputePipelineGetBindGroupLayout(geometryPipeline, 0);
+                    var entriesGeom = stackalloc BindGroupEntry[7];
+                    entriesGeom[0] = new BindGroupEntry { Binding = 0, Buffer = uniformBuffer.BufferPtr, Offset = 0, Size = uniformBuffer.Size };
+                    entriesGeom[1] = new BindGroupEntry { Binding = 1, Buffer = recordsBufferA.BufferPtr, Offset = 0, Size = recordsBufferA.Size };
+                    entriesGeom[2] = new BindGroupEntry { Binding = 2, Buffer = segmentsBufferA.BufferPtr, Offset = 0, Size = segmentsBufferA.Size };
+                    entriesGeom[3] = new BindGroupEntry { Binding = 3, Buffer = recordsBufferB.BufferPtr, Offset = 0, Size = recordsBufferB.Size };
+                    entriesGeom[4] = new BindGroupEntry { Binding = 4, Buffer = segmentsBufferB.BufferPtr, Offset = 0, Size = segmentsBufferB.Size };
+                    entriesGeom[5] = new BindGroupEntry { Binding = 5, Buffer = destRecordBuffer.BufferPtr, Offset = 0, Size = destRecordBuffer.Size };
+                    entriesGeom[6] = new BindGroupEntry { Binding = 6, Buffer = destSegmentsBuffer.BufferPtr, Offset = 0, Size = destSegmentsBuffer.Size };
+
+                    var bgDescGeom = new BindGroupDescriptor
+                    {
+                        Layout = bindGroupLayoutGeom,
+                        EntryCount = 7,
+                        Entries = entriesGeom
+                    };
+                    bgGeom = context.Wgpu.DeviceCreateBindGroup(context.Device, &bgDescGeom);
+
+                    bindGroupLayoutFinal = context.Wgpu.ComputePipelineGetBindGroupLayout(finalizerPipeline, 0);
+                    var entriesFinal = stackalloc BindGroupEntry[5];
+                    entriesFinal[0] = new BindGroupEntry { Binding = 0, Buffer = uniformBuffer.BufferPtr, Offset = 0, Size = uniformBuffer.Size };
+                    entriesFinal[1] = new BindGroupEntry { Binding = 1, Buffer = recordsBufferA.BufferPtr, Offset = 0, Size = recordsBufferA.Size };
+                    entriesFinal[2] = new BindGroupEntry { Binding = 2, Buffer = recordsBufferB.BufferPtr, Offset = 0, Size = recordsBufferB.Size };
+                    entriesFinal[3] = new BindGroupEntry { Binding = 3, Buffer = destRecordBuffer.BufferPtr, Offset = 0, Size = destRecordBuffer.Size };
+                    entriesFinal[4] = new BindGroupEntry { Binding = 4, Buffer = destSegmentsBuffer.BufferPtr, Offset = 0, Size = 16 };
+
+                    var bgDescFinal = new BindGroupDescriptor
+                    {
+                        Layout = bindGroupLayoutFinal,
+                        EntryCount = 5,
+                        Entries = entriesFinal
+                    };
+                    bgFinal = context.Wgpu.DeviceCreateBindGroup(context.Device, &bgDescFinal);
+
+                    // Encoder
+                    var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Path Op Solver Geometry Encoder") };
+                    encoder = context.Wgpu.DeviceCreateCommandEncoder(context.Device, &encoderDesc);
+                    SilkMarshal.Free((nint)encoderDesc.Label);
+
+                    // Pass 1
+                    var passDesc = new ComputePassDescriptor();
+                    var pass = context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDesc);
+                    context.Wgpu.ComputePassEncoderSetPipeline(pass, geometryPipeline);
+                    context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bgGeom, 0, null);
+                    uint workgroups = (uint)((segsA.Length + segsB.Length + 63) / 64);
+                    if (workgroups == 0) workgroups = 1;
+                    context.Wgpu.ComputePassEncoderDispatchWorkgroups(pass, workgroups, 1, 1);
+                    context.Wgpu.ComputePassEncoderEnd(pass);
+                    context.Wgpu.ComputePassEncoderRelease(pass);
+
+                    // Pass 2
+                    var passDescFinal = new ComputePassDescriptor();
+                    var passFinal = context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescFinal);
+                    context.Wgpu.ComputePassEncoderSetPipeline(passFinal, finalizerPipeline);
+                    context.Wgpu.ComputePassEncoderSetBindGroup(passFinal, 0, bgFinal, 0, null);
+                    context.Wgpu.ComputePassEncoderDispatchWorkgroups(passFinal, 1, 1, 1);
+                    context.Wgpu.ComputePassEncoderEnd(passFinal);
+                    context.Wgpu.ComputePassEncoderRelease(passFinal);
+
+                    // Create staging buffer to read segments back to CPU
+                    var stagingBufferDesc = new BufferDescriptor
+                    {
+                        Size = destSegmentsSize,
+                        Usage = BufferUsage.MapRead | BufferUsage.CopyDst
+                    };
+                    stagingBuffer = context.Wgpu.DeviceCreateBuffer(context.Device, &stagingBufferDesc);
+
+                    // Copy output segments to staging buffer
+                    context.Wgpu.CommandEncoderCopyBufferToBuffer(encoder, destSegmentsBuffer.BufferPtr, 0, stagingBuffer, 0, destSegmentsSize);
+
+                    // Submit
+                    var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Path Op Solver Submit") };
+                    cmdBuffer = context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
+                    SilkMarshal.Free((nint)cmdDesc.Label);
+
+                    context.Wgpu.QueueSubmit(context.Queue, 1, &cmdBuffer);
+                    context.Wgpu.CommandBufferRelease(cmdBuffer);
+                    cmdBuffer = null;
+                    context.Wgpu.CommandEncoderRelease(encoder);
+                    encoder = null;
+
+                    // Map staging buffer to read back count and segments
+                    var mapSignal = new System.Threading.ManualResetEventSlim(false);
+                    BufferMapAsyncStatus mapStatus = BufferMapAsyncStatus.ValidationError;
+
+                    var onMapped = PfnBufferMapCallback.From((status, userData) =>
+                    {
+                        mapStatus = status;
+                        mapSignal.Set();
+                    });
+
+                    context.Wgpu.BufferMapAsync(stagingBuffer, MapMode.Read, 0, destSegmentsSize, onMapped, null);
+
+                    // Poll
+                    var swTimeout = System.Diagnostics.Stopwatch.StartNew();
+                    while (!mapSignal.IsSet)
+                    {
+                        context.WaitIdle();
+                        System.Threading.Thread.Sleep(1);
+                        if (swTimeout.ElapsedMilliseconds > 5000)
+                        {
+                            throw new TimeoutException("WebGPU BufferMapAsync timed out after 5 seconds during path op solver readback.");
+                        }
+                    }
+
+                    if (mapStatus != BufferMapAsyncStatus.Success)
+                    {
+                        throw new InvalidOperationException($"Failed to map readback buffer. WebGPU Status: {mapStatus}");
+                    }
+
+                    stagingBufferMapped = true;
+                    void* mappedPtr = context.Wgpu.BufferGetConstMappedRange(stagingBuffer, 0, destSegmentsSize);
+                    if (mappedPtr != null)
+                    {
+                        uint count = *(uint*)mappedPtr;
+                        if (count > maxDestSegments) count = maxDestSegments;
+
+                        GpuPathSegment* segs = (GpuPathSegment*)((byte*)mappedPtr + 16);
+                        var outputSegs = new GpuPathSegment[count];
+                        for (uint i = 0; i < count; i++)
+                        {
+                            outputSegs[i] = segs[i];
+                        }
+
+                        // Reconstruct path figures
+                        var figures = ReconstructFigures(outputSegs);
+                        result.Figures.AddRange(figures);
+                    }
+                }
+                finally
+                {
+                    if (stagingBuffer != null)
+                    {
+                        if (stagingBufferMapped)
+                        {
+                            context.Wgpu.BufferUnmap(stagingBuffer);
+                        }
+
                         context.Wgpu.BufferDestroy(stagingBuffer);
                         context.Wgpu.BufferRelease(stagingBuffer);
-                        throw new TimeoutException("WebGPU BufferMapAsync timed out after 5 seconds during path op solver readback.");
                     }
-                }
 
-                if (mapStatus != BufferMapAsyncStatus.Success)
-                {
-                    context.Wgpu.BufferDestroy(stagingBuffer);
-                    context.Wgpu.BufferRelease(stagingBuffer);
-                    throw new InvalidOperationException($"Failed to map readback buffer. WebGPU Status: {mapStatus}");
-                }
-
-                void* mappedPtr = context.Wgpu.BufferGetConstMappedRange(stagingBuffer, 0, destSegmentsSize);
-                if (mappedPtr != null)
-                {
-                    uint count = *(uint*)mappedPtr;
-                    if (count > maxDestSegments) count = maxDestSegments;
-
-                    GpuPathSegment* segs = (GpuPathSegment*)((byte*)mappedPtr + 16);
-                    var outputSegs = new GpuPathSegment[count];
-                    for (uint i = 0; i < count; i++)
+                    if (cmdBuffer != null)
                     {
-                        outputSegs[i] = segs[i];
+                        context.Wgpu.CommandBufferRelease(cmdBuffer);
                     }
 
-                    // Unmap and release staging buffer
-                    context.Wgpu.BufferUnmap(stagingBuffer);
-                    context.Wgpu.BufferDestroy(stagingBuffer);
-                    context.Wgpu.BufferRelease(stagingBuffer);
+                    if (encoder != null)
+                    {
+                        context.Wgpu.CommandEncoderRelease(encoder);
+                    }
 
-                    // Reconstruct path figures
-                    var figures = ReconstructFigures(outputSegs);
-                    result.Figures.AddRange(figures);
+                    if (bgGeom != null)
+                    {
+                        context.Wgpu.BindGroupRelease(bgGeom);
+                    }
+
+                    if (bindGroupLayoutGeom != null)
+                    {
+                        context.Wgpu.BindGroupLayoutRelease(bindGroupLayoutGeom);
+                    }
+
+                    if (bgFinal != null)
+                    {
+                        context.Wgpu.BindGroupRelease(bgFinal);
+                    }
+
+                    if (bindGroupLayoutFinal != null)
+                    {
+                        context.Wgpu.BindGroupLayoutRelease(bindGroupLayoutFinal);
+                    }
+
+                    recordsBufferA?.Dispose();
+                    segmentsBufferA?.Dispose();
+                    recordsBufferB?.Dispose();
+                    segmentsBufferB?.Dispose();
+                    destRecordBuffer?.Dispose();
+                    destSegmentsBuffer?.Dispose();
+                    uniformBuffer?.Dispose();
+                    cache?.Dispose();
                 }
-                else
-                {
-                    context.Wgpu.BufferUnmap(stagingBuffer);
-                    context.Wgpu.BufferDestroy(stagingBuffer);
-                    context.Wgpu.BufferRelease(stagingBuffer);
-                }
-
-                // Cleanup temporary GPU buffers
-                recordsBufferA.Dispose();
-                segmentsBufferA.Dispose();
-                recordsBufferB.Dispose();
-                segmentsBufferB.Dispose();
-                destRecordBuffer.Dispose();
-                destSegmentsBuffer.Dispose();
-                uniformBuffer.Dispose();
-
-                context.Wgpu.BindGroupRelease(bgGeom);
-                context.Wgpu.BindGroupLayoutRelease(bindGroupLayoutGeom);
-                context.Wgpu.BindGroupRelease(bgFinal);
-                context.Wgpu.BindGroupLayoutRelease(bindGroupLayoutFinal);
-
-                cache.Dispose();
             }
 
             return result;

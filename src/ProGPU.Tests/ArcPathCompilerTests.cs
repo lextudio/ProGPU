@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Numerics;
 using ProGPU.Vector;
 using Xunit;
@@ -301,6 +302,34 @@ public class ArcPathCompilerTests
         Assert.Equal(PathOpGeometrySolver.MinimumOutputSegments, maxDestSegments);
     }
 
+    [Fact]
+    public void PathOperationSolverReadbackFailuresDisposeAllocatedGpuResources()
+    {
+        string source = File.ReadAllText(FindPathOpGeometrySolverSource()).Replace("\r\n", "\n");
+        int cleanupIndex = source.IndexOf("finally\n                {", StringComparison.Ordinal);
+
+        Assert.True(cleanupIndex >= 0, "PathOpGeometrySolver.Combine should clean temporary GPU resources from a finally block.");
+
+        string cleanup = source[cleanupIndex..];
+        Assert.Contains("if (stagingBuffer != null)", cleanup, StringComparison.Ordinal);
+        Assert.Contains("BufferDestroy(stagingBuffer);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("BufferRelease(stagingBuffer);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("CommandBufferRelease(cmdBuffer);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("CommandEncoderRelease(encoder);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("BindGroupRelease(bgGeom);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("BindGroupLayoutRelease(bindGroupLayoutGeom);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("BindGroupRelease(bgFinal);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("BindGroupLayoutRelease(bindGroupLayoutFinal);", cleanup, StringComparison.Ordinal);
+        Assert.Contains("recordsBufferA?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("segmentsBufferA?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("recordsBufferB?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("segmentsBufferB?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("destRecordBuffer?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("destSegmentsBuffer?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("uniformBuffer?.Dispose();", cleanup, StringComparison.Ordinal);
+        Assert.Contains("cache?.Dispose();", cleanup, StringComparison.Ordinal);
+    }
+
     private static PathGeometry CreatePartialCircleArcPath()
     {
         const float radius = 10f;
@@ -326,6 +355,28 @@ public class ArcPathCompilerTests
         figure.Segments.Add(new LineSegment(new Vector2(0f, 10f)));
         path.Figures.Add(figure);
         return path;
+    }
+
+    private static string FindPathOpGeometrySolverSource()
+    {
+        for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
+             directory != null;
+             directory = directory.Parent)
+        {
+            foreach (string candidate in new[]
+                     {
+                         Path.Combine(directory.FullName, "ProGPU.Vector", "PathOpGeometrySolver.cs"),
+                         Path.Combine(directory.FullName, "src", "ProGPU.Vector", "PathOpGeometrySolver.cs")
+                     })
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        throw new FileNotFoundException("Could not locate ProGPU.Vector PathOpGeometrySolver.cs.");
     }
 
     private static void AssertClose(float expected, float actual)
