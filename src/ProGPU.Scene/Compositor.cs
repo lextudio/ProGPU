@@ -6004,9 +6004,15 @@ public unsafe class Compositor : IDisposable
         var savedWidth = _currentWidth;
         var savedHeight = _currentHeight;
         var savedDpiScale = _currentDpiScale;
+        var savedExplicitRenderTargetWidth = _explicitRenderTargetWidth;
+        var savedExplicitRenderTargetHeight = _explicitRenderTargetHeight;
+        var savedExplicitDpiScale = _explicitDpiScale;
         _currentWidth = width;
         _currentHeight = height;
-        _currentDpiScale = dpiScale;
+        _currentDpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
+        _explicitRenderTargetWidth = Math.Max(1u, targetTexture.Width);
+        _explicitRenderTargetHeight = Math.Max(1u, targetTexture.Height);
+        _explicitDpiScale = _currentDpiScale;
 
         // 1. Calculate orthographic projection matrix for offscreen
         var projection = new Matrix4x4(
@@ -6447,6 +6453,9 @@ public unsafe class Compositor : IDisposable
             _currentWidth = savedWidth;
             _currentHeight = savedHeight;
             _currentDpiScale = savedDpiScale;
+            _explicitRenderTargetWidth = savedExplicitRenderTargetWidth;
+            _explicitRenderTargetHeight = savedExplicitRenderTargetHeight;
+            _explicitDpiScale = savedExplicitDpiScale;
             _currentProjection = savedProjection;
         }
     }

@@ -503,6 +503,46 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void RenderOffscreenUsesOffscreenTargetSizeWhenExplicitOuterTargetIsActive()
+    {
+        using var window = new HeadlessWindow(24, 24);
+        using var target = new GpuTexture(
+            window.Context,
+            19,
+            13,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "Offscreen Explicit Outer Target Regression");
+        var extension = new CanvasSizeRecordingExtension();
+        window.Compositor.RegisterExtension(9005, extension);
+
+        SetCompositorField(window.Compositor, "_explicitRenderTargetWidth", (uint?)211u);
+        SetCompositorField(window.Compositor, "_explicitRenderTargetHeight", (uint?)113u);
+        SetCompositorField(window.Compositor, "_explicitDpiScale", (float?)3f);
+
+        var visual = new DrawingVisual
+        {
+            Size = new Vector2(10f, 8f)
+        };
+        visual.Context.DrawExtension(9005);
+
+        window.Compositor.RenderOffscreen(
+            visual,
+            width: 10,
+            height: 8,
+            targetTexture: target,
+            padding: 0f,
+            dpiScale: 2f);
+
+        Assert.Equal(1, extension.RenderCount);
+        Assert.Equal(19f, extension.CanvasPixelWidth);
+        Assert.Equal(13f, extension.CanvasPixelHeight);
+        Assert.Equal(211u, Assert.IsType<uint>(GetRawCompositorField(window.Compositor, "_explicitRenderTargetWidth")));
+        Assert.Equal(113u, Assert.IsType<uint>(GetRawCompositorField(window.Compositor, "_explicitRenderTargetHeight")));
+        Assert.Equal(3f, Assert.IsType<float>(GetRawCompositorField(window.Compositor, "_explicitDpiScale")));
+    }
+
+    [Fact]
     public void CachedLayerRecreatesTextureForCurrentWebGpuContext()
     {
         using var firstWindow = new HeadlessWindow(64, 64);
@@ -1051,6 +1091,20 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         var field = typeof(Compositor).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
         return Assert.IsType<T>(field.GetValue(compositor));
+    }
+
+    private static object? GetRawCompositorField(Compositor compositor, string fieldName)
+    {
+        var field = typeof(Compositor).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return field.GetValue(compositor);
+    }
+
+    private static void SetCompositorField(Compositor compositor, string fieldName, object? value)
+    {
+        var field = typeof(Compositor).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(compositor, value);
     }
 
     private static IList GetPathAtlasTempBuffers(Compositor compositor)
