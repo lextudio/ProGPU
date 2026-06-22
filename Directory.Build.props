@@ -1,6 +1,11 @@
 <Project>
   <PropertyGroup>
     <ProGPUStrongNameKeyFile>$(MSBuildThisFileDirectory)eng/ProGPU.snk</ProGPUStrongNameKeyFile>
+    <Version Condition="'$(Version)' == ''">11.0.0-dev</Version>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">$(Version)</PackageVersion>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">11.0.0.0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">11.0.0.0</FileVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
     <SignAssembly Condition="'$(SignAssembly)' == ''">true</SignAssembly>
     <AssemblyOriginatorKeyFile Condition="'$(AssemblyOriginatorKeyFile)' == ''">$(ProGPUStrongNameKeyFile)</AssemblyOriginatorKeyFile>
     <DelaySign Condition="'$(DelaySign)' == ''">false</DelaySign>
