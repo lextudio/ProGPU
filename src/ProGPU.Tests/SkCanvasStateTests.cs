@@ -175,6 +175,8 @@ public sealed class SkCanvasStateTests
         Assert.NotNull(parameters.Texture);
         Assert.Equal(new Rect(0f, 0f, 100f, 100f), parameters.Rect);
         Assert.Equal(4f, parameters.BlurSigma);
+        Assert.Equal(1, context.RetainedResourceCount);
+        Assert.Empty(GetOwnedLayerTextures(canvas));
     }
 
     [Fact]
@@ -222,7 +224,8 @@ public sealed class SkCanvasStateTests
         Assert.Equal(RenderCommandType.DrawTexture, command.Type);
         Assert.NotNull(command.Texture);
         Assert.Equal(new Rect(0f, 0f, 100f, 100f), command.Rect);
-        Assert.Equal(2, GetOwnedLayerTextures(canvas).Count);
+        Assert.Equal(1, context.RetainedResourceCount);
+        Assert.Single(GetOwnedLayerTextures(canvas));
     }
 
     [Fact]
@@ -236,12 +239,16 @@ public sealed class SkCanvasStateTests
         surface.Canvas.DrawRect(new SKRect(2f, 2f, 20f, 20f), fill);
         surface.Canvas.RestoreToCount(restoreCount);
 
-        var ownedLayerTextures = GetOwnedLayerTextures(surface.Canvas);
-        Assert.Single(ownedLayerTextures);
+        var drawingContext = GetSurfaceDrawingContext(surface);
+        var layerTexture = Assert.IsType<GpuTexture>(Assert.Single(drawingContext.Commands).Texture);
+        Assert.Equal(1, drawingContext.RetainedResourceCount);
+        Assert.Empty(GetOwnedLayerTextures(surface.Canvas));
 
         surface.Flush();
 
-        Assert.Empty(ownedLayerTextures);
+        Assert.Empty(drawingContext.Commands);
+        Assert.Equal(0, drawingContext.RetainedResourceCount);
+        Assert.True(layerTexture.IsDisposed);
     }
 
     [Fact]
@@ -265,20 +272,27 @@ public sealed class SkCanvasStateTests
 
         var drawingContext = GetSurfaceDrawingContext(surface);
         GpuTexture? retainedImageTexture = null;
+        GpuTexture? layerTexture = null;
         foreach (var command in drawingContext.Commands)
         {
             if (command.Texture != null)
             {
-                retainedImageTexture = command.Texture;
-                break;
+                if (retainedImageTexture == null)
+                {
+                    retainedImageTexture = command.Texture;
+                }
+                else
+                {
+                    layerTexture = command.Texture;
+                    break;
+                }
             }
         }
 
         Assert.NotNull(retainedImageTexture);
-        Assert.Equal(1, drawingContext.RetainedResourceCount);
-
-        var ownedLayerTextures = GetOwnedLayerTextures(surface.Canvas);
-        var layerTexture = Assert.IsType<GpuTexture>(Assert.Single(ownedLayerTextures));
+        Assert.NotNull(layerTexture);
+        Assert.Equal(2, drawingContext.RetainedResourceCount);
+        Assert.Empty(GetOwnedLayerTextures(surface.Canvas));
 
         var compositor = GetSurfaceCompositor(surface);
         compositor.RegisterExtension(9901, new ThrowingCompileExtension());
@@ -293,7 +307,7 @@ public sealed class SkCanvasStateTests
                 retainedTextureDisposed = true;
             }
 
-            if (id == layerTexture.Id)
+            if (id == layerTexture!.Id)
             {
                 layerTextureDisposed = true;
             }
@@ -307,7 +321,6 @@ public sealed class SkCanvasStateTests
 
             Assert.Empty(drawingContext.Commands);
             Assert.Equal(0, drawingContext.RetainedResourceCount);
-            Assert.Empty(ownedLayerTextures);
             Assert.True(retainedTextureDisposed);
             Assert.True(layerTextureDisposed);
         }
@@ -315,6 +328,33 @@ public sealed class SkCanvasStateTests
         {
             GpuTexture.OnDisposedWithId -= OnTextureDisposed;
         }
+    }
+
+    [Fact]
+    public void CanvasDisposeKeepsSaveLayerTextureAliveForDeferredDrawingContext()
+    {
+        var context = new DrawingContext();
+        var canvas = new SKCanvas(context, 32f, 32f);
+        using var layerPaint = new SKPaint();
+        using var fill = new SKPaint { Color = SKColors.Red };
+
+        var restoreCount = canvas.SaveLayer(layerPaint);
+        canvas.DrawRect(new SKRect(2f, 2f, 20f, 20f), fill);
+        canvas.RestoreToCount(restoreCount);
+
+        var command = Assert.Single(context.Commands);
+        var layerTexture = Assert.IsType<GpuTexture>(command.Texture);
+        Assert.Equal(1, context.RetainedResourceCount);
+        Assert.Empty(GetOwnedLayerTextures(canvas));
+
+        canvas.Dispose();
+
+        Assert.False(layerTexture.IsDisposed);
+
+        context.Clear();
+
+        Assert.True(layerTexture.IsDisposed);
+        Assert.Equal(0, context.RetainedResourceCount);
     }
 
     [Fact]
@@ -353,7 +393,8 @@ public sealed class SkCanvasStateTests
             Assert.True(retainedTextureDisposed);
             Assert.Empty(layerContext.Commands);
             Assert.Equal(0, layerContext.RetainedResourceCount);
-            Assert.Single(GetOwnedLayerTextures(surface.Canvas));
+            Assert.Equal(1, GetSurfaceDrawingContext(surface).RetainedResourceCount);
+            Assert.Empty(GetOwnedLayerTextures(surface.Canvas));
         }
         finally
         {

@@ -227,6 +227,7 @@ public class SKCanvas : IDisposable
         var imageFilter = layerFrame.Paint?.ImageFilter;
         if (imageFilter is { IsBlur: true })
         {
+            RetainLayerTextureForDeferredCommand(texture);
             _context.DrawImageWithEffect(
                 texture,
                 rect,
@@ -249,6 +250,7 @@ public class SKCanvas : IDisposable
 
     private void DrawRestoredLayerTexture(GpuTexture texture, Rect rect)
     {
+        RetainLayerTextureForDeferredCommand(texture);
         _context.Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.DrawTexture,
@@ -257,6 +259,12 @@ public class SKCanvas : IDisposable
             Transform = Matrix4x4.Identity,
             TextureSamplingMode = TextureSamplingMode.Linear
         });
+    }
+
+    private void RetainLayerTextureForDeferredCommand(GpuTexture texture)
+    {
+        _context.RetainResource(texture);
+        _ownedLayerTextures.Remove(texture);
     }
 
     private GpuTexture RenderFilteredLayerToTexture(GpuTexture sourceTexture, EffectBase effect)
