@@ -57,16 +57,21 @@ public static class DisplayScaleResolver
     {
         try
         {
-            nint screen = TryGetMacOsWindowScreen(window);
-            nint backingScaleFactorSelector = sel_registerName("backingScaleFactor");
-            if (screen == 0 || backingScaleFactorSelector == 0)
+            nint cocoaObject = TryGetCocoaWindowHandle(window);
+            if (TryReadMacOsBackingScaleFactor(cocoaObject, out double objectBackingScaleFactor))
             {
-                return null;
+                return objectBackingScaleFactor;
             }
 
-            double backingScaleFactor = objc_msgSend_Double(screen, backingScaleFactorSelector);
-            return double.IsFinite(backingScaleFactor) && backingScaleFactor > 0.0 && backingScaleFactor <= 8.0
-                ? backingScaleFactor
+            nint screen = TryGetMacOsObjectScreen(cocoaObject);
+            if (TryReadMacOsBackingScaleFactor(screen, out double screenBackingScaleFactor))
+            {
+                return screenBackingScaleFactor;
+            }
+
+            nint mainScreen = TryGetMacOsMainScreen();
+            return TryReadMacOsBackingScaleFactor(mainScreen, out double mainScreenBackingScaleFactor)
+                ? mainScreenBackingScaleFactor
                 : null;
         }
         catch (DllNotFoundException)
@@ -83,32 +88,70 @@ public static class DisplayScaleResolver
         }
     }
 
-    private static nint TryGetMacOsWindowScreen(IWindow? window)
+    private static nint TryGetMacOsObjectScreen(nint cocoaObject)
     {
-        nint cocoaWindow = TryGetCocoaWindowHandle(window);
-        if (cocoaWindow != 0)
+        if (cocoaObject == 0)
         {
-            nint screenSelector = sel_registerName("screen");
-            if (screenSelector != 0)
-            {
-                nint screen = objc_msgSend_IntPtr(cocoaWindow, screenSelector);
-                if (screen != 0)
-                {
-                    return screen;
-                }
-            }
+            return 0;
         }
 
+        if (TrySendMacOsIntPtr(cocoaObject, "screen", out nint screen))
+        {
+            return screen;
+        }
+
+        return TrySendMacOsIntPtr(cocoaObject, "window", out nint cocoaWindow) &&
+            TrySendMacOsIntPtr(cocoaWindow, "screen", out screen)
+                ? screen
+                : 0;
+    }
+
+    private static nint TryGetMacOsMainScreen()
+    {
         nint screenClass = objc_getClass("NSScreen");
         if (screenClass == 0)
         {
             return 0;
         }
 
-        nint mainScreenSelector = sel_registerName("mainScreen");
-        return mainScreenSelector != 0
-            ? objc_msgSend_IntPtr(screenClass, mainScreenSelector)
+        return TrySendMacOsIntPtr(screenClass, "mainScreen", out nint mainScreen)
+            ? mainScreen
             : 0;
+    }
+
+    private static bool TryReadMacOsBackingScaleFactor(nint cocoaObject, out double backingScaleFactor)
+    {
+        backingScaleFactor = 0.0;
+        if (cocoaObject == 0 ||
+            !TryRespondsToMacOsSelector(cocoaObject, "backingScaleFactor", out nint backingScaleFactorSelector))
+        {
+            return false;
+        }
+
+        backingScaleFactor = objc_msgSend_Double(cocoaObject, backingScaleFactorSelector);
+        return double.IsFinite(backingScaleFactor) && backingScaleFactor > 0.0 && backingScaleFactor <= 8.0;
+    }
+
+    private static bool TrySendMacOsIntPtr(nint receiver, string selectorName, out nint value)
+    {
+        value = 0;
+        if (receiver == 0 || !TryRespondsToMacOsSelector(receiver, selectorName, out nint selector))
+        {
+            return false;
+        }
+
+        value = objc_msgSend_IntPtr(receiver, selector);
+        return value != 0;
+    }
+
+    private static bool TryRespondsToMacOsSelector(nint receiver, string selectorName, out nint selector)
+    {
+        selector = sel_registerName(selectorName);
+        nint respondsToSelector = sel_registerName("respondsToSelector:");
+        return receiver != 0 &&
+            selector != 0 &&
+            respondsToSelector != 0 &&
+            objc_msgSend_Bool(receiver, respondsToSelector, selector);
     }
 
     private static nint TryGetCocoaWindowHandle(IWindow? window)
@@ -135,6 +178,10 @@ public static class DisplayScaleResolver
 
     [DllImport(ObjCLibrary, EntryPoint = "objc_msgSend")]
     private static extern nint objc_msgSend_IntPtr(nint receiver, nint selector);
+
+    [DllImport(ObjCLibrary, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private static extern bool objc_msgSend_Bool(nint receiver, nint selector, nint argument);
 
     [DllImport(ObjCLibrary, EntryPoint = "objc_msgSend")]
     private static extern double objc_msgSend_Double(nint receiver, nint selector);

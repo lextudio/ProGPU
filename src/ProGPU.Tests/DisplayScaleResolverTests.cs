@@ -58,4 +58,51 @@ public sealed class DisplayScaleResolverTests
 
         Assert.Equal(1.0, dpiScale);
     }
+
+    [Fact]
+    public void TryResolveNativeWindowDisplayScaleDoesNotThrowWithoutWindow()
+    {
+        double? dpiScale = DisplayScaleResolver.TryResolveNativeWindowDisplayScale(null);
+
+        if (dpiScale.HasValue)
+        {
+            Assert.InRange(dpiScale.Value, 1.0, 8.0);
+        }
+    }
+
+    [Fact]
+    public void MacOsNativeDisplayScaleResolverProbesWindowAndViewSelectorShapes()
+    {
+        string source = File.ReadAllText(FindDisplayScaleResolverSource());
+
+        Assert.Contains("\"backingScaleFactor\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"respondsToSelector:\"", source, StringComparison.Ordinal);
+        Assert.Contains("TryGetMacOsObjectScreen", source, StringComparison.Ordinal);
+        Assert.Contains("TrySendMacOsIntPtr(cocoaObject, \"screen\"", source, StringComparison.Ordinal);
+        Assert.Contains("TrySendMacOsIntPtr(cocoaObject, \"window\"", source, StringComparison.Ordinal);
+        Assert.Contains("TrySendMacOsIntPtr(cocoaWindow, \"screen\"", source, StringComparison.Ordinal);
+        Assert.Contains("TryGetMacOsMainScreen", source, StringComparison.Ordinal);
+    }
+
+    private static string FindDisplayScaleResolverSource()
+    {
+        for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
+             directory != null;
+             directory = directory.Parent)
+        {
+            foreach (string candidate in new[]
+                     {
+                         Path.Combine(directory.FullName, "ProGPU.Backend", "DisplayScaleResolver.cs"),
+                         Path.Combine(directory.FullName, "src", "ProGPU.Backend", "DisplayScaleResolver.cs")
+                     })
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        throw new FileNotFoundException("Could not locate ProGPU.Backend DisplayScaleResolver.cs.");
+    }
 }
