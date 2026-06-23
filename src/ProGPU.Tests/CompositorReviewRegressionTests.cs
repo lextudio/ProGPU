@@ -1118,6 +1118,49 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void AppendTranslatesOpacityMaskBounds()
+    {
+        var source = new DrawingContext();
+        var maskBrush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f));
+        source.PushOpacityMask(maskBrush, new Rect(2f, 3f, 10f, 11f));
+        source.PopOpacityMask();
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        Assert.Equal(2, target.Commands.Count);
+        Assert.Equal(RenderCommandType.PushOpacityMask, target.Commands[0].Type);
+        Assert.Equal(new Rect(22f, 33f, 10f, 11f), target.Commands[0].Rect);
+        Assert.Same(maskBrush, target.Commands[0].Brush);
+        Assert.Equal(RenderCommandType.PopOpacityMask, target.Commands[1].Type);
+    }
+
+    [Fact]
+    public void OpacityMaskCompilationDoesNotInheritActiveBlendMode()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(96, 48);
+        window.Content = new OpacityMaskUnderClearBlendVisual();
+
+        try
+        {
+            window.Render();
+
+            var pixels = window.ReadPixels();
+            var maskedContent = ReadPixel(pixels, window.Width, x: 24, y: 24);
+
+            Assert.True(maskedContent.R >= 220, $"Expected opacity-masked content to remain red, found {maskedContent}.");
+            Assert.True(maskedContent.G <= 35, $"Expected opacity-masked content green channel to stay low, found {maskedContent}.");
+            Assert.True(maskedContent.B <= 35, $"Expected opacity-masked content blue channel to stay low, found {maskedContent}.");
+            Assert.Equal(255, maskedContent.A);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
     public void CachedTextureBindGroupsAreQueuedWhenSourceTextureIsDisposed()
     {
         using var window = new HeadlessWindow(16, 16);
@@ -1957,6 +2000,29 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)) { Opacity = 0.5f },
                 new Rect(80f, 0f, 32f, 32f));
             context.DrawRectangle(_red, null, new Rect(80f, 0f, 32f, 32f));
+            context.PopOpacityMask();
+        }
+    }
+
+    private sealed class OpacityMaskUnderClearBlendVisual : FrameworkElement
+    {
+        private readonly SolidColorBrush _background = new(new Vector4(0f, 0f, 0f, 1f));
+        private readonly SolidColorBrush _mask = new(new Vector4(1f, 1f, 1f, 1f));
+        private readonly SolidColorBrush _red = new(new Vector4(1f, 0f, 0f, 1f));
+
+        public OpacityMaskUnderClearBlendVisual()
+        {
+            Width = 96f;
+            Height = 48f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(_background, null, new Rect(0f, 0f, 96f, 48f));
+            context.PushBlendMode(GpuBlendMode.Clear);
+            context.PushOpacityMask(_mask, new Rect(8f, 8f, 32f, 32f));
+            context.PopBlendMode();
+            context.DrawRectangle(_red, null, new Rect(8f, 8f, 32f, 32f));
             context.PopOpacityMask();
         }
     }

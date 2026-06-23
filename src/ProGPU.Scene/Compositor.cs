@@ -8182,7 +8182,7 @@ public unsafe class Compositor : IDisposable
     {
         CommitPendingDrawCalls();
         int preDrawCallCount = _drawCalls.Count;
-        var savedOpacityStack = ResetOpacityForMaskCompilation(out var savedActiveOpacity);
+        var savedState = ResetStateForMaskCompilation();
 
         try
         {
@@ -8197,7 +8197,7 @@ public unsafe class Compositor : IDisposable
         }
         finally
         {
-            RestoreOpacityAfterMaskCompilation(savedActiveOpacity, savedOpacityStack);
+            RestoreStateAfterMaskCompilation(savedState);
         }
 
         var maskDrawCalls = new List<CompositorDrawCall>();
@@ -8224,7 +8224,7 @@ public unsafe class Compositor : IDisposable
     {
         CommitPendingDrawCalls();
         int preDrawCallCount = _drawCalls.Count;
-        var savedOpacityStack = ResetOpacityForMaskCompilation(out var savedActiveOpacity);
+        var savedState = ResetStateForMaskCompilation();
 
         try
         {
@@ -8239,7 +8239,7 @@ public unsafe class Compositor : IDisposable
         }
         finally
         {
-            RestoreOpacityAfterMaskCompilation(savedActiveOpacity, savedOpacityStack);
+            RestoreStateAfterMaskCompilation(savedState);
         }
 
         var maskDrawCalls = new List<CompositorDrawCall>();
@@ -8262,24 +8262,42 @@ public unsafe class Compositor : IDisposable
         _maskStack.Push(maskTex);
     }
 
-    private float[] ResetOpacityForMaskCompilation(out float savedActiveOpacity)
+    private MaskCompilationState ResetStateForMaskCompilation()
     {
-        savedActiveOpacity = _activeOpacity;
-        var savedOpacityStack = _opacityStack.ToArray();
+        var savedState = new MaskCompilationState(
+            _activeOpacity,
+            _opacityStack.ToArray(),
+            _activeBlendMode,
+            _blendModeStack.ToArray());
         _activeOpacity = 1.0f;
         _opacityStack.Clear();
-        return savedOpacityStack;
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _blendModeStack.Clear();
+        return savedState;
     }
 
-    private void RestoreOpacityAfterMaskCompilation(float savedActiveOpacity, float[] savedOpacityStack)
+    private void RestoreStateAfterMaskCompilation(MaskCompilationState savedState)
     {
-        _activeOpacity = savedActiveOpacity;
+        _activeOpacity = savedState.ActiveOpacity;
         _opacityStack.Clear();
-        for (int i = savedOpacityStack.Length - 1; i >= 0; i--)
+        for (int i = savedState.OpacityStack.Length - 1; i >= 0; i--)
         {
-            _opacityStack.Push(savedOpacityStack[i]);
+            _opacityStack.Push(savedState.OpacityStack[i]);
+        }
+
+        _activeBlendMode = savedState.ActiveBlendMode;
+        _blendModeStack.Clear();
+        for (int i = savedState.BlendModeStack.Length - 1; i >= 0; i--)
+        {
+            _blendModeStack.Push(savedState.BlendModeStack[i]);
         }
     }
+
+    private readonly record struct MaskCompilationState(
+        float ActiveOpacity,
+        float[] OpacityStack,
+        GpuBlendMode ActiveBlendMode,
+        GpuBlendMode[] BlendModeStack);
 
     private void PopGeometryMask()
     {

@@ -1157,9 +1157,10 @@ public class DrawingContext : IRenderDataProvider
 
             if (translation != Vector2.Zero)
             {
-                if (adjustedCmd.Type == RenderCommandType.DrawRect || 
-                    adjustedCmd.Type == RenderCommandType.DrawTexture || 
-                    adjustedCmd.Type == RenderCommandType.DrawRoundedRect)
+                if (adjustedCmd.Type == RenderCommandType.DrawRect ||
+                    adjustedCmd.Type == RenderCommandType.DrawTexture ||
+                    adjustedCmd.Type == RenderCommandType.DrawRoundedRect ||
+                    adjustedCmd.Type == RenderCommandType.PushOpacityMask)
                 {
                     adjustedCmd.Rect = new Rect(adjustedCmd.Rect.Position + translation, adjustedCmd.Rect.Size);
                 }
