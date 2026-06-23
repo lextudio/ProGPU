@@ -479,22 +479,31 @@ public class Bitmap : Image
     private void Dispose(bool disposing)
     {
         if (_isDisposed) return;
-        if (disposing)
+        try
         {
-            Flush();
+            if (disposing)
+            {
+                Flush();
+            }
         }
-
-        if (_lockedHandle.IsAllocated)
+        finally
         {
-            _lockedHandle.Free();
-        }
+            if (_lockedHandle.IsAllocated)
+            {
+                _lockedHandle.Free();
+            }
 
-        _lockedBytes = null;
-        _lockedStride = 0;
-        _lockedPixelFormat = default;
-        _lockedWriteBack = false;
-        _texture.Dispose();
-        _isDisposed = true;
+            _lockedBytes = null;
+            _lockedStride = 0;
+            _lockedPixelFormat = default;
+            _lockedWriteBack = false;
+            if (disposing)
+            {
+                _texture.Dispose();
+            }
+
+            _isDisposed = true;
+        }
     }
 
     ~Bitmap()

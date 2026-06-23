@@ -295,6 +295,109 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void GdiBitmapDisposeReleasesBackingTextureWhenFlushFails()
+    {
+        var previous = WgpuContext.Current;
+        using var context = new WgpuContext();
+        context.Initialize(null);
+        GdiBitmap? target = null;
+
+        try
+        {
+            WgpuContext.Current = context;
+            using var source = new GdiBitmap(1, 1);
+            target = new GdiBitmap(2, 2);
+            using var graphics = GdiGraphics.FromImage(target);
+            graphics.DrawImage(source, new GdiRectangle(0, 0, 1, 1));
+
+            var backingTexture = target.GpuTexture;
+            var compositor = GetGdiBitmapCompositor(target);
+            compositor.RegisterExtension(9908, new ThrowingCompileExtension("Synthetic GDI bitmap dispose failure."));
+            target.RecordedContext.DrawExtension(9908);
+
+            var backingTextureDisposed = false;
+            void OnTextureDisposed(ulong id)
+            {
+                if (id == backingTexture.Id)
+                {
+                    backingTextureDisposed = true;
+                }
+            }
+
+            GpuTexture.OnDisposedWithId += OnTextureDisposed;
+            try
+            {
+                var exception = Assert.Throws<System.InvalidOperationException>(() => target.Dispose());
+                Assert.Contains("Synthetic GDI bitmap dispose failure", exception.Message, System.StringComparison.Ordinal);
+
+                Assert.True(backingTextureDisposed);
+                Assert.True(backingTexture.IsDisposed);
+                Assert.Empty(target.RecordedContext.Commands);
+                Assert.Equal(0, target.RecordedContext.RetainedResourceCount);
+            }
+            finally
+            {
+                GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+            }
+        }
+        finally
+        {
+            if (target?.GpuTexture.IsDisposed == false)
+            {
+                target.GpuTexture.Dispose();
+            }
+
+            WgpuContext.Current = previous;
+        }
+    }
+
+    [Fact]
+    public void GdiBitmapFinalizerPathDoesNotDisposeBackingTexture()
+    {
+        var previous = WgpuContext.Current;
+        using var context = new WgpuContext();
+        context.Initialize(null);
+
+        try
+        {
+            WgpuContext.Current = context;
+            var bitmap = new GdiBitmap(1, 1);
+            var backingTexture = bitmap.GpuTexture;
+
+            var backingTextureDisposed = false;
+            void OnTextureDisposed(ulong id)
+            {
+                if (id == backingTexture.Id)
+                {
+                    backingTextureDisposed = true;
+                }
+            }
+
+            GpuTexture.OnDisposedWithId += OnTextureDisposed;
+            try
+            {
+                InvokeGdiBitmapDispose(bitmap, disposing: false);
+                GC.SuppressFinalize(bitmap);
+
+                Assert.False(backingTextureDisposed);
+                Assert.False(backingTexture.IsDisposed);
+            }
+            finally
+            {
+                GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+                if (!backingTexture.IsDisposed)
+                {
+                    backingTexture.Dispose();
+                }
+            }
+        }
+        finally
+        {
+            WgpuContext.Current = previous;
+        }
+    }
+
+    [Fact]
     public void WpfDrawImageRejectsCrossContextBitmapSourcesBeforeRecording()
     {
         var previous = WgpuContext.Current;
@@ -1293,6 +1396,18 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             BindingFlags.Static | BindingFlags.Public)
             ?? throw new MissingMethodException(providerType.FullName, "GetCompositor");
         return (Compositor)method.Invoke(null, [bitmap.GpuTexture.Context])!;
+    }
+
+    private static void InvokeGdiBitmapDispose(GdiBitmap bitmap, bool disposing)
+    {
+        var method = typeof(GdiBitmap).GetMethod(
+            "Dispose",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(bool)],
+            modifiers: null)
+            ?? throw new MissingMethodException(typeof(GdiBitmap).FullName, "Dispose(bool)");
+        method.Invoke(bitmap, [disposing]);
     }
 
     private static T GetCompositorField<T>(Compositor compositor, string fieldName)
