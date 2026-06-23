@@ -58,6 +58,36 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(58u, info.Height);
     }
 
+    [Fact]
+    public void ResizeAfterExternalPathAtlasDisposeDoesNotSubmitDestroyedTexture()
+    {
+        using var window = new HeadlessWindow(1280, 800);
+        using (var atlas = new PathAtlas(window.Context, atlasSize: 256))
+        {
+            var combined = new PathGeometry
+            {
+                IsCombined = true,
+                Op = 2,
+                PathA = PrimitivePathGeometry.CreateRectangle(10f, 15f, 20f, 10f),
+                PathB = PrimitivePathGeometry.CreateRectangle(40f, 35f, 20f, 5f)
+            };
+
+            atlas.GetOrCreatePath(combined, scale: 2f);
+        }
+
+        window.Resize(96, 48);
+        window.Content = new OpacityMaskUnderClearBlendVisual();
+
+        try
+        {
+            window.Render();
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     [Theory]
     [InlineData(GdiInterpolationMode.NearestNeighbor, TextureSamplingMode.Nearest)]
     [InlineData(GdiInterpolationMode.Bicubic, TextureSamplingMode.Cubic)]
@@ -1081,6 +1111,34 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void MaskTexturePoolSkipsDisposedTextures()
+    {
+        using var window = new HeadlessWindow(32, 32);
+        var maskTexturePool = GetMaskTexturePool(window.Compositor);
+        var disposedTexture = new GpuTexture(
+            window.Context,
+            32,
+            32,
+            TextureFormat.R8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.RenderAttachment | TextureUsage.CopyDst,
+            "Disposed Mask Pool Entry");
+        disposedTexture.Dispose();
+        maskTexturePool.Add(disposedTexture);
+
+        var texture = InvokeGetMaskTexture(window.Compositor, 32, 32);
+        try
+        {
+            Assert.NotSame(disposedTexture, texture);
+            Assert.False(texture.IsDisposed);
+            Assert.DoesNotContain(maskTexturePool, candidate => candidate.Id == disposedTexture.Id);
+        }
+        finally
+        {
+            texture.Dispose();
+        }
+    }
+
+    [Fact]
     public void OpacityMaskWritesComputedAlphaIntoMaskTarget()
     {
         var window = HeadlessWindow.Shared;
@@ -1535,6 +1593,13 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         var field = typeof(Compositor).GetField("_maskTexturePool", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
         return Assert.IsType<List<GpuTexture>>(field.GetValue(compositor));
+    }
+
+    private static GpuTexture InvokeGetMaskTexture(Compositor compositor, uint width, uint height)
+    {
+        var method = typeof(Compositor).GetMethod("GetMaskTexture", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return Assert.IsType<GpuTexture>(method.Invoke(compositor, [width, height]));
     }
 
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)

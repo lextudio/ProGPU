@@ -1842,6 +1842,8 @@ public unsafe class Compositor : IDisposable
     {
         if (Environment.HasShutdownStarted) return;
 
+        RemoveMaskTexturePoolEntries(textureId);
+
         lock (_persistentTextureBindGroups)
         {
             List<TextureCacheKey>? keysToRemove = null;
@@ -1866,39 +1868,45 @@ public unsafe class Compositor : IDisposable
             }
         }
 
-        lock (_maskBindGroups)
+        RemoveMaskBindGroups(_maskBindGroups, textureId);
+        RemoveMaskBindGroups(_maskBindGroupsOffscreen, textureId);
+    }
+
+    private void RemoveMaskTexturePoolEntries(ulong textureId)
+    {
+        for (int i = _maskTexturePool.Count - 1; i >= 0; i--)
         {
-            GpuTexture? maskKeyToRemove = null;
-            foreach (var key in _maskBindGroups.Keys)
+            if (_maskTexturePool[i].Id == textureId)
             {
-                if (key.Id == textureId)
-                {
-                    maskKeyToRemove = key;
-                    break;
-                }
-            }
-            if (maskKeyToRemove != null)
-            {
-                QueueBindGroupRelease(_maskBindGroups[maskKeyToRemove]);
-                _maskBindGroups.Remove(maskKeyToRemove);
+                _maskTexturePool.RemoveAt(i);
             }
         }
+    }
 
-        lock (_maskBindGroupsOffscreen)
+    private void RemoveMaskBindGroups(Dictionary<GpuTexture, nint> cache, ulong textureId)
+    {
+        lock (cache)
         {
-            GpuTexture? maskKeyToRemoveOff = null;
-            foreach (var key in _maskBindGroupsOffscreen.Keys)
+            List<GpuTexture>? keysToRemove = null;
+            foreach (var key in cache.Keys)
             {
                 if (key.Id == textureId)
                 {
-                    maskKeyToRemoveOff = key;
-                    break;
+                    keysToRemove ??= new List<GpuTexture>();
+                    keysToRemove.Add(key);
                 }
             }
-            if (maskKeyToRemoveOff != null)
+
+            if (keysToRemove != null)
             {
-                QueueBindGroupRelease(_maskBindGroupsOffscreen[maskKeyToRemoveOff]);
-                _maskBindGroupsOffscreen.Remove(maskKeyToRemoveOff);
+                foreach (var key in keysToRemove)
+                {
+                    if (cache.TryGetValue(key, out var bindGroupPtr))
+                    {
+                        QueueBindGroupRelease(bindGroupPtr);
+                        cache.Remove(key);
+                    }
+                }
             }
         }
     }
@@ -5489,6 +5497,9 @@ public unsafe class Compositor : IDisposable
                 }
                 _persistentTextureBindGroups.Clear();
             }
+
+            GpuTexture.OnDisposedWithId -= HandleTextureDisposed;
+
             if (_dummyMaskTexture != null) _dummyMaskTexture.Dispose();
             if (!_context.IsDisposed)
             {
@@ -5509,13 +5520,12 @@ public unsafe class Compositor : IDisposable
             _maskBindGroups.Clear();
             _maskBindGroupsOffscreen.Clear();
 
-            foreach (var tex in _maskTexturePool)
+            var pooledMaskTextures = _maskTexturePool.ToArray();
+            _maskTexturePool.Clear();
+            foreach (var tex in pooledMaskTextures)
             {
                 tex.Dispose();
             }
-            _maskTexturePool.Clear();
-
-            GpuTexture.OnDisposedWithId -= HandleTextureDisposed;
 
             _isDisposed = true;
         }
@@ -7953,6 +7963,13 @@ public unsafe class Compositor : IDisposable
         for (int i = 0; i < _maskTexturePool.Count; i++)
         {
             var tex = _maskTexturePool[i];
+            if (!CanReuseMaskTexture(tex))
+            {
+                _maskTexturePool.RemoveAt(i);
+                i--;
+                continue;
+            }
+
             if (tex.Width == width && tex.Height == height)
             {
                 _maskTexturePool.RemoveAt(i);
@@ -7975,6 +7992,11 @@ public unsafe class Compositor : IDisposable
         if (maskTexture == null)
         {
             return isOffscreen ? _dummyMaskBindGroupOffscreen : _dummyMaskBindGroup;
+        }
+
+        if (!CanReuseMaskTexture(maskTexture))
+        {
+            throw new ObjectDisposedException(nameof(GpuTexture), "Cannot bind a disposed or foreign-context mask texture.");
         }
 
         var cache = isOffscreen ? _maskBindGroupsOffscreen : _maskBindGroups;
@@ -8002,6 +8024,14 @@ public unsafe class Compositor : IDisposable
 
         cache[maskTexture] = (nint)bg;
         return bg;
+    }
+
+    private bool CanReuseMaskTexture(GpuTexture texture)
+    {
+        return !texture.IsDisposed
+            && ReferenceEquals(texture.Context, _context)
+            && texture.TexturePtr != null
+            && texture.ViewPtr != null;
     }
 
     private static bool BlendModeRequiresPremultipliedSource(GpuBlendMode blendMode)

@@ -210,7 +210,8 @@ public unsafe class WgpuContext : IDisposable
 
             foreach (var tex in textures)
             {
-                Wgpu.TextureDestroy((Texture*)tex);
+                // Release ownership without destroying; bind groups/views may still keep
+                // the texture alive until the backend has drained all references.
                 Wgpu.TextureRelease((Texture*)tex);
             }
 
