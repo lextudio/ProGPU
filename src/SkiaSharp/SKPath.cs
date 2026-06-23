@@ -292,10 +292,7 @@ public class SKPath : IDisposable
     {
         var result = new SKPath();
         var solvedGeometry = PathOpGeometrySolver.Combine(this.Geometry, other.Geometry, (int)op);
-        foreach (var fig in solvedGeometry.Figures)
-        {
-            result.Geometry.Figures.Add(fig);
-        }
+        ApplySolvedGeometry(result, solvedGeometry);
         return result;
     }
 
@@ -307,13 +304,28 @@ public class SKPath : IDisposable
     public static bool Op(SKPath first, SKPath second, SKPathOp op, SKPath result)
     {
         if (result == null) return false;
-        result.Geometry.Figures.Clear();
         var solvedGeometry = PathOpGeometrySolver.Combine(first.Geometry, second.Geometry, (int)op);
+        ApplySolvedGeometry(result, solvedGeometry);
+        return true;
+    }
+
+    private static void ApplySolvedGeometry(SKPath result, PathGeometry solvedGeometry)
+    {
+        result.Geometry.Figures.Clear();
+        result.FillType = ToSkPathFillType(solvedGeometry.FillRule);
         foreach (var fig in solvedGeometry.Figures)
         {
             result.Geometry.Figures.Add(fig);
         }
-        return true;
+
+        result._currentFigure = null;
+    }
+
+    private static SKPathFillType ToSkPathFillType(FillRule fillRule)
+    {
+        return fillRule == FillRule.EvenOdd
+            ? SKPathFillType.EvenOdd
+            : SKPathFillType.Winding;
     }
 
 

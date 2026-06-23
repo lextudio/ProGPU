@@ -13,6 +13,8 @@ public enum SKPaintStyle
 
 public class SKPaint : IDisposable
 {
+    private const float HairlineStrokeWidth = 1f;
+
     public SKPaintStyle Style { get; set; } = SKPaintStyle.Fill;
     public SKColor Color { get; set; } = SKColors.Black;
     public float StrokeWidth { get; set; } = 1f;
@@ -117,6 +119,11 @@ public class SKPaint : IDisposable
 
     private static float ScaleStrokeWidth(float strokeWidth, float strokeScale)
     {
+        if (strokeWidth == 0f)
+        {
+            return HairlineStrokeWidth;
+        }
+
         if (!float.IsFinite(strokeScale) || strokeScale <= 0f)
         {
             return strokeWidth;

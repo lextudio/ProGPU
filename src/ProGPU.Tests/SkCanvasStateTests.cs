@@ -670,6 +670,27 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void DrawRectMapsZeroStrokeWidthToRenderableHairline()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 100f, 100f);
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 0f
+        };
+
+        canvas.Scale(4f, 4f);
+        canvas.DrawRect(new SKRect(10f, 20f, 40f, 60f), paint);
+
+        var command = Assert.Single(context.Commands);
+        Assert.Equal(RenderCommandType.DrawRect, command.Type);
+        Assert.NotNull(command.Pen);
+        AssertNear(1f, command.Pen!.Thickness);
+        AssertMatrixNear(Matrix4x4.CreateScale(4f, 4f, 1f), command.Transform);
+    }
+
+    [Fact]
     public void ClipPathRecordsCurrentCanvasMatrix()
     {
         var context = new DrawingContext();

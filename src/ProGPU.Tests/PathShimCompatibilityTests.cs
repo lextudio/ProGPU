@@ -131,6 +131,37 @@ public sealed class PathShimCompatibilityTests
     }
 
     [Fact]
+    public void SkPathOpPreservesEvenOddFillRuleOnReturnedPath()
+    {
+        using var path = new SKPath { FillType = SKPathFillType.EvenOdd };
+        using var empty = new SKPath();
+        path.AddRect(new SKRect(0f, 0f, 10f, 10f));
+        path.AddRect(new SKRect(2f, 2f, 8f, 8f));
+
+        using var result = path.Op(empty, SKPathOp.Union);
+
+        Assert.Equal(SKPathFillType.EvenOdd, result.FillType);
+        Assert.Equal(FillRule.EvenOdd, result.Geometry.FillRule);
+        Assert.Equal(2, result.Geometry.Figures.Count);
+    }
+
+    [Fact]
+    public void SkPathStaticOpPreservesEvenOddFillRuleOnResultPath()
+    {
+        using var path = new SKPath { FillType = SKPathFillType.EvenOdd };
+        using var empty = new SKPath();
+        using var result = new SKPath();
+        path.AddRect(new SKRect(0f, 0f, 10f, 10f));
+        path.AddRect(new SKRect(2f, 2f, 8f, 8f));
+
+        Assert.True(SKPath.Op(path, empty, SKPathOp.Union, result));
+
+        Assert.Equal(SKPathFillType.EvenOdd, result.FillType);
+        Assert.Equal(FillRule.EvenOdd, result.Geometry.FillRule);
+        Assert.Equal(2, result.Geometry.Figures.Count);
+    }
+
+    [Fact]
     public void SkRegionIntersectRestrictsContainsAndBounds()
     {
         using var region = new SKRegion();
