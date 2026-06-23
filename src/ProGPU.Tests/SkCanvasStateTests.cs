@@ -363,6 +363,43 @@ public sealed class SkCanvasStateTests
         finally
         {
             GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+            ResetCanvasCompositor(surface);
+        }
+    }
+
+    [Fact]
+    public void RestoreDropShadowLayerDisposesFilteredTextureWhenRenderFails()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+        using var current = WgpuContext.PushCurrent(context);
+        using var surface = SKSurface.Create(new SKImageInfo(32, 32, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var layerPaint = new SKPaint
+        {
+            ImageFilter = SKImageFilter.CreateDropShadow(2f, 3f, 4f, 4f, SKColors.Black)
+        };
+        using var fill = new SKPaint { Color = SKColors.Red };
+
+        DisposeCanvasCompositorCompute(surface);
+
+        var restoreCount = surface.Canvas.SaveLayer(layerPaint);
+        surface.Canvas.DrawRect(new SKRect(2f, 2f, 20f, 20f), fill);
+
+        var disposedTextureCount = 0;
+        void OnTextureDisposed(ulong _) => disposedTextureCount++;
+
+        GpuTexture.OnDisposedWithId += OnTextureDisposed;
+        try
+        {
+            Assert.Throws<ObjectDisposedException>(() => surface.Canvas.RestoreToCount(restoreCount));
+
+            Assert.True(disposedTextureCount > 0);
+            Assert.Empty(GetSurfaceDrawingContext(surface).Commands);
+        }
+        finally
+        {
+            GpuTexture.OnDisposedWithId -= OnTextureDisposed;
+            ResetCanvasCompositor(surface);
         }
     }
 
@@ -1272,6 +1309,26 @@ public sealed class SkCanvasStateTests
 
         var context = (WgpuContext)contextField!.GetValue(surface)!;
         return (Compositor)method!.Invoke(null, new object[] { context })!;
+    }
+
+    private static void DisposeCanvasCompositorCompute(SKSurface surface)
+    {
+        var computeField = typeof(Compositor).GetField(
+            "_compute",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        ((IDisposable)computeField!.GetValue(GetCanvasCompositor(surface))!).Dispose();
+    }
+
+    private static void ResetCanvasCompositor(SKSurface surface)
+    {
+        var contextField = typeof(SKSurface).GetField(
+            "_context",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var removeMethod = typeof(SKCanvas).GetMethod(
+            "RemoveCachedCompositor",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        removeMethod!.Invoke(null, new[] { contextField!.GetValue(surface)! });
     }
 
     private sealed class ThrowingCompileExtension : ICompositorExtension

@@ -288,16 +288,35 @@ public class SKCanvas : IDisposable
         };
         visual.Context.DrawTexture(sourceTexture, new Rect(0f, 0f, _width, _height));
 
-        GetCompositorForContext(context).RenderOffscreen(
-            visual,
-            (uint)_width,
-            (uint)_height,
-            texture,
-            padding: 0f,
-            dpiScale: 1f);
+        var textureRetained = false;
+        try
+        {
+            try
+            {
+                GetCompositorForContext(context).RenderOffscreen(
+                    visual,
+                    (uint)_width,
+                    (uint)_height,
+                    texture,
+                    padding: 0f,
+                    dpiScale: 1f);
+            }
+            finally
+            {
+                visual.Context.Clear();
+            }
 
-        _ownedLayerTextures.Add(texture);
-        return texture;
+            _ownedLayerTextures.Add(texture);
+            textureRetained = true;
+            return texture;
+        }
+        finally
+        {
+            if (!textureRetained)
+            {
+                texture.Dispose();
+            }
+        }
     }
 
     private static Vector4 ToVector4(SKColor color)
