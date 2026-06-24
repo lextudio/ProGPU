@@ -34,11 +34,15 @@ public struct Matrix
         double m12 = -M11 * sin + M12 * cos;
         double m21 = M21 * cos + M22 * sin;
         double m22 = -M21 * sin + M22 * cos;
+        double offsetX = OffsetX * cos + OffsetY * sin;
+        double offsetY = -OffsetX * sin + OffsetY * cos;
 
         M11 = m11;
         M12 = m12;
         M21 = m21;
         M22 = m22;
+        OffsetX = offsetX;
+        OffsetY = offsetY;
     }
 
     public void Scale(double scaleX, double scaleY)
@@ -47,5 +51,7 @@ public struct Matrix
         M12 *= scaleY;
         M21 *= scaleX;
         M22 *= scaleY;
+        OffsetX *= scaleX;
+        OffsetY *= scaleY;
     }
 }

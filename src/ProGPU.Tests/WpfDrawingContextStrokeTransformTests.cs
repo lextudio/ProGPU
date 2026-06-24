@@ -113,6 +113,30 @@ public sealed class WpfDrawingContextStrokeTransformTests
             command.Transform);
     }
 
+    [Fact]
+    public void MatrixRotateAppendsToOffsets()
+    {
+        var matrix = WpfMatrix.Identity;
+        matrix.Translate(10, 5);
+
+        matrix.Rotate(90);
+
+        AssertNear(5, matrix.OffsetX);
+        AssertNear(-10, matrix.OffsetY);
+    }
+
+    [Fact]
+    public void MatrixScaleAppendsToOffsets()
+    {
+        var matrix = WpfMatrix.Identity;
+        matrix.Translate(10, 5);
+
+        matrix.Scale(2, 3);
+
+        AssertNear(20, matrix.OffsetX);
+        AssertNear(15, matrix.OffsetY);
+    }
+
     private static Matrix4x4 ToMatrix4x4(WpfMatrix matrix)
     {
         return new Matrix4x4(
@@ -147,5 +171,10 @@ public sealed class WpfDrawingContextStrokeTransformTests
     private static void AssertNear(float expected, float actual)
     {
         Assert.InRange(MathF.Abs(expected - actual), 0f, 0.0001f);
+    }
+
+    private static void AssertNear(double expected, double actual)
+    {
+        Assert.InRange(Math.Abs(expected - actual), 0d, 0.0001d);
     }
 }
