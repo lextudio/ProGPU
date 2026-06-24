@@ -232,6 +232,29 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void ShaderToyAcceptsBitwiseCompoundAssignments()
+    {
+        var wgsl = ShaderToyTranspiler.Translate(
+            """
+            void mainImage(out vec4 fragColor, in vec2 fragCoord)
+            {
+                uint x = uint(fragCoord.x);
+                uint mask = 0xffffffffu;
+                x ^= x >> 16u;
+                mask &= x;
+                x |= mask << 1u;
+                x %= 17u;
+                fragColor = vec4(float(x & 255u));
+            }
+            """);
+
+        Assert.Contains("x ^= (x >> 16u);", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("mask &= x;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("x |= (mask << 1u);", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("x %= 17u;", wgsl, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ShaderToyIFrameUniformUsesIntegerAbi()
     {
         var header = typeof(ShaderToyExtensionPipeline).GetField(
@@ -1490,6 +1513,26 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Same(clip, target.Commands[0].Path);
         Assert.Equal(Matrix4x4.CreateTranslation(20f, 30f, 0f), target.Commands[0].Transform);
         Assert.Equal(RenderCommandType.PopGeometryClip, target.Commands[1].Type);
+    }
+
+    [Fact]
+    public void AppendTranslatesIdentityDrawPathByComposingTransform()
+    {
+        var source = new DrawingContext();
+        var path = PrimitivePathGeometry.CreateRectangle(2f, 3f, 10f, 11f);
+        var brush = new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f));
+        var pen = new Pen(new SolidColorBrush(new Vector4(0f, 0f, 1f, 1f)), 2f);
+        source.DrawPath(brush, pen, path);
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        Assert.Single(target.Commands);
+        Assert.Equal(RenderCommandType.DrawPath, target.Commands[0].Type);
+        Assert.Same(path, target.Commands[0].Path);
+        Assert.Same(brush, target.Commands[0].Brush);
+        Assert.Same(pen, target.Commands[0].Pen);
+        Assert.Equal(Matrix4x4.CreateTranslation(20f, 30f, 0f), target.Commands[0].Transform);
     }
 
     [Fact]

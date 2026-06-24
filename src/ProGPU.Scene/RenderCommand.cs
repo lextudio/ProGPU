@@ -1134,7 +1134,8 @@ public class DrawingContext : IRenderDataProvider
                 {
                     TranslateRectBackedCommand(ref adjustedCmd, translation);
                 }
-                else if (adjustedCmd.Type == RenderCommandType.PushGeometryClip)
+                else if (adjustedCmd.Type == RenderCommandType.PushGeometryClip ||
+                         adjustedCmd.Type == RenderCommandType.DrawPath)
                 {
                     ComposeAppendTranslation(ref adjustedCmd, translation);
                 }
