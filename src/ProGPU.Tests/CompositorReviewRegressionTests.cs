@@ -504,6 +504,44 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void ImageEffectRejectsCrossContextTexturesBeforeBinding()
+    {
+        using var sourceContext = new WgpuContext();
+        sourceContext.Initialize(null);
+        using var window = new HeadlessWindow(16, 16);
+        using var source = new GpuTexture(
+            sourceContext,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Cross-context Image Effect Source");
+        source.WritePixels(new byte[] { 255, 0, 0, 255 });
+
+        var effect = new ImageEffectParams
+        {
+            Texture = source,
+            Rect = new Rect(0f, 0f, 16f, 16f),
+            BlurSigma = 1f
+        };
+        window.Content = new ImageEffectParamsVisual(effect);
+
+        try
+        {
+            window.Render();
+
+            Assert.StartsWith(
+                "Image effect texture belongs to a different WebGPU context",
+                effect.LastError,
+                System.StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
     public void RenderOffscreenRestoresCompositorStateWhenCompilationFails()
     {
         using var window = new HeadlessWindow(32, 32);
@@ -1709,6 +1747,25 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 _texture,
                 new Rect(0f, 0f, 16f, 16f),
                 blurSigma: 1f);
+        }
+    }
+
+    private sealed class ImageEffectParamsVisual : FrameworkElement
+    {
+        private readonly ImageEffectParams _parameters;
+
+        public ImageEffectParamsVisual(ImageEffectParams parameters)
+        {
+            _parameters = parameters;
+            Width = parameters.Rect.Width;
+            Height = parameters.Rect.Height;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawExtension(
+                CompositorBuiltInExtensions.ImageEffect,
+                dataParam: _parameters);
         }
     }
 

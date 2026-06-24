@@ -16,5 +16,6 @@ namespace ProGPU.Scene
         public float Invert { get; set; } = 0f;     // Weight [0, 1]
         public float BlurSigma { get; set; } = 0f;  // Blur amount
         public GpuTexture? MaskTexture { get; set; }
+        public string? LastError { get; set; }
     }
 }

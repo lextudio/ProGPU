@@ -11,6 +11,9 @@ namespace ProGPU.Scene.Extensions
 {
     public unsafe class ImageEffectExtensionPipeline : ICompositorExtension, IDisposable
     {
+        private const string CrossContextTextureErrorPrefix =
+            "Image effect texture belongs to a different WebGPU context";
+
         private const string ShaderCode = @"
 struct VSUniforms {
     projection: mat4x4<f32>,
@@ -392,6 +395,19 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
             EnsureLayouts(compositor);
 
+            if (!ValidateTextureContext(compositor.Context, p.Texture, "source", out var textureContextError)
+                || (p.MaskTexture != null && !ValidateTextureContext(compositor.Context, p.MaskTexture, "mask", out textureContextError))
+                || (dc.MaskTexture != null && !ValidateTextureContext(compositor.Context, dc.MaskTexture, "active mask", out textureContextError)))
+            {
+                p.LastError = textureContextError;
+                return;
+            }
+
+            if (p.LastError?.StartsWith(CrossContextTextureErrorPrefix, StringComparison.Ordinal) == true)
+            {
+                p.LastError = null;
+            }
+
             var wgpu = compositor.Context.Wgpu;
             var device = compositor.Context.Device;
             var pass = (RenderPassEncoder*)renderPassEncoder;
@@ -537,6 +553,23 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
             wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
             wgpu.RenderPassEncoderDrawIndexed(pass, (uint)dc.PointBufferCount, 1, (uint)dc.PointBufferOffset, 0, 0);
+        }
+
+        private static bool ValidateTextureContext(
+            WgpuContext targetContext,
+            GpuTexture texture,
+            string role,
+            out string? error)
+        {
+            if (!ReferenceEquals(texture.Context, targetContext))
+            {
+                error = $"{CrossContextTextureErrorPrefix} for {role}. " +
+                    "Create or copy the texture in the compositor target context before rendering the effect.";
+                return false;
+            }
+
+            error = null;
+            return true;
         }
 
         public void Dispose()
