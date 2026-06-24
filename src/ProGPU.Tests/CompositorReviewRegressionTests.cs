@@ -1415,6 +1415,45 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void RenderOffscreenBumpsTargetGenerationForWpfShaderEffectCache()
+    {
+        using var window = new HeadlessWindow(16, 16);
+        using var target = new GpuTexture(
+            window.Context,
+            16,
+            16,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "Offscreen Generation Texture");
+        var visual = new DrawingVisual();
+        visual.Context.DrawRectangle(
+            new SolidColorBrush(new Vector4(0.2f, 0.4f, 0.8f, 1f)),
+            pen: null,
+            new Rect(0f, 0f, 16f, 16f));
+        var parameters = new WpfShaderEffectParams
+        {
+            Samplers = new[]
+            {
+                new WpfShaderEffectSampler(1, target, TextureSamplingMode.Nearest)
+            }
+        };
+        var effect = new WpfShaderEffect(parameters);
+        var initialGeneration = target.Generation;
+        var initialCacheKey = GetRenderCacheKey(effect);
+
+        window.Compositor.RenderOffscreen(
+            visual,
+            width: 16,
+            height: 16,
+            targetTexture: target,
+            padding: 0f,
+            dpiScale: 1f);
+
+        Assert.True(target.Generation > initialGeneration);
+        Assert.NotEqual(initialCacheKey, GetRenderCacheKey(effect));
+    }
+
+    [Fact]
     public void MaskTexturePoolSkipsDisposedTextures()
     {
         using var window = new HeadlessWindow(32, 32);

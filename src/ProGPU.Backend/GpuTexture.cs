@@ -250,6 +250,13 @@ public unsafe class GpuTexture : IDisposable
         Generation++;
     }
 
+    public void MarkContentsDirty()
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
+
+        Generation++;
+    }
+
     public void CopyFrom(GpuTexture source)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));

@@ -6525,6 +6525,7 @@ public unsafe class Compositor : IDisposable
         _context.Wgpu.CommandBufferRelease(cmdBuffer);
         _context.Wgpu.CommandEncoderRelease(encoder);
         targetTexture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+        targetTexture.MarkContentsDirty();
 
         foreach (var tex in _masksToReturnToPool)
         {
