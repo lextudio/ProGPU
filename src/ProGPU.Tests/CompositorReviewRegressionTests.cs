@@ -1553,6 +1553,22 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void AppendTranslatesRectangularClipBounds()
+    {
+        var source = new DrawingContext();
+        source.PushClip(new Rect(2f, 3f, 10f, 11f));
+        source.PopClip();
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        Assert.Equal(2, target.Commands.Count);
+        Assert.Equal(RenderCommandType.PushClip, target.Commands[0].Type);
+        Assert.Equal(new Rect(22f, 33f, 10f, 11f), target.Commands[0].Rect);
+        Assert.Equal(RenderCommandType.PopClip, target.Commands[1].Type);
+    }
+
+    [Fact]
     public void AppendTranslatesGeometryClipTransform()
     {
         var source = new DrawingContext();
@@ -1718,6 +1734,42 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(RenderCommandType.DrawPolyline, command.Type);
         Assert.Equal(new Vector2(22f, 33f), target.PointBuffer[command.PointBufferOffset]);
         Assert.Equal(new Vector2(30f, 41f), target.PointBuffer[command.PointBufferOffset + 1]);
+    }
+
+    [Fact]
+    public void AppendTranslatesGpuSeriesUniformTranslate()
+    {
+        var lineBuffer = new object();
+        var scatterBuffer = new object();
+        var source = new DrawingContext();
+        source.DrawGpuLineSeries(
+            lineBuffer,
+            2f,
+            new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+            new Vector2(2f, 3f),
+            new Vector2(5f, 7f));
+        source.DrawGpuScatterSeries(
+            scatterBuffer,
+            4f,
+            new SolidColorBrush(new Vector4(0f, 1f, 0f, 1f)),
+            new Vector2(3f, 4f),
+            new Vector2(11f, 13f));
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        Assert.Equal(2, target.Commands.Count);
+        Assert.Equal(RenderCommandType.DrawExtension, target.Commands[0].Type);
+        Assert.Equal(CompositorBuiltInExtensions.GpuLineSeries, target.Commands[0].ExtensionId);
+        Assert.Same(lineBuffer, target.Commands[0].StaticBuffer);
+        Assert.Equal(new Vector2(25f, 37f), target.Commands[0].Translate);
+        Assert.Equal(new Vector2(2f, 3f), target.Commands[0].Scale);
+
+        Assert.Equal(RenderCommandType.DrawExtension, target.Commands[1].Type);
+        Assert.Equal(CompositorBuiltInExtensions.GpuScatterSeries, target.Commands[1].ExtensionId);
+        Assert.Same(scatterBuffer, target.Commands[1].StaticBuffer);
+        Assert.Equal(new Vector2(31f, 43f), target.Commands[1].Translate);
+        Assert.Equal(new Vector2(3f, 4f), target.Commands[1].Scale);
     }
 
     [Fact]

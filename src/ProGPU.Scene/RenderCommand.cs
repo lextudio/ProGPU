@@ -1130,6 +1130,7 @@ public class DrawingContext : IRenderDataProvider
                 if (adjustedCmd.Type == RenderCommandType.DrawRect ||
                     adjustedCmd.Type == RenderCommandType.DrawTexture ||
                     adjustedCmd.Type == RenderCommandType.DrawRoundedRect ||
+                    adjustedCmd.Type == RenderCommandType.PushClip ||
                     adjustedCmd.Type == RenderCommandType.PushOpacityMask)
                 {
                     TranslateRectBackedCommand(ref adjustedCmd, translation);
@@ -1138,6 +1139,10 @@ public class DrawingContext : IRenderDataProvider
                          adjustedCmd.Type == RenderCommandType.DrawPath)
                 {
                     ComposeAppendTranslation(ref adjustedCmd, translation);
+                }
+                else if (IsGpuSeriesCommand(adjustedCmd))
+                {
+                    TranslateGpuSeriesCommand(ref adjustedCmd, translation);
                 }
                 else if (HasNonIdentityTransform(adjustedCmd))
                 {
@@ -1221,6 +1226,27 @@ public class DrawingContext : IRenderDataProvider
     private static bool HasNonIdentityTransform(RenderCommand command)
     {
         return command.Transform != default && command.Transform != Matrix4x4.Identity;
+    }
+
+    private static bool IsGpuSeriesCommand(RenderCommand command)
+    {
+        return command.Type == RenderCommandType.DrawGpuLineSeries ||
+               command.Type == RenderCommandType.DrawGpuScatterSeries ||
+               (command.Type == RenderCommandType.DrawExtension &&
+                (command.ExtensionId == CompositorBuiltInExtensions.GpuLineSeries ||
+                 command.ExtensionId == CompositorBuiltInExtensions.GpuScatterSeries));
+    }
+
+    private static void TranslateGpuSeriesCommand(ref RenderCommand command, Vector2 translation)
+    {
+        if (HasNonIdentityTransform(command))
+        {
+            ComposeAppendTranslation(ref command, translation);
+        }
+        else
+        {
+            command.Translate += translation;
+        }
     }
 
     private static bool IsRectBackedExtensionDataParam(object? dataParam)
