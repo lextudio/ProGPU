@@ -1269,6 +1269,124 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void AppendTranslatesImageEffectPayloadRect()
+    {
+        var source = new DrawingContext();
+        var parameters = new ImageEffectParams
+        {
+            Texture = null!,
+            Rect = new Rect(2f, 3f, 10f, 11f),
+            Brightness = 0.25f,
+            Contrast = 1.25f,
+            Saturation = 0.75f,
+            Grayscale = 0.5f,
+            Sepia = 0.2f,
+            Invert = 1f,
+            BlurSigma = 4f,
+            LastError = "preserve"
+        };
+        source.DrawExtension(CompositorBuiltInExtensions.ImageEffect, dataParam: parameters);
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        var appended = Assert.IsType<ImageEffectParams>(Assert.Single(target.Commands).DataParam);
+        Assert.NotSame(parameters, appended);
+        Assert.Equal(new Rect(22f, 33f, 10f, 11f), appended.Rect);
+        Assert.Equal(new Rect(2f, 3f, 10f, 11f), parameters.Rect);
+        Assert.Equal(parameters.Brightness, appended.Brightness);
+        Assert.Equal(parameters.Contrast, appended.Contrast);
+        Assert.Equal(parameters.Saturation, appended.Saturation);
+        Assert.Equal(parameters.Grayscale, appended.Grayscale);
+        Assert.Equal(parameters.Sepia, appended.Sepia);
+        Assert.Equal(parameters.Invert, appended.Invert);
+        Assert.Equal(parameters.BlurSigma, appended.BlurSigma);
+        Assert.Equal(parameters.LastError, appended.LastError);
+    }
+
+    [Fact]
+    public void AppendTranslatesWpfShaderEffectPayloadRect()
+    {
+        var source = new DrawingContext();
+        var constants = new[] { 1f, 2f, 3f, 4f };
+        var samplers = new[]
+        {
+            new WpfShaderEffectSampler(1, null, TextureSamplingMode.Nearest)
+        };
+        var parameters = new WpfShaderEffectParams
+        {
+            Texture = null,
+            Rect = new Rect(2f, 3f, 10f, 11f),
+            ShaderSource = "fn custom() -> f32 { return 1.0; }",
+            ShaderKey = "effect-key",
+            Constants = constants,
+            Samplers = samplers,
+            SamplingMode = TextureSamplingMode.Nearest,
+            IsFailed = true,
+            LastError = "preserve",
+            SourceTextureRegisterIndex = 1
+        };
+        source.DrawExtension(CompositorBuiltInExtensions.WpfShaderEffect, dataParam: parameters);
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        var appended = Assert.IsType<WpfShaderEffectParams>(Assert.Single(target.Commands).DataParam);
+        Assert.NotSame(parameters, appended);
+        Assert.Equal(new Rect(22f, 33f, 10f, 11f), appended.Rect);
+        Assert.Equal(new Rect(2f, 3f, 10f, 11f), parameters.Rect);
+        Assert.Equal(parameters.ShaderSource, appended.ShaderSource);
+        Assert.Equal(parameters.ShaderKey, appended.ShaderKey);
+        Assert.Same(constants, appended.Constants);
+        Assert.Same(samplers, appended.Samplers);
+        Assert.Equal(parameters.SamplingMode, appended.SamplingMode);
+        Assert.Equal(parameters.IsFailed, appended.IsFailed);
+        Assert.Equal(parameters.LastError, appended.LastError);
+        Assert.Equal(parameters.SourceTextureRegisterIndex, appended.SourceTextureRegisterIndex);
+    }
+
+    [Fact]
+    public void AppendTranslatesShaderToyPayloadRect()
+    {
+        var source = new DrawingContext();
+        var parameters = new ShaderToyParams
+        {
+            Rect = new Rect(2f, 3f, 10f, 11f),
+            ShaderSource = SolidShaderToySource,
+            ShaderKey = "toy-key",
+            OldShaderKey = "old-toy-key",
+            IsFailed = true,
+            Resolution = new Vector3(10f, 11f, 1f),
+            Time = 3f,
+            TimeDelta = 0.5f,
+            Frame = 12f,
+            FrameRate = 60f,
+            Mouse = new Vector4(1f, 2f, 3f, 4f),
+            Date = new Vector4(2026f, 6f, 24f, 12f)
+        };
+        source.DrawExtension(CompositorBuiltInExtensions.ShaderToy, dataParam: parameters);
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        var appended = Assert.IsType<ShaderToyParams>(Assert.Single(target.Commands).DataParam);
+        Assert.NotSame(parameters, appended);
+        Assert.Equal(new Rect(22f, 33f, 10f, 11f), appended.Rect);
+        Assert.Equal(new Rect(2f, 3f, 10f, 11f), parameters.Rect);
+        Assert.Equal(parameters.ShaderSource, appended.ShaderSource);
+        Assert.Equal(parameters.ShaderKey, appended.ShaderKey);
+        Assert.Equal(parameters.OldShaderKey, appended.OldShaderKey);
+        Assert.Equal(parameters.IsFailed, appended.IsFailed);
+        Assert.Equal(parameters.Resolution, appended.Resolution);
+        Assert.Equal(parameters.Time, appended.Time);
+        Assert.Equal(parameters.TimeDelta, appended.TimeDelta);
+        Assert.Equal(parameters.Frame, appended.Frame);
+        Assert.Equal(parameters.FrameRate, appended.FrameRate);
+        Assert.Equal(parameters.Mouse, appended.Mouse);
+        Assert.Equal(parameters.Date, appended.Date);
+    }
+
+    [Fact]
     public void OpacityMaskCompilationDoesNotInheritActiveBlendMode()
     {
         var window = HeadlessWindow.Shared;

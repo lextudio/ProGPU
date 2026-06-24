@@ -1174,6 +1174,11 @@ public class DrawingContext : IRenderDataProvider
                 }
                 else
                 {
+                    if (adjustedCmd.Type == RenderCommandType.DrawExtension)
+                    {
+                        adjustedCmd.DataParam = TranslateExtensionDataParam(adjustedCmd.DataParam, translation);
+                    }
+
                     adjustedCmd.Position += translation;
                     adjustedCmd.Position2 += translation;
                     adjustedCmd.Position3 += translation;
@@ -1195,6 +1200,62 @@ public class DrawingContext : IRenderDataProvider
         }
 
         _retainedResources.AddRange(other.CloneRetainedResources());
+    }
+
+    private static object? TranslateExtensionDataParam(object? dataParam, Vector2 translation)
+    {
+        return dataParam switch
+        {
+            ImageEffectParams imageEffect => new ImageEffectParams
+            {
+                Texture = imageEffect.Texture,
+                Rect = TranslateRect(imageEffect.Rect, translation),
+                Brightness = imageEffect.Brightness,
+                Contrast = imageEffect.Contrast,
+                Saturation = imageEffect.Saturation,
+                Grayscale = imageEffect.Grayscale,
+                Sepia = imageEffect.Sepia,
+                Invert = imageEffect.Invert,
+                BlurSigma = imageEffect.BlurSigma,
+                MaskTexture = imageEffect.MaskTexture,
+                LastError = imageEffect.LastError
+            },
+            WpfShaderEffectParams wpfShaderEffect => new WpfShaderEffectParams
+            {
+                Texture = wpfShaderEffect.Texture,
+                Rect = TranslateRect(wpfShaderEffect.Rect, translation),
+                ShaderSource = wpfShaderEffect.ShaderSource,
+                ShaderKey = wpfShaderEffect.ShaderKey,
+                Constants = wpfShaderEffect.Constants,
+                Samplers = wpfShaderEffect.Samplers,
+                SamplingMode = wpfShaderEffect.SamplingMode,
+                IsFailed = wpfShaderEffect.IsFailed,
+                LastError = wpfShaderEffect.LastError,
+                SourceTextureRegisterIndex = wpfShaderEffect.SourceTextureRegisterIndex,
+                SourceTextureOverridesSampler = wpfShaderEffect.SourceTextureOverridesSampler
+            },
+            ShaderToyParams shaderToy => new ShaderToyParams
+            {
+                Rect = TranslateRect(shaderToy.Rect, translation),
+                ShaderSource = shaderToy.ShaderSource,
+                ShaderKey = shaderToy.ShaderKey,
+                OldShaderKey = shaderToy.OldShaderKey,
+                IsFailed = shaderToy.IsFailed,
+                Resolution = shaderToy.Resolution,
+                Time = shaderToy.Time,
+                TimeDelta = shaderToy.TimeDelta,
+                Frame = shaderToy.Frame,
+                FrameRate = shaderToy.FrameRate,
+                Mouse = shaderToy.Mouse,
+                Date = shaderToy.Date
+            },
+            _ => dataParam
+        };
+    }
+
+    private static Rect TranslateRect(Rect rect, Vector2 translation)
+    {
+        return new Rect(rect.Position + translation, rect.Size);
     }
 
     public void Clear()
