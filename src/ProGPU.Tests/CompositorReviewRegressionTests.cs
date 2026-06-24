@@ -789,6 +789,41 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public unsafe void ExplicitRenderTargetViewportOffsetsLogicalSceneWithinFramebuffer()
+    {
+        using var window = new HeadlessWindow(24, 24);
+        using var target = new GpuTexture(
+            window.Context,
+            24,
+            24,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "Offset Explicit Viewport Target");
+        var visual = new SolidLogicalSceneVisual(new Vector2(10f, 8f));
+
+        window.Compositor.RenderScene(
+            visual,
+            logicalWidth: 10,
+            logicalHeight: 8,
+            renderTargetWidth: 24,
+            renderTargetHeight: 24,
+            renderTargetViewport: new RenderTargetViewport(2f, 4f, 20f, 16f),
+            dpiScale: 2f,
+            target.ViewPtr);
+
+        var pixels = target.ReadPixels();
+        var outsideTopLeft = ReadPixel(pixels, target.Width, x: 1, y: 4);
+        var insideTopLeft = ReadPixel(pixels, target.Width, x: 2, y: 4);
+        var insideLowerRight = ReadPixel(pixels, target.Width, x: 21, y: 19);
+        var outsideLowerRight = ReadPixel(pixels, target.Width, x: 22, y: 20);
+
+        Assert.True(outsideTopLeft.R <= 35, $"Expected pixels before viewport X to stay clear, found {outsideTopLeft}.");
+        Assert.True(insideTopLeft.R >= 220, $"Expected viewport origin to contain logical scene content, found {insideTopLeft}.");
+        Assert.True(insideLowerRight.R >= 220, $"Expected logical scene to fill offset viewport, found {insideLowerRight}.");
+        Assert.True(outsideLowerRight.R <= 35, $"Expected pixels after viewport to stay clear, found {outsideLowerRight}.");
+    }
+
+    [Fact]
     public unsafe void ExplicitPhysicalRenderTargetFeedsFramebufferSizeToCanvasPixelHelpers()
     {
         using var window = new HeadlessWindow(24, 24);
@@ -823,6 +858,43 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public unsafe void ExplicitRenderTargetViewportFeedsClientRectToCanvasPixelHelpers()
+    {
+        using var window = new HeadlessWindow(24, 24);
+        using var target = new GpuTexture(
+            window.Context,
+            24,
+            24,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+            "Offset Explicit Canvas Size Target");
+        var extension = new CanvasSizeRecordingExtension();
+        window.Compositor.RegisterExtension(9006, extension);
+
+        var visual = new DrawingVisual
+        {
+            Size = new Vector2(10f, 8f)
+        };
+        visual.Context.DrawExtension(9006);
+
+        window.Compositor.RenderScene(
+            visual,
+            logicalWidth: 10,
+            logicalHeight: 8,
+            renderTargetWidth: 24,
+            renderTargetHeight: 24,
+            renderTargetViewport: new RenderTargetViewport(2f, 4f, 20f, 16f),
+            dpiScale: 2f,
+            target.ViewPtr);
+
+        Assert.Equal(1, extension.RenderCount);
+        Assert.Equal(2f, extension.CanvasPixelX);
+        Assert.Equal(4f, extension.CanvasPixelY);
+        Assert.Equal(20f, extension.CanvasPixelWidth);
+        Assert.Equal(16f, extension.CanvasPixelHeight);
+    }
+
+    [Fact]
     public void RenderOffscreenUsesOffscreenTargetSizeWhenExplicitOuterTargetIsActive()
     {
         using var window = new HeadlessWindow(24, 24);
@@ -838,6 +910,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
         SetCompositorField(window.Compositor, "_explicitRenderTargetWidth", (uint?)211u);
         SetCompositorField(window.Compositor, "_explicitRenderTargetHeight", (uint?)113u);
+        SetCompositorField(window.Compositor, "_explicitRenderTargetViewport", new RenderTargetViewport(7f, 11f, 211f, 113f));
         SetCompositorField(window.Compositor, "_explicitDpiScale", (float?)3f);
 
         var visual = new DrawingVisual
@@ -859,6 +932,9 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(13f, extension.CanvasPixelHeight);
         Assert.Equal(211u, Assert.IsType<uint>(GetRawCompositorField(window.Compositor, "_explicitRenderTargetWidth")));
         Assert.Equal(113u, Assert.IsType<uint>(GetRawCompositorField(window.Compositor, "_explicitRenderTargetHeight")));
+        Assert.Equal(
+            new RenderTargetViewport(7f, 11f, 211f, 113f),
+            Assert.IsType<RenderTargetViewport>(GetRawCompositorField(window.Compositor, "_explicitRenderTargetViewport")));
         Assert.Equal(3f, Assert.IsType<float>(GetRawCompositorField(window.Compositor, "_explicitDpiScale")));
     }
 
@@ -2177,6 +2253,14 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
     private sealed class CanvasSizeRecordingExtension : ICompositorExtension
     {
+        private static readonly PropertyInfo s_canvasPixelXProperty =
+            typeof(Compositor).GetProperty("CurrentCanvasPixelX", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(typeof(Compositor).FullName, "CurrentCanvasPixelX");
+
+        private static readonly PropertyInfo s_canvasPixelYProperty =
+            typeof(Compositor).GetProperty("CurrentCanvasPixelY", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(typeof(Compositor).FullName, "CurrentCanvasPixelY");
+
         private static readonly PropertyInfo s_canvasPixelWidthProperty =
             typeof(Compositor).GetProperty("CurrentCanvasPixelWidth", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new MissingMemberException(typeof(Compositor).FullName, "CurrentCanvasPixelWidth");
@@ -2186,6 +2270,10 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             ?? throw new MissingMemberException(typeof(Compositor).FullName, "CurrentCanvasPixelHeight");
 
         public int RenderCount { get; private set; }
+
+        public float CanvasPixelX { get; private set; }
+
+        public float CanvasPixelY { get; private set; }
 
         public float CanvasPixelWidth { get; private set; }
 
@@ -2206,6 +2294,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             in Compositor.CompositorDrawCall dc)
         {
             RenderCount++;
+            CanvasPixelX = (float)s_canvasPixelXProperty.GetValue(compositor)!;
+            CanvasPixelY = (float)s_canvasPixelYProperty.GetValue(compositor)!;
             CanvasPixelWidth = (float)s_canvasPixelWidthProperty.GetValue(compositor)!;
             CanvasPixelHeight = (float)s_canvasPixelHeightProperty.GetValue(compositor)!;
         }

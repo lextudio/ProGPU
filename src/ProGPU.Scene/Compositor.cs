@@ -116,6 +116,18 @@ public struct CompositorMetrics
     public int PathAtlasCachedCount;
 }
 
+public readonly record struct RenderTargetViewport(float X, float Y, float Width, float Height)
+{
+    public static RenderTargetViewport Full(uint width, uint height)
+    {
+        return new RenderTargetViewport(
+            0f,
+            0f,
+            Math.Max(1u, width),
+            Math.Max(1u, height));
+    }
+}
+
 public unsafe class Compositor : IDisposable
 {
     internal const int MaxGradientStops = 65536;
@@ -332,6 +344,7 @@ public unsafe class Compositor : IDisposable
     private Matrix4x4 _gpuTransformsCameraView;
     private uint? _explicitRenderTargetWidth;
     private uint? _explicitRenderTargetHeight;
+    private RenderTargetViewport? _explicitRenderTargetViewport;
     private float? _explicitDpiScale;
 
     // Sampler & Texture Bind Group for Typography
@@ -553,15 +566,29 @@ public unsafe class Compositor : IDisposable
     internal GpuBuffer GradientStopsStorageBuffer => _gradientStopsStorageBuffer;
     internal uint CurrentWidth => _currentWidth;
     internal uint CurrentHeight => _currentHeight;
-    internal float CurrentCanvasPixelWidth => _explicitRenderTargetWidth.HasValue
+    internal float CurrentCanvasPixelX => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.X
+        : 0f;
+
+    internal float CurrentCanvasPixelY => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.Y
+        : 0f;
+
+    internal float CurrentCanvasPixelWidth => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.Width
+        : _explicitRenderTargetWidth.HasValue
         ? _explicitRenderTargetWidth.Value
         : MathF.Max(1f, _currentWidth * (_currentDpiScale > 0f ? _currentDpiScale : 1f));
 
-    internal float CurrentCanvasPixelHeight => _explicitRenderTargetHeight.HasValue
+    internal float CurrentCanvasPixelHeight => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.Height
+        : _explicitRenderTargetHeight.HasValue
         ? _explicitRenderTargetHeight.Value
         : MathF.Max(1f, _currentHeight * (_currentDpiScale > 0f ? _currentDpiScale : 1f));
-    private uint CurrentCanvasPixelWidthUInt => Math.Max(1u, (uint)Math.Round(CurrentCanvasPixelWidth));
-    private uint CurrentCanvasPixelHeightUInt => Math.Max(1u, (uint)Math.Round(CurrentCanvasPixelHeight));
+    private uint CurrentCanvasPixelXUInt => RoundNonNegativeToUInt(CurrentCanvasPixelX);
+    private uint CurrentCanvasPixelYUInt => RoundNonNegativeToUInt(CurrentCanvasPixelY);
+    private uint CurrentCanvasPixelWidthUInt => Math.Max(1u, RoundNonNegativeToUInt(CurrentCanvasPixelWidth));
+    private uint CurrentCanvasPixelHeightUInt => Math.Max(1u, RoundNonNegativeToUInt(CurrentCanvasPixelHeight));
     public float CurrentDpiScale => _currentDpiScale;
     internal Matrix4x4 CurrentProjection => _currentProjection;
     internal System.Runtime.CompilerServices.ConditionalWeakTable<object, GpuSeriesBuffer> DynamicGpuBufferCache => _dynamicGpuBufferCache;
@@ -1162,11 +1189,39 @@ public unsafe class Compositor : IDisposable
         float dpiScale,
         TextureView* targetView)
     {
+        RenderScene(
+            root,
+            logicalWidth,
+            logicalHeight,
+            renderTargetWidth,
+            renderTargetHeight,
+            RenderTargetViewport.Full(renderTargetWidth, renderTargetHeight),
+            dpiScale,
+            targetView);
+    }
+
+    public void RenderScene(
+        Visual root,
+        uint logicalWidth,
+        uint logicalHeight,
+        uint renderTargetWidth,
+        uint renderTargetHeight,
+        RenderTargetViewport renderTargetViewport,
+        float dpiScale,
+        TextureView* targetView)
+    {
         var previousRenderTargetWidth = _explicitRenderTargetWidth;
         var previousRenderTargetHeight = _explicitRenderTargetHeight;
+        var previousRenderTargetViewport = _explicitRenderTargetViewport;
         var previousDpiScale = _explicitDpiScale;
-        _explicitRenderTargetWidth = Math.Max(1, renderTargetWidth);
-        _explicitRenderTargetHeight = Math.Max(1, renderTargetHeight);
+        renderTargetWidth = Math.Max(1u, renderTargetWidth);
+        renderTargetHeight = Math.Max(1u, renderTargetHeight);
+        _explicitRenderTargetWidth = renderTargetWidth;
+        _explicitRenderTargetHeight = renderTargetHeight;
+        _explicitRenderTargetViewport = NormalizeRenderTargetViewport(
+            renderTargetViewport,
+            renderTargetWidth,
+            renderTargetHeight);
         _explicitDpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
 
         try
@@ -1177,6 +1232,7 @@ public unsafe class Compositor : IDisposable
         {
             _explicitRenderTargetWidth = previousRenderTargetWidth;
             _explicitRenderTargetHeight = previousRenderTargetHeight;
+            _explicitRenderTargetViewport = previousRenderTargetViewport;
             _explicitDpiScale = previousDpiScale;
         }
     }
@@ -1579,7 +1635,7 @@ public unsafe class Compositor : IDisposable
         };
 
         var pass = _context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
-        ApplyRenderPassViewport(pass, renderWidth, renderHeight);
+        ApplyRenderPassViewport(pass, renderWidth, renderHeight, useRenderTargetViewport: true);
 
         DrawCallType? currentType = null;
         GpuBlendMode? currentBlendMode = null;
@@ -1588,7 +1644,7 @@ public unsafe class Compositor : IDisposable
 
         foreach (var dc in _drawCalls)
         {
-            ApplyDrawCallScissor(pass, dc);
+            ApplyDrawCallScissor(pass, dc, useRenderTargetViewport: true);
 
             if (dc.Type == DrawCallType.Vector)
             {
@@ -5609,8 +5665,13 @@ public unsafe class Compositor : IDisposable
         return p;
     }
 
-    private unsafe void ApplyDrawCallScissor(RenderPassEncoder* pass, CompositorDrawCall dc)
+    private unsafe void ApplyDrawCallScissor(
+        RenderPassEncoder* pass,
+        CompositorDrawCall dc,
+        bool useRenderTargetViewport)
     {
+        uint viewportX = useRenderTargetViewport ? CurrentCanvasPixelXUInt : 0u;
+        uint viewportY = useRenderTargetViewport ? CurrentCanvasPixelYUInt : 0u;
         uint targetWidth = CurrentCanvasPixelWidthUInt;
         uint targetHeight = CurrentCanvasPixelHeightUInt;
 
@@ -5629,29 +5690,93 @@ public unsafe class Compositor : IDisposable
 
             sw = Math.Max(1u, sw);
             sh = Math.Max(1u, sh);
+            sx += viewportX;
+            sy += viewportY;
 
-            if (sx < targetWidth && sy < targetHeight)
+            uint viewportRight = viewportX + targetWidth;
+            uint viewportBottom = viewportY + targetHeight;
+            if (sx < viewportRight && sy < viewportBottom)
             {
-                sw = Math.Min(sw, targetWidth - sx);
-                sh = Math.Min(sh, targetHeight - sy);
+                sw = Math.Min(sw, viewportRight - sx);
+                sh = Math.Min(sh, viewportBottom - sy);
                 _context.Wgpu.RenderPassEncoderSetScissorRect(pass, sx, sy, sw, sh);
             }
             else
             {
-                _context.Wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, 1, 1);
+                _context.Wgpu.RenderPassEncoderSetScissorRect(pass, viewportX, viewportY, 1, 1);
             }
         }
         else
         {
-            _context.Wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, targetWidth, targetHeight);
+            _context.Wgpu.RenderPassEncoderSetScissorRect(pass, viewportX, viewportY, targetWidth, targetHeight);
         }
     }
 
-    private unsafe void ApplyRenderPassViewport(RenderPassEncoder* pass, uint targetWidth, uint targetHeight)
+    private unsafe void ApplyRenderPassViewport(
+        RenderPassEncoder* pass,
+        uint targetWidth,
+        uint targetHeight,
+        bool useRenderTargetViewport)
     {
         targetWidth = Math.Max(1u, targetWidth);
         targetHeight = Math.Max(1u, targetHeight);
-        _context.Wgpu.RenderPassEncoderSetViewport(pass, 0f, 0f, targetWidth, targetHeight, 0f, 1f);
+        var viewport = useRenderTargetViewport
+            ? NormalizeRenderTargetViewport(
+                _explicitRenderTargetViewport ?? RenderTargetViewport.Full(targetWidth, targetHeight),
+                targetWidth,
+                targetHeight)
+            : RenderTargetViewport.Full(targetWidth, targetHeight);
+        _context.Wgpu.RenderPassEncoderSetViewport(
+            pass,
+            viewport.X,
+            viewport.Y,
+            viewport.Width,
+            viewport.Height,
+            0f,
+            1f);
+    }
+
+    private static RenderTargetViewport NormalizeRenderTargetViewport(
+        RenderTargetViewport viewport,
+        uint targetWidth,
+        uint targetHeight)
+    {
+        float targetWidthF = Math.Max(1u, targetWidth);
+        float targetHeightF = Math.Max(1u, targetHeight);
+        float x = ClampFinite(viewport.X, 0f, MathF.Max(0f, targetWidthF - 1f));
+        float y = ClampFinite(viewport.Y, 0f, MathF.Max(0f, targetHeightF - 1f));
+        float width = IsPositiveFinite(viewport.Width)
+            ? viewport.Width
+            : targetWidthF - x;
+        float height = IsPositiveFinite(viewport.Height)
+            ? viewport.Height
+            : targetHeightF - y;
+
+        width = Math.Clamp(width, 1f, MathF.Max(1f, targetWidthF - x));
+        height = Math.Clamp(height, 1f, MathF.Max(1f, targetHeightF - y));
+        return new RenderTargetViewport(x, y, width, height);
+    }
+
+    private static float ClampFinite(float value, float min, float max)
+    {
+        return float.IsFinite(value)
+            ? Math.Clamp(value, min, max)
+            : min;
+    }
+
+    private static bool IsPositiveFinite(float value)
+    {
+        return float.IsFinite(value) && value > 0f;
+    }
+
+    private static uint RoundNonNegativeToUInt(float value)
+    {
+        if (!float.IsFinite(value) || value <= 0f)
+        {
+            return 0u;
+        }
+
+        return (uint)Math.Round(value);
     }
 
     ~Compositor()
@@ -6016,12 +6141,14 @@ public unsafe class Compositor : IDisposable
         var savedDpiScale = _currentDpiScale;
         var savedExplicitRenderTargetWidth = _explicitRenderTargetWidth;
         var savedExplicitRenderTargetHeight = _explicitRenderTargetHeight;
+        var savedExplicitRenderTargetViewport = _explicitRenderTargetViewport;
         var savedExplicitDpiScale = _explicitDpiScale;
         _currentWidth = width;
         _currentHeight = height;
         _currentDpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
         _explicitRenderTargetWidth = Math.Max(1u, targetTexture.Width);
         _explicitRenderTargetHeight = Math.Max(1u, targetTexture.Height);
+        _explicitRenderTargetViewport = null;
         _explicitDpiScale = _currentDpiScale;
 
         // 1. Calculate orthographic projection matrix for offscreen
@@ -6190,7 +6317,7 @@ public unsafe class Compositor : IDisposable
         };
 
         var pass = _context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
-        ApplyRenderPassViewport(pass, targetTexture.Width, targetTexture.Height);
+        ApplyRenderPassViewport(pass, targetTexture.Width, targetTexture.Height, useRenderTargetViewport: false);
 
         DrawCallType? currentType = null;
         GpuBlendMode? currentBlendMode = null;
@@ -6199,7 +6326,7 @@ public unsafe class Compositor : IDisposable
 
         foreach (var dc in _drawCalls)
         {
-            ApplyDrawCallScissor(pass, dc);
+            ApplyDrawCallScissor(pass, dc, useRenderTargetViewport: false);
 
             if (dc.Type == DrawCallType.Vector)
             {
@@ -6465,6 +6592,7 @@ public unsafe class Compositor : IDisposable
             _currentDpiScale = savedDpiScale;
             _explicitRenderTargetWidth = savedExplicitRenderTargetWidth;
             _explicitRenderTargetHeight = savedExplicitRenderTargetHeight;
+            _explicitRenderTargetViewport = savedExplicitRenderTargetViewport;
             _explicitDpiScale = savedExplicitDpiScale;
             _currentProjection = savedProjection;
         }
@@ -8382,7 +8510,7 @@ public unsafe class Compositor : IDisposable
 
             foreach (var dc in maskPass.DrawCalls)
             {
-                ApplyDrawCallScissor(pass, dc);
+                ApplyDrawCallScissor(pass, dc, useRenderTargetViewport: false);
 
                 if (dc.Type == DrawCallType.Vector)
                 {

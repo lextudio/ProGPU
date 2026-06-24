@@ -73,6 +73,21 @@ public class ProGpuHostControlTests
     }
 
     [Fact]
+    public void HostControlRechecksGraphicsStateBeforeCreatingFallbackVisual()
+    {
+        string source = File.ReadAllText(FindProGpuHostControlSource()).Replace("\r\n", "\n");
+
+        Assert.Contains("var expectedContext = _wgpuContext;", source, StringComparison.Ordinal);
+        Assert.Contains("var expectedCompositor = _compositor;", source, StringComparison.Ordinal);
+        Assert.Contains("IsCompositionSurfaceSetupCurrent(compositor, expectedContext, expectedCompositor)", source, StringComparison.Ordinal);
+        Assert.Contains("ReferenceEquals(_wgpuContext, context)", source, StringComparison.Ordinal);
+        Assert.Contains("ReferenceEquals(_compositor, compositor)", source, StringComparison.Ordinal);
+        Assert.Contains("_wgpuContext == null || _compositor == null || _wgpuContext.IsDisposed", source, StringComparison.Ordinal);
+        Assert.Contains("!_customVisualHandler.Matches(_wgpuContext, _compositor)", source, StringComparison.Ordinal);
+        Assert.Contains("internal bool Matches(WgpuContext context, WinuiCompositor compositor)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ReleaseSharedResourcesIgnoresPartiallyInitializedSwapchainImages()
     {
         var control = new ProGpuHostControl();

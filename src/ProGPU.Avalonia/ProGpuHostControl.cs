@@ -423,6 +423,8 @@ public class ProGpuHostControl : Control
 
     private async Task SetupCompositionSurfaceAsync(AvaloniaCompositor compositor)
     {
+        var expectedContext = _wgpuContext;
+        var expectedCompositor = _compositor;
         _compositionCompositor = compositor;
 
         ICompositionGpuInterop? interop = null;
@@ -454,6 +456,11 @@ public class ProGpuHostControl : Control
             }
         }
 
+        if (!IsCompositionSurfaceSetupCurrent(compositor, expectedContext, expectedCompositor))
+        {
+            return;
+        }
+
         if (EnableZeroCopy && useSharedTexture && interop != null)
         {
             UseZeroCopyCompositionSurface(compositor, interop, handleType);
@@ -462,6 +469,19 @@ public class ProGpuHostControl : Control
         {
             UseCustomVisualFallback(compositor);
         }
+    }
+
+    private bool IsCompositionSurfaceSetupCurrent(
+        AvaloniaCompositor compositionCompositor,
+        WgpuContext? context,
+        WinuiCompositor? compositor)
+    {
+        return context != null &&
+               compositor != null &&
+               !context.IsDisposed &&
+               ReferenceEquals(_compositionCompositor, compositionCompositor) &&
+               ReferenceEquals(_wgpuContext, context) &&
+               ReferenceEquals(_compositor, compositor);
     }
 
     private void UseZeroCopyCompositionSurface(
@@ -473,12 +493,7 @@ public class ProGpuHostControl : Control
         _gpuInterop = interop;
         _gpuHandleType = handleType;
 
-        if (_customVisual != null)
-        {
-            _customVisual.SendHandlerMessage("DISPOSE");
-            _customVisual = null;
-            _customVisualHandler = null;
-        }
+        DisposeCustomVisualFallback();
 
         _surfaceVisual = compositor.CreateSurfaceVisual();
         _drawingSurface = compositor.CreateDrawingSurface();
@@ -505,6 +520,17 @@ public class ProGpuHostControl : Control
             _surfaceVisual = null;
             _drawingSurface?.Dispose();
             _drawingSurface = null;
+        }
+
+        if (_wgpuContext == null || _compositor == null || _wgpuContext.IsDisposed)
+        {
+            DisposeCustomVisualFallback();
+            return;
+        }
+
+        if (_customVisualHandler != null && !_customVisualHandler.Matches(_wgpuContext, _compositor))
+        {
+            DisposeCustomVisualFallback();
         }
 
         _customVisualHandler ??= new ProGpuCustomVisualHandler(_wgpuContext, _compositor);
@@ -536,13 +562,7 @@ public class ProGpuHostControl : Control
 
         ThemeManager.ThemeChanged -= OnThemeChanged;
 
-        if (_customVisual != null)
-        {
-            _customVisual.SendHandlerMessage("DISPOSE");
-            ElementComposition.SetElementChildVisual(this, null);
-            _customVisual = null;
-            _customVisualHandler = null;
-        }
+        DisposeCustomVisualFallback();
 
         if (_surfaceVisual != null)
         {
@@ -586,6 +606,18 @@ public class ProGpuHostControl : Control
         _wgpuContext = null;
 
         _isInitialized = false;
+    }
+
+    private void DisposeCustomVisualFallback()
+    {
+        if (_customVisual != null)
+        {
+            _customVisual.SendHandlerMessage("DISPOSE");
+            ElementComposition.SetElementChildVisual(this, null);
+            _customVisual = null;
+        }
+
+        _customVisualHandler = null;
     }
 
     private bool ResizeSharedResources(uint width, uint height)
@@ -1301,6 +1333,12 @@ public unsafe class ProGpuCustomVisualHandler : CompositionCustomVisualHandler, 
         _wgpuContext = wgpuContext;
         _compositor = compositor;
         _bufferMapCallback = PfnBufferMapCallback.From(OnBufferMapped);
+    }
+
+    internal bool Matches(WgpuContext context, WinuiCompositor compositor)
+    {
+        return ReferenceEquals(_wgpuContext, context) &&
+               ReferenceEquals(_compositor, compositor);
     }
 
     private void OnBufferMapped(BufferMapAsyncStatus status, void* userData)
