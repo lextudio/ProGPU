@@ -177,6 +177,40 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void SkPaintShaderBrushesApplyPaintAlphaToFillAndStroke()
+    {
+        using var shader = SKShader.CreateLinearGradient(
+            new SKPoint(0f, 0f),
+            new SKPoint(10f, 0f),
+            [SKColors.Red, SKColors.Blue],
+            colorPos: null,
+            SKShaderTileMode.Clamp);
+
+        using var fillPaint = new SKPaint
+        {
+            Style = SKPaintStyle.Fill,
+            Shader = shader,
+            Color = new SKColor(255, 255, 255, 128)
+        };
+
+        var fillBrush = Assert.IsType<LinearGradientBrush>(fillPaint.ToBrush());
+        Assert.Equal(128f / 255f, fillBrush.Opacity, precision: 6);
+
+        using var strokePaint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 3f,
+            Shader = shader,
+            Color = new SKColor(255, 255, 255, 64)
+        };
+
+        var pen = strokePaint.ToPen();
+        Assert.NotNull(pen);
+        var strokeBrush = Assert.IsType<LinearGradientBrush>(pen.Brush);
+        Assert.Equal(64f / 255f, strokeBrush.Opacity, precision: 6);
+    }
+
+    [Fact]
     public void ShaderToyForLoopPreservesMultiDeclarationInitializers()
     {
         var wgsl = ShaderToyTranspiler.Translate(

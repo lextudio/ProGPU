@@ -58,7 +58,7 @@ public class SKPaint : IDisposable
         if (Shader != null)
         {
             ThrowIfShaderColorFilter();
-            return Shader.ToBrush();
+            return ApplyPaintAlphaToShaderBrush(Shader.ToBrush(), Color);
         }
 
         var color = GetFilteredColor();
@@ -80,7 +80,7 @@ public class SKPaint : IDisposable
         if (Shader != null)
         {
             ThrowIfShaderColorFilter();
-            penBrush = Shader.ToBrush();
+            penBrush = ApplyPaintAlphaToShaderBrush(Shader.ToBrush(), Color);
         }
         else
         {
@@ -115,6 +115,12 @@ public class SKPaint : IDisposable
     private SKColor GetFilteredColor()
     {
         return ColorFilter?.Apply(Color) ?? Color;
+    }
+
+    private static Brush ApplyPaintAlphaToShaderBrush(Brush brush, SKColor paintColor)
+    {
+        brush.Opacity *= paintColor.A / 255.0f;
+        return brush;
     }
 
     private static float ScaleStrokeWidth(float strokeWidth, float strokeScale)
