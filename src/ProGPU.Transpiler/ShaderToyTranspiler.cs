@@ -1667,7 +1667,7 @@ namespace ProGPU.Transpiler
                 var baseType = arr.Base.ResolvedType;
                 if (IsVector(baseType))
                 {
-                    arr.ResolvedType = "float";
+                    arr.ResolvedType = GetSwizzleResolvedType(baseType, componentCount: 1);
                 }
                 else if (baseType.EndsWith("[]"))
                 {
@@ -1745,7 +1745,7 @@ namespace ProGPU.Transpiler
             {
                 return argTypes.Count > 0 ? argTypes[0] : "float";
             }
-            if (name == "pow") return argTypes.Count > 0 ? argTypes[0] : "float";
+            if (name == "pow") return GetVectorizedBuiltinReturnType(argTypes);
 
             string signatureKey = $"{name}({string.Join(",", argTypes)})";
             if (_userFunctions.TryGetValue(signatureKey, out var returnType)) return returnType;

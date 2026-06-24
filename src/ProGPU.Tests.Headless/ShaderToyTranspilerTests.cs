@@ -85,6 +85,29 @@ void mainImage(out vec4 color, in vec2 coord) {
     }
 
     [Fact]
+    public void IntegerVectorElementAccessPreservesScalarFamily()
+    {
+        const string glsl = """
+void mainImage(out vec4 color, in vec2 coord) {
+    uvec2 u = uvec2(1u, 2u);
+    u[0]++;
+    ivec2 i = ivec2(3, 4);
+    i[1]--;
+    bvec2 flags = bvec2(true, false);
+    bool enabled = flags[0];
+    color = vec4(float(u[0]), float(i[1]), enabled ? 1.0 : 0.0, 1.0);
+}
+""";
+
+        var wgsl = ShaderToyTranspiler.Translate(glsl);
+
+        Assert.Contains("u[0] = u[0] + 1u;", wgsl);
+        Assert.Contains("i[1] = i[1] - 1;", wgsl);
+        Assert.Contains("var enabled: bool = flags[0];", wgsl);
+        Assert.DoesNotContain("u[0] = u[0] + 1.0;", wgsl);
+    }
+
+    [Fact]
     public void ShiftOperatorsEmitWgsl()
     {
         const string glsl = """
@@ -169,6 +192,22 @@ void mainImage(out vec4 color, in vec2 coord) {
         var wgsl = ShaderToyTranspiler.Translate(glsl);
 
         Assert.Contains("pow(vec3<f32>(0.5), vec3<f32>(2.2))", wgsl);
+    }
+
+    [Fact]
+    public void ScalarFirstPowResolvesAsVectorResult()
+    {
+        const string glsl = """
+void mainImage(out vec4 color, in vec2 coord) {
+    vec3 rgb = pow(2.0, vec3(0.5)) + 1.0;
+    color = vec4(rgb, 1.0);
+}
+""";
+
+        var wgsl = ShaderToyTranspiler.Translate(glsl);
+
+        Assert.Contains("var rgb: vec3<f32> = (pow(vec3<f32>(2.0), vec3<f32>(0.5)) + vec3<f32>(1.0));", wgsl);
+        Assert.DoesNotContain("pow(2.0, vec3<f32>(0.5)) + 1.0", wgsl);
     }
 
     [Fact]
