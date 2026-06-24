@@ -733,7 +733,7 @@ namespace ProGPU.Transpiler
             var regex = new Regex(
                 @"(?<comment>//.*|/\*[\s\S]*?\*/)" +
                 @"|(?<float>\b\d+\.\d*(?:[eE][+-]?\d+)?[fF]?|\.\d+(?:[eE][+-]?\d+)?[fF]?|\b\d+(?:[eE][+-]?\d+)[fF]?\b|\b\d+[fF]\b)" +
-                @"|(?<hex>\b0[xX][0-9a-fA-F]+\b)" +
+                @"|(?<hex>\b0[xX][0-9a-fA-F]+[uU]?\b)" +
                 @"|(?<int>\b\d+[uU]?\b)" +
                 @"|(?<id>\b[a-zA-Z_][a-zA-Z0-9_]*\b)" +
                 @"|(?<op>\+\+|--|\+=|-=|\*=|\/=|==|!=|<=|>=|&&|\|\||[+\-*/%<>=!?:\(\)\{\}\[\],;\.&|^~])" +
@@ -1279,16 +1279,25 @@ namespace ProGPU.Transpiler
             }
             if (Match(TokenType.IntLiteral))
             {
-                string val = Previous().Value.TrimEnd('u', 'U');
+                string raw = Previous().Value;
+                bool isUnsigned = raw.EndsWith("u", StringComparison.OrdinalIgnoreCase);
+                string val = isUnsigned ? raw[..^1] : raw;
                 if (val.StartsWith("0x") || val.StartsWith("0X"))
                 {
-                    return new LiteralExpression(Convert.ToInt32(val, 16), "int");
+                    string digits = val[2..];
+                    return isUnsigned
+                        ? new LiteralExpression(Convert.ToUInt32(digits, 16), "uint")
+                        : new LiteralExpression(Convert.ToInt32(digits, 16), "int");
                 }
                 if (val.StartsWith("0") && val.Length > 1)
                 {
-                    return new LiteralExpression(Convert.ToInt32(val, 8), "int");
+                    return isUnsigned
+                        ? new LiteralExpression(Convert.ToUInt32(val, 8), "uint")
+                        : new LiteralExpression(Convert.ToInt32(val, 8), "int");
                 }
-                return new LiteralExpression(int.Parse(val), "int");
+                return isUnsigned
+                    ? new LiteralExpression(uint.Parse(val, System.Globalization.CultureInfo.InvariantCulture), "uint")
+                    : new LiteralExpression(int.Parse(val, System.Globalization.CultureInfo.InvariantCulture), "int");
             }
             if (Match(TokenType.Keyword, "true") || Match(TokenType.Keyword, "false"))
             {
@@ -1633,15 +1642,7 @@ namespace ProGPU.Transpiler
                 var baseType = mem.Base.ResolvedType;
                 if (IsVector(baseType))
                 {
-                    int sz = mem.Member.Length;
-                    mem.ResolvedType = sz switch
-                    {
-                        1 => "float",
-                        2 => "vec2",
-                        3 => "vec3",
-                        4 => "vec4",
-                        _ => "float"
-                    };
+                    mem.ResolvedType = GetSwizzleResolvedType(baseType, mem.Member.Length);
                 }
                 else if (_structs.TryGetValue(baseType, out var st))
                 {
@@ -1686,6 +1687,39 @@ namespace ProGPU.Transpiler
         }
 
         private static bool IsVector(string type) => type != null && (type.StartsWith("vec") || type.StartsWith("ivec") || type.StartsWith("uvec") || type.StartsWith("bvec"));
+
+        private static string GetSwizzleResolvedType(string baseType, int componentCount)
+        {
+            string scalarType;
+            string vectorPrefix;
+            if (baseType.StartsWith("ivec"))
+            {
+                scalarType = "int";
+                vectorPrefix = "ivec";
+            }
+            else if (baseType.StartsWith("uvec"))
+            {
+                scalarType = "uint";
+                vectorPrefix = "uvec";
+            }
+            else if (baseType.StartsWith("bvec"))
+            {
+                scalarType = "bool";
+                vectorPrefix = "bvec";
+            }
+            else
+            {
+                scalarType = "float";
+                vectorPrefix = "vec";
+            }
+
+            return componentCount switch
+            {
+                1 => scalarType,
+                >= 2 and <= 4 => $"{vectorPrefix}{componentCount}",
+                _ => scalarType
+            };
+        }
 
         private static string GetDeclarationResolvedType(VariableDeclarationStatement declaration)
         {
@@ -2125,7 +2159,11 @@ namespace ProGPU.Transpiler
                 }
                 if (lit.Value is int i)
                 {
-                    return i.ToString();
+                    return i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                if (lit.Value is uint uintValue)
+                {
+                    return uintValue.ToString(System.Globalization.CultureInfo.InvariantCulture) + "u";
                 }
                 if (lit.Value is bool b)
                 {

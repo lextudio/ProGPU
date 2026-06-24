@@ -44,6 +44,47 @@ void mainImage(out vec4 color, in vec2 coord) {
     }
 
     [Fact]
+    public void UnsignedHexLiteralsPreserveUintType()
+    {
+        const string glsl = """
+void mainImage(out vec4 color, in vec2 coord) {
+    uint mask = 0xffffffffu;
+    uint low = 0xffu;
+    color = vec4(float(low), float(mask), 0.0, 1.0);
+}
+""";
+
+        var wgsl = ShaderToyTranspiler.Translate(glsl);
+
+        Assert.Contains("var mask: u32 = 4294967295u;", wgsl);
+        Assert.Contains("var low: u32 = 255u;", wgsl);
+    }
+
+    [Fact]
+    public void IntegerVectorSwizzlesPreserveVectorFamily()
+    {
+        const string glsl = """
+void mainImage(out vec4 color, in vec2 coord) {
+    ivec3 a = ivec3(1, 2, 3);
+    ivec2 b = a.xy + 1;
+    uvec3 c = uvec3(1u, 2u, 3u);
+    uvec2 d = c.xy + 1u;
+    bvec3 flags = bvec3(true, false, true);
+    bvec2 flagPair = flags.xy;
+    color = vec4(float(b.x), float(d.x), flagPair.x ? 1.0 : 0.0, 1.0);
+}
+""";
+
+        var wgsl = ShaderToyTranspiler.Translate(glsl);
+
+        Assert.Contains("var b: vec2<i32> = (a.xy + vec2<i32>(1));", wgsl);
+        Assert.Contains("var d: vec2<u32> = (c.xy + vec2<u32>(1u));", wgsl);
+        Assert.Contains("var flagPair: vec2<bool> = flags.xy;", wgsl);
+        Assert.DoesNotContain("a.xy + vec2<f32>(1)", wgsl);
+        Assert.DoesNotContain("c.xy + vec2<f32>(1u)", wgsl);
+    }
+
+    [Fact]
     public void ShaderToyFrameRateUniformMapsToInputStruct()
     {
         const string glsl = """
