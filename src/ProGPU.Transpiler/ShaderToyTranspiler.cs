@@ -2303,6 +2303,19 @@ namespace ProGPU.Transpiler
                 {
                     args.Add(GenerateExpression(a));
                 }
+                if (TryGetSquareMatrixDimension(call.Callee, out var matrixDimension) &&
+                    call.Arguments.Count == 1 &&
+                    IsScalar(call.Arguments[0].ResolvedType))
+                {
+                    var scalar = args[0];
+                    if (call.Arguments[0].ResolvedType == "int" || call.Arguments[0].ResolvedType == "uint")
+                    {
+                        scalar = $"f32({scalar})";
+                    }
+
+                    return GenerateDiagonalMatrixConstructor(ResolveIdentifier(calleeName), matrixDimension, scalar);
+                }
+
                 return $"{ResolveIdentifier(calleeName)}({string.Join(", ", args)})";
             }
             if (expr is MemberAccessExpression mem)
@@ -2462,6 +2475,32 @@ namespace ProGPU.Transpiler
         private static bool IsVector(string type) => type != null && (type.StartsWith("vec") || type.StartsWith("ivec") || type.StartsWith("uvec") || type.StartsWith("bvec"));
 
         private static bool IsScalar(string type) => type == "float" || type == "int" || type == "uint";
+
+        private static bool TryGetSquareMatrixDimension(string glslType, out int dimension)
+        {
+            dimension = glslType switch
+            {
+                "mat2" => 2,
+                "mat3" => 3,
+                "mat4" => 4,
+                _ => 0
+            };
+            return dimension != 0;
+        }
+
+        private static string GenerateDiagonalMatrixConstructor(string wgslType, int dimension, string scalar)
+        {
+            var components = new List<string>(dimension * dimension);
+            for (int column = 0; column < dimension; column++)
+            {
+                for (int row = 0; row < dimension; row++)
+                {
+                    components.Add(row == column ? scalar : "0.0");
+                }
+            }
+
+            return $"{wgslType}({string.Join(", ", components)})";
+        }
 
         private static string MapDeclarationType(VariableDeclarationStatement declaration)
         {

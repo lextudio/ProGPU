@@ -131,4 +131,20 @@ void mainImage(out vec4 color, in vec2 coord) {
         Assert.Contains("weights[0] = 0.25;", wgsl);
         Assert.DoesNotContain("var weights: f32;", wgsl);
     }
+
+    [Fact]
+    public void ScalarMatrixConstructorExpandsToDiagonalComponents()
+    {
+        const string glsl = """
+void mainImage(out vec4 color, in vec2 coord) {
+    mat3 m = mat3(1.0);
+    color = vec4(m[0][0], m[1][1], m[2][2], 1.0);
+}
+""";
+
+        var wgsl = ShaderToyTranspiler.Translate(glsl);
+
+        Assert.Contains("var m: mat3x3<f32> = mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);", wgsl);
+        Assert.DoesNotContain("mat3x3<f32>(1.0);", wgsl);
+    }
 }
