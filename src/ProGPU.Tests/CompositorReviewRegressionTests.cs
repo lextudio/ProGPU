@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Numerics;
@@ -229,6 +230,53 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Contains("var i: i32 = 0;", wgsl, System.StringComparison.Ordinal);
         Assert.Contains("var j: i32 = 1;", wgsl, System.StringComparison.Ordinal);
         Assert.Contains("for (; (i < 4); i = i + 1) {", wgsl, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShaderToyForLoopLowersCommaSeparatedUpdates()
+    {
+        var wgsl = ShaderToyTranspiler.Translate(
+            """
+            void mainImage(out vec4 fragColor, in vec2 fragCoord)
+            {
+                int sum = 0;
+                for (int i = 0, j = 0; i < 4; i++, j++)
+                {
+                    if (i == 2)
+                    {
+                        continue;
+                    }
+                    sum += i + j;
+                }
+                fragColor = vec4(float(sum));
+            }
+            """);
+
+        Assert.Contains("loop {", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("if (!((i < 4))) { break; }", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("continuing {", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("i = i + 1;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("j = j + 1;", wgsl, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("i++, j++", wgsl, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GpuPictureRecorderEndRecordingTransfersRetainedResourceLeases()
+    {
+        var recorder = new GpuPictureRecorder();
+        var context = recorder.BeginRecording(new Rect(0f, 0f, 16f, 16f));
+        var resource = new CountingDisposable();
+        context.RetainResource(resource);
+
+        using var picture = recorder.EndRecording();
+
+        Assert.Equal(0, context.RetainedResourceCount);
+        Assert.Equal(1, picture.RetainedResourceCount);
+        Assert.Equal(0, resource.DisposeCount);
+
+        picture.Dispose();
+
+        Assert.Equal(1, resource.DisposeCount);
     }
 
     [Fact]
@@ -3166,6 +3214,16 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 RadiusX = 8f,
                 RadiusY = 0f
             });
+        }
+    }
+
+    private sealed class CountingDisposable : IDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public void Dispose()
+        {
+            DisposeCount++;
         }
     }
 }

@@ -979,7 +979,7 @@ public sealed class SkCanvasStateTests
         using var picture = recorder.EndRecording();
         var command = Assert.Single(picture.Commands);
         var retainedTexture = command.Texture!;
-        Assert.Equal(1, context.RetainedResourceCount);
+        Assert.Equal(0, context.RetainedResourceCount);
         Assert.Equal(1, picture.RetainedResourceCount);
 
         var retainedTextureDisposed = false;
@@ -994,8 +994,6 @@ public sealed class SkCanvasStateTests
         GpuTexture.OnDisposedWithId += OnTextureDisposed;
         try
         {
-            recorder.BeginRecording(new Rect(0f, 0f, 16f, 16f));
-
             Assert.False(retainedTextureDisposed);
             Assert.Equal(0, context.RetainedResourceCount);
 

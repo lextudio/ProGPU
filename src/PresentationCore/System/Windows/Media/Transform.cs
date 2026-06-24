@@ -98,12 +98,12 @@ public struct Matrix
         double cos = Math.Cos(radians);
         double sin = Math.Sin(radians);
 
-        double m11 = M11 * cos + M12 * sin;
-        double m12 = -M11 * sin + M12 * cos;
-        double m21 = M21 * cos + M22 * sin;
-        double m22 = -M21 * sin + M22 * cos;
-        double offsetX = OffsetX * cos + OffsetY * sin;
-        double offsetY = -OffsetX * sin + OffsetY * cos;
+        double m11 = M11 * cos - M12 * sin;
+        double m12 = M11 * sin + M12 * cos;
+        double m21 = M21 * cos - M22 * sin;
+        double m22 = M21 * sin + M22 * cos;
+        double offsetX = OffsetX * cos - OffsetY * sin;
+        double offsetY = OffsetX * sin + OffsetY * cos;
 
         M11 = m11;
         M12 = m12;

@@ -121,8 +121,8 @@ public sealed class WpfDrawingContextStrokeTransformTests
 
         matrix.Rotate(90);
 
-        AssertNear(5, matrix.OffsetX);
-        AssertNear(-10, matrix.OffsetY);
+        AssertNear(-5, matrix.OffsetX);
+        AssertNear(10, matrix.OffsetY);
     }
 
     [Fact]
@@ -160,8 +160,8 @@ public sealed class WpfDrawingContextStrokeTransformTests
         rotate.Rotate(90);
 
         AssertNear(0, rotate.M11);
-        AssertNear(-1, rotate.M12);
-        AssertNear(1, rotate.M21);
+        AssertNear(1, rotate.M12);
+        AssertNear(-1, rotate.M21);
         AssertNear(0, rotate.M22);
     }
 

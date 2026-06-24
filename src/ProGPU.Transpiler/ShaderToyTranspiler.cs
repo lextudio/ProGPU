@@ -248,13 +248,23 @@ namespace ProGPU.Transpiler
     {
         public Statement Initializer { get; }
         public Expression Condition { get; }
-        public Expression Increment { get; }
+        public IReadOnlyList<Expression> Increments { get; }
+        public Expression Increment => Increments.Count == 1 ? Increments[0] : null;
         public Statement Body { get; }
         public ForStatement(Statement initializer, Expression condition, Expression increment, Statement body)
+            : this(
+                initializer,
+                condition,
+                increment != null ? new[] { increment } : Array.Empty<Expression>(),
+                body)
+        {
+        }
+
+        public ForStatement(Statement initializer, Expression condition, IReadOnlyList<Expression> increments, Statement body)
         {
             Initializer = initializer;
             Condition = condition;
-            Increment = increment;
+            Increments = increments ?? Array.Empty<Expression>();
             Body = body;
         }
     }
@@ -1522,17 +1532,17 @@ namespace ProGPU.Transpiler
                     Consume(TokenType.Punctuation, ";", "Expected ';' after condition expression");
                 }
 
-                Expression increment = null;
+                var increments = new List<Expression>();
                 if (!Match(TokenType.Punctuation, ")"))
                 {
-                    increment = ParseExpression();
+                    increments = ParseForIncrementExpressions();
                     Consume(TokenType.Punctuation, ")", "Expected ')' after increment expression");
                 }
 
                 var bodyStmts = ParseStatement();
                 Statement body = bodyStmts.Count == 1 ? bodyStmts[0] : new BlockStatement(bodyStmts);
 
-                return new List<Statement> { new ForStatement(initializer, condition, increment, body) };
+                return new List<Statement> { new ForStatement(initializer, condition, increments, body) };
             }
 
             if (Match(TokenType.Keyword, "return"))
@@ -1616,6 +1626,17 @@ namespace ProGPU.Transpiler
             }
 
             throw new NotSupportedException("Only positive integer literal ShaderToy array sizes are supported.");
+        }
+
+        private List<Expression> ParseForIncrementExpressions()
+        {
+            var increments = new List<Expression>();
+            do
+            {
+                increments.Add(ParseExpression());
+            } while (Match(TokenType.Punctuation, ","));
+
+            return increments;
         }
 
         private Expression ParsePrimary()
@@ -1907,9 +1928,12 @@ namespace ProGPU.Transpiler
                 var parentScope = _currentScope;
                 _currentScope = new Scope(parentScope);
 
-                if (fors.Initializer != null) ResolveStatement(fors.Initializer);
+                if (fors.Initializer != null) ResolveForInitializer(fors.Initializer);
                 if (fors.Condition != null) ResolveExpression(fors.Condition);
-                if (fors.Increment != null) ResolveExpression(fors.Increment);
+                foreach (var increment in fors.Increments)
+                {
+                    ResolveExpression(increment);
+                }
 
                 ResolveStatement(fors.Body);
 
@@ -1922,6 +1946,33 @@ namespace ProGPU.Transpiler
                     ResolveExpression(r.Expression);
                 }
             }
+        }
+
+        private void ResolveForInitializer(Statement initializer)
+        {
+            if (initializer is BlockStatement block)
+            {
+                foreach (var statement in block.Statements)
+                {
+                    if (statement is VariableDeclarationStatement declaration)
+                    {
+                        if (declaration.Initializer != null)
+                        {
+                            ResolveExpression(declaration.Initializer);
+                        }
+
+                        _currentScope.Declare(declaration.Name, GetDeclarationResolvedType(declaration));
+                    }
+                    else
+                    {
+                        ResolveStatement(statement);
+                    }
+                }
+
+                return;
+            }
+
+            ResolveStatement(initializer);
         }
 
         private void ResolveExpression(Expression expr)
@@ -2366,17 +2417,21 @@ namespace ProGPU.Transpiler
                 string initPrelude = "";
                 string initStr = GenerateForInitializer(fors.Initializer, indent + "    ", out initPrelude);
                 string condStr = fors.Condition != null ? GenerateExpression(fors.Condition) : "";
-                string incrStr = "";
-                if (fors.Increment != null)
+                var incrementStatements = new List<string>();
+                foreach (var increment in fors.Increments)
                 {
-                    if (fors.Increment is UnaryExpression u && (u.Op == "++" || u.Op == "--"))
-                    {
-                        incrStr = GenerateIncrementDecrementAssignment(u);
-                    }
-                    else
-                    {
-                        incrStr = GenerateExpression(fors.Increment);
-                    }
+                    incrementStatements.Add(GenerateStatementExpression(increment));
+                }
+                string incrStr = incrementStatements.Count == 1 ? incrementStatements[0] : "";
+                if (incrementStatements.Count > 1)
+                {
+                    return GenerateForLoopWithContinuing(
+                        fors,
+                        indent,
+                        initPrelude,
+                        initStr,
+                        condStr,
+                        incrementStatements);
                 }
 
                 var sb = new StringBuilder();
@@ -2449,6 +2504,58 @@ namespace ProGPU.Transpiler
                 return $"{indent}continue;\n";
             }
             return "";
+        }
+
+        private string GenerateForLoopWithContinuing(
+            ForStatement statement,
+            string indent,
+            string initPrelude,
+            string initStatement,
+            string condition,
+            IReadOnlyList<string> incrementStatements)
+        {
+            var sb = new StringBuilder();
+            string innerIndent = indent + "    ";
+            string loopBodyIndent = innerIndent + "    ";
+            string continuingIndent = loopBodyIndent + "    ";
+
+            sb.AppendLine($"{indent}{{");
+            if (initPrelude.Length > 0)
+            {
+                sb.Append(initPrelude);
+            }
+            else if (initStatement.Length > 0)
+            {
+                sb.AppendLine($"{innerIndent}{initStatement};");
+            }
+
+            sb.AppendLine($"{innerIndent}loop {{");
+            if (!string.IsNullOrEmpty(condition))
+            {
+                sb.AppendLine($"{loopBodyIndent}if (!({condition})) {{ break; }}");
+            }
+
+            if (statement.Body is BlockStatement block)
+            {
+                foreach (var s in block.Statements)
+                {
+                    sb.Append(GenerateStatement(s, loopBodyIndent));
+                }
+            }
+            else
+            {
+                sb.Append(GenerateStatement(statement.Body, loopBodyIndent));
+            }
+
+            sb.AppendLine($"{loopBodyIndent}continuing {{");
+            foreach (string incrementStatement in incrementStatements)
+            {
+                sb.AppendLine($"{continuingIndent}{incrementStatement};");
+            }
+            sb.AppendLine($"{loopBodyIndent}}}");
+            sb.AppendLine($"{innerIndent}}}");
+            sb.AppendLine($"{indent}}}");
+            return sb.ToString();
         }
 
         private string GenerateForInitializer(Statement initializer, string preludeIndent, out string prelude)
@@ -2799,8 +2906,9 @@ namespace ProGPU.Transpiler
         {
             return resolvedType switch
             {
-                "float" => "1.0",
-                "uint" => "1u",
+                "float" or "f32" => "1.0",
+                "uint" or "u32" => "1u",
+                "int" or "i32" => "1",
                 _ => "1"
             };
         }

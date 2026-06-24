@@ -407,7 +407,7 @@ public class GpuPictureRecorder
 
     public GpuPicture EndRecording()
     {
-        return new GpuPicture(
+        var picture = new GpuPicture(
             _recordingContext.Commands.ToArray(),
             _recordingContext.PointBuffer.ToArray(),
             _recordingContext.DoubleBuffer.ToArray(),
@@ -415,6 +415,8 @@ public class GpuPictureRecorder
             _recordingContext.FloatBuffer.ToArray(),
             _recordingContext.CloneRetainedResources()
         );
+        _recordingContext.Clear();
+        return picture;
     }
 }
 
