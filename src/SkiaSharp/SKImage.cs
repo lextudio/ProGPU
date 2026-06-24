@@ -494,7 +494,7 @@ public class SKBitmap : IDisposable
                             : Math.Clamp((int)((long)x * result.Width / targetInfo.Width), 0, result.Width - 1);
                         byte* srcPixel = src + (srcY * result.Width + srcX) * 4;
                         byte* dstPixel = dstRow + x * 4;
-                        byte alpha = srcPixel[3];
+                        byte alpha = targetInfo.AlphaType == SKAlphaType.Opaque ? (byte)255 : srcPixel[3];
                         byte red = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[0], alpha) : srcPixel[0];
                         byte green = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[1], alpha) : srcPixel[1];
                         byte blue = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[2], alpha) : srcPixel[2];
