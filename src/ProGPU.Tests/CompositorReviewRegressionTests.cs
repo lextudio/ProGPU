@@ -1527,6 +1527,68 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void AppendComposesTransformedPointCommandAfterCommandTransform()
+    {
+        var source = new DrawingContext();
+        var lineTransform = Matrix4x4.CreateScale(2f, 3f, 1f);
+        source.Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawLine,
+            Position = new Vector2(2f, 3f),
+            Position2 = new Vector2(10f, 11f),
+            Transform = lineTransform
+        });
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        var command = Assert.Single(target.Commands);
+        Assert.Equal(RenderCommandType.DrawLine, command.Type);
+        Assert.Equal(new Vector2(2f, 3f), command.Position);
+        Assert.Equal(new Vector2(10f, 11f), command.Position2);
+        Assert.Equal(lineTransform * Matrix4x4.CreateTranslation(20f, 30f, 0f), command.Transform);
+    }
+
+    [Fact]
+    public void AppendComposesTransformedPointBufferAfterCommandTransform()
+    {
+        var source = new DrawingContext();
+        source.DrawPolyline(
+            new Pen(new SolidColorBrush(0xFFFFFFFF), 1f),
+            new[] { new Vector2(2f, 3f), new Vector2(10f, 11f) });
+        var lineTransform = Matrix4x4.CreateScale(2f, 3f, 1f);
+        var sourceCommand = source.Commands[0];
+        sourceCommand.Transform = lineTransform;
+        source.Commands[0] = sourceCommand;
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        var command = Assert.Single(target.Commands);
+        Assert.Equal(RenderCommandType.DrawPolyline, command.Type);
+        Assert.Equal(lineTransform * Matrix4x4.CreateTranslation(20f, 30f, 0f), command.Transform);
+        Assert.Equal(new Vector2(2f, 3f), target.PointBuffer[command.PointBufferOffset]);
+        Assert.Equal(new Vector2(10f, 11f), target.PointBuffer[command.PointBufferOffset + 1]);
+    }
+
+    [Fact]
+    public void AppendTranslatesUntransformedPointBuffer()
+    {
+        var source = new DrawingContext();
+        source.DrawPolyline(
+            new Pen(new SolidColorBrush(0xFFFFFFFF), 1f),
+            new[] { new Vector2(2f, 3f), new Vector2(10f, 11f) });
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        var command = Assert.Single(target.Commands);
+        Assert.Equal(RenderCommandType.DrawPolyline, command.Type);
+        Assert.Equal(new Vector2(22f, 33f), target.PointBuffer[command.PointBufferOffset]);
+        Assert.Equal(new Vector2(30f, 41f), target.PointBuffer[command.PointBufferOffset + 1]);
+    }
+
+    [Fact]
     public void AppendTranslatesImageEffectPayloadRect()
     {
         var source = new DrawingContext();

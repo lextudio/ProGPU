@@ -1103,41 +1103,11 @@ public class DrawingContext : IRenderDataProvider
         int line3dOffset = Line3DBuffer.Count;
         int floatOffset = FloatBuffer.Count;
 
-        if (translation == Vector2.Zero)
-        {
-            PointBuffer.AddRange(other.PointBuffer);
-        }
-        else
-        {
-            int required = PointBuffer.Count + other.PointBuffer.Count;
-            if (PointBuffer.Capacity < required)
-                PointBuffer.Capacity = Math.Max(required, PointBuffer.Capacity * 2);
-            for (int i = 0; i < other.PointBuffer.Count; i++)
-            {
-                PointBuffer.Add(other.PointBuffer[i] + translation);
-            }
-        }
+        PointBuffer.AddRange(other.PointBuffer);
 
         DoubleBuffer.AddRange(other.DoubleBuffer);
 
-        if (translation == Vector2.Zero)
-        {
-            Line3DBuffer.AddRange(other.Line3DBuffer);
-        }
-        else
-        {
-            var trans3D = new Vector3(translation.X, translation.Y, 0f);
-            int required = Line3DBuffer.Count + other.Line3DBuffer.Count;
-            if (Line3DBuffer.Capacity < required)
-                Line3DBuffer.Capacity = Math.Max(required, Line3DBuffer.Capacity * 2);
-            for (int i = 0; i < other.Line3DBuffer.Count; i++)
-            {
-                var l = other.Line3DBuffer[i];
-                l.Start += trans3D;
-                l.End += trans3D;
-                Line3DBuffer.Add(l);
-            }
-        }
+        Line3DBuffer.AddRange(other.Line3DBuffer);
 
         FloatBuffer.AddRange(other.FloatBuffer);
 
@@ -1168,25 +1138,25 @@ public class DrawingContext : IRenderDataProvider
                 {
                     ComposeAppendTranslation(ref adjustedCmd, translation);
                 }
+                else if (HasNonIdentityTransform(adjustedCmd))
+                {
+                    ComposeAppendTranslation(ref adjustedCmd, translation);
+                }
                 else
                 {
                     if (adjustedCmd.Type == RenderCommandType.DrawExtension &&
                         IsRectBackedExtensionDataParam(adjustedCmd.DataParam))
                     {
-                        if (HasNonIdentityTransform(adjustedCmd))
-                        {
-                            ComposeAppendTranslation(ref adjustedCmd, translation);
-                        }
-                        else
-                        {
-                            adjustedCmd.DataParam = TranslateExtensionDataParam(adjustedCmd.DataParam, translation);
-                        }
+                        adjustedCmd.DataParam = TranslateExtensionDataParam(adjustedCmd.DataParam, translation);
                     }
 
                     adjustedCmd.Position += translation;
                     adjustedCmd.Position2 += translation;
                     adjustedCmd.Position3 += translation;
                     adjustedCmd.Position4 += translation;
+
+                    TranslatePointBufferSlice(adjustedCmd.PointBufferOffset, adjustedCmd.PointBufferCount, translation);
+                    TranslateLine3DBufferSlice(adjustedCmd.Line3DBufferOffset, adjustedCmd.Line3DBufferCount, translation);
 
                     if (adjustedCmd.PolylinePoints != null)
                     {
@@ -1204,6 +1174,26 @@ public class DrawingContext : IRenderDataProvider
         }
 
         _retainedResources.AddRange(other.CloneRetainedResources());
+    }
+
+    private void TranslatePointBufferSlice(int offset, int count, Vector2 translation)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            PointBuffer[offset + i] += translation;
+        }
+    }
+
+    private void TranslateLine3DBufferSlice(int offset, int count, Vector2 translation)
+    {
+        var trans3D = new Vector3(translation.X, translation.Y, 0f);
+        for (int i = 0; i < count; i++)
+        {
+            var line = Line3DBuffer[offset + i];
+            line.Start += trans3D;
+            line.End += trans3D;
+            Line3DBuffer[offset + i] = line;
+        }
     }
 
     private static void TranslateRectBackedCommand(ref RenderCommand command, Vector2 translation)
