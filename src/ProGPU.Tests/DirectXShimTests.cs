@@ -382,6 +382,22 @@ PixelOutput PSMain(PixelInput input)
 }
 """;
 
+    private const string DepthOutputPixelHlsl = """
+struct PixelOutput
+{
+    float4 color : SV_Target;
+    float depth : SV_Depth;
+};
+
+PixelOutput PSMain()
+{
+    PixelOutput output;
+    output.color = float4(1.0, 0.0, 0.0, 1.0);
+    output.depth = 0.25;
+    return output;
+}
+""";
+
     private const string SolidLineWgsl = """
 @vertex
 fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
@@ -1329,6 +1345,80 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL fragment system-value draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL fragment system-value draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL fragment system-value draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslDepthOutputDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var depth = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.D32Float,
+            Usage = DxTextureUsage.DepthStencil
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl,
+            EntryPoint = "vs_main",
+            Label = "WGSL Position Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = DepthOutputPixelHlsl,
+            EntryPoint = "PSMain",
+            Label = "HLSL Depth Output Pixel"
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            DepthStencilFormat = DxResourceFormat.D32Float,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            DepthStencilState = new DxDepthStencilStateDescriptor
+            {
+                DepthEnable = true,
+                DepthWriteMask = DxDepthWriteMask.All,
+                DepthFunction = DxComparisonFunction.LessEqual
+            }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearDepthStencil(depth, DxDepthStencilClearFlags.Depth, depth: 1f, stencil: 0);
+        context.SetRenderTargets(target, depth);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.True(pixelShader.HasBackendShaderModule);
+        Assert.Contains("@builtin(frag_depth) depth: f32", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after HLSL depth-output draw, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after HLSL depth-output draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL depth-output draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL depth-output draw, actual: {center}");
     }
 
     [Fact]
