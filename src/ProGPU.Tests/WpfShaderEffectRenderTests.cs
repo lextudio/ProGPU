@@ -591,6 +591,67 @@ fn wpf_effect_main(uv: vec2<f32>, inputColor: vec4<f32>) -> vec4<f32> {
         }
     }
 
+    [Fact]
+    public void WpfShaderEffectShaderModuleCacheTracksSourceWithExplicitShaderKey()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(32, 32);
+
+        using var texture = new GpuTexture(
+            window.Context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "WPF Shader Effect Explicit Key Source Tracking Texture");
+        texture.WritePixels(new byte[] { 255, 255, 255, 255 });
+
+        var effect = new WpfShaderEffectParams
+        {
+            Texture = texture,
+            Rect = new Rect(0f, 0f, 32f, 32f),
+            ShaderKey = $"test_wpf_shader_effect_mutable_source_{Guid.NewGuid():N}",
+            SamplingMode = TextureSamplingMode.Nearest,
+            ShaderSource = """
+fn wpf_effect_main(uv: vec2<f32>, inputColor: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(1.0, 0.0, 0.0, inputColor.a);
+}
+"""
+        };
+
+        try
+        {
+            window.Content = new ShaderEffectVisual(effect);
+            window.Render();
+            Assert.False(effect.IsFailed, effect.LastError);
+
+            var red = ReadPixel(window.ReadPixels(), window.Width, x: 16, y: 16);
+            Assert.InRange(red.R, 240, 255);
+            Assert.InRange(red.G, 0, 12);
+            Assert.InRange(red.B, 0, 12);
+            Assert.Equal(255, red.A);
+
+            effect.ShaderSource = """
+fn wpf_effect_main(uv: vec2<f32>, inputColor: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(0.0, 1.0, 0.0, inputColor.a);
+}
+""";
+
+            window.Render();
+            Assert.False(effect.IsFailed, effect.LastError);
+
+            var green = ReadPixel(window.ReadPixels(), window.Width, x: 16, y: 16);
+            Assert.InRange(green.R, 0, 12);
+            Assert.InRange(green.G, 240, 255);
+            Assert.InRange(green.B, 0, 12);
+            Assert.Equal(255, green.A);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private sealed class ShaderEffectVisual : FrameworkElement
     {
         private readonly WpfShaderEffectParams _effect;

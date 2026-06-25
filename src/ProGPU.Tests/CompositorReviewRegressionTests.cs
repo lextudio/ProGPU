@@ -261,6 +261,50 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void ShaderToyForLoopLowersCommaSeparatedInitializerExpressions()
+    {
+        var wgsl = ShaderToyTranspiler.Translate(
+            """
+            void mainImage(out vec4 fragColor, in vec2 fragCoord)
+            {
+                int sum = 0;
+                int i = 0;
+                int j = 0;
+                for (i = 0, j = 1; i < 4; i++, j++)
+                {
+                    sum += i + j;
+                }
+                fragColor = vec4(float(sum));
+            }
+            """);
+
+        Assert.Contains("i = 0;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("j = 1;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("loop {", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("if (!((i < 4))) { break; }", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("i = i + 1;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("j = j + 1;", wgsl, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("i = 0, j = 1", wgsl, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShaderToyModBroadcastsScalarFirstVectorDivisor()
+    {
+        var wgsl = ShaderToyTranspiler.Translate(
+            """
+            void mainImage(out vec4 fragColor, in vec2 fragCoord)
+            {
+                vec2 wrapped = mod(1.0, fragCoord.xy);
+                fragColor = vec4(wrapped, 0.0, 1.0);
+            }
+            """);
+
+        Assert.Contains("fn wgsl_mod_fv2(x: f32, y: vec2<f32>) -> vec2<f32>", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("wgsl_mod_fv2(1.0", wgsl, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("wgsl_mod_ff(1.0", wgsl, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GpuPictureRecorderEndRecordingTransfersRetainedResourceLeases()
     {
         var recorder = new GpuPictureRecorder();

@@ -521,7 +521,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         var sourceAlphaMode = primaryTexture.AlphaMode;
         var pipelineSourceAlphaMode = GetPipelineSourceAlphaMode(sourceAlphaMode, dc.BlendMode);
-        var shaderKey = $"{p.GetStableShaderKey()}_{sourceLayout.LayoutKey}_{sourceAlphaMode}_{pipelineSourceAlphaMode}";
+        var shaderKey = $"{p.GetStableShaderKey()}_src_{p.GetStableShaderSourceKey()}_{sourceLayout.LayoutKey}_{sourceAlphaMode}_{pipelineSourceAlphaMode}";
         var pipelineKey = isOffscreen
             ? $"{shaderKey}_wpf_effect_offscreen_{pipelineSourceAlphaMode}_{dc.BlendMode}"
             : $"{shaderKey}_wpf_effect_onscreen_{pipelineSourceAlphaMode}_{dc.BlendMode}";

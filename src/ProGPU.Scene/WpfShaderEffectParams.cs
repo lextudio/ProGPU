@@ -48,6 +48,11 @@ public sealed class WpfShaderEffectParams
         return "wpf_shader_" + ComputeStableHash(GetShaderSourceOrDefault()).ToString("x16");
     }
 
+    internal string GetStableShaderSourceKey()
+    {
+        return ComputeStableHash(GetShaderSourceOrDefault()).ToString("x16");
+    }
+
     public string GetShaderSourceOrDefault()
     {
         return string.IsNullOrWhiteSpace(ShaderSource)

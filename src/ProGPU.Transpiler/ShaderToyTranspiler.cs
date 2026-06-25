@@ -1519,9 +1519,11 @@ namespace ProGPU.Transpiler
                     }
                     else
                     {
-                        var expr = ParseExpression();
+                        var initializers = ParseForInitializerExpressions();
                         Consume(TokenType.Punctuation, ";", "Expected ';' after initializer expression");
-                        initializer = new ExpressionStatement(expr);
+                        initializer = initializers.Count == 1
+                            ? new ExpressionStatement(initializers[0])
+                            : new BlockStatement(initializers.Select(static expr => new ExpressionStatement(expr)).Cast<Statement>().ToList());
                     }
                 }
 
@@ -1637,6 +1639,17 @@ namespace ProGPU.Transpiler
             } while (Match(TokenType.Punctuation, ","));
 
             return increments;
+        }
+
+        private List<Expression> ParseForInitializerExpressions()
+        {
+            var initializers = new List<Expression>();
+            do
+            {
+                initializers.Add(ParseExpression());
+            } while (Match(TokenType.Punctuation, ","));
+
+            return initializers;
         }
 
         private Expression ParsePrimary()
@@ -2225,6 +2238,9 @@ namespace ProGPU.Transpiler
             sb.AppendLine("fn wgsl_mod_v2f(x: vec2<f32>, y: f32) -> vec2<f32> { return x - y * floor(x / y); }");
             sb.AppendLine("fn wgsl_mod_v3f(x: vec3<f32>, y: f32) -> vec3<f32> { return x - y * floor(x / y); }");
             sb.AppendLine("fn wgsl_mod_v4f(x: vec4<f32>, y: f32) -> vec4<f32> { return x - y * floor(x / y); }");
+            sb.AppendLine("fn wgsl_mod_fv2(x: f32, y: vec2<f32>) -> vec2<f32> { let bx = vec2<f32>(x); return bx - y * floor(bx / y); }");
+            sb.AppendLine("fn wgsl_mod_fv3(x: f32, y: vec3<f32>) -> vec3<f32> { let bx = vec3<f32>(x); return bx - y * floor(bx / y); }");
+            sb.AppendLine("fn wgsl_mod_fv4(x: f32, y: vec4<f32>) -> vec4<f32> { let bx = vec4<f32>(x); return bx - y * floor(bx / y); }");
             sb.AppendLine("fn wgsl_mod_v2v2(x: vec2<f32>, y: vec2<f32>) -> vec2<f32> { return x - y * floor(x / y); }");
             sb.AppendLine("fn wgsl_mod_v3v3(x: vec3<f32>, y: vec3<f32>) -> vec3<f32> { return x - y * floor(x / y); }");
             sb.AppendLine("fn wgsl_mod_v4v4(x: vec4<f32>, y: vec4<f32>) -> vec4<f32> { return x - y * floor(x / y); }");
@@ -2581,9 +2597,9 @@ namespace ProGPU.Transpiler
                 var sb = new StringBuilder();
                 foreach (var statement in block.Statements)
                 {
-                    if (statement is not VariableDeclarationStatement)
+                    if (statement is not VariableDeclarationStatement && statement is not ExpressionStatement)
                     {
-                        throw new NotSupportedException("Only variable declarations are supported in multi-declaration for-loop initializers.");
+                        throw new NotSupportedException("Only variable declarations or expression statements are supported in multi-statement for-loop initializers.");
                     }
 
                     sb.Append(GenerateStatement(statement, preludeIndent));
@@ -2677,6 +2693,9 @@ namespace ProGPU.Transpiler
                     if (t0 == "vec2" && t1 == "float") helperName = "wgsl_mod_v2f";
                     else if (t0 == "vec3" && t1 == "float") helperName = "wgsl_mod_v3f";
                     else if (t0 == "vec4" && t1 == "float") helperName = "wgsl_mod_v4f";
+                    else if (t0 == "float" && t1 == "vec2") helperName = "wgsl_mod_fv2";
+                    else if (t0 == "float" && t1 == "vec3") helperName = "wgsl_mod_fv3";
+                    else if (t0 == "float" && t1 == "vec4") helperName = "wgsl_mod_fv4";
                     else if (t0 == "vec2" && t1 == "vec2") helperName = "wgsl_mod_v2v2";
                     else if (t0 == "vec3" && t1 == "vec3") helperName = "wgsl_mod_v3v3";
                     else if (t0 == "vec4" && t1 == "vec4") helperName = "wgsl_mod_v4v4";
