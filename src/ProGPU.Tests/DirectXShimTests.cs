@@ -769,6 +769,93 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextRecordsMountainBatches()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        var pen = renderContext.CreatePen(0xFFFF0000);
+        var brush = renderContext.CreateBrush(0xFF00FF00);
+        ProGpuDirectXSciChartBandVertex[] vertices =
+        [
+            new(0, 8, 24),
+            new(16, 8, 24),
+            new(32, 16, 24)
+        ];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 32, 32));
+        renderContext.DrawMountainBatch(
+            vertices,
+            count: vertices.Length,
+            pen,
+            brush,
+            isDigital: false,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+
+        Assert.Single(renderContext.MountainBatchDraws);
+        Assert.Equal(new DxRect(0, 0, 32, 32), renderContext.MountainBatchDraws[0].ClipRect);
+        Assert.Equal(pen, renderContext.MountainBatchDraws[0].Pen);
+        Assert.Equal(brush, renderContext.MountainBatchDraws[0].Brush);
+        var drawVertexCounts = renderContext.ImmediateContext.Commands
+            .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
+            .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart mountain draw payload.")).VertexCount)
+            .ToArray();
+        Assert.Equal([12u, 4u], drawVertexCounts);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawMountainBatch(vertices, count: 1, pen, brush, false, default));
+
+        renderContext.BeginFrame();
+        renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
+        renderContext.DrawMountainBatch(
+            vertices,
+            count: vertices.Length,
+            pen,
+            brush,
+            isDigital: false,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        Assert.Empty(renderContext.MountainBatchDraws);
+    }
+
+    [Fact]
+    public void SciChartRenderContextRecordsBandBatches()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        var penA = renderContext.CreatePen(0xFFFF0000);
+        var penB = renderContext.CreatePen(0xFF0000FF);
+        var brushPositive = renderContext.CreateBrush(0xFF00FF00);
+        var brushNegative = renderContext.CreateBrush(0xFFFFFF00);
+        ProGpuDirectXSciChartBandVertex[] vertices =
+        [
+            new(0, 8, 24),
+            new(16, 24, 8),
+            new(32, 24, 8)
+        ];
+
+        renderContext.DrawBandsBatch(
+            vertices,
+            count: vertices.Length,
+            penA,
+            penB,
+            brushPositive,
+            brushNegative,
+            isDigital: false,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+
+        Assert.Single(renderContext.BandBatchDraws);
+        Assert.Equal(penA, renderContext.BandBatchDraws[0].PenA);
+        Assert.Equal(penB, renderContext.BandBatchDraws[0].PenB);
+        Assert.Equal(brushPositive, renderContext.BandBatchDraws[0].BrushPositive);
+        Assert.Equal(brushNegative, renderContext.BandBatchDraws[0].BrushNegative);
+        var drawVertexCounts = renderContext.ImmediateContext.Commands
+            .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
+            .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart band draw payload.")).VertexCount)
+            .ToArray();
+        Assert.Equal([18u, 4u, 4u], drawVertexCounts);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawBandsBatch(vertices, count: vertices.Length + 1, penA, penB, brushPositive, brushNegative, false, default));
+    }
+
+    [Fact]
     public void SciChartRenderContextLineBatchHonorsNanGapPolicy()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -2258,6 +2345,51 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after SciChart texture draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartMountainBatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        ProGpuDirectXSciChartBandVertex[] vertices =
+        [
+            new(2, 4, 12),
+            new(14, 4, 12)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 16, 16));
+        renderContext.DrawMountainBatch(
+            vertices,
+            count: vertices.Length,
+            renderContext.CreatePen(0x00000000),
+            renderContext.CreateBrush(0xFF00FF00),
+            isDigital: false,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        renderContext.Flush();
+
+        Assert.Single(renderContext.MountainBatchDraws);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var filled = ReadRgbaPixel(targetPixels, 16, 8, 8);
+        Assert.True(filled.R < 50, $"Expected mountain batch low red fill pixel, actual: {filled}");
+        Assert.True(filled.G > 200, $"Expected mountain batch green fill pixel, actual: {filled}");
+        Assert.True(filled.B < 50, $"Expected mountain batch low blue fill pixel, actual: {filled}");
+        Assert.True(filled.A > 200, $"Expected mountain batch opaque fill pixel, actual: {filled}");
+
+        var outside = ReadRgbaPixel(targetPixels, 16, 8, 14);
+        Assert.True(outside.R < 50, $"Expected black pixel outside SciChart mountain fill, actual: {outside}");
+        Assert.True(outside.G < 50, $"Expected black pixel outside SciChart mountain fill, actual: {outside}");
+        Assert.True(outside.B < 50, $"Expected black pixel outside SciChart mountain fill, actual: {outside}");
+        Assert.True(outside.A > 200, $"Expected opaque clear alpha outside SciChart mountain fill, actual: {outside}");
     }
 
     [Fact]

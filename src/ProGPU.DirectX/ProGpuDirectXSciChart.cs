@@ -53,6 +53,17 @@ public sealed record ProGpuDirectXSciChartPen2D
     public bool IsAntiAliased { get; init; }
 }
 
+public sealed record ProGpuDirectXSciChartBrush2D(uint ColorArgb)
+{
+    public static ProGpuDirectXSciChartBrush2D Transparent { get; } = new(0);
+}
+
+public sealed record ProGpuDirectXSciChartPalette(
+    IReadOnlyList<uint>? LineAColors = null,
+    IReadOnlyList<uint>? LineBColors = null,
+    IReadOnlyList<uint>? FillPositiveColors = null,
+    IReadOnlyList<uint>? FillNegativeColors = null);
+
 public enum ProGpuDirectXSciChartFinancialBatchKind
 {
     Candles,
@@ -77,6 +88,11 @@ public readonly record struct ProGpuDirectXSciChartColorVertex(
     float Y,
     float Offset,
     uint ColorArgb);
+
+public readonly record struct ProGpuDirectXSciChartBandVertex(
+    float X,
+    float Y0,
+    float Y1);
 
 public readonly record struct ProGpuDirectXSciChartColumnVertex(
     float X,
@@ -117,6 +133,26 @@ public sealed record ProGpuDirectXSciChartLineBatchDraw(
     bool IsDigital,
     bool? IsDrawNanAsGaps,
     ProGpuDirectXSciChartVertexTransform Transform,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartMountainBatchDraw(
+    IReadOnlyList<ProGpuDirectXSciChartBandVertex> Vertices,
+    ProGpuDirectXSciChartPen2D Pen,
+    ProGpuDirectXSciChartBrush2D Brush,
+    bool IsDigital,
+    ProGpuDirectXSciChartVertexTransform Transform,
+    ProGpuDirectXSciChartPalette? Palette,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartBandBatchDraw(
+    IReadOnlyList<ProGpuDirectXSciChartBandVertex> Vertices,
+    ProGpuDirectXSciChartPen2D PenA,
+    ProGpuDirectXSciChartPen2D PenB,
+    ProGpuDirectXSciChartBrush2D BrushPositive,
+    ProGpuDirectXSciChartBrush2D BrushNegative,
+    bool IsDigital,
+    ProGpuDirectXSciChartVertexTransform Transform,
+    ProGpuDirectXSciChartPalette? Palette,
     DxRect? ClipRect);
 
 public sealed record ProGpuDirectXSciChartColumnBatchDraw(
@@ -370,6 +406,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private readonly List<IDisposable> _transientResources = new();
     private readonly List<ProGpuDirectXSciChartTextureDraw> _textureDraws = new();
     private readonly List<ProGpuDirectXSciChartLineBatchDraw> _lineBatchDraws = new();
+    private readonly List<ProGpuDirectXSciChartMountainBatchDraw> _mountainBatchDraws = new();
+    private readonly List<ProGpuDirectXSciChartBandBatchDraw> _bandBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartColumnBatchDraw> _columnBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartRectBatchDraw> _rectBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartSpriteBatchDraw> _spriteBatchDraws = new();
@@ -428,6 +466,10 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
     public IReadOnlyList<ProGpuDirectXSciChartLineBatchDraw> LineBatchDraws => _lineBatchDraws;
 
+    public IReadOnlyList<ProGpuDirectXSciChartMountainBatchDraw> MountainBatchDraws => _mountainBatchDraws;
+
+    public IReadOnlyList<ProGpuDirectXSciChartBandBatchDraw> BandBatchDraws => _bandBatchDraws;
+
     public IReadOnlyList<ProGpuDirectXSciChartColumnBatchDraw> ColumnBatchDraws => _columnBatchDraws;
 
     public IReadOnlyList<ProGpuDirectXSciChartRectBatchDraw> RectBatchDraws => _rectBatchDraws;
@@ -476,6 +518,12 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         return new ProGpuDirectXSciChartPen2D(colorArgb, strokeThickness, isAntiAliased);
     }
 
+    public ProGpuDirectXSciChartBrush2D CreateBrush(uint colorArgb)
+    {
+        ThrowIfDisposed();
+        return new ProGpuDirectXSciChartBrush2D(colorArgb);
+    }
+
     public void Clear(DxColor color)
     {
         ThrowIfDisposed();
@@ -489,6 +537,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         ThrowIfDisposed();
         _textureDraws.Clear();
         _lineBatchDraws.Clear();
+        _mountainBatchDraws.Clear();
+        _bandBatchDraws.Clear();
         _columnBatchDraws.Clear();
         _rectBatchDraws.Clear();
         _spriteBatchDraws.Clear();
@@ -624,6 +674,177 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             transform,
             _clipRect));
         _transientResources.Add(vertexBuffer);
+    }
+
+    public void DrawMountainBatch(
+        ReadOnlySpan<ProGpuDirectXSciChartBandVertex> vertices,
+        int count,
+        ProGpuDirectXSciChartPen2D? pen,
+        ProGpuDirectXSciChartBrush2D? brush,
+        bool isDigital,
+        ProGpuDirectXSciChartVertexTransform transform,
+        ProGpuDirectXSciChartPalette? palette = null)
+    {
+        ThrowIfDisposed();
+        ValidateBandVertexRange(vertices.Length, count);
+        pen ??= ProGpuDirectXSciChartPen2D.Default;
+        brush ??= ProGpuDirectXSciChartBrush2D.Transparent;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices[..count].ToArray();
+        var fillBuffer = CreateMountainFillVertexBuffer(
+            copiedVertices,
+            brush,
+            palette,
+            transform,
+            isDigital,
+            out var fillVertexCount);
+        var lineVertices = CreateBandLineVertices(copiedVertices, useY1: false, pen, palette);
+        var lineBuffer = CreateLineBatchVertexBuffer(
+            lineVertices,
+            transform,
+            pen,
+            isStrips: true,
+            isDigital,
+            isDrawNanAsGaps: true,
+            out var lineVertexCount,
+            out var lineUsesTriangleTopology);
+
+        if (fillBuffer is null && lineBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        if (fillBuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                fillBuffer,
+                GetColumnFillPipeline(RenderTarget.Descriptor.Format),
+                fillVertexCount);
+        }
+
+        if (lineBuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                lineBuffer,
+                lineUsesTriangleTopology
+                    ? GetColumnFillPipeline(RenderTarget.Descriptor.Format)
+                    : GetLinePipeline(RenderTarget.Descriptor.Format),
+                lineVertexCount);
+        }
+
+        _mountainBatchDraws.Add(new ProGpuDirectXSciChartMountainBatchDraw(
+            copiedVertices,
+            pen,
+            brush,
+            isDigital,
+            transform,
+            palette,
+            _clipRect));
+    }
+
+    public void DrawBandsBatch(
+        ReadOnlySpan<ProGpuDirectXSciChartBandVertex> vertices,
+        int count,
+        ProGpuDirectXSciChartPen2D? penA,
+        ProGpuDirectXSciChartPen2D? penB,
+        ProGpuDirectXSciChartBrush2D? brushPositive,
+        ProGpuDirectXSciChartBrush2D? brushNegative,
+        bool isDigital,
+        ProGpuDirectXSciChartVertexTransform transform,
+        ProGpuDirectXSciChartPalette? palette = null)
+    {
+        ThrowIfDisposed();
+        ValidateBandVertexRange(vertices.Length, count);
+        penA ??= ProGpuDirectXSciChartPen2D.Default;
+        penB ??= ProGpuDirectXSciChartPen2D.Default;
+        brushPositive ??= ProGpuDirectXSciChartBrush2D.Transparent;
+        brushNegative ??= ProGpuDirectXSciChartBrush2D.Transparent;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices[..count].ToArray();
+        var fillBuffer = CreateBandFillVertexBuffer(
+            copiedVertices,
+            brushPositive,
+            brushNegative,
+            palette,
+            transform,
+            isDigital,
+            out var fillVertexCount);
+        var lineAVertices = CreateBandLineVertices(copiedVertices, useY1: false, penA, palette);
+        var lineBVertices = CreateBandLineVertices(copiedVertices, useY1: true, penB, palette);
+        var lineABuffer = CreateLineBatchVertexBuffer(
+            lineAVertices,
+            transform,
+            penA,
+            isStrips: true,
+            isDigital,
+            isDrawNanAsGaps: true,
+            out var lineAVertexCount,
+            out var lineAUsesTriangleTopology);
+        var lineBBuffer = CreateLineBatchVertexBuffer(
+            lineBVertices,
+            transform,
+            penB,
+            isStrips: true,
+            isDigital,
+            isDrawNanAsGaps: true,
+            out var lineBVertexCount,
+            out var lineBUsesTriangleTopology);
+
+        if (fillBuffer is null && lineABuffer is null && lineBBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        if (fillBuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                fillBuffer,
+                GetColumnFillPipeline(RenderTarget.Descriptor.Format),
+                fillVertexCount);
+        }
+
+        if (lineABuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                lineABuffer,
+                lineAUsesTriangleTopology
+                    ? GetColumnFillPipeline(RenderTarget.Descriptor.Format)
+                    : GetLinePipeline(RenderTarget.Descriptor.Format),
+                lineAVertexCount);
+        }
+
+        if (lineBBuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                lineBBuffer,
+                lineBUsesTriangleTopology
+                    ? GetColumnFillPipeline(RenderTarget.Descriptor.Format)
+                    : GetLinePipeline(RenderTarget.Descriptor.Format),
+                lineBVertexCount);
+        }
+
+        _bandBatchDraws.Add(new ProGpuDirectXSciChartBandBatchDraw(
+            copiedVertices,
+            penA,
+            penB,
+            brushPositive,
+            brushNegative,
+            isDigital,
+            transform,
+            palette,
+            _clipRect));
     }
 
     public void DrawColumnsBatch(
@@ -1172,6 +1393,173 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         return vertexBuffer;
     }
 
+    private void SetSolidColorDrawState()
+    {
+        _context.SetRenderTargets(RenderTarget);
+        _context.SetViewport(new DxViewport(0, 0, RenderTarget.Width, RenderTarget.Height));
+        _context.SetScissorRect(_clipRect ?? FullRenderTargetRect);
+        _context.SetShaderResource(DxShaderStage.Pixel, 0, null);
+        _context.SetShaderResource(DxShaderStage.Pixel, 1, null);
+        _context.SetConstantBuffer(DxShaderStage.Pixel, 0, null);
+        _context.SetSampler(DxShaderStage.Pixel, 0, null);
+    }
+
+    private void DrawSolidColorBuffer(
+        ProGpuDirectXBuffer vertexBuffer,
+        ProGpuDirectXGraphicsPipeline pipeline,
+        uint vertexCount)
+    {
+        _context.SetGraphicsPipeline(pipeline);
+        _context.SetVertexBuffer(vertexBuffer);
+        _context.Draw(vertexCount);
+        _transientResources.Add(vertexBuffer);
+    }
+
+    private ProGpuDirectXBuffer? CreateMountainFillVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartBandVertex> vertices,
+        ProGpuDirectXSciChartBrush2D brush,
+        ProGpuDirectXSciChartPalette? palette,
+        ProGpuDirectXSciChartVertexTransform transform,
+        bool isDigital,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(Math.Max(vertices.Length - 1, 0) * 36));
+        for (var i = 0; i < vertices.Length - 1; i++)
+        {
+            var colorArgb = GetPaletteColor(palette?.FillPositiveColors, i, brush.ColorArgb);
+            AppendBandFillSegment(
+                vertexData,
+                vertices[i],
+                vertices[i + 1],
+                transform,
+                colorArgb,
+                colorArgb,
+                isDigital,
+                splitAtCrossing: false);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartMountainFillVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreateBandFillVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartBandVertex> vertices,
+        ProGpuDirectXSciChartBrush2D brushPositive,
+        ProGpuDirectXSciChartBrush2D brushNegative,
+        ProGpuDirectXSciChartPalette? palette,
+        ProGpuDirectXSciChartVertexTransform transform,
+        bool isDigital,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(Math.Max(vertices.Length - 1, 0) * 72));
+        for (var i = 0; i < vertices.Length - 1; i++)
+        {
+            var positiveColor = GetPaletteColor(palette?.FillPositiveColors, i, brushPositive.ColorArgb);
+            var negativeColor = GetPaletteColor(palette?.FillNegativeColors, i, brushNegative.ColorArgb);
+            AppendBandFillSegment(
+                vertexData,
+                vertices[i],
+                vertices[i + 1],
+                transform,
+                positiveColor,
+                negativeColor,
+                isDigital,
+                splitAtCrossing: true);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartBandFillVertices", out submittedVertexCount);
+    }
+
+    private static ProGpuDirectXSciChartColorVertex[] CreateBandLineVertices(
+        ReadOnlySpan<ProGpuDirectXSciChartBandVertex> vertices,
+        bool useY1,
+        ProGpuDirectXSciChartPen2D pen,
+        ProGpuDirectXSciChartPalette? palette)
+    {
+        var lineVertices = new ProGpuDirectXSciChartColorVertex[vertices.Length];
+        var colors = useY1
+            ? palette?.LineBColors
+            : palette?.LineAColors;
+        for (var i = 0; i < vertices.Length; i++)
+        {
+            var source = vertices[i];
+            lineVertices[i] = new ProGpuDirectXSciChartColorVertex(
+                source.X,
+                useY1 ? source.Y1 : source.Y0,
+                0f,
+                GetPaletteColor(colors, i, pen.ColorArgb));
+        }
+
+        return lineVertices;
+    }
+
+    private void AppendBandFillSegment(
+        List<float> vertexData,
+        ProGpuDirectXSciChartBandVertex start,
+        ProGpuDirectXSciChartBandVertex end,
+        ProGpuDirectXSciChartVertexTransform transform,
+        uint positiveColorArgb,
+        uint negativeColorArgb,
+        bool isDigital,
+        bool splitAtCrossing)
+    {
+        if (!HasFiniteBandVertex(start) || !HasFiniteBandVertex(end))
+        {
+            return;
+        }
+
+        if (!isDigital
+            && splitAtCrossing
+            && TryGetBandCrossing(start, end, out var crossing))
+        {
+            AppendBandFillQuad(
+                vertexData,
+                start,
+                crossing,
+                transform,
+                SelectBandFillColor(start, positiveColorArgb, negativeColorArgb),
+                isDigital: false);
+            AppendBandFillQuad(
+                vertexData,
+                crossing,
+                end,
+                transform,
+                SelectBandFillColor(end, positiveColorArgb, negativeColorArgb),
+                isDigital: false);
+            return;
+        }
+
+        AppendBandFillQuad(
+            vertexData,
+            start,
+            end,
+            transform,
+            SelectBandFillColor(start, positiveColorArgb, negativeColorArgb),
+            isDigital);
+    }
+
+    private void AppendBandFillQuad(
+        List<float> vertexData,
+        ProGpuDirectXSciChartBandVertex start,
+        ProGpuDirectXSciChartBandVertex end,
+        ProGpuDirectXSciChartVertexTransform transform,
+        uint colorArgb,
+        bool isDigital)
+    {
+        if (!HasVisibleColor(colorArgb))
+        {
+            return;
+        }
+
+        var endY0 = isDigital ? start.Y0 : end.Y0;
+        var endY1 = isDigital ? start.Y1 : end.Y1;
+        AppendTransformedSolidColorVertex(vertexData, start.X, start.Y0, transform, colorArgb);
+        AppendTransformedSolidColorVertex(vertexData, end.X, endY0, transform, colorArgb);
+        AppendTransformedSolidColorVertex(vertexData, end.X, endY1, transform, colorArgb);
+        AppendTransformedSolidColorVertex(vertexData, start.X, start.Y0, transform, colorArgb);
+        AppendTransformedSolidColorVertex(vertexData, end.X, endY1, transform, colorArgb);
+        AppendTransformedSolidColorVertex(vertexData, start.X, start.Y1, transform, colorArgb);
+    }
+
     private ProGpuDirectXBuffer? CreateColumnFillVertexBuffer(
         ReadOnlySpan<ProGpuDirectXSciChartColumnVertex> vertices,
         ProGpuDirectXSciChartVertexTransform transform,
@@ -1644,6 +2032,16 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     {
         AppendSolidColorVertex(vertexData, transform.SwapAxis ? y0 : x0, transform.SwapAxis ? x0 : y0, colorArgb);
         AppendSolidColorVertex(vertexData, transform.SwapAxis ? y1 : x1, transform.SwapAxis ? x1 : y1, colorArgb);
+    }
+
+    private void AppendTransformedSolidColorVertex(
+        List<float> vertexData,
+        float x,
+        float y,
+        ProGpuDirectXSciChartVertexTransform transform,
+        uint colorArgb)
+    {
+        AppendSolidColorVertex(vertexData, transform.SwapAxis ? y : x, transform.SwapAxis ? x : y, colorArgb);
     }
 
     private ProGpuDirectXBuffer CreateShapedHeatmapConstants(
@@ -2360,6 +2758,19 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
     }
 
+    private static void ValidateBandVertexRange(int vertexLength, int count)
+    {
+        if (count < 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "SciChart band batches require at least two vertices.");
+        }
+
+        if (count > vertexLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "SciChart band vertex count exceeds the supplied vertex span.");
+        }
+    }
+
     private static void ValidateVertexRange(int vertexLength, int startIndex, int count)
     {
         if (startIndex < 0 || startIndex > vertexLength)
@@ -2383,6 +2794,63 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         return float.IsFinite(vertex.X)
             && float.IsFinite(vertex.Y)
             && float.IsFinite(vertex.Offset);
+    }
+
+    private static bool HasFiniteBandVertex(ProGpuDirectXSciChartBandVertex vertex)
+    {
+        return float.IsFinite(vertex.X)
+            && float.IsFinite(vertex.Y0)
+            && float.IsFinite(vertex.Y1);
+    }
+
+    private static uint GetPaletteColor(IReadOnlyList<uint>? colors, int index, uint fallbackColorArgb)
+    {
+        return colors is not null && (uint)index < (uint)colors.Count
+            ? colors[index]
+            : fallbackColorArgb;
+    }
+
+    private static uint SelectBandFillColor(
+        ProGpuDirectXSciChartBandVertex vertex,
+        uint positiveColorArgb,
+        uint negativeColorArgb)
+    {
+        return vertex.Y0 >= vertex.Y1
+            ? positiveColorArgb
+            : negativeColorArgb;
+    }
+
+    private static bool TryGetBandCrossing(
+        ProGpuDirectXSciChartBandVertex start,
+        ProGpuDirectXSciChartBandVertex end,
+        out ProGpuDirectXSciChartBandVertex crossing)
+    {
+        var startDelta = start.Y0 - start.Y1;
+        var endDelta = end.Y0 - end.Y1;
+        if (startDelta == 0f
+            || endDelta == 0f
+            || MathF.Sign(startDelta) == MathF.Sign(endDelta))
+        {
+            crossing = default;
+            return false;
+        }
+
+        var t = startDelta / (startDelta - endDelta);
+        if (t <= 0f || t >= 1f)
+        {
+            crossing = default;
+            return false;
+        }
+
+        var x = Lerp(start.X, end.X, t);
+        var y = Lerp(start.Y0, end.Y0, t);
+        crossing = new ProGpuDirectXSciChartBandVertex(x, y, y);
+        return true;
+    }
+
+    private static float Lerp(float start, float end, float t)
+    {
+        return start + ((end - start) * t);
     }
 
     private static bool TryGetLinePoint(
