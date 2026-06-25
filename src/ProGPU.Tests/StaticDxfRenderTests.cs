@@ -131,6 +131,27 @@ public sealed class StaticDxfRenderTests
     }
 
     [Fact]
+    public void CompileStaticDxfAcisSolidPreservesModelTransform()
+    {
+        var window = HeadlessWindow.Shared;
+        using var contextBuffer = CreateStaticAcis(window.Compositor, y: 14f);
+        using var listBuffer = window.Compositor.CompileStaticDxf(CreateAcisCommands(y: 34f));
+
+        var contextRecords = GetStaticAcisRecords(contextBuffer);
+        var listRecords = GetStaticAcisRecords(listBuffer);
+        if (contextRecords == null || listRecords == null)
+        {
+            return;
+        }
+
+        var contextRecord = Assert.Single(contextRecords);
+        var listRecord = Assert.Single(listRecords);
+
+        Assert.Equal(Matrix4x4.CreateTranslation(18f, 14f, 0f), contextRecord.Transform);
+        Assert.Equal(Matrix4x4.CreateTranslation(18f, 34f, 0f), listRecord.Transform);
+    }
+
+    [Fact]
     public void CompileStaticDxfIncludesGlyphRunCommands()
     {
         var font = TryLoadTestFont();
@@ -158,6 +179,53 @@ public sealed class StaticDxfRenderTests
             rect);
 
         return compositor.CompileStaticDxf(context);
+    }
+
+    private static DxfStaticBuffer CreateStaticAcis(Compositor compositor, float y)
+    {
+        return compositor.CompileStaticDxf(CreateAcisContext(y));
+    }
+
+    private static DrawingContext CreateAcisContext(float y)
+    {
+        var context = new DrawingContext();
+        var pen = new Pen(new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)), 8f);
+        var edges = new[]
+        {
+            new Line3D(new Vector3(0f, 0f, 0f), new Vector3(24f, 0f, 0f))
+        };
+
+        context.DrawAcisSolid(pen, edges, Matrix4x4.CreateTranslation(18f, y, 0f));
+        return context;
+    }
+
+    private static List<RenderCommand> CreateAcisCommands(float y)
+    {
+        return
+        [
+            new RenderCommand
+            {
+                Type = RenderCommandType.DrawExtension,
+                ExtensionId = CompositorBuiltInExtensions.AcisSolid,
+                Pen = new Pen(new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)), 8f),
+                Edges3D =
+                [
+                    new Line3D(new Vector3(0f, 0f, 0f), new Vector3(24f, 0f, 0f))
+                ],
+                Transform = Matrix4x4.CreateTranslation(18f, y, 0f)
+            }
+        ];
+    }
+
+    private static GpuAcisRecord[]? GetStaticAcisRecords(DxfStaticBuffer buffer)
+    {
+        var state = buffer.GetExtensionState(CompositorBuiltInExtensions.AcisSolid);
+        Assert.NotNull(state);
+
+        return state
+            .GetType()
+            .GetProperty("RecordsSnapshot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue(state) as GpuAcisRecord[];
     }
 
     private static DxfStaticBuffer CreateStaticSpline(Compositor compositor)

@@ -6856,7 +6856,7 @@ public unsafe class Compositor : IDisposable
                             if (pipeline != null)
                             {
                                 var localCmd = cmd;
-                                pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
+                                pipeline.Compile(this, null, localCmd.Transform, ref localCmd);
                                 staticDrawCalls.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
@@ -6956,7 +6956,10 @@ public unsafe class Compositor : IDisposable
                             {
                                 CommitStaticDrawCalls();
                                 var localCmd = cmd;
-                                pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
+                                var compileTransform = localCmd.ExtensionId == CompositorBuiltInExtensions.AcisSolid
+                                    ? localCmd.Transform
+                                    : Matrix4x4.Identity;
+                                pipeline.Compile(this, null, compileTransform, ref localCmd);
                                 var cmdTransform = localCmd.Transform;
                                 if (cmdTransform == default || cmdTransform == new Matrix4x4())
                                 {
@@ -7266,7 +7269,7 @@ public unsafe class Compositor : IDisposable
                             if (pipeline != null)
                             {
                                 var localCmd = cmd;
-                                pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
+                                pipeline.Compile(this, context, localCmd.Transform, ref localCmd);
                                 staticDrawCalls.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
@@ -7366,7 +7369,10 @@ public unsafe class Compositor : IDisposable
                             {
                                 CommitStaticDrawCalls();
                                 var localCmd = cmd;
-                                pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
+                                var compileTransform = localCmd.ExtensionId == CompositorBuiltInExtensions.AcisSolid
+                                    ? localCmd.Transform
+                                    : Matrix4x4.Identity;
+                                pipeline.Compile(this, context, compileTransform, ref localCmd);
                                 var cmdTransform = localCmd.Transform;
                                 if (cmdTransform == default || cmdTransform == new Matrix4x4())
                                 {
