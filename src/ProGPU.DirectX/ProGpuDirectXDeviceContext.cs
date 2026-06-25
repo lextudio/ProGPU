@@ -61,6 +61,7 @@ public sealed record ProGpuDirectXCommand
     public ProGpuDirectXSamplerState? Sampler { get; init; }
     public ProGpuDirectXUnorderedAccessView? UnorderedAccessView { get; init; }
     public ProGpuDirectXBindingSnapshot? BindingSnapshot { get; init; }
+    public ProGpuDirectXBindingValidationResult? BindingValidation { get; init; }
     public DxBlendStateDescriptor? BlendState { get; init; }
     public DxDepthStencilStateDescriptor? DepthStencilState { get; init; }
     public DxRasterizerStateDescriptor? RasterizerState { get; init; }
@@ -489,6 +490,44 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         return CreateBindingSnapshotCore(stages, label ?? "ProGPU DirectX Binding Snapshot");
     }
 
+    public ProGpuDirectXBindingValidationResult ValidateGraphicsPipelineBindings()
+    {
+        return ValidateGraphicsPipelineBindings(_graphicsPipeline);
+    }
+
+    public ProGpuDirectXBindingValidationResult ValidateGraphicsPipelineBindings(ProGpuDirectXGraphicsPipeline? pipeline)
+    {
+        ThrowIfDisposed();
+        if (pipeline is null)
+        {
+            return ProGpuDirectXBindingValidationResult.Success;
+        }
+
+        return ValidateBindingRequirements(
+            pipeline.ReflectedBindingRequirementsSupported,
+            pipeline.ReflectedBindingRequirementsFailureReason,
+            pipeline.ReflectedBindingRequirements);
+    }
+
+    public ProGpuDirectXBindingValidationResult ValidateComputePipelineBindings()
+    {
+        return ValidateComputePipelineBindings(_computePipeline);
+    }
+
+    public ProGpuDirectXBindingValidationResult ValidateComputePipelineBindings(ProGpuDirectXComputePipeline? pipeline)
+    {
+        ThrowIfDisposed();
+        if (pipeline is null)
+        {
+            return ProGpuDirectXBindingValidationResult.Success;
+        }
+
+        return ValidateBindingRequirements(
+            pipeline.ReflectedBindingRequirementsSupported,
+            pipeline.ReflectedBindingRequirementsFailureReason,
+            pipeline.ReflectedBindingRequirements);
+    }
+
     public void ApplyBindings(DxShaderStageFlags stages, string? label = null)
     {
         ThrowIfDisposed();
@@ -616,6 +655,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     {
         ThrowIfDisposed();
         var draw = new DxDrawCall(_topology, vertexCount, startVertexLocation, instanceCount, startInstanceLocation);
+        var bindingValidation = ValidateGraphicsPipelineBindings(_graphicsPipeline);
+        ThrowIfBindingValidationFails(bindingValidation);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.Draw,
@@ -630,7 +671,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             BindingSnapshot = CreateBindingSnapshotCore(
                 DxShaderStageFlags.AllGraphics,
                 "ProGPU DirectX Draw Bindings",
-                createStandaloneBackendBindGroup: false)
+                createStandaloneBackendBindGroup: false),
+            BindingValidation = bindingValidation
         });
     }
 
@@ -661,6 +703,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             instanceCount,
             startInstanceLocation,
             effectiveIndexFormat);
+        var bindingValidation = ValidateGraphicsPipelineBindings(_graphicsPipeline);
+        ThrowIfBindingValidationFails(bindingValidation);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.DrawIndexed,
@@ -677,7 +721,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             BindingSnapshot = CreateBindingSnapshotCore(
                 DxShaderStageFlags.AllGraphics,
                 "ProGPU DirectX DrawIndexed Bindings",
-                createStandaloneBackendBindGroup: false)
+                createStandaloneBackendBindGroup: false),
+            BindingValidation = bindingValidation
         });
     }
 
@@ -706,6 +751,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             throw new ArgumentOutOfRangeException(nameof(threadGroupCountX), "Dispatch dimensions must be non-zero.");
         }
 
+        var bindingValidation = ValidateComputePipelineBindings(_computePipeline);
+        ThrowIfBindingValidationFails(bindingValidation);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.Dispatch,
@@ -714,7 +761,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             BindingSnapshot = CreateBindingSnapshotCore(
                 DxShaderStageFlags.Compute,
                 "ProGPU DirectX Dispatch Bindings",
-                createStandaloneBackendBindGroup: false)
+                createStandaloneBackendBindGroup: false),
+            BindingValidation = bindingValidation
         });
     }
 
@@ -760,6 +808,87 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     {
         var entries = BuildBindingEntries(stages);
         return new ProGpuDirectXBindingSnapshot(_device, stages, entries, label, createStandaloneBackendBindGroup);
+    }
+
+    private ProGpuDirectXBindingValidationResult ValidateBindingRequirements(
+        bool requirementsSupported,
+        string? failureReason,
+        IReadOnlyList<DxReflectedShaderBindingRequirement> requirements)
+    {
+        if (!requirementsSupported)
+        {
+            return new ProGpuDirectXBindingValidationResult(
+            [
+                new ProGpuDirectXBindingValidationIssue(
+                    ProGpuDirectXBindingValidationIssueKind.UnsupportedReflectedRequirements,
+                    $"DirectX reflected binding requirements are unsupported: {failureReason ?? "unknown failure"}.")
+            ]);
+        }
+
+        if (requirements.Count == 0)
+        {
+            return ProGpuDirectXBindingValidationResult.Success;
+        }
+
+        var issues = new List<ProGpuDirectXBindingValidationIssue>();
+        foreach (var requirement in requirements)
+        {
+            var count = requirement.Count == 0 ? 1u : requirement.Count;
+            for (uint offset = 0; offset < count; offset++)
+            {
+                var slot = requirement.Slot + offset;
+                if (HasBoundResource(requirement.Stage, requirement.Kind, slot))
+                {
+                    continue;
+                }
+
+                var nativeBinding = ProGpuDirectXNativeBindingMap.GetNativeBinding(
+                    requirement.Stage,
+                    requirement.Kind,
+                    slot);
+                issues.Add(new ProGpuDirectXBindingValidationIssue(
+                    ProGpuDirectXBindingValidationIssueKind.MissingBinding,
+                    $"Missing DirectX {requirement.Kind} binding '{requirement.Name}' for {requirement.Stage} slot {slot} (native binding {nativeBinding}).",
+                    requirement.Name,
+                    requirement.Stage,
+                    requirement.Kind,
+                    slot,
+                    nativeBinding));
+            }
+        }
+
+        return issues.Count == 0
+            ? ProGpuDirectXBindingValidationResult.Success
+            : new ProGpuDirectXBindingValidationResult(issues);
+    }
+
+    private bool HasBoundResource(DxShaderStage stage, ProGpuDirectXBindingKind kind, uint slot)
+    {
+        return kind switch
+        {
+            ProGpuDirectXBindingKind.ConstantBuffer =>
+                _constantBuffers.TryGetValue(new DxConstantBufferBinding(stage, slot), out var buffer) &&
+                buffer is not null,
+            ProGpuDirectXBindingKind.ShaderResourceView =>
+                _shaderResourceViews.TryGetValue(new DxShaderResourceBinding(stage, slot), out var view) &&
+                view is not null,
+            ProGpuDirectXBindingKind.Sampler =>
+                _samplers.TryGetValue(new DxShaderResourceBinding(stage, slot), out var sampler) &&
+                sampler is not null,
+            ProGpuDirectXBindingKind.UnorderedAccessView =>
+                stage == DxShaderStage.Compute &&
+                _unorderedAccessViews.TryGetValue(slot, out var unorderedAccessView) &&
+                unorderedAccessView is not null,
+            _ => false
+        };
+    }
+
+    private void ThrowIfBindingValidationFails(ProGpuDirectXBindingValidationResult validation)
+    {
+        if (_device.Options.EnableValidation && !validation.IsValid)
+        {
+            throw new InvalidOperationException(validation.ToExceptionMessage());
+        }
     }
 
     private IReadOnlyDictionary<uint, ProGpuDirectXBuffer> SnapshotVertexBuffers()

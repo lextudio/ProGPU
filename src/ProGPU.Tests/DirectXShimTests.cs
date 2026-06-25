@@ -4788,6 +4788,108 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
     }
 
     [Fact]
+    public void GraphicsBindingValidationPreflightsReflectedPipelineRequirements()
+    {
+        var vertexBytecode = CreateDxbcBytecode(
+            ("RDEF", CreateResourceDefinitionChunk(
+                ("FrameConstants", (uint)DxReflectedShaderResourceType.ConstantBuffer, 0u, 0u, 0u, 1u, 0u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Vertex, 5, 0)));
+        var pixelBytecode = CreateDxbcBytecode(
+            ("RDEF", CreateResourceDefinitionChunk(
+                ("DiffuseTexture", (uint)DxReflectedShaderResourceType.Texture, 5u, 4u, 1u, 1u, 0u),
+                ("LinearSampler", (uint)DxReflectedShaderResourceType.Sampler, 0u, 0u, 0u, 1u, 0u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Pixel, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = vertexBytecode
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = pixelBytecode
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader
+        });
+        using var constants = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 256,
+            Usage = DxBufferUsage.Constant
+        });
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Usage = DxTextureUsage.ShaderResource
+        });
+        using var textureView = device.CreateShaderResourceView(texture);
+        using var sampler = device.CreateSamplerState(new DxSamplerDescriptor());
+        using var context = device.CreateImmediateContext();
+
+        context.SetGraphicsPipeline(pipeline);
+        context.SetConstantBuffer(DxShaderStage.Vertex, 0, constants);
+        context.SetShaderResource(DxShaderStage.Pixel, 1, textureView);
+
+        var missingSampler = context.ValidateGraphicsPipelineBindings();
+        Assert.False(missingSampler.IsValid);
+        var issue = Assert.Single(missingSampler.Issues);
+        Assert.Equal(ProGpuDirectXBindingValidationIssueKind.MissingBinding, issue.IssueKind);
+        Assert.Equal("LinearSampler", issue.ResourceName);
+        Assert.Equal(DxShaderStage.Pixel, issue.Stage);
+        Assert.Equal(ProGpuDirectXBindingKind.Sampler, issue.Kind);
+        Assert.Equal(0u, issue.Slot);
+        Assert.Equal(768u, issue.NativeBinding);
+
+        context.Draw(3);
+        Assert.NotNull(context.Commands[^1].BindingValidation);
+        Assert.False(context.Commands[^1].BindingValidation!.IsValid);
+
+        context.SetSampler(DxShaderStage.Pixel, 0, sampler);
+
+        var valid = context.ValidateGraphicsPipelineBindings();
+        Assert.True(valid.IsValid);
+        context.Draw(3);
+        Assert.NotNull(context.Commands[^1].BindingValidation);
+        Assert.True(context.Commands[^1].BindingValidation!.IsValid);
+    }
+
+    [Fact]
+    public void ValidationEnabledDeviceRejectsDrawWithMissingReflectedBindings()
+    {
+        var vertexBytecode = CreateDxbcBytecode(
+            ("RDEF", CreateResourceDefinitionChunk(
+                ("FrameConstants", (uint)DxReflectedShaderResourceType.ConstantBuffer, 0u, 0u, 0u, 1u, 0u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Vertex, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice(new ProGpuDirectXDeviceOptions
+        {
+            EnableValidation = true
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = vertexBytecode
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetGraphicsPipeline(pipeline);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => context.Draw(3));
+        Assert.Contains("FrameConstants", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ConstantBuffer", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DispatchCommandsCaptureComputeBindingSnapshotWithUavMetadata()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -4852,6 +4954,75 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
             entry.Slot == 2 &&
             ReferenceEquals(entry.UnorderedAccessView, outputView));
         Assert.Contains("UnorderedAccessView:Compute:2", snapshot.BindingKey, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ComputeBindingValidationHonorsReflectedUavArrayCounts()
+    {
+        var computeBytecode = CreateDxbcBytecode(
+            ("RDEF", CreateResourceDefinitionChunk(
+                ("OutputValues", (uint)DxReflectedShaderResourceType.UnorderedAccessStructured, 0u, 1u, 0u, 2u, 0u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Compute, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var computeShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = computeBytecode
+        });
+        using var pipeline = device.CreateComputePipeline(new DxComputePipelineDescriptor
+        {
+            ComputeShader = computeShader
+        });
+        using var output0 = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 256,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.UnorderedAccess,
+            StrideInBytes = 16
+        });
+        using var output1 = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 256,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.UnorderedAccess,
+            StrideInBytes = 16
+        });
+        using var outputView0 = device.CreateUnorderedAccessView(
+            output0,
+            new DxUnorderedAccessViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 16,
+                ElementStrideInBytes = 16
+            });
+        using var outputView1 = device.CreateUnorderedAccessView(
+            output1,
+            new DxUnorderedAccessViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 16,
+                ElementStrideInBytes = 16
+            });
+        using var context = device.CreateImmediateContext();
+
+        context.SetComputePipeline(pipeline);
+        context.SetUnorderedAccessView(0, outputView0);
+
+        var missingSecondUav = context.ValidateComputePipelineBindings();
+        Assert.False(missingSecondUav.IsValid);
+        var issue = Assert.Single(missingSecondUav.Issues);
+        Assert.Equal("OutputValues", issue.ResourceName);
+        Assert.Equal(DxShaderStage.Compute, issue.Stage);
+        Assert.Equal(ProGpuDirectXBindingKind.UnorderedAccessView, issue.Kind);
+        Assert.Equal(1u, issue.Slot);
+        Assert.Equal(1857u, issue.NativeBinding);
+
+        context.SetUnorderedAccessView(1, outputView1);
+
+        var valid = context.ValidateComputePipelineBindings();
+        Assert.True(valid.IsValid);
+        context.Dispatch(1, 1, 1);
+        Assert.NotNull(context.Commands[^1].BindingValidation);
+        Assert.True(context.Commands[^1].BindingValidation!.IsValid);
     }
 
     [Fact]

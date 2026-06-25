@@ -25,6 +25,36 @@ public sealed record ProGpuDirectXBindingEntry
     public ProGpuDirectXUnorderedAccessView? UnorderedAccessView { get; init; }
 }
 
+public enum ProGpuDirectXBindingValidationIssueKind
+{
+    UnsupportedReflectedRequirements,
+    MissingBinding
+}
+
+public sealed record ProGpuDirectXBindingValidationIssue(
+    ProGpuDirectXBindingValidationIssueKind IssueKind,
+    string Message,
+    string? ResourceName = null,
+    DxShaderStage? Stage = null,
+    ProGpuDirectXBindingKind? Kind = null,
+    uint? Slot = null,
+    uint? NativeBinding = null);
+
+public sealed record ProGpuDirectXBindingValidationResult(IReadOnlyList<ProGpuDirectXBindingValidationIssue> Issues)
+{
+    public static ProGpuDirectXBindingValidationResult Success { get; } =
+        new(Array.Empty<ProGpuDirectXBindingValidationIssue>());
+
+    public bool IsValid => Issues.Count == 0;
+
+    public string ToExceptionMessage()
+    {
+        return IsValid
+            ? "DirectX binding validation succeeded."
+            : string.Join(Environment.NewLine, Issues.Select(issue => issue.Message));
+    }
+}
+
 public sealed unsafe class ProGpuDirectXBindingSnapshot : IDisposable
 {
     private readonly ProGpuDirectXDevice _device;
