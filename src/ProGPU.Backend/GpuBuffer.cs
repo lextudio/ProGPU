@@ -81,10 +81,16 @@ public unsafe class GpuBuffer : IDisposable
 
         var readSize = sizeBytes ?? (Size - offsetBytes);
         ValidateReadRange(offsetBytes, readSize);
+        if (readSize == 0)
+        {
+            return [];
+        }
 
         if (Usage.HasFlag(BufferUsage.MapRead))
         {
-            return MapReadBuffer(BufferPtr, offsetBytes, readSize, destroyAfterRead: false);
+            var mappedRange = CreateAlignedReadbackRange(offsetBytes, readSize, offsetAlignment: 8);
+            var mappedBytes = MapReadBuffer(BufferPtr, mappedRange.OffsetBytes, mappedRange.SizeBytes, destroyAfterRead: false);
+            return mappedBytes.AsSpan(checked((int)mappedRange.LeadingBytes), checked((int)readSize)).ToArray();
         }
 
         if (!Usage.HasFlag(BufferUsage.CopySrc))
@@ -92,10 +98,11 @@ public unsafe class GpuBuffer : IDisposable
             throw new InvalidOperationException("Buffer was not created with CopySrc or MapRead usage.");
         }
 
+        var copyRange = CreateAlignedReadbackRange(offsetBytes, readSize, offsetAlignment: 4);
         var readbackDesc = new BufferDescriptor
         {
             Usage = BufferUsage.CopyDst | BufferUsage.MapRead,
-            Size = readSize,
+            Size = copyRange.SizeBytes,
             MappedAtCreation = false
         };
         var readbackBuffer = _context.Wgpu.DeviceCreateBuffer(_context.Device, &readbackDesc);
@@ -117,10 +124,10 @@ public unsafe class GpuBuffer : IDisposable
         _context.Wgpu.CommandEncoderCopyBufferToBuffer(
             encoder,
             BufferPtr,
-            offsetBytes,
+            copyRange.OffsetBytes,
             readbackBuffer,
             0,
-            readSize);
+            copyRange.SizeBytes);
 
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Buffer Readback Command Buffer") };
         var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
@@ -137,7 +144,8 @@ public unsafe class GpuBuffer : IDisposable
         _context.Wgpu.CommandBufferRelease(commandBuffer);
         _context.Wgpu.CommandEncoderRelease(encoder);
 
-        return MapReadBuffer(readbackBuffer, 0, readSize, destroyAfterRead: true);
+        var readbackBytes = MapReadBuffer(readbackBuffer, 0, copyRange.SizeBytes, destroyAfterRead: true);
+        return readbackBytes.AsSpan(checked((int)copyRange.LeadingBytes), checked((int)readSize)).ToArray();
     }
 
     private byte[] MapReadBuffer(Buffer* buffer, uint offsetBytes, uint sizeBytes, bool destroyAfterRead)
@@ -202,12 +210,36 @@ public unsafe class GpuBuffer : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(sizeBytes), "Buffer read exceeds the buffer bounds.");
         }
-
-        if ((offsetBytes % 4) != 0 || (sizeBytes % 4) != 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(sizeBytes), "GPU buffer readback requires 4-byte aligned offset and size.");
-        }
     }
+
+    private ReadbackRange CreateAlignedReadbackRange(uint offsetBytes, uint sizeBytes, uint offsetAlignment)
+    {
+        var alignedOffset = AlignDown(offsetBytes, offsetAlignment);
+        var leadingBytes = offsetBytes - alignedOffset;
+        var minimumSize = (ulong)leadingBytes + sizeBytes;
+        var alignedSize = AlignUp(minimumSize, 4);
+        var availableSize = Size - alignedOffset;
+        if (alignedSize > availableSize)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sizeBytes),
+                "GPU buffer readback cannot form an aligned enclosing range inside the buffer bounds.");
+        }
+
+        return new ReadbackRange(alignedOffset, alignedSize, leadingBytes);
+    }
+
+    private static uint AlignDown(uint value, uint alignment)
+    {
+        return value - (value % alignment);
+    }
+
+    private static uint AlignUp(ulong value, uint alignment)
+    {
+        return checked((uint)(((value + alignment - 1) / alignment) * alignment));
+    }
+
+    private readonly record struct ReadbackRange(uint OffsetBytes, uint SizeBytes, uint LeadingBytes);
 
     public void Dispose()
     {

@@ -518,6 +518,39 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void CpuReadableBuffersSupportUnalignedByteReads()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var source = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 16,
+            Usage = DxBufferUsage.CopySource | DxBufferUsage.CopyDestination
+        });
+        using var staging = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 16,
+            Usage = DxBufferUsage.CopyDestination,
+            CpuAccess = DxCpuAccessFlags.Read
+        });
+        using var context = device.CreateImmediateContext();
+
+        source.Write<byte>([
+            0xA0, 0xA1, 0xA2, 0xA3,
+            0xA4, 0xA5, 0xA6, 0xA7,
+            0xA8, 0xA9, 0xAA, 0xAB,
+            0xAC, 0xAD, 0xAE, 0xAF
+        ]);
+        context.CopyResource(staging, source);
+        context.Flush();
+
+        var expected = new byte[] { 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7 };
+        Assert.Equal(expected, staging.ReadBytes(offsetBytes: 1, sizeInBytes: 7));
+        Assert.Equal(expected, source.BackendBuffer!.ReadBytes(offsetBytes: 1, sizeBytes: 7));
+    }
+
+    [Fact]
     public void FlushSubmitsGpuBackedComputeDispatchCommands()
     {
         using var wgpu = new WgpuContext();
