@@ -764,6 +764,11 @@ internal static class ProGpuDirectXHlslTranslator
         IReadOnlyList<HlslShaderResource> shaderResources)
     {
         var trimmed = expression.Trim();
+        if (TryTranslateConditionalExpression(trimmed, constantBuffers, shaderResources, out var conditional))
+        {
+            return conditional;
+        }
+
         var translated = TranslateByteAddressBufferReadMethodCalls(trimmed, constantBuffers, shaderResources);
         translated = TranslateTextureMethodCalls(translated, constantBuffers, shaderResources);
         translated = TranslateHlslIntrinsicCalls(translated, constantBuffers, shaderResources);
@@ -784,6 +789,128 @@ internal static class ProGpuDirectXHlslTranslator
         }
 
         return translated;
+    }
+
+    private static bool TryTranslateConditionalExpression(
+        string expression,
+        IReadOnlyList<HlslConstantBuffer> constantBuffers,
+        IReadOnlyList<HlslShaderResource> shaderResources,
+        out string translated)
+    {
+        translated = string.Empty;
+        if (!TrySplitConditionalExpression(expression, out var condition, out var trueValue, out var falseValue))
+        {
+            return false;
+        }
+
+        translated = string.Concat(
+            "select(",
+            TranslateExpression(falseValue, constantBuffers, shaderResources),
+            ", ",
+            TranslateExpression(trueValue, constantBuffers, shaderResources),
+            ", ",
+            TranslateExpression(condition, constantBuffers, shaderResources),
+            ")");
+        return true;
+    }
+
+    private static bool TrySplitConditionalExpression(
+        string expression,
+        out string condition,
+        out string trueValue,
+        out string falseValue)
+    {
+        condition = string.Empty;
+        trueValue = string.Empty;
+        falseValue = string.Empty;
+
+        var questionIndex = FindTopLevelConditionalQuestion(expression);
+        if (questionIndex < 0)
+        {
+            return false;
+        }
+
+        var colonIndex = FindMatchingConditionalColon(expression, questionIndex);
+        if (colonIndex < 0)
+        {
+            throw new NotSupportedException("HLSL conditional expression is missing a matching ':' arm.");
+        }
+
+        condition = expression[..questionIndex].Trim();
+        trueValue = expression[(questionIndex + 1)..colonIndex].Trim();
+        falseValue = expression[(colonIndex + 1)..].Trim();
+        if (condition.Length == 0 || trueValue.Length == 0 || falseValue.Length == 0)
+        {
+            throw new NotSupportedException("HLSL conditional expression requires condition, true arm, and false arm.");
+        }
+
+        return true;
+    }
+
+    private static int FindTopLevelConditionalQuestion(string expression)
+    {
+        var parenDepth = 0;
+        var bracketDepth = 0;
+        for (var i = 0; i < expression.Length; i++)
+        {
+            switch (expression[i])
+            {
+                case '(':
+                    parenDepth++;
+                    break;
+                case ')':
+                    parenDepth--;
+                    break;
+                case '[':
+                    bracketDepth++;
+                    break;
+                case ']':
+                    bracketDepth--;
+                    break;
+                case '?' when parenDepth == 0 && bracketDepth == 0:
+                    return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int FindMatchingConditionalColon(string expression, int questionIndex)
+    {
+        var parenDepth = 0;
+        var bracketDepth = 0;
+        var nestedConditionalDepth = 0;
+        for (var i = questionIndex + 1; i < expression.Length; i++)
+        {
+            switch (expression[i])
+            {
+                case '(':
+                    parenDepth++;
+                    break;
+                case ')':
+                    parenDepth--;
+                    break;
+                case '[':
+                    bracketDepth++;
+                    break;
+                case ']':
+                    bracketDepth--;
+                    break;
+                case '?' when parenDepth == 0 && bracketDepth == 0:
+                    nestedConditionalDepth++;
+                    break;
+                case ':' when parenDepth == 0 && bracketDepth == 0:
+                    if (nestedConditionalDepth == 0)
+                    {
+                        return i;
+                    }
+
+                    nestedConditionalDepth--;
+                    break;
+            }
+        }
+
+        return -1;
     }
 
     private static string TranslateHlslIntrinsicCalls(

@@ -352,6 +352,14 @@ float4 PSMain() : SV_Target
 }
 """;
 
+    private const string ConditionalPixelHlsl = """
+float4 PSMain() : SV_Target
+{
+    float value = 1.0 > 0.5 ? 1.0 : 0.0;
+    return float4(value, 0.0, 0.0, 1.0);
+}
+""";
+
     private const string ClippedPixelHlsl = """
 float4 PSMain() : SV_Target
 {
@@ -700,6 +708,23 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
         Assert.Contains("var falloff: f32 = pow(sqrt(light), 1.0);", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("var mask: f32 = clamp(mix(0.0, sampled.r * 2.0, fract(1.5)) * falloff * loaded.r * biased.r * grad.r, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("textureSampleLevel(SourceTexture, SourceSampler, uv, 0.0) * vec4<f32>(0.0, 0.5, 0.25, 0.0)", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderTranslatesConditionalExpressions()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = ConditionalPixelHlsl,
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("var value: f32 = select(0.0, 1.0, 1.0 > 0.5);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("return vec4<f32>(value, 0.0, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1345,6 +1370,66 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL fragment system-value draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL fragment system-value draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL fragment system-value draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslConditionalPixelDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl,
+            EntryPoint = "vs_main",
+            Label = "WGSL Triangle Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = ConditionalPixelHlsl,
+            EntryPoint = "PSMain",
+            Label = "HLSL Conditional Pixel"
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.True(pixelShader.HasBackendShaderModule);
+        Assert.NotNull(pixelShader.BackendSource);
+        Assert.Contains("select(0.0, 1.0, 1.0 > 0.5)", pixelShader.BackendSource, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after HLSL conditional draw, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after HLSL conditional draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL conditional draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL conditional draw, actual: {center}");
     }
 
     [Fact]
