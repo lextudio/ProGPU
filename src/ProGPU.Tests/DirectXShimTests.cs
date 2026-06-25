@@ -518,6 +518,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         ]);
         ProGpuDirectXSciChartTextureVertex[] vertices =
         [
+            new(-10, -10, 0, 0, 0xFFFFFFFF),
             new(0, 0, 0, 0, 0xFF00FF00),
             new(16, 0, 1, 0, 0xFF00FF00),
             new(16, 16, 1, 1, 0xFF00FF00),
@@ -525,36 +526,89 @@ fn fs_main() -> @location(0) vec4<f32> {
             new(16, 16, 1, 1, 0xFF00FF00),
             new(0, 16, 0, 1, 0xFF00FF00)
         ];
+        var drawVertexCount = vertices.Length - 1;
 
         renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
         renderContext.DrawTextureVertices(
             vertices,
-            vertexCount: vertices.Length,
-            indexCount: vertices.Length,
+            startIndex: 1,
+            count: drawVertexCount,
             texture,
             new ProGpuDirectXSciChartVertexTransform(),
             ProGpuDirectXSciChartTextureFiltering.Point);
 
         Assert.Single(renderContext.TextureVertexDraws);
         Assert.Equal(new DxRect(0, 0, 8, 16), renderContext.TextureVertexDraws[0].ClipRect);
-        Assert.Equal(vertices.Length, renderContext.TextureVertexDraws[0].Vertices.Count);
+        Assert.Equal(drawVertexCount, renderContext.TextureVertexDraws[0].Vertices.Count);
+        Assert.Equal(0, renderContext.TextureVertexDraws[0].Vertices[0].X);
         Assert.Equal(ProGpuDirectXCommandKind.Draw, renderContext.ImmediateContext.Commands[^1].Kind);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            renderContext.DrawTextureVertices(vertices, vertices.Length, vertices.Length + 1, texture, default));
+            renderContext.DrawTextureVertices(vertices, vertices.Length, 1, texture, default));
 
         renderContext.BeginFrame();
         Assert.Empty(renderContext.TextureDraws);
         Assert.Empty(renderContext.TextureVertexDraws);
+        Assert.Empty(renderContext.ShapedHeatmapDraws);
 
         renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
         renderContext.DrawTextureVertices(
             vertices,
-            vertexCount: vertices.Length,
-            indexCount: vertices.Length,
+            startIndex: 1,
+            count: drawVertexCount,
             texture,
             new ProGpuDirectXSciChartVertexTransform(),
             ProGpuDirectXSciChartTextureFiltering.Point);
         Assert.Empty(renderContext.TextureVertexDraws);
+    }
+
+    [Fact]
+    public void SciChartRenderContextRecordsShapedHeatmapDrawsAndClip()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        using var heightsTexture = renderContext.CreateTexture(2, 2, ProGpuDirectXSciChartTextureFormat.Float32);
+        using var gradientTexture = renderContext.CreateTexture(2, 1);
+        heightsTexture.SetFloatData([0f, 0.5f, 0.75f, 1f]);
+        gradientTexture.SetData(
+        [
+            unchecked((int)0xFF00FF00),
+            unchecked((int)0xFF00FF00)
+        ]);
+        ProGpuDirectXSciChartTextureVertex[] vertices =
+        [
+            new(-10, -10, 0, 0, 0xFFFFFFFF),
+            new(0, 0, 0, 0, 0xFFFFFFFF),
+            new(16, 0, 1, 0, 0xFFFFFFFF),
+            new(16, 16, 1, 1, 0xFFFFFFFF),
+            new(0, 0, 0, 0, 0xFFFFFFFF),
+            new(16, 16, 1, 1, 0xFFFFFFFF),
+            new(0, 16, 0, 1, 0xFFFFFFFF)
+        ];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
+        renderContext.DrawShapedHeatmap(
+            vertices,
+            startIndex: 1,
+            count: vertices.Length - 1,
+            colorMapMin: 0,
+            colorMapMax: 1,
+            heightsTexture,
+            gradientTexture,
+            ProGpuDirectXSciChartTextureFiltering.Point);
+
+        Assert.Single(renderContext.ShapedHeatmapDraws);
+        Assert.Equal(new DxRect(0, 0, 8, 16), renderContext.ShapedHeatmapDraws[0].ClipRect);
+        Assert.Equal(vertices.Length - 1, renderContext.ShapedHeatmapDraws[0].Vertices.Count);
+        Assert.Equal(0, renderContext.ShapedHeatmapDraws[0].Vertices[0].X);
+        Assert.Equal(ProGpuDirectXCommandKind.Draw, renderContext.ImmediateContext.Commands[^1].Kind);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawShapedHeatmap(vertices, 1, vertices.Length, 0, 1, heightsTexture, gradientTexture));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawShapedHeatmap(vertices, 1, 1, 1, 0, heightsTexture, gradientTexture));
+
+        using var unsupportedHeights = renderContext.CreateTexture(2, 2);
+        Assert.Throws<NotSupportedException>(() =>
+            renderContext.DrawShapedHeatmap(vertices, 1, vertices.Length - 1, 0, 1, unsupportedHeights, gradientTexture));
     }
 
     [Fact]
@@ -1422,6 +1476,7 @@ VertexOutput VSMain(VertexInput input)
         ]);
         ProGpuDirectXSciChartTextureVertex[] vertices =
         [
+            new(-10, -10, 0, 0, 0xFFFFFFFF),
             new(0, 0, 0, 0, 0xFF00FF00),
             new(16, 0, 1, 0, 0xFF00FF00),
             new(16, 16, 1, 1, 0xFF00FF00),
@@ -1434,8 +1489,8 @@ VertexOutput VSMain(VertexInput input)
         renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
         renderContext.DrawTextureVertices(
             vertices,
-            vertexCount: vertices.Length,
-            indexCount: vertices.Length,
+            startIndex: 1,
+            count: vertices.Length - 1,
             texture,
             new ProGpuDirectXSciChartVertexTransform(),
             ProGpuDirectXSciChartTextureFiltering.Point);
@@ -1456,6 +1511,66 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart clip, actual: {clippedOut}");
         Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart clip, actual: {clippedOut}");
         Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart clip, actual: {clippedOut}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartShapedHeatmapCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        using var heightsTexture = renderContext.CreateTexture(2, 2, ProGpuDirectXSciChartTextureFormat.Float32);
+        using var gradientTexture = renderContext.CreateTexture(2, 1);
+        heightsTexture.SetFloatData([1f, 1f, 1f, 1f]);
+        gradientTexture.SetData(
+        [
+            unchecked((int)0xFF00FF00),
+            unchecked((int)0xFF00FF00)
+        ]);
+        ProGpuDirectXSciChartTextureVertex[] vertices =
+        [
+            new(-10, -10, 0, 0, 0xFFFFFFFF),
+            new(0, 0, 0, 0, 0xFFFFFFFF),
+            new(16, 0, 1, 0, 0xFFFFFFFF),
+            new(16, 16, 1, 1, 0xFFFFFFFF),
+            new(0, 0, 0, 0, 0xFFFFFFFF),
+            new(16, 16, 1, 1, 0xFFFFFFFF),
+            new(0, 16, 0, 1, 0xFFFFFFFF)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
+        renderContext.DrawShapedHeatmap(
+            vertices,
+            startIndex: 1,
+            count: vertices.Length - 1,
+            colorMapMin: 0,
+            colorMapMax: 1,
+            heightsTexture,
+            gradientTexture,
+            ProGpuDirectXSciChartTextureFiltering.Point);
+        renderContext.Flush();
+
+        Assert.Single(renderContext.ShapedHeatmapDraws);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var clippedIn = ReadRgbaPixel(targetPixels, 16, 4, 8);
+        Assert.True(clippedIn.R < 50, $"Expected shaped heatmap low red pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.G > 200, $"Expected shaped heatmap green pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.B < 50, $"Expected shaped heatmap low blue pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.A > 200, $"Expected shaped heatmap opaque pixel inside SciChart clip, actual: {clippedIn}");
+
+        var clippedOut = ReadRgbaPixel(targetPixels, 16, 12, 8);
+        Assert.True(clippedOut.R < 50, $"Expected black pixel outside SciChart heatmap clip, actual: {clippedOut}");
+        Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart heatmap clip, actual: {clippedOut}");
+        Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart heatmap clip, actual: {clippedOut}");
+        Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart heatmap clip, actual: {clippedOut}");
     }
 
     [Fact]
