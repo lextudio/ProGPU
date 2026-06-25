@@ -29,8 +29,16 @@ internal static class ProGpuDirectXHlslTranslator
         @"\bStructuredBuffer\s*<\s*(?<type>[A-Za-z_]\w*)\s*>\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*t(?<slot>\d+)\s*\)\s*;",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex s_typedBufferResourceRegex = new(
+        @"\bBuffer\s*<\s*(?<type>[A-Za-z_]\w*)\s*>\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*t(?<slot>\d+)\s*\)\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Regex s_rwStructuredBufferResourceRegex = new(
         @"\bRWStructuredBuffer\s*<\s*(?<type>[A-Za-z_]\w*)\s*>\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*u(?<slot>\d+)\s*\)\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex s_rwTypedBufferResourceRegex = new(
+        @"\bRWBuffer\s*<\s*(?<type>[A-Za-z_]\w*)\s*>\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*u(?<slot>\d+)\s*\)\s*;",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex s_samplerStateResourceRegex = new(
@@ -247,6 +255,7 @@ internal static class ProGpuDirectXHlslTranslator
                         .Append(": texture_2d<f32>;\n");
                     break;
                 case HlslShaderResourceKind.StructuredBuffer:
+                case HlslShaderResourceKind.Buffer:
                     builder
                         .Append("@group(0) @binding(")
                         .Append(ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(stage, resource.Register))
@@ -257,9 +266,10 @@ internal static class ProGpuDirectXHlslTranslator
                         .Append(">;\n");
                     break;
                 case HlslShaderResourceKind.RWStructuredBuffer:
+                case HlslShaderResourceKind.RWBuffer:
                     if (stage != DxShaderStage.Compute)
                     {
-                        throw new NotSupportedException("HLSL RWStructuredBuffer resources are currently supported only for compute shaders.");
+                        throw new NotSupportedException($"HLSL {resource.Kind} resources are currently supported only for compute shaders.");
                     }
 
                     builder
@@ -492,12 +502,34 @@ internal static class ProGpuDirectXHlslTranslator
                 elementType));
         }
 
+        foreach (Match match in s_typedBufferResourceRegex.Matches(source))
+        {
+            var elementType = match.Groups["type"].Value;
+            _ = MapResourceElementType(elementType, structs);
+            resources.Add(new HlslShaderResource(
+                HlslShaderResourceKind.Buffer,
+                match.Groups["name"].Value,
+                uint.Parse(match.Groups["slot"].Value),
+                elementType));
+        }
+
         foreach (Match match in s_rwStructuredBufferResourceRegex.Matches(source))
         {
             var elementType = match.Groups["type"].Value;
             _ = MapResourceElementType(elementType, structs);
             resources.Add(new HlslShaderResource(
                 HlslShaderResourceKind.RWStructuredBuffer,
+                match.Groups["name"].Value,
+                uint.Parse(match.Groups["slot"].Value),
+                elementType));
+        }
+
+        foreach (Match match in s_rwTypedBufferResourceRegex.Matches(source))
+        {
+            var elementType = match.Groups["type"].Value;
+            _ = MapResourceElementType(elementType, structs);
+            resources.Add(new HlslShaderResource(
+                HlslShaderResourceKind.RWBuffer,
                 match.Groups["name"].Value,
                 uint.Parse(match.Groups["slot"].Value),
                 elementType));
@@ -1115,7 +1147,7 @@ internal static class ProGpuDirectXHlslTranslator
             ? MapType(type)
             : structs.ContainsKey(type)
                 ? type
-                : throw new NotSupportedException($"Unsupported HLSL StructuredBuffer element type '{type}'.");
+                : throw new NotSupportedException($"Unsupported HLSL buffer resource element type '{type}'.");
     }
 
     private static string MapType(string type)
@@ -1186,7 +1218,9 @@ internal static class ProGpuDirectXHlslTranslator
     {
         Texture2D,
         StructuredBuffer,
+        Buffer,
         RWStructuredBuffer,
+        RWBuffer,
         SamplerState
     }
 

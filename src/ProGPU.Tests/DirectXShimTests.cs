@@ -228,6 +228,16 @@ float4 VSMain(uint vertexId : SV_VertexID) : SV_Position
 }
 """;
 
+    private const string TypedBufferVertexHlsl = """
+Buffer<float4> Positions : register(t0);
+
+float4 VSMain(uint vertexId : SV_VertexID) : SV_Position
+{
+    float4 position = Positions[vertexId];
+    return float4(position.xy, 0.0, 1.0);
+}
+""";
+
     private const string StructuredBufferRecordVertexHlsl = """
 struct ChartPoint
 {
@@ -250,6 +260,16 @@ VertexOutput VSMain(uint vertexId : SV_VertexID)
     output.position = float4(point.position.xy, 0.0, 1.0);
     output.color = point.color;
     return output;
+}
+""";
+
+    private const string RwTypedBufferComputeHlsl = """
+RWBuffer<float4> Output : register(u0);
+
+[numthreads(1, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    Output[id.x] = float4(0.0, 0.0, 1.0, 1.0);
 }
 """;
 
@@ -584,6 +604,25 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
     }
 
     [Fact]
+    public void HlslTextShaderTranslatesTypedBufferResources()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = TypedBufferVertexHlsl,
+            EntryPoint = "VSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("@binding(64) var<storage, read> Positions: array<vec4<f32>>;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("@vertex\nfn VSMain(@builtin(vertex_index) vertexId: u32) -> @builtin(position) vec4<f32>", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("var position: vec4<f32> = Positions[vertexId];", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("return vec4<f32>(position.xy, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HlslTextShaderTranslatesStructuredBufferRecordResources()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -620,6 +659,24 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
         Assert.Contains("@binding(1856) var<storage, read_write> Output: array<vec4<f32>>;", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("@compute @workgroup_size(1, 1, 1)\nfn CSMain(@builtin(global_invocation_id) id: vec3<u32>)", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("Output[id.x] = vec4<f32>(0.0, 1.0, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderTranslatesRwTypedBufferResources()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = RwTypedBufferComputeHlsl,
+            EntryPoint = "CSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<vec4<f32>>;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("@compute @workgroup_size(1, 1, 1)\nfn CSMain(@builtin(global_invocation_id) id: vec3<u32>)", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("Output[id.x] = vec4<f32>(0.0, 0.0, 1.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1369,6 +1426,87 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G > 200, $"Expected green center pixel after structured-buffer draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after structured-buffer draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after structured-buffer draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslTypedBufferDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var positions = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 48,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.ShaderResource | DxBufferUsage.CopyDestination,
+            StrideInBytes = 16,
+            Label = "Typed Buffer Positions"
+        });
+        positions.Write<float>(
+        [
+            -0.8f, -0.8f, 0.0f, 1.0f,
+             0.8f, -0.8f, 0.0f, 1.0f,
+             0.0f,  0.8f, 0.0f, 1.0f
+        ]);
+        using var positionsView = device.CreateShaderResourceView(
+            positions,
+            new DxShaderResourceViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 3,
+                ElementStrideInBytes = 16
+            });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = TypedBufferVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Buffer Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = SolidGreenPixelHlsl,
+            EntryPoint = "PSMain",
+            Label = "HLSL Green Pixel"
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.SetShaderResource(DxShaderStage.Vertex, 0, positionsView);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.True(vertexShader.HasBackendShaderModule);
+        Assert.Contains("@binding(64) var<storage, read> Positions: array<vec4<f32>>;", vertexShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R < 50, $"Expected low red center pixel after typed-buffer draw, actual: {center}");
+        Assert.True(center.G > 200, $"Expected green center pixel after typed-buffer draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after typed-buffer draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after typed-buffer draw, actual: {center}");
     }
 
     [Fact]
@@ -2317,6 +2455,56 @@ VertexOutput VSMain(VertexInput input)
 
         var values = MemoryMarshal.Cast<byte, float>(output.BackendBuffer!.ReadBytes(0, 16)).ToArray();
         Assert.Equal([0f, 1f, 0f, 1f], values);
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslRwTypedBufferDispatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var output = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 16,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.UnorderedAccess | DxBufferUsage.CopySource,
+            StrideInBytes = 16,
+            Label = "RWBuffer Output"
+        });
+        using var outputView = device.CreateUnorderedAccessView(
+            output,
+            new DxUnorderedAccessViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 1,
+                ElementStrideInBytes = 16,
+                Access = DxUnorderedAccessViewAccess.ReadWrite
+            });
+        using var computeShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = RwTypedBufferComputeHlsl,
+            EntryPoint = "CSMain",
+            Label = "HLSL RWBuffer Compute"
+        });
+        using var pipeline = device.CreateComputePipeline(new DxComputePipelineDescriptor
+        {
+            ComputeShader = computeShader
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetComputePipeline(pipeline);
+        context.SetUnorderedAccessView(0, outputView);
+        context.Dispatch(1, 1, 1);
+        context.Flush();
+
+        Assert.True(computeShader.HasBackendShaderModule);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<vec4<f32>>;", computeShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDispatchCount);
+
+        var values = MemoryMarshal.Cast<byte, float>(output.BackendBuffer!.ReadBytes(0, 16)).ToArray();
+        Assert.Equal([0f, 0f, 1f, 1f], values);
     }
 
     [Fact]
