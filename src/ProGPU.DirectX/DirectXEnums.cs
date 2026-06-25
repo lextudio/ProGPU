@@ -153,6 +153,18 @@ public enum DxDepthWriteMask
     All
 }
 
+public enum DxStencilOperation
+{
+    Keep,
+    Zero,
+    Replace,
+    IncrementSaturate,
+    DecrementSaturate,
+    Invert,
+    Increment,
+    Decrement
+}
+
 [Flags]
 public enum DxDepthStencilClearFlags
 {

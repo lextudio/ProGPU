@@ -190,6 +190,21 @@ internal static class ProGpuDirectXFormatConverter
         };
     }
 
+    public static StencilOperation ToStencilOperation(DxStencilOperation operation)
+    {
+        return operation switch
+        {
+            DxStencilOperation.Zero => StencilOperation.Zero,
+            DxStencilOperation.Replace => StencilOperation.Replace,
+            DxStencilOperation.IncrementSaturate => StencilOperation.IncrementClamp,
+            DxStencilOperation.DecrementSaturate => StencilOperation.DecrementClamp,
+            DxStencilOperation.Invert => StencilOperation.Invert,
+            DxStencilOperation.Increment => StencilOperation.IncrementWrap,
+            DxStencilOperation.Decrement => StencilOperation.DecrementWrap,
+            _ => StencilOperation.Keep
+        };
+    }
+
     public static BlendFactor ToBlendFactor(DxBlendFactor factor)
     {
         return factor switch

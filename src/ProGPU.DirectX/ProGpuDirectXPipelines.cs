@@ -346,12 +346,15 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
             var depthStencilState = new DepthStencilState
             {
                 Format = ProGpuDirectXFormatConverter.ToTextureFormat(descriptor.DepthStencilFormat),
-                DepthWriteEnabled = descriptor.DepthStencilState.DepthWriteMask == DxDepthWriteMask.All,
-                DepthCompare = ProGpuDirectXFormatConverter.ToCompareFunction(descriptor.DepthStencilState.DepthFunction),
-                StencilFront = CreateStencilFaceState(),
-                StencilBack = CreateStencilFaceState(),
-                StencilReadMask = 0xFF,
-                StencilWriteMask = 0xFF,
+                DepthWriteEnabled = descriptor.DepthStencilState.DepthEnable &&
+                    descriptor.DepthStencilState.DepthWriteMask == DxDepthWriteMask.All,
+                DepthCompare = descriptor.DepthStencilState.DepthEnable
+                    ? ProGpuDirectXFormatConverter.ToCompareFunction(descriptor.DepthStencilState.DepthFunction)
+                    : CompareFunction.Always,
+                StencilFront = CreateStencilFaceState(descriptor.DepthStencilState.FrontFace),
+                StencilBack = CreateStencilFaceState(descriptor.DepthStencilState.BackFace),
+                StencilReadMask = descriptor.DepthStencilState.StencilReadMask,
+                StencilWriteMask = descriptor.DepthStencilState.StencilWriteMask,
                 DepthBias = descriptor.RasterizerState.DepthBias,
                 DepthBiasClamp = descriptor.RasterizerState.DepthBiasClamp,
                 DepthBiasSlopeScale = descriptor.RasterizerState.SlopeScaledDepthBias
@@ -409,14 +412,14 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
         return ProGpuDirectXFormatConverter.ToPrimitiveTopology(descriptor.Topology);
     }
 
-    private static StencilFaceState CreateStencilFaceState()
+    private static StencilFaceState CreateStencilFaceState(DxStencilFaceDescriptor descriptor)
     {
         return new StencilFaceState
         {
-            Compare = CompareFunction.Always,
-            FailOp = StencilOperation.Keep,
-            DepthFailOp = StencilOperation.Keep,
-            PassOp = StencilOperation.Keep
+            Compare = ProGpuDirectXFormatConverter.ToCompareFunction(descriptor.Function),
+            FailOp = ProGpuDirectXFormatConverter.ToStencilOperation(descriptor.FailOperation),
+            DepthFailOp = ProGpuDirectXFormatConverter.ToStencilOperation(descriptor.DepthFailOperation),
+            PassOp = ProGpuDirectXFormatConverter.ToStencilOperation(descriptor.PassOperation)
         };
     }
 
@@ -436,6 +439,18 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
         if (descriptor.SampleCount == 0)
         {
             throw new ArgumentOutOfRangeException(nameof(descriptor), "Graphics pipelines must use at least one sample.");
+        }
+
+        if ((descriptor.DepthStencilState.DepthEnable || descriptor.DepthStencilState.StencilEnable) &&
+            descriptor.DepthStencilFormat == DxResourceFormat.Unknown)
+        {
+            throw new ArgumentException("Depth or stencil enabled pipelines require a depth-stencil format.", nameof(descriptor));
+        }
+
+        if (descriptor.DepthStencilState.StencilEnable &&
+            descriptor.DepthStencilFormat != DxResourceFormat.D24UnormS8UInt)
+        {
+            throw new ArgumentException("Stencil enabled pipelines require a stencil-capable depth-stencil format.", nameof(descriptor));
         }
     }
 

@@ -1187,7 +1187,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         var depthTexture = command.DepthStencilTexture?.BackendTexture;
         var hasDepthAttachment = depthTexture is { IsDisposed: false, ViewPtr: not null };
         if (command.GraphicsPipeline.Descriptor.DepthStencilFormat != DxResourceFormat.Unknown &&
-            command.GraphicsPipeline.Descriptor.DepthStencilState.DepthEnable &&
+            (command.GraphicsPipeline.Descriptor.DepthStencilState.DepthEnable ||
+                command.GraphicsPipeline.Descriptor.DepthStencilState.StencilEnable) &&
             !hasDepthAttachment)
         {
             throw new InvalidOperationException("GPU-backed DirectX draw requires a backend depth-stencil texture for depth-enabled pipelines.");
@@ -1246,6 +1247,12 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
             context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline.BackendPipeline);
             ApplyRenderState(context, pass, command, renderTarget.Width, renderTarget.Height);
+            if (command.GraphicsPipeline.Descriptor.DepthStencilState.StencilEnable)
+            {
+                context.Wgpu.RenderPassEncoderSetStencilReference(
+                    pass,
+                    command.GraphicsPipeline.Descriptor.DepthStencilState.StencilReference);
+            }
 
             if (command.BindingSnapshot is { HasBackendBindGroup: true } snapshot)
             {

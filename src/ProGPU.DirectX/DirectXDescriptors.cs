@@ -128,6 +128,19 @@ public sealed record DxDepthStencilStateDescriptor
     public DxDepthWriteMask DepthWriteMask { get; init; } = DxDepthWriteMask.All;
     public DxComparisonFunction DepthFunction { get; init; } = DxComparisonFunction.LessEqual;
     public bool StencilEnable { get; init; }
+    public byte StencilReadMask { get; init; } = 0xFF;
+    public byte StencilWriteMask { get; init; } = 0xFF;
+    public byte StencilReference { get; init; }
+    public DxStencilFaceDescriptor FrontFace { get; init; } = new();
+    public DxStencilFaceDescriptor BackFace { get; init; } = new();
+}
+
+public sealed record DxStencilFaceDescriptor
+{
+    public DxStencilOperation FailOperation { get; init; } = DxStencilOperation.Keep;
+    public DxStencilOperation DepthFailOperation { get; init; } = DxStencilOperation.Keep;
+    public DxStencilOperation PassOperation { get; init; } = DxStencilOperation.Keep;
+    public DxComparisonFunction Function { get; init; } = DxComparisonFunction.Always;
 }
 
 public sealed record DxGraphicsPipelineDescriptor

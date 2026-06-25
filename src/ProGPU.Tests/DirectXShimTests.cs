@@ -223,6 +223,61 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void CanCreateDirectXStencilPipelineMetadata()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            DepthStencilFormat = DxResourceFormat.D24UnormS8UInt,
+            DepthStencilState = new DxDepthStencilStateDescriptor
+            {
+                StencilEnable = true,
+                StencilReference = 7,
+                StencilReadMask = 0x0F,
+                StencilWriteMask = 0xF0,
+                FrontFace = new DxStencilFaceDescriptor
+                {
+                    Function = DxComparisonFunction.Equal,
+                    FailOperation = DxStencilOperation.Replace,
+                    DepthFailOperation = DxStencilOperation.IncrementSaturate,
+                    PassOperation = DxStencilOperation.Invert
+                },
+                BackFace = new DxStencilFaceDescriptor
+                {
+                    Function = DxComparisonFunction.NotEqual,
+                    FailOperation = DxStencilOperation.Zero,
+                    DepthFailOperation = DxStencilOperation.DecrementSaturate,
+                    PassOperation = DxStencilOperation.Decrement
+                }
+            }
+        });
+
+        Assert.False(pipeline.HasBackendPipeline);
+        Assert.True(pipeline.Descriptor.DepthStencilState.StencilEnable);
+        Assert.Equal(7, pipeline.Descriptor.DepthStencilState.StencilReference);
+        Assert.Equal(0x0F, pipeline.Descriptor.DepthStencilState.StencilReadMask);
+        Assert.Equal(0xF0, pipeline.Descriptor.DepthStencilState.StencilWriteMask);
+        Assert.Equal(DxComparisonFunction.Equal, pipeline.Descriptor.DepthStencilState.FrontFace.Function);
+        Assert.Equal(DxStencilOperation.Invert, pipeline.Descriptor.DepthStencilState.FrontFace.PassOperation);
+        Assert.Equal(DxStencilOperation.Decrement, pipeline.Descriptor.DepthStencilState.BackFace.PassOperation);
+    }
+
+    [Fact]
     public void HlslBytecodeShadersRemainMetadataUntilTranslatorOrNativeFacadeIsConnected()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -634,6 +689,114 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.True(center.G < 50, $"Expected low green center pixel after DirectX depth draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after DirectX depth draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after DirectX depth draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedStencilReferenceAndOperations()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var depthStencil = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.D24UnormS8UInt,
+            Usage = DxTextureUsage.DepthStencil
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var stencilWritePipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            DepthStencilFormat = DxResourceFormat.D24UnormS8UInt,
+            BlendState = new DxBlendStateDescriptor
+            {
+                EnableBlend = false,
+                WriteMask = DxColorWriteMask.None
+            },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            DepthStencilState = new DxDepthStencilStateDescriptor
+            {
+                StencilEnable = true,
+                StencilReference = 1,
+                StencilWriteMask = 0xFF,
+                FrontFace = new DxStencilFaceDescriptor
+                {
+                    Function = DxComparisonFunction.Always,
+                    PassOperation = DxStencilOperation.Replace
+                },
+                BackFace = new DxStencilFaceDescriptor
+                {
+                    Function = DxComparisonFunction.Always,
+                    PassOperation = DxStencilOperation.Replace
+                }
+            }
+        });
+        using var stencilTestPipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            DepthStencilFormat = DxResourceFormat.D24UnormS8UInt,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            DepthStencilState = new DxDepthStencilStateDescriptor
+            {
+                StencilEnable = true,
+                StencilReference = 1,
+                StencilReadMask = 0xFF,
+                FrontFace = new DxStencilFaceDescriptor
+                {
+                    Function = DxComparisonFunction.Equal
+                },
+                BackFace = new DxStencilFaceDescriptor
+                {
+                    Function = DxComparisonFunction.Equal
+                }
+            }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.ClearDepthStencil(depthStencil, DxDepthStencilClearFlags.DepthStencil, depth: 1f, stencil: 0);
+        context.SetRenderTargets(target, depthStencil);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.SetGraphicsPipeline(stencilWritePipeline);
+        context.Draw(3);
+        context.SetGraphicsPipeline(stencilTestPipeline);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.Equal(2ul, context.SubmittedClearCount);
+        Assert.Equal(2ul, context.SubmittedDrawCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected stencil-gated red center pixel, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after stencil test, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after stencil test, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after stencil test, actual: {center}");
     }
 
     [Fact]
@@ -1149,6 +1312,23 @@ fn fs_main() -> @location(0) vec4<f32> {
                 Stage = DxShaderStage.Pixel,
                 SourceKind = DxShaderSourceKind.Wgsl,
                 Source = ""
+            }));
+
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        Assert.Throws<ArgumentException>(() =>
+            device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+            {
+                VertexShader = vertexShader,
+                DepthStencilFormat = DxResourceFormat.D32Float,
+                DepthStencilState = new DxDepthStencilStateDescriptor
+                {
+                    StencilEnable = true
+                }
             }));
 
         using var renderOnlyTexture = device.CreateTexture2D(new DxTexture2DDescriptor
