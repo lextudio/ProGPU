@@ -14,6 +14,19 @@ public enum ProGpuDirectXSciChartTextureFiltering
     Linear
 }
 
+public enum ProGpuDirectXSciChartSpriteAnchor
+{
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight
+}
+
 public sealed record ProGpuDirectXSciChartTextureDraw(
     ProGpuDirectXSciChartTexture2D Texture,
     DxRect ViewportRect,
@@ -41,6 +54,13 @@ public readonly record struct ProGpuDirectXSciChartColumnVertex(
     uint FillColorArgb,
     uint StrokeColorArgb);
 
+public readonly record struct ProGpuDirectXSciChartRectVertex(
+    float X,
+    float Y,
+    float Width,
+    float Height,
+    uint ColorArgb);
+
 public readonly record struct ProGpuDirectXSciChartVertexTransform(bool SwapAxis = false);
 
 public sealed record ProGpuDirectXSciChartLineBatchDraw(
@@ -51,6 +71,12 @@ public sealed record ProGpuDirectXSciChartLineBatchDraw(
 public sealed record ProGpuDirectXSciChartColumnBatchDraw(
     IReadOnlyList<ProGpuDirectXSciChartColumnVertex> Vertices,
     ProGpuDirectXSciChartVertexTransform Transform,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartRectBatchDraw(
+    IReadOnlyList<ProGpuDirectXSciChartRectVertex> Vertices,
+    ProGpuDirectXSciChartVertexTransform Transform,
+    ProGpuDirectXSciChartSpriteAnchor Anchor,
     DxRect? ClipRect);
 
 public sealed record ProGpuDirectXSciChartTextureVertexDraw(
@@ -229,6 +255,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private readonly List<ProGpuDirectXSciChartTextureDraw> _textureDraws = new();
     private readonly List<ProGpuDirectXSciChartLineBatchDraw> _lineBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartColumnBatchDraw> _columnBatchDraws = new();
+    private readonly List<ProGpuDirectXSciChartRectBatchDraw> _rectBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartTextureVertexDraw> _textureVertexDraws = new();
     private readonly List<ProGpuDirectXSciChartShapedHeatmapDraw> _shapedHeatmapDraws = new();
     private readonly List<ProGpuDirectXSciChartHeightTextureContoursDraw> _heightTextureContourDraws = new();
@@ -284,6 +311,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
     public IReadOnlyList<ProGpuDirectXSciChartColumnBatchDraw> ColumnBatchDraws => _columnBatchDraws;
 
+    public IReadOnlyList<ProGpuDirectXSciChartRectBatchDraw> RectBatchDraws => _rectBatchDraws;
+
     public IReadOnlyList<ProGpuDirectXSciChartTextureVertexDraw> TextureVertexDraws => _textureVertexDraws;
 
     public IReadOnlyList<ProGpuDirectXSciChartShapedHeatmapDraw> ShapedHeatmapDraws => _shapedHeatmapDraws;
@@ -323,6 +352,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         _textureDraws.Clear();
         _lineBatchDraws.Clear();
         _columnBatchDraws.Clear();
+        _rectBatchDraws.Clear();
         _textureVertexDraws.Clear();
         _shapedHeatmapDraws.Clear();
         _heightTextureContourDraws.Clear();
@@ -471,6 +501,46 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             copiedVertices,
             transform,
             _clipRect));
+    }
+
+    public void DrawRectsBatch(
+        ReadOnlySpan<ProGpuDirectXSciChartRectVertex> vertices,
+        int count,
+        ProGpuDirectXSciChartVertexTransform transform,
+        ProGpuDirectXSciChartSpriteAnchor anchor = ProGpuDirectXSciChartSpriteAnchor.TopLeft)
+    {
+        ThrowIfDisposed();
+        ValidateRectVertexRange(vertices.Length, count);
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices[..count].ToArray();
+        var vertexBuffer = CreateRectBatchVertexBuffer(copiedVertices, transform, anchor, out var submittedVertexCount);
+        if (vertexBuffer is null)
+        {
+            return;
+        }
+
+        _context.SetRenderTargets(RenderTarget);
+        _context.SetViewport(new DxViewport(0, 0, RenderTarget.Width, RenderTarget.Height));
+        _context.SetScissorRect(_clipRect ?? FullRenderTargetRect);
+        _context.SetGraphicsPipeline(GetColumnFillPipeline(RenderTarget.Descriptor.Format));
+        _context.SetVertexBuffer(vertexBuffer);
+        _context.SetShaderResource(DxShaderStage.Pixel, 0, null);
+        _context.SetShaderResource(DxShaderStage.Pixel, 1, null);
+        _context.SetConstantBuffer(DxShaderStage.Pixel, 0, null);
+        _context.SetSampler(DxShaderStage.Pixel, 0, null);
+        _context.Draw(submittedVertexCount);
+
+        _rectBatchDraws.Add(new ProGpuDirectXSciChartRectBatchDraw(
+            copiedVertices,
+            transform,
+            anchor,
+            _clipRect));
+        _transientResources.Add(vertexBuffer);
     }
 
     public void DrawTextureVertices(
@@ -782,6 +852,32 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
 
         return CreateSolidColorVertexBuffer(vertexData, "SciChartColumnStrokeVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreateRectBatchVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartRectVertex> vertices,
+        ProGpuDirectXSciChartVertexTransform transform,
+        ProGpuDirectXSciChartSpriteAnchor anchor,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(vertices.Length * 36));
+        foreach (var source in vertices)
+        {
+            if (!TryGetRect(source, transform, anchor, out var left, out var top, out var right, out var bottom)
+                || !HasVisibleColor(source.ColorArgb))
+            {
+                continue;
+            }
+
+            AppendSolidColorVertex(vertexData, left, top, source.ColorArgb);
+            AppendSolidColorVertex(vertexData, right, top, source.ColorArgb);
+            AppendSolidColorVertex(vertexData, right, bottom, source.ColorArgb);
+            AppendSolidColorVertex(vertexData, left, top, source.ColorArgb);
+            AppendSolidColorVertex(vertexData, right, bottom, source.ColorArgb);
+            AppendSolidColorVertex(vertexData, left, bottom, source.ColorArgb);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartRectBatchVertices", out submittedVertexCount);
     }
 
     private ProGpuDirectXBuffer? CreateSolidColorVertexBuffer(
@@ -1462,6 +1558,19 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
     }
 
+    private static void ValidateRectVertexRange(int vertexLength, int count)
+    {
+        if (count <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "SciChart rect batches require at least one vertex.");
+        }
+
+        if (count > vertexLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "SciChart rect vertex count exceeds the supplied vertex span.");
+        }
+    }
+
     private static void ValidateLineVertexRange(int vertexLength, int count)
     {
         if (count < 2)
@@ -1527,6 +1636,109 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         right = MathF.Max(x, x + width);
         top = MathF.Min(y, y + height);
         bottom = MathF.Max(y, y + height);
+        return true;
+    }
+
+    private static bool TryGetRect(
+        ProGpuDirectXSciChartRectVertex vertex,
+        ProGpuDirectXSciChartVertexTransform transform,
+        ProGpuDirectXSciChartSpriteAnchor anchor,
+        out float left,
+        out float top,
+        out float right,
+        out float bottom)
+    {
+        if (!TryGetAnchoredRect(
+            vertex.X,
+            vertex.Y,
+            vertex.Width,
+            vertex.Height,
+            anchor,
+            out var x,
+            out var y,
+            out var width,
+            out var height))
+        {
+            left = top = right = bottom = 0f;
+            return false;
+        }
+
+        if (transform.SwapAxis)
+        {
+            (x, y) = (y, x);
+            (width, height) = (height, width);
+        }
+
+        left = MathF.Min(x, x + width);
+        right = MathF.Max(x, x + width);
+        top = MathF.Min(y, y + height);
+        bottom = MathF.Max(y, y + height);
+        return true;
+    }
+
+    private static bool TryGetAnchoredRect(
+        float x,
+        float y,
+        float width,
+        float height,
+        ProGpuDirectXSciChartSpriteAnchor anchor,
+        out float left,
+        out float top,
+        out float anchoredWidth,
+        out float anchoredHeight)
+    {
+        if (!float.IsFinite(x)
+            || !float.IsFinite(y)
+            || !float.IsFinite(width)
+            || !float.IsFinite(height)
+            || width == 0f
+            || height == 0f)
+        {
+            left = top = anchoredWidth = anchoredHeight = 0f;
+            return false;
+        }
+
+        left = x;
+        top = y;
+        anchoredWidth = width;
+        anchoredHeight = height;
+
+        switch (anchor)
+        {
+            case ProGpuDirectXSciChartSpriteAnchor.TopLeft:
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.Top:
+                left -= width / 2f;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.TopRight:
+                left -= width;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.Left:
+                top -= height / 2f;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.Center:
+                left -= width / 2f;
+                top -= height / 2f;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.Right:
+                left -= width;
+                top -= height / 2f;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.BottomLeft:
+                top -= height;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.Bottom:
+                left -= width / 2f;
+                top -= height;
+                break;
+            case ProGpuDirectXSciChartSpriteAnchor.BottomRight:
+                left -= width;
+                top -= height;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(anchor), anchor, null);
+        }
+
         return true;
     }
 

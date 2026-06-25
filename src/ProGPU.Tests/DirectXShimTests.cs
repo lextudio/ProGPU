@@ -549,6 +549,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.Empty(renderContext.TextureDraws);
         Assert.Empty(renderContext.LineBatchDraws);
         Assert.Empty(renderContext.ColumnBatchDraws);
+        Assert.Empty(renderContext.RectBatchDraws);
         Assert.Empty(renderContext.TextureVertexDraws);
         Assert.Empty(renderContext.ShapedHeatmapDraws);
         Assert.Empty(renderContext.HeightTextureContourDraws);
@@ -765,6 +766,47 @@ fn fs_main() -> @location(0) vec4<f32> {
             count: vertices.Length,
             transform: new ProGpuDirectXSciChartVertexTransform());
         Assert.Empty(renderContext.ColumnBatchDraws);
+    }
+
+    [Fact]
+    public void SciChartRenderContextRecordsRectBatchesAndClip()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        ProGpuDirectXSciChartRectVertex[] vertices =
+        [
+            new(8, 8, 8, 8, 0xFF00FF00),
+            new(24, 8, 8, 8, 0x0000FF00),
+            new(float.NaN, 8, 8, 8, 0xFF00FF00)
+        ];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 16, 16));
+        renderContext.DrawRectsBatch(
+            vertices,
+            count: vertices.Length,
+            transform: new ProGpuDirectXSciChartVertexTransform(),
+            anchor: ProGpuDirectXSciChartSpriteAnchor.Center);
+
+        Assert.Single(renderContext.RectBatchDraws);
+        Assert.Equal(new DxRect(0, 0, 16, 16), renderContext.RectBatchDraws[0].ClipRect);
+        Assert.Equal(ProGpuDirectXSciChartSpriteAnchor.Center, renderContext.RectBatchDraws[0].Anchor);
+        Assert.Equal(vertices.Length, renderContext.RectBatchDraws[0].Vertices.Count);
+        var drawCommand = renderContext.ImmediateContext.Commands[^1];
+        var draw = drawCommand.Draw ?? throw new InvalidOperationException("Expected SciChart rect batch draw command payload.");
+        Assert.Equal(ProGpuDirectXCommandKind.Draw, drawCommand.Kind);
+        Assert.Equal(6u, draw.VertexCount);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawRectsBatch(vertices, count: 0, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawRectsBatch(vertices, count: vertices.Length + 1, default));
+
+        renderContext.BeginFrame();
+        renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
+        renderContext.DrawRectsBatch(
+            vertices,
+            count: vertices.Length,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        Assert.Empty(renderContext.RectBatchDraws);
     }
 
     [Fact]
@@ -1609,6 +1651,48 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after SciChart texture draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartRectBatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        ProGpuDirectXSciChartRectVertex[] vertices =
+        [
+            new(0, 0, 8, 16, 0xFF00FF00),
+            new(8, 0, 8, 16, 0xFFFF0000)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
+        renderContext.DrawRectsBatch(
+            vertices,
+            count: vertices.Length,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        renderContext.Flush();
+
+        Assert.Single(renderContext.RectBatchDraws);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var clippedIn = ReadRgbaPixel(targetPixels, 16, 4, 8);
+        Assert.True(clippedIn.R < 50, $"Expected rect batch low red pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.G > 200, $"Expected rect batch green pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.B < 50, $"Expected rect batch low blue pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.A > 200, $"Expected rect batch opaque pixel inside SciChart clip, actual: {clippedIn}");
+
+        var clippedOut = ReadRgbaPixel(targetPixels, 16, 12, 8);
+        Assert.True(clippedOut.R < 50, $"Expected black pixel outside SciChart rect clip, actual: {clippedOut}");
+        Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart rect clip, actual: {clippedOut}");
+        Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart rect clip, actual: {clippedOut}");
+        Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart rect clip, actual: {clippedOut}");
     }
 
     [Fact]
