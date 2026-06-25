@@ -301,6 +301,134 @@ fn cs_main() {
     }
 
     [Fact]
+    public void DrawCommandsCaptureGraphicsBindingSnapshot()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var vertexConstants = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 256,
+            Usage = DxBufferUsage.Constant | DxBufferUsage.CopyDestination
+        });
+        using var pixelConstants = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 128,
+            Usage = DxBufferUsage.Constant | DxBufferUsage.CopyDestination
+        });
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 64,
+            Height = 64,
+            Usage = DxTextureUsage.ShaderResource
+        });
+        using var textureView = device.CreateShaderResourceView(texture);
+        using var sampler = device.CreateSamplerState(new DxSamplerDescriptor());
+        using var context = device.CreateImmediateContext();
+
+        context.SetConstantBuffer(DxShaderStage.Vertex, 0, vertexConstants);
+        context.SetConstantBuffer(DxShaderStage.Pixel, 1, pixelConstants);
+        context.SetShaderResource(DxShaderStage.Pixel, 0, textureView);
+        context.SetSampler(DxShaderStage.Pixel, 0, sampler);
+        context.Draw(3);
+
+        var snapshot = context.Commands[^1].BindingSnapshot;
+
+        Assert.NotNull(snapshot);
+        Assert.False(snapshot.HasBackendBindGroup);
+        Assert.Equal(DxShaderStageFlags.AllGraphics, snapshot.StageMask);
+        Assert.Equal(4, snapshot.Entries.Count);
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.ConstantBuffer &&
+            entry.Stage == DxShaderStage.Vertex &&
+            entry.Slot == 0 &&
+            ReferenceEquals(entry.ConstantBuffer, vertexConstants));
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.ConstantBuffer &&
+            entry.Stage == DxShaderStage.Pixel &&
+            entry.Slot == 1 &&
+            ReferenceEquals(entry.ConstantBuffer, pixelConstants));
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.ShaderResourceView &&
+            entry.Stage == DxShaderStage.Pixel &&
+            entry.Slot == 0 &&
+            ReferenceEquals(entry.ShaderResourceView, textureView));
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.Sampler &&
+            entry.Stage == DxShaderStage.Pixel &&
+            entry.Slot == 0 &&
+            ReferenceEquals(entry.Sampler, sampler));
+        Assert.Contains("ConstantBuffer:Vertex:0", snapshot.BindingKey, StringComparison.Ordinal);
+        Assert.Contains("ShaderResourceView:Pixel:0", snapshot.BindingKey, StringComparison.Ordinal);
+        Assert.Contains("Sampler:Pixel:0", snapshot.BindingKey, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DispatchCommandsCaptureComputeBindingSnapshotWithUavMetadata()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var constants = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 256,
+            Usage = DxBufferUsage.Constant | DxBufferUsage.CopyDestination
+        });
+        using var input = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 1024,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.ShaderResource | DxBufferUsage.CopyDestination,
+            StrideInBytes = 16
+        });
+        using var output = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 1024,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.UnorderedAccess | DxBufferUsage.CopySource,
+            StrideInBytes = 16
+        });
+        using var inputView = device.CreateShaderResourceView(
+            input,
+            new DxShaderResourceViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 64,
+                ElementStrideInBytes = 16
+            });
+        using var outputView = device.CreateUnorderedAccessView(
+            output,
+            new DxUnorderedAccessViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 64,
+                ElementStrideInBytes = 16
+            });
+        using var context = device.CreateImmediateContext();
+
+        context.SetConstantBuffer(DxShaderStage.Compute, 0, constants);
+        context.SetShaderResource(DxShaderStage.Compute, 1, inputView);
+        context.SetUnorderedAccessView(2, outputView);
+        context.Dispatch(4, 2, 1);
+
+        var snapshot = context.Commands[^1].BindingSnapshot;
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(DxShaderStageFlags.Compute, snapshot.StageMask);
+        Assert.Equal(3, snapshot.Entries.Count);
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.ConstantBuffer &&
+            entry.Stage == DxShaderStage.Compute &&
+            entry.Slot == 0 &&
+            ReferenceEquals(entry.ConstantBuffer, constants));
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.ShaderResourceView &&
+            entry.Stage == DxShaderStage.Compute &&
+            entry.Slot == 1 &&
+            ReferenceEquals(entry.ShaderResourceView, inputView));
+        Assert.Contains(snapshot.Entries, entry =>
+            entry.Kind == ProGpuDirectXBindingKind.UnorderedAccessView &&
+            entry.Stage == DxShaderStage.Compute &&
+            entry.Slot == 2 &&
+            ReferenceEquals(entry.UnorderedAccessView, outputView));
+        Assert.Contains("UnorderedAccessView:Compute:2", snapshot.BindingKey, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CanCreateUnorderedAccessViewsAndRecordCopies()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -406,5 +534,13 @@ fn cs_main() {
         });
         using var context = device.CreateImmediateContext();
         Assert.Throws<ArgumentOutOfRangeException>(() => context.CopyResource(mismatchedDestination, copySource));
+
+        using var vertexBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 128,
+            Usage = DxBufferUsage.Vertex
+        });
+        Assert.Throws<ArgumentException>(() =>
+            context.SetConstantBuffer(DxShaderStage.Vertex, 0, vertexBuffer));
     }
 }

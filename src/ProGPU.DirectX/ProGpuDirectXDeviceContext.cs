@@ -22,6 +22,7 @@ public enum ProGpuDirectXCommandKind
     SetRasterizerState,
     SetGraphicsPipeline,
     SetComputePipeline,
+    SetBindingSnapshot,
     SetShaderResource,
     SetSampler,
     SetUnorderedAccessView,
@@ -54,9 +55,11 @@ public sealed record ProGpuDirectXCommand
     public ProGpuDirectXShaderResourceView? ShaderResourceView { get; init; }
     public ProGpuDirectXSamplerState? Sampler { get; init; }
     public ProGpuDirectXUnorderedAccessView? UnorderedAccessView { get; init; }
+    public ProGpuDirectXBindingSnapshot? BindingSnapshot { get; init; }
     public DxBlendStateDescriptor? BlendState { get; init; }
     public DxDepthStencilStateDescriptor? DepthStencilState { get; init; }
     public DxRasterizerStateDescriptor? RasterizerState { get; init; }
+    public DxConstantBufferBinding? ConstantBufferBinding { get; init; }
     public DxShaderResourceBinding? ResourceBinding { get; init; }
     public ProGpuDirectXTexture2D? SourceTexture { get; init; }
     public ProGpuDirectXTexture2D? DestinationTexture { get; init; }
@@ -79,6 +82,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     private ProGpuDirectXShader? _computeShader;
     private ProGpuDirectXGraphicsPipeline? _graphicsPipeline;
     private ProGpuDirectXComputePipeline? _computePipeline;
+    private readonly Dictionary<DxConstantBufferBinding, ProGpuDirectXBuffer?> _constantBuffers = new();
     private readonly Dictionary<DxShaderResourceBinding, ProGpuDirectXShaderResourceView?> _shaderResourceViews = new();
     private readonly Dictionary<DxShaderResourceBinding, ProGpuDirectXSamplerState?> _samplers = new();
     private readonly Dictionary<uint, ProGpuDirectXUnorderedAccessView?> _unorderedAccessViews = new();
@@ -116,6 +120,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public IReadOnlyDictionary<DxShaderResourceBinding, ProGpuDirectXShaderResourceView?> ShaderResourceViews => _shaderResourceViews;
 
     public IReadOnlyDictionary<DxShaderResourceBinding, ProGpuDirectXSamplerState?> Samplers => _samplers;
+
+    public IReadOnlyDictionary<DxConstantBufferBinding, ProGpuDirectXBuffer?> ConstantBuffers => _constantBuffers;
 
     public IReadOnlyDictionary<uint, ProGpuDirectXUnorderedAccessView?> UnorderedAccessViews => _unorderedAccessViews;
 
@@ -188,11 +194,23 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
     public void SetConstantBuffer(uint slot, ProGpuDirectXBuffer buffer)
     {
+        SetConstantBuffer(DxShaderStage.Vertex, slot, buffer);
+    }
+
+    public void SetConstantBuffer(DxShaderStage stage, uint slot, ProGpuDirectXBuffer? buffer)
+    {
         ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(buffer);
+        if (buffer is not null && (buffer.Descriptor.Usage & DxBufferUsage.Constant) == 0)
+        {
+            throw new ArgumentException("Buffer was not created with constant-buffer usage.", nameof(buffer));
+        }
+
+        var binding = new DxConstantBufferBinding(stage, slot);
+        _constantBuffers[binding] = buffer;
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.SetConstantBuffer,
+            ConstantBufferBinding = binding,
             Buffer = buffer
         });
     }
@@ -354,6 +372,28 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         });
     }
 
+    public ProGpuDirectXBindingSnapshot CreateBindingSnapshot(DxShaderStage stage, string? label = null)
+    {
+        return CreateBindingSnapshot(ToStageFlags(stage), label);
+    }
+
+    public ProGpuDirectXBindingSnapshot CreateBindingSnapshot(DxShaderStageFlags stages, string? label = null)
+    {
+        ThrowIfDisposed();
+        return CreateBindingSnapshotCore(stages, label ?? "ProGPU DirectX Binding Snapshot");
+    }
+
+    public void ApplyBindings(DxShaderStageFlags stages, string? label = null)
+    {
+        ThrowIfDisposed();
+        var snapshot = CreateBindingSnapshotCore(stages, label ?? "ProGPU DirectX Applied Bindings");
+        _commands.Add(new ProGpuDirectXCommand
+        {
+            Kind = ProGpuDirectXCommandKind.SetBindingSnapshot,
+            BindingSnapshot = snapshot
+        });
+    }
+
     public void CopyResource(ProGpuDirectXTexture2D destination, ProGpuDirectXTexture2D source)
     {
         ThrowIfDisposed();
@@ -438,7 +478,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             Kind = ProGpuDirectXCommandKind.Draw,
             Topology = _topology,
             Draw = draw,
-            GraphicsPipeline = _graphicsPipeline
+            GraphicsPipeline = _graphicsPipeline,
+            BindingSnapshot = CreateBindingSnapshotCore(DxShaderStageFlags.AllGraphics, "ProGPU DirectX Draw Bindings")
         });
     }
 
@@ -464,7 +505,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             Kind = ProGpuDirectXCommandKind.DrawIndexed,
             Topology = _topology,
             DrawIndexed = draw,
-            GraphicsPipeline = _graphicsPipeline
+            GraphicsPipeline = _graphicsPipeline,
+            BindingSnapshot = CreateBindingSnapshotCore(DxShaderStageFlags.AllGraphics, "ProGPU DirectX DrawIndexed Bindings")
         });
     }
 
@@ -480,7 +522,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         {
             Kind = ProGpuDirectXCommandKind.Dispatch,
             Dispatch = new DxDispatchCall(threadGroupCountX, threadGroupCountY, threadGroupCountZ),
-            ComputePipeline = _computePipeline
+            ComputePipeline = _computePipeline,
+            BindingSnapshot = CreateBindingSnapshotCore(DxShaderStageFlags.Compute, "ProGPU DirectX Dispatch Bindings")
         });
     }
 
@@ -499,7 +542,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public void ClearRecordedCommands()
     {
         ThrowIfDisposed();
-        _commands.Clear();
+        ClearRecordedCommandResources();
     }
 
     public void Flush(bool clearRecordedCommands = true)
@@ -515,8 +558,145 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
         if (clearRecordedCommands)
         {
-            _commands.Clear();
+            ClearRecordedCommandResources();
         }
+    }
+
+    private ProGpuDirectXBindingSnapshot CreateBindingSnapshotCore(DxShaderStageFlags stages, string label)
+    {
+        var entries = BuildBindingEntries(stages);
+        return new ProGpuDirectXBindingSnapshot(_device, stages, entries, label);
+    }
+
+    private IReadOnlyList<ProGpuDirectXBindingEntry> BuildBindingEntries(DxShaderStageFlags stages)
+    {
+        var entries = new List<ProGpuDirectXBindingEntry>();
+        foreach (var stage in EnumerateStages(stages))
+        {
+            AddStageBindings(entries, stage);
+        }
+
+        var ordered = entries
+            .OrderBy(entry => entry.Stage)
+            .ThenBy(entry => entry.Slot)
+            .ThenBy(entry => entry.Kind)
+            .ToArray();
+
+        for (var i = 0; i < ordered.Length; i++)
+        {
+            ordered[i] = ordered[i] with { NativeBinding = (uint)i };
+        }
+
+        return ordered;
+    }
+
+    private void AddStageBindings(List<ProGpuDirectXBindingEntry> entries, DxShaderStage stage)
+    {
+        foreach (var pair in _constantBuffers)
+        {
+            if (pair.Key.Stage == stage && pair.Value is { } buffer)
+            {
+                entries.Add(new ProGpuDirectXBindingEntry
+                {
+                    Kind = ProGpuDirectXBindingKind.ConstantBuffer,
+                    Stage = stage,
+                    Slot = pair.Key.Slot,
+                    ConstantBuffer = buffer
+                });
+            }
+        }
+
+        foreach (var pair in _shaderResourceViews)
+        {
+            if (pair.Key.Stage == stage && pair.Value is { } view)
+            {
+                entries.Add(new ProGpuDirectXBindingEntry
+                {
+                    Kind = ProGpuDirectXBindingKind.ShaderResourceView,
+                    Stage = stage,
+                    Slot = pair.Key.Slot,
+                    ShaderResourceView = view
+                });
+            }
+        }
+
+        foreach (var pair in _samplers)
+        {
+            if (pair.Key.Stage == stage && pair.Value is { } sampler)
+            {
+                entries.Add(new ProGpuDirectXBindingEntry
+                {
+                    Kind = ProGpuDirectXBindingKind.Sampler,
+                    Stage = stage,
+                    Slot = pair.Key.Slot,
+                    Sampler = sampler
+                });
+            }
+        }
+
+        if (stage != DxShaderStage.Compute)
+        {
+            return;
+        }
+
+        foreach (var pair in _unorderedAccessViews)
+        {
+            if (pair.Value is { } view)
+            {
+                entries.Add(new ProGpuDirectXBindingEntry
+                {
+                    Kind = ProGpuDirectXBindingKind.UnorderedAccessView,
+                    Stage = stage,
+                    Slot = pair.Key,
+                    UnorderedAccessView = view
+                });
+            }
+        }
+    }
+
+    private static IEnumerable<DxShaderStage> EnumerateStages(DxShaderStageFlags stages)
+    {
+        if ((stages & DxShaderStageFlags.Vertex) != 0)
+        {
+            yield return DxShaderStage.Vertex;
+        }
+
+        if ((stages & DxShaderStageFlags.Pixel) != 0)
+        {
+            yield return DxShaderStage.Pixel;
+        }
+
+        if ((stages & DxShaderStageFlags.Geometry) != 0)
+        {
+            yield return DxShaderStage.Geometry;
+        }
+
+        if ((stages & DxShaderStageFlags.Compute) != 0)
+        {
+            yield return DxShaderStage.Compute;
+        }
+    }
+
+    private static DxShaderStageFlags ToStageFlags(DxShaderStage stage)
+    {
+        return stage switch
+        {
+            DxShaderStage.Vertex => DxShaderStageFlags.Vertex,
+            DxShaderStage.Pixel => DxShaderStageFlags.Pixel,
+            DxShaderStage.Geometry => DxShaderStageFlags.Geometry,
+            DxShaderStage.Compute => DxShaderStageFlags.Compute,
+            _ => DxShaderStageFlags.None
+        };
+    }
+
+    private void ClearRecordedCommandResources()
+    {
+        foreach (var command in _commands)
+        {
+            command.BindingSnapshot?.Dispose();
+        }
+
+        _commands.Clear();
     }
 
     private void ExecuteGpuBackedClearCommands(ProGPU.Backend.WgpuContext context)
@@ -642,7 +822,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
     public void Dispose()
     {
-        _commands.Clear();
+        ClearRecordedCommandResources();
+        _constantBuffers.Clear();
         _shaderResourceViews.Clear();
         _samplers.Clear();
         _unorderedAccessViews.Clear();

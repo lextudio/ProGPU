@@ -191,6 +191,8 @@ public sealed record DxSamplerDescriptor
     public string Label { get; init; } = "DirectXSamplerState";
 }
 
+public sealed record DxConstantBufferBinding(DxShaderStage Stage, uint Slot);
+
 public sealed record DxShaderResourceBinding(DxShaderStage Stage, uint Slot);
 
 public sealed record DxCopyResourceCall(string Kind);
