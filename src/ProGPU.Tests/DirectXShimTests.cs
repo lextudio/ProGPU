@@ -273,6 +273,19 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 }
 """;
 
+    private const string ByteAddressBufferComputeHlsl = """
+ByteAddressBuffer Input : register(t0);
+RWByteAddressBuffer Output : register(u0);
+
+[numthreads(1, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    uint4 values = Input.Load4(id.x * 16u);
+    Output.Store(id.x * 8u, values.x + values.y);
+    Output.Store(id.x * 8u + 4u, values.z + values.w);
+}
+""";
+
     private const string SolidGreenPixelHlsl = """
 float4 PSMain() : SV_Target
 {
@@ -677,6 +690,26 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
         Assert.Contains("@binding(1856) var<storage, read_write> Output: array<vec4<f32>>;", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("@compute @workgroup_size(1, 1, 1)\nfn CSMain(@builtin(global_invocation_id) id: vec3<u32>)", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("Output[id.x] = vec4<f32>(0.0, 0.0, 1.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderTranslatesByteAddressBufferResources()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = ByteAddressBufferComputeHlsl,
+            EntryPoint = "CSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("@binding(1600) var<storage, read> Input: array<u32>;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<u32>;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("var values: vec4<u32> = vec4<u32>(Input[((id.x * 16u) / 4u)], Input[(((id.x * 16u) / 4u) + 1u)], Input[(((id.x * 16u) / 4u) + 2u)], Input[(((id.x * 16u) / 4u) + 3u)]);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("Output[((id.x * 8u) / 4u)] = values.x + values.y;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("Output[((id.x * 8u + 4u) / 4u)] = values.z + values.w;", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2505,6 +2538,74 @@ VertexOutput VSMain(VertexInput input)
 
         var values = MemoryMarshal.Cast<byte, float>(output.BackendBuffer!.ReadBytes(0, 16)).ToArray();
         Assert.Equal([0f, 0f, 1f, 1f], values);
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslByteAddressBufferDispatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var input = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 16,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.ShaderResource | DxBufferUsage.CopyDestination,
+            StrideInBytes = 4,
+            Label = "ByteAddressBuffer Input"
+        });
+        input.Write<uint>([10u, 20u, 30u, 40u]);
+        using var inputView = device.CreateShaderResourceView(
+            input,
+            new DxShaderResourceViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 4,
+                ElementStrideInBytes = 4
+            });
+        using var output = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 8,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.UnorderedAccess | DxBufferUsage.CopySource,
+            StrideInBytes = 4,
+            Label = "RWByteAddressBuffer Output"
+        });
+        using var outputView = device.CreateUnorderedAccessView(
+            output,
+            new DxUnorderedAccessViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 2,
+                ElementStrideInBytes = 4,
+                Access = DxUnorderedAccessViewAccess.ReadWrite
+            });
+        using var computeShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = ByteAddressBufferComputeHlsl,
+            EntryPoint = "CSMain",
+            Label = "HLSL ByteAddressBuffer Compute"
+        });
+        using var pipeline = device.CreateComputePipeline(new DxComputePipelineDescriptor
+        {
+            ComputeShader = computeShader
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetComputePipeline(pipeline);
+        context.SetShaderResource(DxShaderStage.Compute, 0, inputView);
+        context.SetUnorderedAccessView(0, outputView);
+        context.Dispatch(1, 1, 1);
+        context.Flush();
+
+        Assert.True(computeShader.HasBackendShaderModule);
+        Assert.Contains("@binding(1600) var<storage, read> Input: array<u32>;", computeShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<u32>;", computeShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDispatchCount);
+
+        var values = MemoryMarshal.Cast<byte, uint>(output.BackendBuffer!.ReadBytes(0, 8)).ToArray();
+        Assert.Equal([30u, 70u], values);
     }
 
     [Fact]

@@ -41,6 +41,14 @@ internal static class ProGpuDirectXHlslTranslator
         @"\bRWBuffer\s*<\s*(?<type>[A-Za-z_]\w*)\s*>\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*u(?<slot>\d+)\s*\)\s*;",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex s_byteAddressBufferResourceRegex = new(
+        @"\bByteAddressBuffer\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*t(?<slot>\d+)\s*\)\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex s_rwByteAddressBufferResourceRegex = new(
+        @"\bRWByteAddressBuffer\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*u(?<slot>\d+)\s*\)\s*;",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Regex s_samplerStateResourceRegex = new(
         @"\bSamplerState\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*s(?<slot>\d+)\s*\)\s*;",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -49,12 +57,20 @@ internal static class ProGpuDirectXHlslTranslator
         @"(?<texture>[A-Za-z_]\w*)\.(?<method>SampleLevel|SampleBias|SampleGrad|Sample|Load)\s*\(",
         RegexOptions.Compiled);
 
+    private static readonly Regex s_byteAddressBufferMethodCallStartRegex = new(
+        @"(?<buffer>[A-Za-z_]\w*)\.(?<method>Load4|Load3|Load2|Load)\s*\(",
+        RegexOptions.Compiled);
+
+    private static readonly Regex s_byteAddressBufferStoreStatementRegex = new(
+        @"^(?<buffer>[A-Za-z_]\w*)\.(?<method>Store4|Store3|Store2|Store)\s*\((?<arguments>.*)\)$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     private static readonly Regex s_hlslIntrinsicCallStartRegex = new(
         @"(?<!\.)\b(?<name>abs|acos|asin|atan|atan2|ceil|clamp|cos|cross|ddx|ddy|distance|dot|exp|exp2|floor|frac|length|lerp|log|log2|mad|max|min|mul|normalize|pow|rcp|reflect|refract|round|rsqrt|saturate|sign|sin|smoothstep|sqrt|tan)\s*\(",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex s_unsupportedRegex = new(
-        @"\b(tbuffer|Texture(?!2D\b)\w*|Sampler(?!State\b)\w*|RWTexture\w*|ByteAddressBuffer|RWByteAddressBuffer)\b",
+        @"\b(tbuffer|Texture(?!2D\b)\w*|Sampler(?!State\b)\w*|RWTexture\w*)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     public static bool TryTranslate(DxShaderDescriptor descriptor, out string wgsl)
@@ -265,6 +281,14 @@ internal static class ProGpuDirectXHlslTranslator
                         .Append(MapResourceElementType(resource.ElementType!, structs))
                         .Append(">;\n");
                     break;
+                case HlslShaderResourceKind.ByteAddressBuffer:
+                    builder
+                        .Append("@group(0) @binding(")
+                        .Append(ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(stage, resource.Register))
+                        .Append(") var<storage, read> ")
+                        .Append(resource.Name)
+                        .Append(": array<u32>;\n");
+                    break;
                 case HlslShaderResourceKind.RWStructuredBuffer:
                 case HlslShaderResourceKind.RWBuffer:
                     if (stage != DxShaderStage.Compute)
@@ -283,6 +307,22 @@ internal static class ProGpuDirectXHlslTranslator
                         .Append(": array<")
                         .Append(MapResourceElementType(resource.ElementType!, structs))
                         .Append(">;\n");
+                    break;
+                case HlslShaderResourceKind.RWByteAddressBuffer:
+                    if (stage != DxShaderStage.Compute)
+                    {
+                        throw new NotSupportedException($"HLSL {resource.Kind} resources are currently supported only for compute shaders.");
+                    }
+
+                    builder
+                        .Append("@group(0) @binding(")
+                        .Append(ProGpuDirectXNativeBindingMap.GetNativeBinding(
+                            stage,
+                            ProGpuDirectXBindingKind.UnorderedAccessView,
+                            resource.Register))
+                        .Append(") var<storage, read_write> ")
+                        .Append(resource.Name)
+                        .Append(": array<u32>;\n");
                     break;
                 case HlslShaderResourceKind.SamplerState:
                     builder
@@ -384,6 +424,11 @@ internal static class ProGpuDirectXHlslTranslator
                     .Append("    return ")
                     .Append(TranslateExpression(statement["return ".Length..].Trim(), constantBuffers, shaderResources))
                     .Append(";\n");
+                continue;
+            }
+
+            if (TryTranslateByteAddressBufferStoreStatement(builder, statement, constantBuffers, shaderResources))
+            {
                 continue;
             }
 
@@ -535,6 +580,22 @@ internal static class ProGpuDirectXHlslTranslator
                 elementType));
         }
 
+        foreach (Match match in s_byteAddressBufferResourceRegex.Matches(source))
+        {
+            resources.Add(new HlslShaderResource(
+                HlslShaderResourceKind.ByteAddressBuffer,
+                match.Groups["name"].Value,
+                uint.Parse(match.Groups["slot"].Value)));
+        }
+
+        foreach (Match match in s_rwByteAddressBufferResourceRegex.Matches(source))
+        {
+            resources.Add(new HlslShaderResource(
+                HlslShaderResourceKind.RWByteAddressBuffer,
+                match.Groups["name"].Value,
+                uint.Parse(match.Groups["slot"].Value)));
+        }
+
         foreach (Match match in s_samplerStateResourceRegex.Matches(source))
         {
             resources.Add(new HlslShaderResource(
@@ -678,7 +739,8 @@ internal static class ProGpuDirectXHlslTranslator
         IReadOnlyList<HlslShaderResource> shaderResources)
     {
         var trimmed = expression.Trim();
-        var translated = TranslateTextureMethodCalls(trimmed, constantBuffers, shaderResources);
+        var translated = TranslateByteAddressBufferReadMethodCalls(trimmed, constantBuffers, shaderResources);
+        translated = TranslateTextureMethodCalls(translated, constantBuffers, shaderResources);
         translated = TranslateHlslIntrinsicCalls(translated, constantBuffers, shaderResources);
         translated = Regex.Replace(
             translated,
@@ -969,6 +1031,177 @@ internal static class ProGpuDirectXHlslTranslator
         return builder.ToString();
     }
 
+    private static string TranslateByteAddressBufferReadMethodCalls(
+        string expression,
+        IReadOnlyList<HlslConstantBuffer> constantBuffers,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        var builder = new StringBuilder();
+        var searchIndex = 0;
+        while (searchIndex < expression.Length)
+        {
+            var match = s_byteAddressBufferMethodCallStartRegex.Match(expression, searchIndex);
+            if (!match.Success)
+            {
+                builder.Append(expression, searchIndex, expression.Length - searchIndex);
+                break;
+            }
+
+            builder.Append(expression, searchIndex, match.Index - searchIndex);
+            var buffer = match.Groups["buffer"].Value;
+            var method = match.Groups["method"].Value;
+            var openParen = match.Index + match.Length - 1;
+            var closeParen = FindMatchingParen(expression, openParen);
+            if (closeParen < 0)
+            {
+                throw new NotSupportedException($"HLSL ByteAddressBuffer.{method} call is missing a closing parenthesis.");
+            }
+
+            var resource = FindByteAddressBufferResource(buffer, shaderResources);
+            if (resource is null)
+            {
+                if (string.Equals(method, "Load", StringComparison.Ordinal))
+                {
+                    builder.Append(expression, match.Index, closeParen + 1 - match.Index);
+                    searchIndex = closeParen + 1;
+                    continue;
+                }
+
+                throw new NotSupportedException("HLSL ByteAddressBuffer load methods require a declared ByteAddressBuffer or RWByteAddressBuffer resource.");
+            }
+
+            var arguments = SplitTopLevelArguments(expression[(openParen + 1)..closeParen]);
+            if (arguments.Count != 1)
+            {
+                throw new NotSupportedException($"HLSL ByteAddressBuffer.{method} requires one byte-offset argument.");
+            }
+
+            var baseIndex = TranslateByteAddressBufferIndex(arguments[0], constantBuffers, shaderResources);
+            var componentCount = GetByteAddressBufferComponentCount(method);
+            if (componentCount == 1)
+            {
+                builder
+                    .Append(buffer)
+                    .Append('[')
+                    .Append(baseIndex)
+                    .Append(']');
+            }
+            else
+            {
+                builder
+                    .Append("vec")
+                    .Append(componentCount)
+                    .Append("<u32>(");
+
+                for (var component = 0; component < componentCount; component++)
+                {
+                    if (component > 0)
+                    {
+                        builder.Append(", ");
+                    }
+
+                    builder
+                        .Append(buffer)
+                        .Append('[')
+                        .Append(AddByteAddressBufferComponentOffset(baseIndex, component))
+                        .Append(']');
+                }
+
+                builder.Append(')');
+            }
+
+            searchIndex = closeParen + 1;
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool TryTranslateByteAddressBufferStoreStatement(
+        StringBuilder builder,
+        string statement,
+        IReadOnlyList<HlslConstantBuffer> constantBuffers,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        var match = s_byteAddressBufferStoreStatementRegex.Match(statement);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var buffer = match.Groups["buffer"].Value;
+        var method = match.Groups["method"].Value;
+        ValidateByteAddressBufferResource(buffer, shaderResources, requireWritable: true);
+
+        var arguments = SplitTopLevelArguments(match.Groups["arguments"].Value);
+        if (arguments.Count != 2)
+        {
+            throw new NotSupportedException($"HLSL RWByteAddressBuffer.{method} requires byte-offset and value arguments.");
+        }
+
+        var baseIndex = TranslateByteAddressBufferIndex(arguments[0], constantBuffers, shaderResources);
+        var value = TranslateExpression(arguments[1], constantBuffers, shaderResources);
+        var componentCount = GetByteAddressBufferComponentCount(method);
+        for (var component = 0; component < componentCount; component++)
+        {
+            builder
+                .Append("    ")
+                .Append(buffer)
+                .Append('[')
+                .Append(AddByteAddressBufferComponentOffset(baseIndex, component))
+                .Append("] = ");
+
+            if (componentCount == 1)
+            {
+                builder.Append(value);
+            }
+            else
+            {
+                builder.Append(AppendVectorMemberAccess(value, GetVectorComponentName(component)));
+            }
+
+            builder.Append(";\n");
+        }
+
+        return true;
+    }
+
+    private static string TranslateByteAddressBufferIndex(
+        string byteOffset,
+        IReadOnlyList<HlslConstantBuffer> constantBuffers,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        return $"(({TranslateExpression(byteOffset, constantBuffers, shaderResources)}) / 4u)";
+    }
+
+    private static string AddByteAddressBufferComponentOffset(string baseIndex, int component)
+    {
+        return component == 0 ? baseIndex : $"({baseIndex} + {component}u)";
+    }
+
+    private static int GetByteAddressBufferComponentCount(string method)
+    {
+        return method switch
+        {
+            "Load" or "Store" => 1,
+            "Load2" or "Store2" => 2,
+            "Load3" or "Store3" => 3,
+            "Load4" or "Store4" => 4,
+            _ => throw new NotSupportedException($"HLSL ByteAddressBuffer method '{method}' is not supported.")
+        };
+    }
+
+    private static string GetVectorComponentName(int component)
+    {
+        return component switch
+        {
+            0 => "x",
+            1 => "y",
+            2 => "z",
+            3 => "w",
+            _ => throw new ArgumentOutOfRangeException(nameof(component), component, null)
+        };
+    }
+
     private static int FindMatchingParen(string expression, int openParen)
     {
         var depth = 0;
@@ -1040,6 +1273,32 @@ internal static class ProGpuDirectXHlslTranslator
         {
             throw new NotSupportedException("HLSL Texture2D.Load requires a declared Texture2D resource.");
         }
+    }
+
+    private static void ValidateByteAddressBufferResource(
+        string buffer,
+        IReadOnlyList<HlslShaderResource> shaderResources,
+        bool requireWritable)
+    {
+        var resource = FindByteAddressBufferResource(buffer, shaderResources);
+        if (resource is null)
+        {
+            throw new NotSupportedException("HLSL ByteAddressBuffer methods require a declared ByteAddressBuffer or RWByteAddressBuffer resource.");
+        }
+
+        if (requireWritable && resource.Kind != HlslShaderResourceKind.RWByteAddressBuffer)
+        {
+            throw new NotSupportedException("HLSL RWByteAddressBuffer.Store methods require a declared RWByteAddressBuffer resource.");
+        }
+    }
+
+    private static HlslShaderResource? FindByteAddressBufferResource(
+        string buffer,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        return shaderResources.FirstOrDefault(resource =>
+            string.Equals(resource.Name, buffer, StringComparison.Ordinal) &&
+            resource.Kind is HlslShaderResourceKind.ByteAddressBuffer or HlslShaderResourceKind.RWByteAddressBuffer);
     }
 
     private static bool HasTextureResource(
@@ -1219,8 +1478,10 @@ internal static class ProGpuDirectXHlslTranslator
         Texture2D,
         StructuredBuffer,
         Buffer,
+        ByteAddressBuffer,
         RWStructuredBuffer,
         RWBuffer,
+        RWByteAddressBuffer,
         SamplerState
     }
 
