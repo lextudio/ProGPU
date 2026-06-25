@@ -634,6 +634,15 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         });
     }
 
+    public void DrawInstanced(
+        uint vertexCountPerInstance,
+        uint instanceCount,
+        uint startVertexLocation = 0,
+        uint startInstanceLocation = 0)
+    {
+        Draw(vertexCountPerInstance, startVertexLocation, instanceCount, startInstanceLocation);
+    }
+
     public void DrawIndexed(
         uint indexCount,
         uint startIndexLocation = 0,
@@ -670,6 +679,23 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 "ProGPU DirectX DrawIndexed Bindings",
                 createStandaloneBackendBindGroup: false)
         });
+    }
+
+    public void DrawIndexedInstanced(
+        uint indexCountPerInstance,
+        uint instanceCount,
+        uint startIndexLocation = 0,
+        int baseVertexLocation = 0,
+        uint startInstanceLocation = 0,
+        DxIndexFormat? indexFormat = null)
+    {
+        DrawIndexed(
+            indexCountPerInstance,
+            startIndexLocation,
+            baseVertexLocation,
+            instanceCount,
+            startInstanceLocation,
+            indexFormat);
     }
 
     public void Dispatch(uint threadGroupCountX, uint threadGroupCountY, uint threadGroupCountZ)

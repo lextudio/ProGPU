@@ -87,6 +87,30 @@ VertexOutput VSMain(VertexInput input)
 }
 """;
 
+    private const string InstancedVertexHlsl = """
+struct VertexInput
+{
+    float2 position : POSITION0;
+    float2 offset : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+struct VertexOutput
+{
+    float4 position : SV_Position;
+    float4 color : COLOR0;
+};
+
+VertexOutput VSMain(VertexInput input)
+{
+    VertexOutput output;
+    float2 translated = input.position + input.offset;
+    output.position = float4(translated, 0.0, 1.0);
+    output.color = input.color;
+    return output;
+}
+""";
+
     private const string TransformVertexHlsl = """
 cbuffer Transform : register(b0)
 {
@@ -723,6 +747,36 @@ VertexOutput VSMain(VertexInput input)
     }
 
     [Fact]
+    public void DrawInstancedCommandsPreserveDirectXArguments()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var indexBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 64,
+            Usage = DxBufferUsage.Index | DxBufferUsage.CopyDestination
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.DrawInstanced(3, 4, 5, 6);
+        context.SetIndexBuffer(indexBuffer, DxIndexFormat.UInt16);
+        context.DrawIndexedInstanced(7, 8, 9, 10, 11, DxIndexFormat.UInt16);
+
+        var draw = context.Commands[0].Draw!;
+        Assert.Equal(3u, draw.VertexCount);
+        Assert.Equal(4u, draw.InstanceCount);
+        Assert.Equal(5u, draw.StartVertexLocation);
+        Assert.Equal(6u, draw.StartInstanceLocation);
+
+        var indexedDraw = context.Commands[^1].DrawIndexed!;
+        Assert.Equal(7u, indexedDraw.IndexCount);
+        Assert.Equal(8u, indexedDraw.InstanceCount);
+        Assert.Equal(9u, indexedDraw.StartIndexLocation);
+        Assert.Equal(10, indexedDraw.BaseVertexLocation);
+        Assert.Equal(11u, indexedDraw.StartInstanceLocation);
+        Assert.Equal(DxIndexFormat.UInt16, indexedDraw.IndexFormat);
+    }
+
+    [Fact]
     public void FlushSubmitsGpuBackedDrawCommands()
     {
         using var wgpu = new WgpuContext();
@@ -869,6 +923,128 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL DirectX draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL DirectX draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL DirectX draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslInstancedDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 24,
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
+            StrideInBytes = 8
+        });
+        vertexBuffer.Write<float>(
+        [
+             0.0f, -0.35f,
+             0.35f, 0.35f,
+            -0.35f, 0.35f
+        ]);
+        using var instanceBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 48,
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
+            StrideInBytes = 24
+        });
+        instanceBuffer.Write<float>(
+        [
+            -0.45f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+             0.45f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f
+        ]);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = InstancedVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Instanced Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = PassthroughPixelHlsl,
+            EntryPoint = "PSMain",
+            Label = "HLSL Instanced Pixel"
+        });
+        var inputLayout = device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32Float,
+                    InputSlot = 0,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "TEXCOORD",
+                    Format = DxResourceFormat.R32G32Float,
+                    InputSlot = 1,
+                    AlignedByteOffset = 0,
+                    InputSlotClass = DxInputClassification.PerInstanceData,
+                    InstanceDataStepRate = 1,
+                    ShaderLocation = 1
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    InputSlot = 1,
+                    AlignedByteOffset = 8,
+                    InputSlotClass = DxInputClassification.PerInstanceData,
+                    InstanceDataStepRate = 1,
+                    ShaderLocation = 2
+                }
+            ]
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            InputLayout = inputLayout,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.SetVertexBuffer(0, vertexBuffer);
+        context.SetVertexBuffer(1, instanceBuffer);
+        context.DrawInstanced(3, 2);
+        context.Flush();
+
+        Assert.True(vertexShader.HasBackendShaderModule);
+        Assert.Contains("@location(1) offset: vec2<f32>", vertexShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("@location(2) color: vec4<f32>", vertexShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var left = ReadRgbaPixel(pixels, 32, 8, 16);
+        var right = ReadRgbaPixel(pixels, 32, 24, 16);
+        Assert.True(left.R > 200, $"Expected red left instanced triangle, actual: {left}");
+        Assert.True(left.G < 50, $"Expected low green left instanced triangle, actual: {left}");
+        Assert.True(right.R < 50, $"Expected low red right instanced triangle, actual: {right}");
+        Assert.True(right.G > 200, $"Expected green right instanced triangle, actual: {right}");
+        Assert.True(left.A > 200 && right.A > 200, $"Expected opaque instanced triangles, actual: left {left}, right {right}");
     }
 
     [Fact]
