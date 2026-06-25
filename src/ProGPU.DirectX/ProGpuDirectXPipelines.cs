@@ -18,12 +18,13 @@ public sealed unsafe class ProGpuDirectXShader : IDisposable
         Descriptor = descriptor with { EntryPoint = ResolveEntryPoint(descriptor) };
         ValidateDescriptor(Descriptor);
         SourceHash = ComputeSourceHash(Descriptor);
+        BackendSource = ResolveBackendSource(Descriptor);
 
         if (device.Context is { } context &&
             device.IsGpuBacked &&
-            Descriptor.SourceKind == DxShaderSourceKind.Wgsl)
+            BackendSource is not null)
         {
-            _backendShaderModule = (IntPtr)CreateWgslShaderModule(context, Descriptor);
+            _backendShaderModule = (IntPtr)CreateWgslShaderModule(context, Descriptor, BackendSource);
         }
     }
 
@@ -33,15 +34,20 @@ public sealed unsafe class ProGpuDirectXShader : IDisposable
 
     public string SourceHash { get; }
 
+    public string? BackendSource { get; }
+
     public bool HasBackendShaderModule => _backendShaderModule != IntPtr.Zero;
 
     public IntPtr BackendShaderModuleHandle => _backendShaderModule;
 
     internal ShaderModule* BackendShaderModule => (ShaderModule*)_backendShaderModule;
 
-    private static ShaderModule* CreateWgslShaderModule(WgpuContext context, DxShaderDescriptor descriptor)
+    private static ShaderModule* CreateWgslShaderModule(
+        WgpuContext context,
+        DxShaderDescriptor descriptor,
+        string source)
     {
-        var sourcePtr = SilkMarshal.StringToPtr(descriptor.Source!);
+        var sourcePtr = SilkMarshal.StringToPtr(source);
         var labelPtr = SilkMarshal.StringToPtr(descriptor.Label);
         try
         {
@@ -114,6 +120,18 @@ public sealed unsafe class ProGpuDirectXShader : IDisposable
             : Encoding.UTF8.GetBytes(descriptor.Source ?? string.Empty);
 
         return Convert.ToHexString(SHA256.HashData(bytes));
+    }
+
+    private static string? ResolveBackendSource(DxShaderDescriptor descriptor)
+    {
+        if (descriptor.SourceKind == DxShaderSourceKind.Wgsl)
+        {
+            return descriptor.Source;
+        }
+
+        return ProGpuDirectXHlslTranslator.TryTranslate(descriptor, out var wgsl)
+            ? wgsl
+            : null;
     }
 
     public void Dispose()
