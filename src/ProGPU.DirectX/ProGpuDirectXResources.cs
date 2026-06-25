@@ -791,7 +791,9 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         return format switch
         {
             DxResourceFormat.R8Unorm => 1,
-            DxResourceFormat.R32Float => 4,
+            DxResourceFormat.R32Float or
+            DxResourceFormat.R32UInt or
+            DxResourceFormat.R32SInt => 4,
             DxResourceFormat.R8G8B8A8Unorm or
             DxResourceFormat.R8G8B8A8UnormSrgb or
             DxResourceFormat.B8G8R8A8Unorm or

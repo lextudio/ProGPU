@@ -466,6 +466,44 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextCreatesTexturesAndRecordsTextureDraws()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        using var texture = renderContext.CreateTexture(2, 2);
+        int[] pixels =
+        [
+            unchecked((int)0xFFFF0000),
+            unchecked((int)0xFFFF0000),
+            unchecked((int)0xFFFF0000),
+            unchecked((int)0xFFFF0000)
+        ];
+
+        texture.SetData(pixels);
+        renderContext.DrawTexture(
+            texture,
+            new DxRect(4, 6, 20, 10),
+            ProGpuDirectXSciChartTextureFiltering.Point);
+
+        Assert.Equal(ProGpuDirectXSciChartTextureFormat.Bgra8, texture.TextureFormat);
+        Assert.Equal(DxResourceFormat.B8G8R8A8Unorm, texture.Resource.Descriptor.Format);
+        Assert.True(texture.Generation > 0);
+        Assert.Single(renderContext.TextureDraws);
+        Assert.Equal(new DxRect(4, 6, 20, 10), renderContext.TextureDraws[0].ViewportRect);
+        Assert.Equal(ProGpuDirectXCommandKind.Draw, renderContext.ImmediateContext.Commands[^1].Kind);
+
+        using var floatTexture = renderContext.CreateTexture(2, 2, ProGpuDirectXSciChartTextureFormat.Float32);
+        floatTexture.SetFloatData([0f, 0.25f, 0.5f, 1f]);
+        Assert.Equal(DxResourceFormat.R32Float, floatTexture.Resource.Descriptor.Format);
+
+        using var uintTexture = renderContext.CreateTexture(2, 2, ProGpuDirectXSciChartTextureFormat.UInt32);
+        uintTexture.SetUIntData([0u, 1u, 2u, 3u]);
+        Assert.Equal(DxResourceFormat.R32UInt, uintTexture.Resource.Descriptor.Format);
+        Assert.Throws<NotSupportedException>(() =>
+            renderContext.DrawTexture(uintTexture, new DxRect(0, 0, 8, 8)));
+    }
+
+    [Fact]
     public void ImmediateContextRecordsSciChartStyleRenderCommands()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -1267,6 +1305,46 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL DirectX draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL DirectX draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL DirectX draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartTextureDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        using var texture = renderContext.CreateTexture(2, 2);
+        int[] pixels =
+        [
+            unchecked((int)0xFFFF0000),
+            unchecked((int)0xFFFF0000),
+            unchecked((int)0xFFFF0000),
+            unchecked((int)0xFFFF0000)
+        ];
+
+        texture.SetData(pixels);
+        renderContext.Clear(DxColor.Black);
+        renderContext.DrawTexture(
+            texture,
+            new DxRect(0, 0, 16, 16),
+            ProGpuDirectXSciChartTextureFiltering.Point);
+        renderContext.Flush();
+
+        Assert.Single(renderContext.TextureDraws);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+        Assert.True(renderContext.ImmediateContext.SubmittedClearCount >= 1);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var center = ReadRgbaPixel(targetPixels, 16, 8, 8);
+        Assert.True(center.R > 200, $"Expected red center pixel after SciChart texture draw, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after SciChart texture draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after SciChart texture draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after SciChart texture draw, actual: {center}");
     }
 
     [Fact]

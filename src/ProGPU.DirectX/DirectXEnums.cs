@@ -19,6 +19,8 @@ public enum DxResourceFormat
     B8G8R8A8UnormSrgb,
     R16Float,
     R32Float,
+    R32UInt,
+    R32SInt,
     R32G32Float,
     R32G32B32Float,
     R32G32B32A32Float,
