@@ -54,6 +54,22 @@ fn fs_main() -> @location(0) vec4<f32> {
 }
 """;
 
+    private const string SolidLineWgsl = """
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
+    var positions = array<vec2<f32>, 2>(
+        vec2<f32>(-0.9, 0.0),
+        vec2<f32>(0.9, 0.0));
+    let p = positions[vertexIndex];
+    return vec4<f32>(p, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+}
+""";
+
     [Fact]
     public void MetadataDeviceAdvertisesSciChartFeatureLevelRange()
     {
@@ -356,6 +372,63 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.True(center.G < 50, $"Expected low green center pixel after DirectX draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after DirectX draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after DirectX draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedLineListDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 64,
+            Height = 64,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidLineWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidLineWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            Topology = DxPrimitiveTopology.LineList,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 64, 64));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.Draw(2);
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedClearCount);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        Assert.Contains(
+            Enumerable.Range(0, 64 * 64),
+            index =>
+            {
+                var pixel = ReadRgbaPixel(pixels, 64, index % 64, index / 64);
+                return pixel.R < 50 && pixel.G > 150 && pixel.B < 50 && pixel.A > 200;
+            });
     }
 
     [Fact]
