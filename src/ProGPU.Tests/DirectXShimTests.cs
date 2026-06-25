@@ -286,6 +286,22 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 }
 """;
 
+    private const string ByteAddressBufferInterlockedComputeHlsl = """
+RWByteAddressBuffer Output : register(u0);
+
+[numthreads(1, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    Output.Store(0u, 10u);
+    Output.Store(8u, 0u);
+    uint previous;
+    Output.InterlockedAdd(0u, 5u, previous);
+    Output.Store(4u, previous);
+    Output.InterlockedOr(8u, 2u);
+    Output.InterlockedXor(8u, 3u);
+}
+""";
+
     private const string SolidGreenPixelHlsl = """
 float4 PSMain() : SV_Target
 {
@@ -706,10 +722,32 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
 
         Assert.NotNull(shader.BackendSource);
         Assert.Contains("@binding(1600) var<storage, read> Input: array<u32>;", shader.BackendSource, StringComparison.Ordinal);
-        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<u32>;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<atomic<u32>>;", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("var values: vec4<u32> = vec4<u32>(Input[((id.x * 16u) / 4u)], Input[(((id.x * 16u) / 4u) + 1u)], Input[(((id.x * 16u) / 4u) + 2u)], Input[(((id.x * 16u) / 4u) + 3u)]);", shader.BackendSource, StringComparison.Ordinal);
-        Assert.Contains("Output[((id.x * 8u) / 4u)] = values.x + values.y;", shader.BackendSource, StringComparison.Ordinal);
-        Assert.Contains("Output[((id.x * 8u + 4u) / 4u)] = values.z + values.w;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("atomicStore(&Output[((id.x * 8u) / 4u)], values.x + values.y);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("atomicStore(&Output[((id.x * 8u + 4u) / 4u)], values.z + values.w);", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderTranslatesRwByteAddressBufferInterlockedOperations()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = ByteAddressBufferInterlockedComputeHlsl,
+            EntryPoint = "CSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<atomic<u32>>;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("atomicStore(&Output[((0u) / 4u)], 10u);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("var previous: u32;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("previous = atomicAdd(&Output[((0u) / 4u)], 5u);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("atomicStore(&Output[((4u) / 4u)], previous);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("atomicOr(&Output[((8u) / 4u)], 2u);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("atomicXor(&Output[((8u) / 4u)], 3u);", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2600,12 +2638,62 @@ VertexOutput VSMain(VertexInput input)
 
         Assert.True(computeShader.HasBackendShaderModule);
         Assert.Contains("@binding(1600) var<storage, read> Input: array<u32>;", computeShader.BackendSource!, StringComparison.Ordinal);
-        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<u32>;", computeShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("@binding(1856) var<storage, read_write> Output: array<atomic<u32>>;", computeShader.BackendSource!, StringComparison.Ordinal);
         Assert.True(pipeline.HasBackendPipeline);
         Assert.Equal(1ul, context.SubmittedDispatchCount);
 
         var values = MemoryMarshal.Cast<byte, uint>(output.BackendBuffer!.ReadBytes(0, 8)).ToArray();
         Assert.Equal([30u, 70u], values);
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslRwByteAddressBufferInterlockedDispatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var output = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 12,
+            Usage = DxBufferUsage.Structured | DxBufferUsage.UnorderedAccess | DxBufferUsage.CopySource,
+            StrideInBytes = 4,
+            Label = "RWByteAddressBuffer Interlocked Output"
+        });
+        using var outputView = device.CreateUnorderedAccessView(
+            output,
+            new DxUnorderedAccessViewDescriptor
+            {
+                Dimension = DxResourceViewDimension.Buffer,
+                ElementCount = 3,
+                ElementStrideInBytes = 4,
+                Access = DxUnorderedAccessViewAccess.ReadWrite
+            });
+        using var computeShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Compute,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = ByteAddressBufferInterlockedComputeHlsl,
+            EntryPoint = "CSMain",
+            Label = "HLSL RWByteAddressBuffer Interlocked Compute"
+        });
+        using var pipeline = device.CreateComputePipeline(new DxComputePipelineDescriptor
+        {
+            ComputeShader = computeShader
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetComputePipeline(pipeline);
+        context.SetUnorderedAccessView(0, outputView);
+        context.Dispatch(1, 1, 1);
+        context.Flush();
+
+        Assert.True(computeShader.HasBackendShaderModule);
+        Assert.Contains("previous = atomicAdd(&Output[((0u) / 4u)], 5u);", computeShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDispatchCount);
+
+        var values = MemoryMarshal.Cast<byte, uint>(output.BackendBuffer!.ReadBytes(0, 12)).ToArray();
+        Assert.Equal([15u, 10u, 1u], values);
     }
 
     [Fact]

@@ -65,6 +65,10 @@ internal static class ProGpuDirectXHlslTranslator
         @"^(?<buffer>[A-Za-z_]\w*)\.(?<method>Store4|Store3|Store2|Store)\s*\((?<arguments>.*)\)$",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private static readonly Regex s_byteAddressBufferInterlockedStatementRegex = new(
+        @"^(?<buffer>[A-Za-z_]\w*)\.(?<method>Interlocked(?:Add|And|Or|Xor|Min|Max|Exchange))\s*\((?<arguments>.*)\)$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     private static readonly Regex s_hlslIntrinsicCallStartRegex = new(
         @"(?<!\.)\b(?<name>abs|acos|asin|atan|atan2|ceil|clamp|cos|cross|ddx|ddy|distance|dot|exp|exp2|floor|frac|length|lerp|log|log2|mad|max|min|mul|normalize|pow|rcp|reflect|refract|round|rsqrt|saturate|sign|sin|smoothstep|sqrt|tan)\s*\(",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -322,7 +326,7 @@ internal static class ProGpuDirectXHlslTranslator
                             resource.Register))
                         .Append(") var<storage, read_write> ")
                         .Append(resource.Name)
-                        .Append(": array<u32>;\n");
+                        .Append(": array<atomic<u32>>;\n");
                     break;
                 case HlslShaderResourceKind.SamplerState:
                     builder
@@ -427,7 +431,8 @@ internal static class ProGpuDirectXHlslTranslator
                 continue;
             }
 
-            if (TryTranslateByteAddressBufferStoreStatement(builder, statement, constantBuffers, shaderResources))
+            if (TryTranslateByteAddressBufferStoreStatement(builder, statement, constantBuffers, shaderResources) ||
+                TryTranslateByteAddressBufferInterlockedStatement(builder, statement, constantBuffers, shaderResources))
             {
                 continue;
             }
@@ -1080,11 +1085,7 @@ internal static class ProGpuDirectXHlslTranslator
             var componentCount = GetByteAddressBufferComponentCount(method);
             if (componentCount == 1)
             {
-                builder
-                    .Append(buffer)
-                    .Append('[')
-                    .Append(baseIndex)
-                    .Append(']');
+                builder.Append(TranslateByteAddressBufferRead(buffer, baseIndex, resource.Kind));
             }
             else
             {
@@ -1100,11 +1101,10 @@ internal static class ProGpuDirectXHlslTranslator
                         builder.Append(", ");
                     }
 
-                    builder
-                        .Append(buffer)
-                        .Append('[')
-                        .Append(AddByteAddressBufferComponentOffset(baseIndex, component))
-                        .Append(']');
+                    builder.Append(TranslateByteAddressBufferRead(
+                        buffer,
+                        AddByteAddressBufferComponentOffset(baseIndex, component),
+                        resource.Kind));
                 }
 
                 builder.Append(')');
@@ -1145,10 +1145,11 @@ internal static class ProGpuDirectXHlslTranslator
         {
             builder
                 .Append("    ")
+                .Append("atomicStore(&")
                 .Append(buffer)
                 .Append('[')
                 .Append(AddByteAddressBufferComponentOffset(baseIndex, component))
-                .Append("] = ");
+                .Append("], ");
 
             if (componentCount == 1)
             {
@@ -1159,10 +1160,88 @@ internal static class ProGpuDirectXHlslTranslator
                 builder.Append(AppendVectorMemberAccess(value, GetVectorComponentName(component)));
             }
 
-            builder.Append(";\n");
+            builder.Append(");\n");
         }
 
         return true;
+    }
+
+    private static bool TryTranslateByteAddressBufferInterlockedStatement(
+        StringBuilder builder,
+        string statement,
+        IReadOnlyList<HlslConstantBuffer> constantBuffers,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        var match = s_byteAddressBufferInterlockedStatementRegex.Match(statement);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var buffer = match.Groups["buffer"].Value;
+        var method = match.Groups["method"].Value;
+        ValidateByteAddressBufferResource(buffer, shaderResources, requireWritable: true);
+
+        var arguments = SplitTopLevelArguments(match.Groups["arguments"].Value);
+        if (arguments.Count is not (2 or 3))
+        {
+            throw new NotSupportedException($"HLSL RWByteAddressBuffer.{method} requires byte-offset, value, and optional original-value arguments.");
+        }
+
+        var baseIndex = TranslateByteAddressBufferIndex(arguments[0], constantBuffers, shaderResources);
+        var value = TranslateExpression(arguments[1], constantBuffers, shaderResources);
+        var operation = TranslateByteAddressBufferInterlockedOperation(method);
+
+        builder.Append("    ");
+        if (arguments.Count == 3)
+        {
+            var original = arguments[2].Trim();
+            if (!Regex.IsMatch(original, @"^[A-Za-z_]\w*(?:(?:\[[^\]]+\])|(?:\.[A-Za-z_]\w*))*$"))
+            {
+                throw new NotSupportedException($"HLSL RWByteAddressBuffer.{method} original-value argument must be assignable.");
+            }
+
+            builder
+                .Append(original)
+                .Append(" = ");
+        }
+
+        builder
+            .Append(operation)
+            .Append("(&")
+            .Append(buffer)
+            .Append('[')
+            .Append(baseIndex)
+            .Append("], ")
+            .Append(value)
+            .Append(");\n");
+
+        return true;
+    }
+
+    private static string TranslateByteAddressBufferRead(
+        string buffer,
+        string index,
+        HlslShaderResourceKind resourceKind)
+    {
+        return resourceKind == HlslShaderResourceKind.RWByteAddressBuffer
+            ? $"atomicLoad(&{buffer}[{index}])"
+            : $"{buffer}[{index}]";
+    }
+
+    private static string TranslateByteAddressBufferInterlockedOperation(string method)
+    {
+        return method switch
+        {
+            "InterlockedAdd" => "atomicAdd",
+            "InterlockedAnd" => "atomicAnd",
+            "InterlockedOr" => "atomicOr",
+            "InterlockedXor" => "atomicXor",
+            "InterlockedMin" => "atomicMin",
+            "InterlockedMax" => "atomicMax",
+            "InterlockedExchange" => "atomicExchange",
+            _ => throw new NotSupportedException($"HLSL RWByteAddressBuffer method '{method}' is not supported.")
+        };
     }
 
     private static string TranslateByteAddressBufferIndex(
