@@ -126,8 +126,14 @@ internal static class ProGpuDirectXFormatConverter
             DxResourceFormat.R32UInt => VertexFormat.Uint32,
             DxResourceFormat.R32SInt => VertexFormat.Sint32,
             DxResourceFormat.R32G32Float => VertexFormat.Float32x2,
+            DxResourceFormat.R32G32UInt => VertexFormat.Uint32x2,
+            DxResourceFormat.R32G32SInt => VertexFormat.Sint32x2,
             DxResourceFormat.R32G32B32Float => VertexFormat.Float32x3,
+            DxResourceFormat.R32G32B32UInt => VertexFormat.Uint32x3,
+            DxResourceFormat.R32G32B32SInt => VertexFormat.Sint32x3,
             DxResourceFormat.R32G32B32A32Float => VertexFormat.Float32x4,
+            DxResourceFormat.R32G32B32A32UInt => VertexFormat.Uint32x4,
+            DxResourceFormat.R32G32B32A32SInt => VertexFormat.Sint32x4,
             _ => VertexFormat.Float32x4
         };
     }
@@ -143,8 +149,11 @@ internal static class ProGpuDirectXFormatConverter
             DxResourceFormat.R32Float => 4,
             DxResourceFormat.R32UInt or DxResourceFormat.R32SInt => 4,
             DxResourceFormat.R32G32Float => 8,
+            DxResourceFormat.R32G32UInt or DxResourceFormat.R32G32SInt => 8,
             DxResourceFormat.R32G32B32Float => 12,
+            DxResourceFormat.R32G32B32UInt or DxResourceFormat.R32G32B32SInt => 12,
             DxResourceFormat.R32G32B32A32Float => 16,
+            DxResourceFormat.R32G32B32A32UInt or DxResourceFormat.R32G32B32A32SInt => 16,
             _ => 16
         };
     }

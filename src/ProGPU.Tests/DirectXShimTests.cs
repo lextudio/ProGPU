@@ -1190,6 +1190,89 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void HlslBytecodeInputSignatureInfersInputLayoutDescriptor()
+    {
+        var bytecode = CreateDxbcBytecode(
+            ("ISGN", CreateSignatureChunk(
+                ("POSITION", 0u, 0u, 3u, 0u, 0x7u, 0x7u),
+                ("COLOR", 0u, 0u, 3u, 1u, 0xFu, 0xFu),
+                ("SV_InstanceID", 0u, 8u, 1u, 2u, 0x1u, 0x1u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Vertex, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = bytecode
+        });
+
+        Assert.NotNull(shader.BytecodeInfo);
+        Assert.True(shader.BytecodeInfo.TryCreateInputLayoutDescriptor(out var descriptor));
+        Assert.NotNull(descriptor);
+        var inputLayout = device.CreateInputLayout(descriptor);
+
+        Assert.Equal(2, inputLayout.Elements.Count);
+        Assert.Equal("POSITION", inputLayout.Elements[0].SemanticName);
+        Assert.Equal(DxResourceFormat.R32G32B32Float, inputLayout.Elements[0].Format);
+        Assert.Equal(0u, inputLayout.Elements[0].AlignedByteOffset);
+        Assert.Equal(0u, inputLayout.Elements[0].ShaderLocation);
+        Assert.Equal("COLOR", inputLayout.Elements[1].SemanticName);
+        Assert.Equal(DxResourceFormat.R32G32B32A32Float, inputLayout.Elements[1].Format);
+        Assert.Equal(12u, inputLayout.Elements[1].AlignedByteOffset);
+        Assert.Equal(1u, inputLayout.Elements[1].ShaderLocation);
+        Assert.DoesNotContain(inputLayout.Elements, element => element.SemanticName.StartsWith("SV_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HlslBytecodeInputSignatureInfersIntegerVectorFormats()
+    {
+        var bytecode = CreateDxbcBytecode(
+            ("ISGN", CreateSignatureChunk(
+                ("INDEX", 0u, 0u, 1u, 0u, 0x3u, 0x3u),
+                ("DELTA", 0u, 0u, 2u, 1u, 0xFu, 0xFu))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Vertex, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = bytecode
+        });
+
+        Assert.NotNull(shader.BytecodeInfo);
+        Assert.True(shader.BytecodeInfo.TryCreateInputLayoutDescriptor(out var descriptor, inputSlot: 3, inputSlotClass: DxInputClassification.PerInstanceData, instanceDataStepRate: 1));
+        Assert.NotNull(descriptor);
+        var inputLayout = device.CreateInputLayout(descriptor);
+
+        Assert.Equal(2, inputLayout.Elements.Count);
+        Assert.Equal(DxResourceFormat.R32G32UInt, inputLayout.Elements[0].Format);
+        Assert.Equal(3u, inputLayout.Elements[0].InputSlot);
+        Assert.Equal(DxInputClassification.PerInstanceData, inputLayout.Elements[0].InputSlotClass);
+        Assert.Equal(1u, inputLayout.Elements[0].InstanceDataStepRate);
+        Assert.Equal(DxResourceFormat.R32G32B32A32SInt, inputLayout.Elements[1].Format);
+        Assert.Equal(8u, inputLayout.Elements[1].AlignedByteOffset);
+    }
+
+    [Fact]
+    public void HlslBytecodeInputSignatureRejectsUnsupportedMasks()
+    {
+        var bytecode = CreateDxbcBytecode(
+            ("ISGN", CreateSignatureChunk(("TEXCOORD", 0u, 0u, 3u, 0u, 0x5u, 0x5u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Vertex, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = bytecode
+        });
+
+        Assert.NotNull(shader.BytecodeInfo);
+        Assert.False(shader.BytecodeInfo.TryCreateInputLayoutDescriptor(out var descriptor));
+        Assert.Null(descriptor);
+    }
+
+    [Fact]
     public void UnsupportedHlslTextShadersRemainMetadata()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();

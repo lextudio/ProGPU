@@ -44,6 +44,10 @@ public sealed record DxReflectedShaderResourceBinding(
 
 public sealed record ProGpuDirectXShaderBytecodeInfo
 {
+    private const uint D3DRegisterComponentUInt32 = 1;
+    private const uint D3DRegisterComponentSInt32 = 2;
+    private const uint D3DRegisterComponentFloat32 = 3;
+
     public required DxShaderBytecodeContainerKind ContainerKind { get; init; }
 
     public required bool IsValid { get; init; }
@@ -82,6 +86,108 @@ public sealed record ProGpuDirectXShaderBytecodeInfo
     {
         ArgumentNullException.ThrowIfNull(fourCC);
         return Chunks.FirstOrDefault(chunk => string.Equals(chunk.FourCC, fourCC, StringComparison.Ordinal));
+    }
+
+    public bool TryCreateInputLayoutDescriptor(
+        out DxInputLayoutDescriptor? descriptor,
+        uint inputSlot = 0,
+        DxInputClassification inputSlotClass = DxInputClassification.PerVertexData,
+        uint instanceDataStepRate = 0,
+        string label = "Reflected DirectX Input Layout")
+    {
+        var elements = new List<DxInputElementDescriptor>();
+        var alignedByteOffset = 0u;
+        foreach (var parameter in InputSignature)
+        {
+            if (IsSystemGeneratedInput(parameter))
+            {
+                continue;
+            }
+
+            if (!TryInferInputElementFormat(parameter, out var format))
+            {
+                descriptor = null;
+                return false;
+            }
+
+            elements.Add(new DxInputElementDescriptor
+            {
+                SemanticName = parameter.SemanticName,
+                SemanticIndex = parameter.SemanticIndex,
+                Format = format,
+                InputSlot = inputSlot,
+                AlignedByteOffset = alignedByteOffset,
+                InputSlotClass = inputSlotClass,
+                InstanceDataStepRate = instanceDataStepRate,
+                ShaderLocation = parameter.Register
+            });
+            alignedByteOffset += ProGpuDirectXFormatConverter.GetVertexFormatSizeInBytes(format);
+        }
+
+        if (elements.Count == 0)
+        {
+            descriptor = null;
+            return false;
+        }
+
+        descriptor = new DxInputLayoutDescriptor
+        {
+            Elements = elements,
+            Label = label
+        };
+        return true;
+    }
+
+    private static bool IsSystemGeneratedInput(DxShaderSignatureParameter parameter)
+    {
+        return parameter.SystemValueType != 0 ||
+            parameter.SemanticName.StartsWith("SV_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryInferInputElementFormat(DxShaderSignatureParameter parameter, out DxResourceFormat format)
+    {
+        var componentCount = parameter.Mask switch
+        {
+            0x1 => 1,
+            0x3 => 2,
+            0x7 => 3,
+            0xF => 4,
+            _ => 0
+        };
+
+        format = DxResourceFormat.Unknown;
+        if (componentCount == 0)
+        {
+            return false;
+        }
+
+        format = parameter.ComponentType switch
+        {
+            D3DRegisterComponentFloat32 => componentCount switch
+            {
+                1 => DxResourceFormat.R32Float,
+                2 => DxResourceFormat.R32G32Float,
+                3 => DxResourceFormat.R32G32B32Float,
+                _ => DxResourceFormat.R32G32B32A32Float
+            },
+            D3DRegisterComponentUInt32 => componentCount switch
+            {
+                1 => DxResourceFormat.R32UInt,
+                2 => DxResourceFormat.R32G32UInt,
+                3 => DxResourceFormat.R32G32B32UInt,
+                _ => DxResourceFormat.R32G32B32A32UInt
+            },
+            D3DRegisterComponentSInt32 => componentCount switch
+            {
+                1 => DxResourceFormat.R32SInt,
+                2 => DxResourceFormat.R32G32SInt,
+                3 => DxResourceFormat.R32G32B32SInt,
+                _ => DxResourceFormat.R32G32B32A32SInt
+            },
+            _ => DxResourceFormat.Unknown
+        };
+
+        return format != DxResourceFormat.Unknown;
     }
 }
 
