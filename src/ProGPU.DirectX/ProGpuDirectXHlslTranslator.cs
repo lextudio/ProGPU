@@ -30,7 +30,7 @@ internal static class ProGpuDirectXHlslTranslator
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly Regex s_textureMethodCallStartRegex = new(
-        @"(?<texture>[A-Za-z_]\w*)\.(?<method>SampleLevel|Sample|Load)\s*\(",
+        @"(?<texture>[A-Za-z_]\w*)\.(?<method>SampleLevel|SampleBias|SampleGrad|Sample|Load)\s*\(",
         RegexOptions.Compiled);
 
     private static readonly Regex s_hlslIntrinsicCallStartRegex = new(
@@ -794,6 +794,48 @@ internal static class ProGpuDirectXHlslTranslator
                     .Append(TranslateExpression(arguments[1], constantBuffers, shaderResources))
                     .Append(", ")
                     .Append(TranslateExpression(arguments[2], constantBuffers, shaderResources))
+                    .Append(')');
+            }
+            else if (string.Equals(method, "SampleBias", StringComparison.Ordinal))
+            {
+                if (arguments.Count != 3)
+                {
+                    throw new NotSupportedException("HLSL Texture2D.SampleBias requires sampler, coordinate, and bias arguments.");
+                }
+
+                var sampler = arguments[0].Trim();
+                ValidateTextureSampleResources(texture, sampler, shaderResources);
+                builder
+                    .Append("textureSampleBias(")
+                    .Append(texture)
+                    .Append(", ")
+                    .Append(sampler)
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[1], constantBuffers, shaderResources))
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[2], constantBuffers, shaderResources))
+                    .Append(')');
+            }
+            else if (string.Equals(method, "SampleGrad", StringComparison.Ordinal))
+            {
+                if (arguments.Count != 4)
+                {
+                    throw new NotSupportedException("HLSL Texture2D.SampleGrad requires sampler, coordinate, ddx, and ddy arguments.");
+                }
+
+                var sampler = arguments[0].Trim();
+                ValidateTextureSampleResources(texture, sampler, shaderResources);
+                builder
+                    .Append("textureSampleGrad(")
+                    .Append(texture)
+                    .Append(", ")
+                    .Append(sampler)
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[1], constantBuffers, shaderResources))
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[2], constantBuffers, shaderResources))
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[3], constantBuffers, shaderResources))
                     .Append(')');
             }
             else

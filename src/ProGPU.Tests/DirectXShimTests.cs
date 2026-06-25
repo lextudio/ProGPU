@@ -174,11 +174,13 @@ float4 PSMain(VertexOutput input) : SV_Target
 {
     float4 sampled = SourceTexture.SampleLevel(SourceSampler, input.uv, 0.0);
     float4 loaded = SourceTexture.Load(int3(0, 0, 0), int2(0, 0));
+    float4 biased = SourceTexture.SampleBias(SourceSampler, input.uv, 0.0);
+    float4 grad = SourceTexture.SampleGrad(SourceSampler, input.uv, float2(0.0, 0.0), float2(0.0, 0.0));
     float3 normal = normalize(float3(sampled.r, sampled.g, sampled.b));
     float light = max(dot(normal, normalize(float3(1.0, 1.0, 1.0))), 0.0);
     float falloff = pow(sqrt(light), 1.0);
-    float mask = saturate(lerp(0.0, sampled.r * 2.0, frac(1.5)) * falloff * loaded.r);
-    return float4(mask, 0.0, 0.0, sampled.a * loaded.a);
+    float mask = saturate(lerp(0.0, sampled.r * 2.0, frac(1.5)) * falloff * loaded.r * biased.r * grad.r);
+    return float4(mask, 0.0, 0.0, sampled.a * loaded.a * biased.a * grad.a);
 }
 """;
 
@@ -462,11 +464,13 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
 {
     float4 sampled = SourceTexture.Sample(SourceSampler, float2(uv.x, uv.y));
     float4 loaded = SourceTexture.Load(int3(0, 0, 0), int2(0, 0));
+    float4 biased = SourceTexture.SampleBias(SourceSampler, uv, 0.0);
+    float4 grad = SourceTexture.SampleGrad(SourceSampler, uv, float2(0.0, 0.0), float2(0.0, 0.0));
     float3 normal = normalize(float3(sampled.r, sampled.g, sampled.b));
     float light = max(dot(normal, normalize(float3(1.0, 1.0, 1.0))), 0.0);
     float falloff = pow(sqrt(light), 1.0);
-    float mask = saturate(lerp(0.0, sampled.r * 2.0, frac(1.5)) * falloff * loaded.r);
-    return float4(mask, 0.0, 0.0, sampled.a * loaded.a) + SourceTexture.SampleLevel(SourceSampler, uv, 0.0) * float4(0.0, 0.5, 0.25, 0.0);
+    float mask = saturate(lerp(0.0, sampled.r * 2.0, frac(1.5)) * falloff * loaded.r * biased.r * grad.r);
+    return float4(mask, 0.0, 0.0, sampled.a * loaded.a * biased.a * grad.a) + SourceTexture.SampleLevel(SourceSampler, uv, 0.0) * float4(0.0, 0.5, 0.25, 0.0);
 }
 """,
             EntryPoint = "PSMain"
@@ -475,10 +479,12 @@ float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
         Assert.NotNull(shader.BackendSource);
         Assert.Contains("var sampled: vec4<f32> = textureSample(SourceTexture, SourceSampler, vec2<f32>(uv.x, uv.y));", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("var loaded: vec4<f32> = textureLoad(SourceTexture, ((vec3<i32>(0, 0, 0)).xy + vec2<i32>(0, 0)), (vec3<i32>(0, 0, 0)).z);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("var biased: vec4<f32> = textureSampleBias(SourceTexture, SourceSampler, uv, 0.0);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("var grad: vec4<f32> = textureSampleGrad(SourceTexture, SourceSampler, uv, vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("var normal: vec3<f32> = normalize(vec3<f32>(sampled.r, sampled.g, sampled.b));", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("var light: f32 = max(dot(normal, normalize(vec3<f32>(1.0, 1.0, 1.0))), 0.0);", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("var falloff: f32 = pow(sqrt(light), 1.0);", shader.BackendSource, StringComparison.Ordinal);
-        Assert.Contains("var mask: f32 = clamp(mix(0.0, sampled.r * 2.0, fract(1.5)) * falloff * loaded.r, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("var mask: f32 = clamp(mix(0.0, sampled.r * 2.0, fract(1.5)) * falloff * loaded.r * biased.r * grad.r, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("textureSampleLevel(SourceTexture, SourceSampler, uv, 0.0) * vec4<f32>(0.0, 0.5, 0.25, 0.0)", shader.BackendSource, StringComparison.Ordinal);
     }
 
@@ -981,10 +987,12 @@ VertexOutput VSMain(VertexInput input)
         Assert.Contains("@binding(768)", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.Contains("var sampled: vec4<f32> = textureSampleLevel(SourceTexture, SourceSampler, input.uv, 0.0);", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.Contains("var loaded: vec4<f32> = textureLoad(SourceTexture, ((vec3<i32>(0, 0, 0)).xy + vec2<i32>(0, 0)), (vec3<i32>(0, 0, 0)).z);", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("var biased: vec4<f32> = textureSampleBias(SourceTexture, SourceSampler, input.uv, 0.0);", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("var grad: vec4<f32> = textureSampleGrad(SourceTexture, SourceSampler, input.uv, vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.Contains("var normal: vec3<f32> = normalize(vec3<f32>(sampled.r, sampled.g, sampled.b));", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.Contains("var light: f32 = max(dot(normal, normalize(vec3<f32>(1.0, 1.0, 1.0))), 0.0);", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.Contains("var falloff: f32 = pow(sqrt(light), 1.0);", pixelShader.BackendSource!, StringComparison.Ordinal);
-        Assert.Contains("var mask: f32 = clamp(mix(0.0, sampled.r * 2.0, fract(1.5)) * falloff * loaded.r, 0.0, 1.0);", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("var mask: f32 = clamp(mix(0.0, sampled.r * 2.0, fract(1.5)) * falloff * loaded.r * biased.r * grad.r, 0.0, 1.0);", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.True(pipeline.HasBackendPipeline);
         Assert.Equal(1ul, context.SubmittedDrawCount);
 
