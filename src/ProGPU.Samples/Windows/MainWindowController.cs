@@ -271,52 +271,55 @@ public static unsafe class MainWindowController
             VerticalAlignment = VerticalAlignment.Stretch
         };
 
-        // Persistent page visual trees
-        var basicInputItem = new NavigationViewItem("Basic Input", "🖱", BasicInputPage.Create());
-        var chartShowcaseItem = new NavigationViewItem("GPU Charting", "📊", ChartShowcasePage.Create());
-        var panelsItem = new NavigationViewItem("Layout Panels", "🔲", LayoutPanelsPage.Create());
-        var textItem = new NavigationViewItem("Text & Documents", "📄", TextDocumentsPage.Create());
-        var markdownPlaygroundItem = new NavigationViewItem("Markdown Playground", "📝", MarkdownPage.Create());
-        var dataItem = new NavigationViewItem("Data Virtualization", "📊", DataVirtualizationPage.Create());
-        var virtualizationControlsItem = new NavigationViewItem("Virtualization Controls", "🎛️", VirtualizationControlsPage.Create());
-        var frameworkEffectsItem = new NavigationViewItem("Framework Effects", "✨", FrameworkEffectsPage.Create());
-        var imageEffectsItem = new NavigationViewItem("Image Effects", "🖼️", ImageEffectsPage.Create());
-        var gdiShowcaseItem = new NavigationViewItem("GDI Shim Showcase", "🎨", GdiShowcasePage.Create());
-        var glyphRunShowcaseItem = new NavigationViewItem("Glyph Run Showcase", "🔤", GlyphRunShowcasePage.Create());
-        var wpfShowcaseItem = new NavigationViewItem("WPF Shim Showcase", "📐", WpfShowcasePage.Create());
+        static NavigationViewItem PageItem(string text, string icon, Func<FrameworkElement?> createPage)
+            => new(text, icon, createPage);
 
-        var computeItem = new NavigationViewItem("Compute FX", "⚙", ComputeFxPage.Create());
-        var motionAnimationsItem = new NavigationViewItem("Motion & Animations", "🎬", MotionAnimationsPage.Create());
-        var advancedItem = new NavigationViewItem("Advanced Controls", "🛠", AdvancedControlsPage.Create());
-        var keyboardParityItem = new NavigationViewItem("Keyboard & Focus", "⌨️", KeyboardParityPage.Create());
-        var themeShowcaseItem = new NavigationViewItem("Theme Showcase", "🎨", ThemeShowcasePage.Create());
-        var compositorItem = new NavigationViewItem("Compositor API", "🎨", CompositorShowcasePage.Create());
-        var splitViewItem = new NavigationViewItem("SplitView Layout", "🪟", SplitViewShowcasePage.Create());
-        var imageRepeatItem = new NavigationViewItem("Image & Buttons", "🖼️", ImageRepeatShowcasePage.Create());
-        var drawingContextItem = new NavigationViewItem("Drawing Context", "📐", SamplePagePresenter.CreateDrawingContextShowcaseView());
-        var fileStorageItem = new NavigationViewItem("File Storage", "📁", SamplePagePresenter.CreateFileStorageShowcaseView());
-        var stylesShowcaseItem = new NavigationViewItem("Styles Showcase", "💅", SamplePagePresenter.CreateStylesShowcaseView());
-        var motionMarkItem = new NavigationViewItem("MotionMark Showcase", "🏁", SamplePagePresenter.CreateMotionMarkShowcaseView());
-        var scriptsItem = new NavigationViewItem("Typography & Scripts", "🔤", SamplePagePresenter.CreateTypographyScriptsView());
-        var textInputItem = new NavigationViewItem("Interactive Input", "⌨️", SamplePagePresenter.CreateInteractiveInputView());
-        var lolsItem = new NavigationViewItem("LOL/s Benchmark", "💥", LolsPage.Create());
-        var radioButtonItem = new NavigationViewItem("Radio Button", "🔘", RadioButtonPage.Create());
-        var ratingControlItem = new NavigationViewItem("Rating Control", "⭐", RatingControlPage.Create());
-        var passwordBoxItem = new NavigationViewItem("Password Box", "🔒", PasswordBoxPage.Create());
-        var dxfViewerItem = new NavigationViewItem("DXF CAD Viewer", "📐", DxfViewerPage.Create());
-        var visualDesignerItem = new NavigationViewItem("Visual Designer", "📐", VisualDesignerPage.Create());
-        var pictureCachingItem = new NavigationViewItem("Picture Caching", "🖼️", PictureShowcasePage.Create());
-        var fontGlyphBrowserItem = new NavigationViewItem("Font Glyph Browser", "🔤", FontGlyphBrowserPage.Create());
-        var mesh3DViewerItem = new NavigationViewItem("3D Mesh Viewer", "🧊", Mesh3DViewerPage.Create());
-        var shaderToyPlaygroundItem = new NavigationViewItem("ShaderToy Playground", "🔮", ShaderToyPlaygroundPage.Create());
+        // Page visual trees are created on first selection to keep startup focused on the default page.
+        var basicInputItem = PageItem("Basic Input", "🖱", BasicInputPage.Create);
+        var chartShowcaseItem = PageItem("GPU Charting", "📊", ChartShowcasePage.Create);
+        var panelsItem = PageItem("Layout Panels", "🔲", LayoutPanelsPage.Create);
+        var textItem = PageItem("Text & Documents", "📄", TextDocumentsPage.Create);
+        var markdownPlaygroundItem = PageItem("Markdown Playground", "📝", MarkdownPage.Create);
+        var dataItem = PageItem("Data Virtualization", "📊", DataVirtualizationPage.Create);
+        var virtualizationControlsItem = PageItem("Virtualization Controls", "🎛️", VirtualizationControlsPage.Create);
+        var frameworkEffectsItem = PageItem("Framework Effects", "✨", FrameworkEffectsPage.Create);
+        var imageEffectsItem = PageItem("Image Effects", "🖼️", ImageEffectsPage.Create);
+        var gdiShowcaseItem = PageItem("GDI Shim Showcase", "🎨", GdiShowcasePage.Create);
+        var glyphRunShowcaseItem = PageItem("Glyph Run Showcase", "🔤", GlyphRunShowcasePage.Create);
+        var wpfShowcaseItem = PageItem("WPF Shim Showcase", "📐", WpfShowcasePage.Create);
 
-        var wrapPanelItem = new NavigationViewItem("Wrap Panel", "🔲", WrapPanelPage.Create());
-        var dockPanelItem = new NavigationViewItem("Dock Panel", "🪟", DockPanelPage.Create());
-        var gridSplitterItem = new NavigationViewItem("Grid Splitter", "↔️", GridSplitterPage.Create());
-        var colorPickerItem = new NavigationViewItem("Color Picker", "🎨", ColorPickerPage.Create());
-        var vectorShapesItem = new NavigationViewItem("Vector Shapes", "📐", VectorShapesPage.Create());
-        var skiaSharpShimItem = new NavigationViewItem("SkiaSharp Shim", "🦊", SkiaSharpShimPage.Create());
-        var pathOpsItem = new NavigationViewItem("Path Operations", "✂️", PathOpsPage.Create());
+        var computeItem = PageItem("Compute FX", "⚙", ComputeFxPage.Create);
+        var motionAnimationsItem = PageItem("Motion & Animations", "🎬", MotionAnimationsPage.Create);
+        var advancedItem = PageItem("Advanced Controls", "🛠", AdvancedControlsPage.Create);
+        var keyboardParityItem = PageItem("Keyboard & Focus", "⌨️", KeyboardParityPage.Create);
+        var themeShowcaseItem = PageItem("Theme Showcase", "🎨", ThemeShowcasePage.Create);
+        var compositorItem = PageItem("Compositor API", "🎨", CompositorShowcasePage.Create);
+        var splitViewItem = PageItem("SplitView Layout", "🪟", SplitViewShowcasePage.Create);
+        var imageRepeatItem = PageItem("Image & Buttons", "🖼️", ImageRepeatShowcasePage.Create);
+        var drawingContextItem = PageItem("Drawing Context", "📐", SamplePagePresenter.CreateDrawingContextShowcaseView);
+        var fileStorageItem = PageItem("File Storage", "📁", SamplePagePresenter.CreateFileStorageShowcaseView);
+        var stylesShowcaseItem = PageItem("Styles Showcase", "💅", SamplePagePresenter.CreateStylesShowcaseView);
+        var motionMarkItem = PageItem("MotionMark Showcase", "🏁", SamplePagePresenter.CreateMotionMarkShowcaseView);
+        var scriptsItem = PageItem("Typography & Scripts", "🔤", SamplePagePresenter.CreateTypographyScriptsView);
+        var textInputItem = PageItem("Interactive Input", "⌨️", SamplePagePresenter.CreateInteractiveInputView);
+        var lolsItem = PageItem("LOL/s Benchmark", "💥", LolsPage.Create);
+        var radioButtonItem = PageItem("Radio Button", "🔘", RadioButtonPage.Create);
+        var ratingControlItem = PageItem("Rating Control", "⭐", RatingControlPage.Create);
+        var passwordBoxItem = PageItem("Password Box", "🔒", PasswordBoxPage.Create);
+        var dxfViewerItem = PageItem("DXF CAD Viewer", "📐", DxfViewerPage.Create);
+        var visualDesignerItem = PageItem("Visual Designer", "📐", VisualDesignerPage.Create);
+        var pictureCachingItem = PageItem("Picture Caching", "🖼️", PictureShowcasePage.Create);
+        var fontGlyphBrowserItem = PageItem("Font Glyph Browser", "🔤", FontGlyphBrowserPage.Create);
+        var mesh3DViewerItem = PageItem("3D Mesh Viewer", "🧊", Mesh3DViewerPage.Create);
+        var shaderToyPlaygroundItem = PageItem("ShaderToy Playground", "🔮", ShaderToyPlaygroundPage.Create);
+
+        var wrapPanelItem = PageItem("Wrap Panel", "🔲", WrapPanelPage.Create);
+        var dockPanelItem = PageItem("Dock Panel", "🪟", DockPanelPage.Create);
+        var gridSplitterItem = PageItem("Grid Splitter", "↔️", GridSplitterPage.Create);
+        var colorPickerItem = PageItem("Color Picker", "🎨", ColorPickerPage.Create);
+        var vectorShapesItem = PageItem("Vector Shapes", "📐", VectorShapesPage.Create);
+        var skiaSharpShimItem = PageItem("SkiaSharp Shim", "🦊", SkiaSharpShimPage.Create);
+        var pathOpsItem = PageItem("Path Operations", "✂️", PathOpsPage.Create);
 
         AppState._navigationView.MenuItems.Add(basicInputItem);
         AppState._navigationView.MenuItems.Add(chartShowcaseItem);
@@ -377,7 +380,7 @@ public static unsafe class MainWindowController
 
         if (AppState._navigationView.SettingsItem != null)
         {
-            AppState._navigationView.SettingsItem.Page = SettingsPage.Create();
+            AppState._navigationView.SettingsItem.PageFactory = SettingsPage.Create;
         }
 
         // Select default category

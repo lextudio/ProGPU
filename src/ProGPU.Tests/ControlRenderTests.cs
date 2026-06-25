@@ -26,6 +26,46 @@ public class ControlRenderTests
         }
     }
 
+    [Fact]
+    public void NavigationViewItem_PageFactory_IsLazyAndCached()
+    {
+        var nav = new NavigationView();
+        var firstCreated = 0;
+        var secondCreated = 0;
+
+        var firstItem = new NavigationViewItem("First", "", () =>
+        {
+            firstCreated++;
+            return new Border();
+        });
+        var secondItem = new NavigationViewItem("Second", "", () =>
+        {
+            secondCreated++;
+            return new Border();
+        });
+
+        nav.MenuItems.Add(firstItem);
+        nav.MenuItems.Add(secondItem);
+
+        Assert.Equal(0, firstCreated);
+        Assert.Equal(0, secondCreated);
+        Assert.Null(firstItem.Page);
+
+        nav.SelectedItem = firstItem;
+        var firstPage = firstItem.Page;
+
+        Assert.Equal(1, firstCreated);
+        Assert.Equal(0, secondCreated);
+        Assert.Same(firstPage, nav.Content);
+
+        nav.SelectedItem = secondItem;
+        nav.SelectedItem = firstItem;
+
+        Assert.Equal(1, firstCreated);
+        Assert.Equal(1, secondCreated);
+        Assert.Same(firstPage, nav.Content);
+    }
+
     private void VerifyControlStates<T>(T control, string namePrefix) where T : Control
     {
         PopupService.Clear();

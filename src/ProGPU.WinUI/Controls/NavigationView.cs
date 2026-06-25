@@ -156,9 +156,10 @@ public class NavigationView : FrameworkElement
                 if (_selectedItem != null)
                 {
                     _selectedItem.IsSelected = true;
-                    if (_selectedItem.Page != null)
+                    var page = _selectedItem.GetOrCreatePage();
+                    if (page != null)
                     {
-                        Content = _selectedItem.Page;
+                        Content = page;
                     }
                 }
                 
