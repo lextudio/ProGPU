@@ -551,6 +551,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.Empty(renderContext.ColumnBatchDraws);
         Assert.Empty(renderContext.RectBatchDraws);
         Assert.Empty(renderContext.SpriteBatchDraws);
+        Assert.Empty(renderContext.FinancialBatchDraws);
         Assert.Empty(renderContext.TextureVertexDraws);
         Assert.Empty(renderContext.ShapedHeatmapDraws);
         Assert.Empty(renderContext.HeightTextureContourDraws);
@@ -862,6 +863,100 @@ fn fs_main() -> @location(0) vec4<f32> {
             transform: new ProGpuDirectXSciChartVertexTransform(),
             centeredAmount: 0.5f);
         Assert.Empty(renderContext.SpriteBatchDraws);
+    }
+
+    [Fact]
+    public void SciChartRenderContextRecordsCandleBatchesAndClip()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        ProGpuDirectXSciChartOhlcCandleVertex[] vertices =
+        [
+            new(8, 6, 4, 14, 12, 0xFF00FF00, 0xFFFF0000),
+            new(24, 6, 4, 14, 12, 0x0000FF00, 0x00000000),
+            new(float.NaN, 6, 4, 14, 12, 0xFF00FF00, 0xFFFF0000)
+        ];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 32, 16));
+        renderContext.DrawCandlesBatch(
+            vertices,
+            count: vertices.Length,
+            width: 4,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+
+        Assert.Single(renderContext.FinancialBatchDraws);
+        Assert.Equal(new DxRect(0, 0, 32, 16), renderContext.FinancialBatchDraws[0].ClipRect);
+        Assert.Equal(ProGpuDirectXSciChartFinancialBatchKind.Candles, renderContext.FinancialBatchDraws[0].Kind);
+        Assert.Equal(4, renderContext.FinancialBatchDraws[0].Width);
+        Assert.Equal(vertices.Length, renderContext.FinancialBatchDraws[0].Vertices.Count);
+        var drawVertexCounts = renderContext.ImmediateContext.Commands
+            .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
+            .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart candle draw payload.")).VertexCount)
+            .ToArray();
+        Assert.Equal([6u, 10u], drawVertexCounts);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawCandlesBatch(vertices, count: 0, width: 4, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawCandlesBatch(vertices, count: vertices.Length + 1, width: 4, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawCandlesBatch(vertices, count: vertices.Length, width: 0, default));
+
+        renderContext.BeginFrame();
+        renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
+        renderContext.DrawCandlesBatch(
+            vertices,
+            count: vertices.Length,
+            width: 4,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        Assert.Empty(renderContext.FinancialBatchDraws);
+    }
+
+    [Fact]
+    public void SciChartRenderContextRecordsOhlcBatchesAndClip()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        ProGpuDirectXSciChartOhlcCandleVertex[] vertices =
+        [
+            new(8, 6, 4, 14, 12, 0x00000000, 0xFF00FF00),
+            new(24, 6, 4, 14, 12, 0x00000000, 0x00000000),
+            new(float.NaN, 6, 4, 14, 12, 0x00000000, 0xFF00FF00)
+        ];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 32, 16));
+        renderContext.DrawOhlcBatch(
+            vertices,
+            count: vertices.Length,
+            width: 4,
+            transform: new ProGpuDirectXSciChartVertexTransform(),
+            isDigital: true,
+            isVerticalChart: true);
+
+        Assert.Single(renderContext.FinancialBatchDraws);
+        Assert.Equal(new DxRect(0, 0, 32, 16), renderContext.FinancialBatchDraws[0].ClipRect);
+        Assert.Equal(ProGpuDirectXSciChartFinancialBatchKind.Ohlc, renderContext.FinancialBatchDraws[0].Kind);
+        Assert.True(renderContext.FinancialBatchDraws[0].IsDigital);
+        Assert.True(renderContext.FinancialBatchDraws[0].IsVerticalChart);
+        Assert.Equal(vertices.Length, renderContext.FinancialBatchDraws[0].Vertices.Count);
+        var drawCommand = renderContext.ImmediateContext.Commands[^1];
+        var draw = drawCommand.Draw ?? throw new InvalidOperationException("Expected SciChart OHLC draw command payload.");
+        Assert.Equal(ProGpuDirectXCommandKind.Draw, drawCommand.Kind);
+        Assert.Equal(6u, draw.VertexCount);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawOhlcBatch(vertices, count: 0, width: 4, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawOhlcBatch(vertices, count: vertices.Length + 1, width: 4, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawOhlcBatch(vertices, count: vertices.Length, width: float.NaN, default));
+
+        renderContext.BeginFrame();
+        renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
+        renderContext.DrawOhlcBatch(
+            vertices,
+            count: vertices.Length,
+            width: 4,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        Assert.Empty(renderContext.FinancialBatchDraws);
     }
 
     [Fact]
@@ -1706,6 +1801,97 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after SciChart texture draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartCandleBatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        ProGpuDirectXSciChartOhlcCandleVertex[] vertices =
+        [
+            new(4, 2, 2, 14, 14, 0xFF00FF00, 0x00000000),
+            new(12, 2, 2, 14, 14, 0xFFFF0000, 0x00000000)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
+        renderContext.DrawCandlesBatch(
+            vertices,
+            count: vertices.Length,
+            width: 8,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        renderContext.Flush();
+
+        Assert.Single(renderContext.FinancialBatchDraws);
+        Assert.Equal(ProGpuDirectXSciChartFinancialBatchKind.Candles, renderContext.FinancialBatchDraws[0].Kind);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var clippedIn = ReadRgbaPixel(targetPixels, 16, 4, 8);
+        Assert.True(clippedIn.R < 50, $"Expected candle batch low red pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.G > 200, $"Expected candle batch green pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.B < 50, $"Expected candle batch low blue pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.A > 200, $"Expected candle batch opaque pixel inside SciChart clip, actual: {clippedIn}");
+
+        var clippedOut = ReadRgbaPixel(targetPixels, 16, 12, 8);
+        Assert.True(clippedOut.R < 50, $"Expected black pixel outside SciChart candle clip, actual: {clippedOut}");
+        Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart candle clip, actual: {clippedOut}");
+        Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart candle clip, actual: {clippedOut}");
+        Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart candle clip, actual: {clippedOut}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartOhlcBatchCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        ProGpuDirectXSciChartOhlcCandleVertex[] vertices =
+        [
+            new(4, 4, 0, 15, 12, 0x00000000, 0xFF00FF00),
+            new(12, 4, 0, 15, 12, 0x00000000, 0xFFFF0000)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
+        renderContext.DrawOhlcBatch(
+            vertices,
+            count: vertices.Length,
+            width: 8,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        renderContext.Flush();
+
+        Assert.Single(renderContext.FinancialBatchDraws);
+        Assert.Equal(ProGpuDirectXSciChartFinancialBatchKind.Ohlc, renderContext.FinancialBatchDraws[0].Kind);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        Assert.Contains(
+            Enumerable.Range(0, 8 * 16),
+            index =>
+            {
+                var pixel = ReadRgbaPixel(targetPixels, 16, index % 8, index / 8);
+                return pixel.R < 50 && pixel.G > 150 && pixel.B < 50 && pixel.A > 200;
+            });
+        Assert.DoesNotContain(
+            Enumerable.Range(0, 8 * 16),
+            index =>
+            {
+                var pixel = ReadRgbaPixel(targetPixels, 16, 8 + (index % 8), index / 8);
+                return pixel.R > 150 || pixel.G > 150 || pixel.B > 150;
+            });
     }
 
     [Fact]

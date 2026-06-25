@@ -27,6 +27,12 @@ public enum ProGpuDirectXSciChartSpriteAnchor
     BottomRight
 }
 
+public enum ProGpuDirectXSciChartFinancialBatchKind
+{
+    Candles,
+    Ohlc
+}
+
 public sealed record ProGpuDirectXSciChartTextureDraw(
     ProGpuDirectXSciChartTexture2D Texture,
     DxRect ViewportRect,
@@ -67,6 +73,15 @@ public readonly record struct ProGpuDirectXSciChartSpriteVertex(
     uint FillColorArgb,
     uint StrokeColorArgb);
 
+public readonly record struct ProGpuDirectXSciChartOhlcCandleVertex(
+    float X,
+    float O,
+    float H,
+    float L,
+    float C,
+    uint FillColorArgb,
+    uint StrokeColorArgb);
+
 public readonly record struct ProGpuDirectXSciChartVertexTransform(bool SwapAxis = false);
 
 public sealed record ProGpuDirectXSciChartLineBatchDraw(
@@ -92,6 +107,15 @@ public sealed record ProGpuDirectXSciChartSpriteBatchDraw(
     ProGpuDirectXSciChartVertexTransform Transform,
     float CenteredAmount,
     ProGpuDirectXSciChartTextureFiltering Filtering,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartFinancialBatchDraw(
+    IReadOnlyList<ProGpuDirectXSciChartOhlcCandleVertex> Vertices,
+    float Width,
+    ProGpuDirectXSciChartFinancialBatchKind Kind,
+    ProGpuDirectXSciChartVertexTransform Transform,
+    bool IsDigital,
+    bool IsVerticalChart,
     DxRect? ClipRect);
 
 public sealed record ProGpuDirectXSciChartTextureVertexDraw(
@@ -319,6 +343,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private readonly List<ProGpuDirectXSciChartColumnBatchDraw> _columnBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartRectBatchDraw> _rectBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartSpriteBatchDraw> _spriteBatchDraws = new();
+    private readonly List<ProGpuDirectXSciChartFinancialBatchDraw> _financialBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartTextureVertexDraw> _textureVertexDraws = new();
     private readonly List<ProGpuDirectXSciChartShapedHeatmapDraw> _shapedHeatmapDraws = new();
     private readonly List<ProGpuDirectXSciChartHeightTextureContoursDraw> _heightTextureContourDraws = new();
@@ -379,6 +404,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
     public IReadOnlyList<ProGpuDirectXSciChartSpriteBatchDraw> SpriteBatchDraws => _spriteBatchDraws;
 
+    public IReadOnlyList<ProGpuDirectXSciChartFinancialBatchDraw> FinancialBatchDraws => _financialBatchDraws;
+
     public IReadOnlyList<ProGpuDirectXSciChartTextureVertexDraw> TextureVertexDraws => _textureVertexDraws;
 
     public IReadOnlyList<ProGpuDirectXSciChartShapedHeatmapDraw> ShapedHeatmapDraws => _shapedHeatmapDraws;
@@ -426,6 +453,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         _columnBatchDraws.Clear();
         _rectBatchDraws.Clear();
         _spriteBatchDraws.Clear();
+        _financialBatchDraws.Clear();
         _textureVertexDraws.Clear();
         _shapedHeatmapDraws.Clear();
         _heightTextureContourDraws.Clear();
@@ -704,6 +732,112 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             centeredAmount,
             filtering,
             _clipRect));
+    }
+
+    public void DrawCandlesBatch(
+        ReadOnlySpan<ProGpuDirectXSciChartOhlcCandleVertex> vertices,
+        int count,
+        float width,
+        ProGpuDirectXSciChartVertexTransform transform)
+    {
+        ThrowIfDisposed();
+        ValidateFinancialVertexRange(vertices.Length, count);
+        ValidateFinancialWidth(width);
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices[..count].ToArray();
+        var fillBuffer = CreateCandleFillVertexBuffer(copiedVertices, width, transform, out var fillVertexCount);
+        var strokeBuffer = CreateCandleStrokeVertexBuffer(copiedVertices, width, transform, out var strokeVertexCount);
+        if (fillBuffer is null && strokeBuffer is null)
+        {
+            return;
+        }
+
+        _context.SetRenderTargets(RenderTarget);
+        _context.SetViewport(new DxViewport(0, 0, RenderTarget.Width, RenderTarget.Height));
+        _context.SetScissorRect(_clipRect ?? FullRenderTargetRect);
+        _context.SetShaderResource(DxShaderStage.Pixel, 0, null);
+        _context.SetShaderResource(DxShaderStage.Pixel, 1, null);
+        _context.SetConstantBuffer(DxShaderStage.Pixel, 0, null);
+        _context.SetSampler(DxShaderStage.Pixel, 0, null);
+
+        if (fillBuffer is not null)
+        {
+            _context.SetGraphicsPipeline(GetColumnFillPipeline(RenderTarget.Descriptor.Format));
+            _context.SetVertexBuffer(fillBuffer);
+            _context.Draw(fillVertexCount);
+            _transientResources.Add(fillBuffer);
+        }
+
+        if (strokeBuffer is not null)
+        {
+            _context.SetGraphicsPipeline(GetLinePipeline(RenderTarget.Descriptor.Format));
+            _context.SetVertexBuffer(strokeBuffer);
+            _context.Draw(strokeVertexCount);
+            _transientResources.Add(strokeBuffer);
+        }
+
+        _financialBatchDraws.Add(new ProGpuDirectXSciChartFinancialBatchDraw(
+            copiedVertices,
+            width,
+            ProGpuDirectXSciChartFinancialBatchKind.Candles,
+            transform,
+            false,
+            false,
+            _clipRect));
+    }
+
+    public void DrawOhlcBatch(
+        ReadOnlySpan<ProGpuDirectXSciChartOhlcCandleVertex> vertices,
+        int count,
+        float width,
+        ProGpuDirectXSciChartVertexTransform transform,
+        bool isDigital = false,
+        bool isVerticalChart = false)
+    {
+        ThrowIfDisposed();
+        ValidateFinancialVertexRange(vertices.Length, count);
+        ValidateFinancialWidth(width);
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices[..count].ToArray();
+        var effectiveTransform = isVerticalChart
+            ? new ProGpuDirectXSciChartVertexTransform(!transform.SwapAxis)
+            : transform;
+        var strokeBuffer = CreateOhlcStrokeVertexBuffer(copiedVertices, width, effectiveTransform, out var strokeVertexCount);
+        if (strokeBuffer is null)
+        {
+            return;
+        }
+
+        _context.SetRenderTargets(RenderTarget);
+        _context.SetViewport(new DxViewport(0, 0, RenderTarget.Width, RenderTarget.Height));
+        _context.SetScissorRect(_clipRect ?? FullRenderTargetRect);
+        _context.SetGraphicsPipeline(GetLinePipeline(RenderTarget.Descriptor.Format));
+        _context.SetVertexBuffer(strokeBuffer);
+        _context.SetShaderResource(DxShaderStage.Pixel, 0, null);
+        _context.SetShaderResource(DxShaderStage.Pixel, 1, null);
+        _context.SetConstantBuffer(DxShaderStage.Pixel, 0, null);
+        _context.SetSampler(DxShaderStage.Pixel, 0, null);
+        _context.Draw(strokeVertexCount);
+
+        _financialBatchDraws.Add(new ProGpuDirectXSciChartFinancialBatchDraw(
+            copiedVertices,
+            width,
+            ProGpuDirectXSciChartFinancialBatchKind.Ohlc,
+            transform,
+            isDigital,
+            isVerticalChart,
+            _clipRect));
+        _transientResources.Add(strokeBuffer);
     }
 
     public void DrawTextureVertices(
@@ -1074,6 +1208,86 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         return CreateTexturedColorVertexBuffer(vertexData, "SciChartSpriteBatchVertices", out submittedVertexCount);
     }
 
+    private ProGpuDirectXBuffer? CreateCandleFillVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartOhlcCandleVertex> vertices,
+        float width,
+        ProGpuDirectXSciChartVertexTransform transform,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(vertices.Length * 36));
+        foreach (var source in vertices)
+        {
+            if (!HasVisibleColor(source.FillColorArgb)
+                || !TryGetFinancialBodyRect(source, width, transform, out var left, out var top, out var right, out var bottom))
+            {
+                continue;
+            }
+
+            AppendSolidColorVertex(vertexData, left, top, source.FillColorArgb);
+            AppendSolidColorVertex(vertexData, right, top, source.FillColorArgb);
+            AppendSolidColorVertex(vertexData, right, bottom, source.FillColorArgb);
+            AppendSolidColorVertex(vertexData, left, top, source.FillColorArgb);
+            AppendSolidColorVertex(vertexData, right, bottom, source.FillColorArgb);
+            AppendSolidColorVertex(vertexData, left, bottom, source.FillColorArgb);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartCandleFillVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreateCandleStrokeVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartOhlcCandleVertex> vertices,
+        float width,
+        ProGpuDirectXSciChartVertexTransform transform,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(vertices.Length * 60));
+        foreach (var source in vertices)
+        {
+            if (!HasVisibleColor(source.StrokeColorArgb)
+                || !HasFiniteFinancialVertex(source)
+                || !TryGetFinancialBodyRect(source, width, transform, out var left, out var top, out var right, out var bottom))
+            {
+                continue;
+            }
+
+            AppendFinancialLine(vertexData, source.X, source.H, source.X, source.L, transform, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, left, top, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, right, top, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, right, top, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, right, bottom, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, right, bottom, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, left, bottom, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, left, bottom, source.StrokeColorArgb);
+            AppendSolidColorVertex(vertexData, left, top, source.StrokeColorArgb);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartCandleStrokeVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreateOhlcStrokeVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartOhlcCandleVertex> vertices,
+        float width,
+        ProGpuDirectXSciChartVertexTransform transform,
+        out uint submittedVertexCount)
+    {
+        var halfWidth = width / 2f;
+        var vertexData = new List<float>(checked(vertices.Length * 36));
+        foreach (var source in vertices)
+        {
+            if (!HasVisibleColor(source.StrokeColorArgb)
+                || !HasFiniteFinancialVertex(source))
+            {
+                continue;
+            }
+
+            AppendFinancialLine(vertexData, source.X, source.H, source.X, source.L, transform, source.StrokeColorArgb);
+            AppendFinancialLine(vertexData, source.X - halfWidth, source.O, source.X, source.O, transform, source.StrokeColorArgb);
+            AppendFinancialLine(vertexData, source.X, source.C, source.X + halfWidth, source.C, transform, source.StrokeColorArgb);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartOhlcStrokeVertices", out submittedVertexCount);
+    }
+
     private ProGpuDirectXBuffer? CreateTexturedColorVertexBuffer(
         List<float> vertexData,
         string label,
@@ -1165,6 +1379,19 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         var x = transform.SwapAxis ? source.Y : source.X;
         var y = transform.SwapAxis ? source.X : source.Y;
         AppendSolidColorVertex(vertexData, x, y, source.ColorArgb);
+    }
+
+    private void AppendFinancialLine(
+        List<float> vertexData,
+        float x0,
+        float y0,
+        float x1,
+        float y1,
+        ProGpuDirectXSciChartVertexTransform transform,
+        uint colorArgb)
+    {
+        AppendSolidColorVertex(vertexData, transform.SwapAxis ? y0 : x0, transform.SwapAxis ? x0 : y0, colorArgb);
+        AppendSolidColorVertex(vertexData, transform.SwapAxis ? y1 : x1, transform.SwapAxis ? x1 : y1, colorArgb);
     }
 
     private ProGpuDirectXBuffer CreateShapedHeatmapConstants(
@@ -1847,6 +2074,27 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
     }
 
+    private static void ValidateFinancialVertexRange(int vertexLength, int count)
+    {
+        if (count <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "SciChart financial batches require at least one vertex.");
+        }
+
+        if (count > vertexLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "SciChart financial vertex count exceeds the supplied vertex span.");
+        }
+    }
+
+    private static void ValidateFinancialWidth(float width)
+    {
+        if (!float.IsFinite(width) || width <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), "SciChart financial batches require a finite positive width.");
+        }
+    }
+
     private static void ValidateLineVertexRange(int vertexLength, int count)
     {
         if (count < 2)
@@ -1883,6 +2131,15 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         return float.IsFinite(vertex.X)
             && float.IsFinite(vertex.Y)
             && float.IsFinite(vertex.Offset);
+    }
+
+    private static bool HasFiniteFinancialVertex(ProGpuDirectXSciChartOhlcCandleVertex vertex)
+    {
+        return float.IsFinite(vertex.X)
+            && float.IsFinite(vertex.O)
+            && float.IsFinite(vertex.H)
+            && float.IsFinite(vertex.L)
+            && float.IsFinite(vertex.C);
     }
 
     private static bool TryGetColumnRect(
@@ -1980,6 +2237,49 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         right = left + width;
         bottom = top + height;
         return true;
+    }
+
+    private static bool TryGetFinancialBodyRect(
+        ProGpuDirectXSciChartOhlcCandleVertex vertex,
+        float width,
+        ProGpuDirectXSciChartVertexTransform transform,
+        out float left,
+        out float top,
+        out float right,
+        out float bottom)
+    {
+        if (!HasFiniteFinancialVertex(vertex))
+        {
+            left = top = right = bottom = 0f;
+            return false;
+        }
+
+        var halfWidth = width / 2f;
+        var x0 = vertex.X - halfWidth;
+        var x1 = vertex.X + halfWidth;
+        var y0 = vertex.O;
+        var y1 = vertex.C;
+        if (y0 == y1)
+        {
+            y1 += 1f;
+        }
+
+        if (transform.SwapAxis)
+        {
+            left = MathF.Min(y0, y1);
+            right = MathF.Max(y0, y1);
+            top = MathF.Min(x0, x1);
+            bottom = MathF.Max(x0, x1);
+        }
+        else
+        {
+            left = MathF.Min(x0, x1);
+            right = MathF.Max(x0, x1);
+            top = MathF.Min(y0, y1);
+            bottom = MathF.Max(y0, y1);
+        }
+
+        return left != right && top != bottom;
     }
 
     private static bool TryGetAnchoredRect(
