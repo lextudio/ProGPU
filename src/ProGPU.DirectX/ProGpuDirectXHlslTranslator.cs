@@ -1566,6 +1566,11 @@ internal static class ProGpuDirectXHlslTranslator
             return "@builtin(instance_index)";
         }
 
+        if (IsSystemSemantic(semantic, "SV_IsFrontFace"))
+        {
+            return "@builtin(front_facing)";
+        }
+
         if (IsSystemSemantic(semantic, "SV_DispatchThreadID"))
         {
             return "@builtin(global_invocation_id)";
@@ -1591,6 +1596,11 @@ internal static class ProGpuDirectXHlslTranslator
             return $"@location({GetSemanticIndex(semantic)})";
         }
 
+        if (IsSystemSemantic(semantic, "SV_Depth"))
+        {
+            return "@builtin(frag_depth)";
+        }
+
         if (IsBuiltinSemantic(semantic))
         {
             throw new NotSupportedException($"Unsupported HLSL system-value semantic '{semantic}'.");
@@ -1609,6 +1619,11 @@ internal static class ProGpuDirectXHlslTranslator
         if (IsSystemSemantic(semantic, "SV_InstanceID"))
         {
             return "@builtin(instance_index)";
+        }
+
+        if (IsSystemSemantic(semantic, "SV_IsFrontFace"))
+        {
+            return "@builtin(front_facing)";
         }
 
         if (IsSystemSemantic(semantic, "SV_DispatchThreadID"))
@@ -1680,6 +1695,7 @@ internal static class ProGpuDirectXHlslTranslator
     {
         return type switch
         {
+            "bool" => "bool",
             "float" => "f32",
             "float2" => "vec2<f32>",
             "float3" => "vec3<f32>",
@@ -1707,7 +1723,7 @@ internal static class ProGpuDirectXHlslTranslator
 
     private static bool IsKnownScalarOrVectorType(string type)
     {
-        return type is "float" or "float2" or "float3" or "float4" or
+        return type is "bool" or "float" or "float2" or "float3" or "float4" or
             "float2x2" or "float2x3" or "float2x4" or
             "float3x2" or "float3x3" or "float3x4" or
             "float4x2" or "float4x3" or "float4x4" or

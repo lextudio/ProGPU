@@ -15,12 +15,14 @@ public sealed class ProGpuDirectXCapabilities
         bool isGpuBacked,
         uint maxTextureDimension2D,
         bool supportsReadWriteStorageTextures,
-        bool supportsRwByteAddressBufferInterlockedCompareExchange)
+        bool supportsRwByteAddressBufferInterlockedCompareExchange,
+        bool supportsFragmentFrontFacingBuiltin)
     {
         IsGpuBacked = isGpuBacked;
         MaxTextureDimension2D = maxTextureDimension2D;
         SupportsReadWriteStorageTextures = supportsReadWriteStorageTextures;
         SupportsRwByteAddressBufferInterlockedCompareExchange = supportsRwByteAddressBufferInterlockedCompareExchange;
+        SupportsFragmentFrontFacingBuiltin = supportsFragmentFrontFacingBuiltin;
     }
 
     public bool IsGpuBacked { get; }
@@ -34,6 +36,8 @@ public sealed class ProGpuDirectXCapabilities
     public bool SupportsReadWriteStorageTextures { get; }
 
     public bool SupportsRwByteAddressBufferInterlockedCompareExchange { get; }
+
+    public bool SupportsFragmentFrontFacingBuiltin { get; }
 
     public bool SupportsFeatureLevel(DxFeatureLevel featureLevel)
     {

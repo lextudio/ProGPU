@@ -39,6 +39,10 @@ public sealed unsafe class ProGpuDirectXShader : IDisposable
     internal bool UsesRwByteAddressBufferInterlockedCompareExchange =>
         BackendSource?.Contains("atomicCompareExchangeWeak(", StringComparison.Ordinal) == true;
 
+    internal bool UsesFragmentFrontFacingBuiltin =>
+        Descriptor.Stage == DxShaderStage.Pixel &&
+        BackendSource?.Contains("@builtin(front_facing)", StringComparison.Ordinal) == true;
+
     public bool HasBackendShaderModule => _backendShaderModule != IntPtr.Zero;
 
     public IntPtr BackendShaderModuleHandle => _backendShaderModule;
@@ -225,6 +229,12 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
 
         if (device.Context is { } context && device.IsGpuBacked)
         {
+            if (descriptor.PixelShader is { UsesFragmentFrontFacingBuiltin: true } &&
+                !device.Capabilities.SupportsFragmentFrontFacingBuiltin)
+            {
+                return;
+            }
+
             _backendPipeline = (IntPtr)CreateBackendPipeline(context, descriptor, PipelineKey);
         }
     }

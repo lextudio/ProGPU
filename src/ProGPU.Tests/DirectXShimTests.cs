@@ -360,6 +360,28 @@ float4 PSMain() : SV_Target
 }
 """;
 
+    private const string FrontFacingDepthPixelHlsl = """
+struct PixelInput
+{
+    float4 position : SV_Position;
+    bool isFrontFace : SV_IsFrontFace;
+};
+
+struct PixelOutput
+{
+    float4 color : SV_Target;
+    float depth : SV_Depth;
+};
+
+PixelOutput PSMain(PixelInput input)
+{
+    PixelOutput output;
+    output.color = float4(1.0, 0.0, 0.0, 1.0);
+    output.depth = 0.25;
+    return output;
+}
+""";
+
     private const string SolidLineWgsl = """
 @vertex
 fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
@@ -701,6 +723,26 @@ void CSMain()
 
         Assert.False(shader.HasBackendShaderModule);
         Assert.Null(shader.BackendSource);
+    }
+
+    [Fact]
+    public void HlslTextShaderTranslatesFragmentFrontFaceAndDepthSystemValues()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = FrontFacingDepthPixelHlsl,
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("@builtin(front_facing) isFrontFace: bool", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("@builtin(frag_depth) depth: f32", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("output.depth = 0.25;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("@location(0) isFrontFace: bool", shader.BackendSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("@location(0) depth: f32", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1184,6 +1226,109 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL DirectX draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL DirectX draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL DirectX draw, actual: {center}");
+    }
+
+    [Fact]
+    public void GpuBackedHlslFragmentFrontFacePipelineHonorsBackendCapability()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 84,
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
+            StrideInBytes = 28
+        });
+        vertexBuffer.Write<float>(
+        [
+            -0.8f, -0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+             0.8f, -0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+             0.0f,  0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f
+        ]);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = PassthroughVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
+{
+    return float4(1.0, 0.0, 0.0, 1.0);
+}
+""",
+            EntryPoint = "PSMain",
+            Label = "HLSL FrontFace Pixel"
+        });
+        var inputLayout = device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    AlignedByteOffset = 12,
+                    ShaderLocation = 1
+                }
+            ]
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            InputLayout = inputLayout,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        Assert.True(pixelShader.HasBackendShaderModule);
+        Assert.Contains("@builtin(front_facing) isFrontFace: bool", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Equal(device.Capabilities.SupportsFragmentFrontFacingBuiltin, pipeline.HasBackendPipeline);
+        if (!device.Capabilities.SupportsFragmentFrontFacingBuiltin)
+        {
+            return;
+        }
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.SetVertexBuffer(vertexBuffer);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after HLSL fragment system-value draw, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after HLSL fragment system-value draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL fragment system-value draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL fragment system-value draw, actual: {center}");
     }
 
     [Fact]

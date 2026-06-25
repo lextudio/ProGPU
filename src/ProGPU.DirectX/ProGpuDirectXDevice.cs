@@ -16,7 +16,8 @@ public sealed class ProGpuDirectXDevice : IDisposable
             maxTextureDimension2D: 16384,
             supportsReadWriteStorageTextures: context?.SupportsReadOnlyAndReadWriteStorageTextures == true,
             supportsRwByteAddressBufferInterlockedCompareExchange: context is { IsDisposed: false, Device: not null, Queue: not null } &&
-                !RuntimeInformation.IsOSPlatform(OSPlatform.OSX));
+                !RuntimeInformation.IsOSPlatform(OSPlatform.OSX),
+            supportsFragmentFrontFacingBuiltin: false);
 
         if (options.RequireGpuBackedResources && !Capabilities.IsGpuBacked)
         {
