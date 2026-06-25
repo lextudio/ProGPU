@@ -1,5 +1,6 @@
 using System.Reflection;
 using ProGPU.Backend;
+using ProGPU.DirectX;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
@@ -16,6 +17,7 @@ public sealed class StrongNameSigningTests
 
     [Theory]
     [InlineData(typeof(WgpuContext))]
+    [InlineData(typeof(ProGpuDirectXDevice))]
     [InlineData(typeof(Compositor))]
     [InlineData(typeof(TtfFont))]
     [InlineData(typeof(PathGeometry))]

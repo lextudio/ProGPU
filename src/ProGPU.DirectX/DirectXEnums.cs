@@ -1,0 +1,76 @@
+namespace ProGPU.DirectX;
+
+public enum DxFeatureLevel
+{
+    Direct3D9_3,
+    Direct3D10_0,
+    Direct3D10_1,
+    Direct3D11_0,
+    Direct3D11_1
+}
+
+public enum DxResourceFormat
+{
+    Unknown,
+    R8Unorm,
+    R8G8B8A8Unorm,
+    R8G8B8A8UnormSrgb,
+    B8G8R8A8Unorm,
+    B8G8R8A8UnormSrgb,
+    R16Float,
+    R32Float,
+    R32G32Float,
+    R32G32B32Float,
+    R32G32B32A32Float,
+    D24UnormS8UInt,
+    D32Float
+}
+
+public enum DxPrimitiveTopology
+{
+    Undefined,
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip
+}
+
+[Flags]
+public enum DxBufferUsage
+{
+    None = 0,
+    Vertex = 1 << 0,
+    Index = 1 << 1,
+    Constant = 1 << 2,
+    Structured = 1 << 3,
+    ShaderResource = 1 << 4,
+    UnorderedAccess = 1 << 5,
+    CopySource = 1 << 6,
+    CopyDestination = 1 << 7
+}
+
+[Flags]
+public enum DxTextureUsage
+{
+    None = 0,
+    ShaderResource = 1 << 0,
+    RenderTarget = 1 << 1,
+    DepthStencil = 1 << 2,
+    UnorderedAccess = 1 << 3,
+    CopySource = 1 << 4,
+    CopyDestination = 1 << 5,
+    Present = 1 << 6
+}
+
+public enum DxPresentMode
+{
+    Immediate,
+    Fifo
+}
+
+public enum DxIndexFormat
+{
+    UInt16,
+    UInt32
+}
