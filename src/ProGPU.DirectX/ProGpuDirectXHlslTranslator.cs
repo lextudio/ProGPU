@@ -29,6 +29,10 @@ internal static class ProGpuDirectXHlslTranslator
         @"\bSamplerState\s+(?<name>[A-Za-z_]\w*)\s*:\s*register\s*\(\s*s(?<slot>\d+)\s*\)\s*;",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex s_textureSampleCallStartRegex = new(
+        @"(?<texture>[A-Za-z_]\w*)\.(?<method>SampleLevel|Sample)\s*\(",
+        RegexOptions.Compiled);
+
     private static readonly Regex s_unsupportedRegex = new(
         @"\b(tbuffer|Texture(?!2D\b)\w*|Sampler(?!State\b)\w*|RWTexture\w*|StructuredBuffer|RWStructuredBuffer|ByteAddressBuffer|RWByteAddressBuffer)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -562,29 +566,9 @@ internal static class ProGpuDirectXHlslTranslator
             return $"{TranslateExpression(mul.Groups["left"].Value, constantBuffers, shaderResources)} * {TranslateExpression(mul.Groups["right"].Value, constantBuffers, shaderResources)}";
         }
 
-        var sample = Regex.Match(
-            trimmed,
-            @"^(?<texture>[A-Za-z_]\w*)\.Sample\s*\(\s*(?<sampler>[A-Za-z_]\w*)\s*,\s*(?<coords>.+)\s*\)$",
-            RegexOptions.Singleline);
-        if (sample.Success)
-        {
-            var texture = sample.Groups["texture"].Value;
-            var sampler = sample.Groups["sampler"].Value;
-            if (!shaderResources.Any(resource =>
-                    resource.Kind == HlslShaderResourceKind.Texture2D &&
-                    string.Equals(resource.Name, texture, StringComparison.Ordinal)) ||
-                !shaderResources.Any(resource =>
-                    resource.Kind == HlslShaderResourceKind.SamplerState &&
-                    string.Equals(resource.Name, sampler, StringComparison.Ordinal)))
-            {
-                throw new NotSupportedException("HLSL Texture2D.Sample requires declared Texture2D and SamplerState resources.");
-            }
-
-            return $"textureSample({texture}, {sampler}, {TranslateExpression(sample.Groups["coords"].Value, constantBuffers, shaderResources)})";
-        }
-
-        var translated = Regex.Replace(
-            trimmed,
+        var translated = TranslateTextureSampleCalls(trimmed, constantBuffers, shaderResources);
+        translated = Regex.Replace(
+            translated,
             @"\b(?<type>float|float2|float3|float4|uint|uint2|uint3|uint4|int|int2|int3|int4)\s*\(",
             match => $"{MapType(match.Groups["type"].Value)}(");
 
@@ -600,6 +584,143 @@ internal static class ProGpuDirectXHlslTranslator
         }
 
         return translated;
+    }
+
+    private static string TranslateTextureSampleCalls(
+        string expression,
+        IReadOnlyList<HlslConstantBuffer> constantBuffers,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        var builder = new StringBuilder();
+        var searchIndex = 0;
+        while (searchIndex < expression.Length)
+        {
+            var match = s_textureSampleCallStartRegex.Match(expression, searchIndex);
+            if (!match.Success)
+            {
+                builder.Append(expression, searchIndex, expression.Length - searchIndex);
+                break;
+            }
+
+            builder.Append(expression, searchIndex, match.Index - searchIndex);
+            var texture = match.Groups["texture"].Value;
+            var method = match.Groups["method"].Value;
+            var openParen = match.Index + match.Length - 1;
+            var closeParen = FindMatchingParen(expression, openParen);
+            if (closeParen < 0)
+            {
+                throw new NotSupportedException($"HLSL Texture2D.{method} call is missing a closing parenthesis.");
+            }
+
+            var arguments = SplitTopLevelArguments(expression[(openParen + 1)..closeParen]);
+            if (string.Equals(method, "Sample", StringComparison.Ordinal))
+            {
+                if (arguments.Count != 2)
+                {
+                    throw new NotSupportedException("HLSL Texture2D.Sample requires sampler and coordinate arguments.");
+                }
+
+                var sampler = arguments[0].Trim();
+                ValidateTextureSampleResources(texture, sampler, shaderResources);
+                builder
+                    .Append("textureSample(")
+                    .Append(texture)
+                    .Append(", ")
+                    .Append(sampler)
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[1], constantBuffers, shaderResources))
+                    .Append(')');
+            }
+            else
+            {
+                if (arguments.Count != 3)
+                {
+                    throw new NotSupportedException("HLSL Texture2D.SampleLevel requires sampler, coordinate, and LOD arguments.");
+                }
+
+                var sampler = arguments[0].Trim();
+                ValidateTextureSampleResources(texture, sampler, shaderResources);
+                builder
+                    .Append("textureSampleLevel(")
+                    .Append(texture)
+                    .Append(", ")
+                    .Append(sampler)
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[1], constantBuffers, shaderResources))
+                    .Append(", ")
+                    .Append(TranslateExpression(arguments[2], constantBuffers, shaderResources))
+                    .Append(')');
+            }
+
+            searchIndex = closeParen + 1;
+        }
+
+        return builder.ToString();
+    }
+
+    private static int FindMatchingParen(string expression, int openParen)
+    {
+        var depth = 0;
+        for (var i = openParen; i < expression.Length; i++)
+        {
+            if (expression[i] == '(')
+            {
+                depth++;
+            }
+            else if (expression[i] == ')')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static List<string> SplitTopLevelArguments(string argumentText)
+    {
+        var arguments = new List<string>();
+        var start = 0;
+        var depth = 0;
+        for (var i = 0; i < argumentText.Length; i++)
+        {
+            var current = argumentText[i];
+            if (current == '(')
+            {
+                depth++;
+            }
+            else if (current == ')')
+            {
+                depth--;
+            }
+            else if (current == ',' && depth == 0)
+            {
+                arguments.Add(argumentText[start..i]);
+                start = i + 1;
+            }
+        }
+
+        arguments.Add(argumentText[start..]);
+        return arguments;
+    }
+
+    private static void ValidateTextureSampleResources(
+        string texture,
+        string sampler,
+        IReadOnlyList<HlslShaderResource> shaderResources)
+    {
+        if (!shaderResources.Any(resource =>
+                resource.Kind == HlslShaderResourceKind.Texture2D &&
+                string.Equals(resource.Name, texture, StringComparison.Ordinal)) ||
+            !shaderResources.Any(resource =>
+                resource.Kind == HlslShaderResourceKind.SamplerState &&
+                string.Equals(resource.Name, sampler, StringComparison.Ordinal)))
+        {
+            throw new NotSupportedException("HLSL Texture2D sampling requires declared Texture2D and SamplerState resources.");
+        }
     }
 
     private static string GetFieldAttribute(string semantic, uint location)

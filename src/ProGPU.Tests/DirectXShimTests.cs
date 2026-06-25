@@ -160,6 +160,22 @@ float4 PSMain(VertexOutput input) : SV_Target
 }
 """;
 
+    private const string TextureSampleLevelTintPixelHlsl = """
+Texture2D SourceTexture : register(t0);
+SamplerState SourceSampler : register(s0);
+
+struct VertexOutput
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+float4 PSMain(VertexOutput input) : SV_Target
+{
+    return SourceTexture.SampleLevel(SourceSampler, input.uv, 0.0) * float4(1.0, 0.0, 0.0, 1.0);
+}
+""";
+
     private const string SolidLineWgsl = """
 @vertex
 fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
@@ -422,6 +438,31 @@ float4 PSMain(float3 uv : TEXCOORD0) : SV_Target
         Assert.False(shader.HasBackendShaderModule);
         Assert.Null(shader.BackendSource);
         Assert.Equal("PSMain", shader.EntryPoint);
+    }
+
+    [Fact]
+    public void HlslTextShaderTranslatesTextureSampleCallsInsideExpressions()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+Texture2D SourceTexture : register(t0);
+SamplerState SourceSampler : register(s0);
+
+float4 PSMain(float2 uv : TEXCOORD0) : SV_Target
+{
+    return SourceTexture.Sample(SourceSampler, float2(uv.x, uv.y)) + SourceTexture.SampleLevel(SourceSampler, uv, 0.0) * float4(1.0, 0.5, 0.25, 1.0);
+}
+""",
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("textureSample(SourceTexture, SourceSampler, vec2<f32>(uv.x, uv.y))", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("textureSampleLevel(SourceTexture, SourceSampler, uv, 0.0) * vec4<f32>(1.0, 0.5, 0.25, 1.0)", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -784,7 +825,7 @@ float4 PSMain(float3 uv : TEXCOORD0) : SV_Target
             Usage = DxTextureUsage.ShaderResource | DxTextureUsage.CopyDestination,
             Label = "Source Texture"
         });
-        sourceTexture.WritePixels<byte>([255, 0, 0, 255]);
+        sourceTexture.WritePixels<byte>([255, 255, 255, 255]);
         using var sourceView = device.CreateShaderResourceView(sourceTexture);
         using var sourceSampler = device.CreateSamplerState(new DxSamplerDescriptor
         {
@@ -829,7 +870,7 @@ float4 PSMain(float3 uv : TEXCOORD0) : SV_Target
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.HlslText,
-            Source = TextureSamplePixelHlsl,
+            Source = TextureSampleLevelTintPixelHlsl,
             EntryPoint = "PSMain",
             Label = "HLSL Texture Pixel"
         });
@@ -878,7 +919,7 @@ float4 PSMain(float3 uv : TEXCOORD0) : SV_Target
         Assert.True(pixelShader.HasBackendShaderModule);
         Assert.Contains("@binding(576)", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.Contains("@binding(768)", pixelShader.BackendSource!, StringComparison.Ordinal);
-        Assert.Contains("textureSample(SourceTexture, SourceSampler, input.uv)", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("textureSampleLevel(SourceTexture, SourceSampler, input.uv, 0.0) * vec4<f32>(1.0, 0.0, 0.0, 1.0)", pixelShader.BackendSource!, StringComparison.Ordinal);
         Assert.True(pipeline.HasBackendPipeline);
         Assert.Equal(1ul, context.SubmittedDrawCount);
 
