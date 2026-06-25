@@ -1,0 +1,362 @@
+using System.Buffers.Binary;
+using System.Text;
+
+namespace ProGPU.DirectX;
+
+public enum DxShaderBytecodeContainerKind
+{
+    Unknown,
+    Dxbc,
+    RawDxil,
+    RawDxilBitcode
+}
+
+public enum DxShaderProgramKind
+{
+    Unknown,
+    Pixel,
+    Vertex,
+    Geometry,
+    Hull,
+    Domain,
+    Compute
+}
+
+public sealed record DxShaderBytecodeChunk(string FourCC, uint Offset, uint Size);
+
+public sealed record DxShaderSignatureParameter(
+    string SemanticName,
+    uint SemanticIndex,
+    uint Register,
+    uint Mask,
+    uint ReadWriteMask,
+    uint ComponentType,
+    uint SystemValueType);
+
+public sealed record DxReflectedShaderResourceBinding(
+    string Name,
+    uint Type,
+    uint ReturnType,
+    uint Dimension,
+    uint BindPoint,
+    uint BindCount,
+    uint Flags);
+
+public sealed record ProGpuDirectXShaderBytecodeInfo
+{
+    public required DxShaderBytecodeContainerKind ContainerKind { get; init; }
+
+    public required bool IsValid { get; init; }
+
+    public string? FailureReason { get; init; }
+
+    public uint TotalSizeInBytes { get; init; }
+
+    public DxShaderProgramKind ProgramKind { get; init; } = DxShaderProgramKind.Unknown;
+
+    public uint ShaderModelMajor { get; init; }
+
+    public uint ShaderModelMinor { get; init; }
+
+    public IReadOnlyList<DxShaderBytecodeChunk> Chunks { get; init; } = Array.Empty<DxShaderBytecodeChunk>();
+
+    public IReadOnlyList<DxShaderSignatureParameter> InputSignature { get; init; } = Array.Empty<DxShaderSignatureParameter>();
+
+    public IReadOnlyList<DxShaderSignatureParameter> OutputSignature { get; init; } = Array.Empty<DxShaderSignatureParameter>();
+
+    public IReadOnlyList<DxShaderSignatureParameter> PatchConstantSignature { get; init; } = Array.Empty<DxShaderSignatureParameter>();
+
+    public IReadOnlyList<DxReflectedShaderResourceBinding> ResourceBindings { get; init; } = Array.Empty<DxReflectedShaderResourceBinding>();
+
+    public bool HasDxilProgram => Chunks.Any(static chunk => string.Equals(chunk.FourCC, "DXIL", StringComparison.Ordinal));
+
+    public bool HasTokenizedProgram => Chunks.Any(static chunk => string.Equals(chunk.FourCC, "SHDR", StringComparison.Ordinal) || string.Equals(chunk.FourCC, "SHEX", StringComparison.Ordinal));
+
+    public bool HasResourceDefinition => Chunks.Any(static chunk => string.Equals(chunk.FourCC, "RDEF", StringComparison.Ordinal));
+
+    public bool HasInputSignature => InputSignature.Count > 0 || Chunks.Any(static chunk => string.Equals(chunk.FourCC, "ISGN", StringComparison.Ordinal) || string.Equals(chunk.FourCC, "ISG1", StringComparison.Ordinal));
+
+    public bool HasOutputSignature => OutputSignature.Count > 0 || Chunks.Any(static chunk => string.Equals(chunk.FourCC, "OSGN", StringComparison.Ordinal) || string.Equals(chunk.FourCC, "OSG5", StringComparison.Ordinal));
+
+    public DxShaderBytecodeChunk? GetChunk(string fourCC)
+    {
+        ArgumentNullException.ThrowIfNull(fourCC);
+        return Chunks.FirstOrDefault(chunk => string.Equals(chunk.FourCC, fourCC, StringComparison.Ordinal));
+    }
+}
+
+internal static class ProGpuDirectXShaderBytecodeParser
+{
+    private const uint DxbcHeaderSize = 32u;
+
+    public static ProGpuDirectXShaderBytecodeInfo Parse(ReadOnlySpan<byte> bytecode)
+    {
+        if (bytecode.Length < 4)
+        {
+            return Invalid(DxShaderBytecodeContainerKind.Unknown, "Shader bytecode is shorter than a DirectX bytecode magic.");
+        }
+
+        var magic = ReadFourCC(bytecode, 0);
+        return magic switch
+        {
+            "DXBC" => ParseDxbc(bytecode),
+            "DXIL" => new ProGpuDirectXShaderBytecodeInfo
+            {
+                ContainerKind = DxShaderBytecodeContainerKind.RawDxil,
+                IsValid = true,
+                TotalSizeInBytes = checked((uint)bytecode.Length)
+            },
+            _ when bytecode.Length >= 4 && bytecode[0] == (byte)'B' && bytecode[1] == (byte)'C' && bytecode[2] == 0xC0 && bytecode[3] == 0xDE =>
+                new ProGpuDirectXShaderBytecodeInfo
+                {
+                    ContainerKind = DxShaderBytecodeContainerKind.RawDxilBitcode,
+                    IsValid = true,
+                    TotalSizeInBytes = checked((uint)bytecode.Length)
+                },
+            _ => Invalid(DxShaderBytecodeContainerKind.Unknown, $"Unknown DirectX shader bytecode magic '{magic}'.")
+        };
+    }
+
+    private static ProGpuDirectXShaderBytecodeInfo ParseDxbc(ReadOnlySpan<byte> bytecode)
+    {
+        if (bytecode.Length < DxbcHeaderSize)
+        {
+            return Invalid(DxShaderBytecodeContainerKind.Dxbc, "DXBC container header is incomplete.");
+        }
+
+        var totalSize = BinaryPrimitives.ReadUInt32LittleEndian(bytecode[24..28]);
+        var chunkCount = BinaryPrimitives.ReadUInt32LittleEndian(bytecode[28..32]);
+        var offsetsByteCount = checked(chunkCount * 4u);
+        if (chunkCount > 4096 || DxbcHeaderSize + offsetsByteCount > bytecode.Length)
+        {
+            return Invalid(DxShaderBytecodeContainerKind.Dxbc, "DXBC chunk-offset table is outside the bytecode range.");
+        }
+
+        if (totalSize == 0 || totalSize > bytecode.Length)
+        {
+            return Invalid(DxShaderBytecodeContainerKind.Dxbc, "DXBC total size is outside the supplied bytecode range.");
+        }
+
+        var chunks = new List<DxShaderBytecodeChunk>(checked((int)chunkCount));
+        var inputs = new List<DxShaderSignatureParameter>();
+        var outputs = new List<DxShaderSignatureParameter>();
+        var patchConstants = new List<DxShaderSignatureParameter>();
+        var resources = new List<DxReflectedShaderResourceBinding>();
+        var programKind = DxShaderProgramKind.Unknown;
+        uint shaderModelMajor = 0;
+        uint shaderModelMinor = 0;
+
+        for (var i = 0; i < chunkCount; i++)
+        {
+            var offsetTableIndex = checked((int)(DxbcHeaderSize + (uint)i * 4u));
+            var chunkOffset = BinaryPrimitives.ReadUInt32LittleEndian(bytecode.Slice(offsetTableIndex, 4));
+            if (chunkOffset > totalSize || chunkOffset + 8u > totalSize)
+            {
+                return Invalid(DxShaderBytecodeContainerKind.Dxbc, "DXBC chunk header is outside the declared container size.");
+            }
+
+            var chunkStart = checked((int)chunkOffset);
+            var fourCC = ReadFourCC(bytecode, chunkStart);
+            var chunkSize = BinaryPrimitives.ReadUInt32LittleEndian(bytecode.Slice(chunkStart + 4, 4));
+            if (chunkSize > totalSize - chunkOffset - 8u)
+            {
+                return Invalid(DxShaderBytecodeContainerKind.Dxbc, $"DXBC chunk '{fourCC}' is outside the declared container size.");
+            }
+
+            chunks.Add(new DxShaderBytecodeChunk(fourCC, chunkOffset, chunkSize));
+            var chunkData = bytecode.Slice(chunkStart + 8, checked((int)chunkSize));
+            switch (fourCC)
+            {
+                case "ISGN":
+                case "ISG1":
+                    inputs.AddRange(ParseSignatureParameters(chunkData, hasStream: false));
+                    break;
+                case "OSGN":
+                    outputs.AddRange(ParseSignatureParameters(chunkData, hasStream: false));
+                    break;
+                case "OSG5":
+                    outputs.AddRange(ParseSignatureParameters(chunkData, hasStream: true));
+                    break;
+                case "PCSG":
+                    patchConstants.AddRange(ParseSignatureParameters(chunkData, hasStream: false));
+                    break;
+                case "RDEF":
+                    resources.AddRange(ParseResourceBindings(chunkData));
+                    break;
+                case "SHDR":
+                case "SHEX":
+                case "DXIL":
+                    if (TryParseProgramVersion(chunkData, out var kind, out var major, out var minor))
+                    {
+                        programKind = kind;
+                        shaderModelMajor = major;
+                        shaderModelMinor = minor;
+                    }
+
+                    break;
+            }
+        }
+
+        return new ProGpuDirectXShaderBytecodeInfo
+        {
+            ContainerKind = DxShaderBytecodeContainerKind.Dxbc,
+            IsValid = true,
+            TotalSizeInBytes = totalSize,
+            Chunks = chunks,
+            InputSignature = inputs,
+            OutputSignature = outputs,
+            PatchConstantSignature = patchConstants,
+            ResourceBindings = resources,
+            ProgramKind = programKind,
+            ShaderModelMajor = shaderModelMajor,
+            ShaderModelMinor = shaderModelMinor
+        };
+    }
+
+    private static List<DxShaderSignatureParameter> ParseSignatureParameters(ReadOnlySpan<byte> chunkData, bool hasStream)
+    {
+        var parameters = new List<DxShaderSignatureParameter>();
+        if (chunkData.Length < 8)
+        {
+            return parameters;
+        }
+
+        var parameterCount = BinaryPrimitives.ReadUInt32LittleEndian(chunkData[..4]);
+        var parameterOffset = BinaryPrimitives.ReadUInt32LittleEndian(chunkData[4..8]);
+        var entrySize = hasStream ? 28u : 24u;
+        if (parameterCount > 4096 || parameterOffset > chunkData.Length)
+        {
+            return parameters;
+        }
+
+        for (var i = 0u; i < parameterCount; i++)
+        {
+            var entryOffset = parameterOffset + i * entrySize;
+            if (entryOffset > chunkData.Length || entrySize > chunkData.Length - entryOffset)
+            {
+                return parameters;
+            }
+
+            var entry = chunkData.Slice(checked((int)entryOffset), checked((int)entrySize));
+            var baseOffset = hasStream ? 4 : 0;
+            var nameOffset = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(baseOffset, 4));
+            var semanticIndex = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(baseOffset + 4, 4));
+            var systemValueType = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(baseOffset + 8, 4));
+            var componentType = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(baseOffset + 12, 4));
+            var register = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(baseOffset + 16, 4));
+            var mask = entry[baseOffset + 20];
+            var readWriteMask = entry[baseOffset + 21];
+            parameters.Add(new DxShaderSignatureParameter(
+                ReadNullTerminatedAscii(chunkData, nameOffset),
+                semanticIndex,
+                register,
+                mask,
+                readWriteMask,
+                componentType,
+                systemValueType));
+        }
+
+        return parameters;
+    }
+
+    private static List<DxReflectedShaderResourceBinding> ParseResourceBindings(ReadOnlySpan<byte> chunkData)
+    {
+        var resources = new List<DxReflectedShaderResourceBinding>();
+        if (chunkData.Length < 28)
+        {
+            return resources;
+        }
+
+        var resourceCount = BinaryPrimitives.ReadUInt32LittleEndian(chunkData[8..12]);
+        var resourceOffset = BinaryPrimitives.ReadUInt32LittleEndian(chunkData[12..16]);
+        const uint entrySize = 32u;
+        if (resourceCount > 4096 || resourceOffset > chunkData.Length)
+        {
+            return resources;
+        }
+
+        for (var i = 0u; i < resourceCount; i++)
+        {
+            var entryOffset = resourceOffset + i * entrySize;
+            if (entryOffset > chunkData.Length || entrySize > chunkData.Length - entryOffset)
+            {
+                return resources;
+            }
+
+            var entry = chunkData.Slice(checked((int)entryOffset), checked((int)entrySize));
+            var nameOffset = BinaryPrimitives.ReadUInt32LittleEndian(entry[..4]);
+            resources.Add(new DxReflectedShaderResourceBinding(
+                ReadNullTerminatedAscii(chunkData, nameOffset),
+                BinaryPrimitives.ReadUInt32LittleEndian(entry[4..8]),
+                BinaryPrimitives.ReadUInt32LittleEndian(entry[8..12]),
+                BinaryPrimitives.ReadUInt32LittleEndian(entry[12..16]),
+                BinaryPrimitives.ReadUInt32LittleEndian(entry[20..24]),
+                BinaryPrimitives.ReadUInt32LittleEndian(entry[24..28]),
+                BinaryPrimitives.ReadUInt32LittleEndian(entry[28..32])));
+        }
+
+        return resources;
+    }
+
+    private static bool TryParseProgramVersion(
+        ReadOnlySpan<byte> chunkData,
+        out DxShaderProgramKind programKind,
+        out uint shaderModelMajor,
+        out uint shaderModelMinor)
+    {
+        programKind = DxShaderProgramKind.Unknown;
+        shaderModelMajor = 0;
+        shaderModelMinor = 0;
+        if (chunkData.Length < 4)
+        {
+            return false;
+        }
+
+        var versionToken = BinaryPrimitives.ReadUInt32LittleEndian(chunkData[..4]);
+        programKind = ((versionToken >> 16) & 0xFFFFu) switch
+        {
+            0 => DxShaderProgramKind.Pixel,
+            1 => DxShaderProgramKind.Vertex,
+            2 => DxShaderProgramKind.Geometry,
+            3 => DxShaderProgramKind.Hull,
+            4 => DxShaderProgramKind.Domain,
+            5 => DxShaderProgramKind.Compute,
+            _ => DxShaderProgramKind.Unknown
+        };
+        shaderModelMajor = (versionToken >> 4) & 0xFu;
+        shaderModelMinor = versionToken & 0xFu;
+        return programKind != DxShaderProgramKind.Unknown;
+    }
+
+    private static ProGpuDirectXShaderBytecodeInfo Invalid(DxShaderBytecodeContainerKind kind, string reason)
+    {
+        return new ProGpuDirectXShaderBytecodeInfo
+        {
+            ContainerKind = kind,
+            IsValid = false,
+            FailureReason = reason
+        };
+    }
+
+    private static string ReadFourCC(ReadOnlySpan<byte> bytes, int offset)
+    {
+        return Encoding.ASCII.GetString(bytes.Slice(offset, 4));
+    }
+
+    private static string ReadNullTerminatedAscii(ReadOnlySpan<byte> bytes, uint offset)
+    {
+        if (offset >= bytes.Length)
+        {
+            return string.Empty;
+        }
+
+        var start = checked((int)offset);
+        var end = start;
+        while (end < bytes.Length && bytes[end] != 0)
+        {
+            end++;
+        }
+
+        return Encoding.ASCII.GetString(bytes[start..end]);
+    }
+}

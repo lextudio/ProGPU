@@ -1,5 +1,6 @@
 using ProGPU.Backend;
 using ProGPU.DirectX;
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using Xunit;
 
@@ -1138,6 +1139,54 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.Null(shader.BackendSource);
         Assert.Equal("vs_main", shader.EntryPoint);
         Assert.NotEqual(string.Empty, shader.SourceHash);
+        Assert.NotNull(shader.BytecodeInfo);
+        Assert.Equal(DxShaderBytecodeContainerKind.Dxbc, shader.BytecodeInfo.ContainerKind);
+        Assert.False(shader.BytecodeInfo.IsValid);
+        Assert.Contains("incomplete", shader.BytecodeInfo.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HlslBytecodeShadersReflectDxbcContainerMetadata()
+    {
+        var bytecode = CreateDxbcBytecode(
+            ("ISGN", CreateSignatureChunk(("POSITION", 0u, 0u, 1u, 0u, 0x7u, 0x7u))),
+            ("RDEF", CreateResourceDefinitionChunk(("SourceTexture", 2u, 5u, 4u, 0u, 1u, 0u))),
+            ("SHEX", CreateProgramChunk(DxShaderProgramKind.Vertex, 5, 0)));
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslBytecode,
+            Bytecode = bytecode
+        });
+
+        Assert.False(shader.HasBackendShaderModule);
+        Assert.Null(shader.BackendSource);
+        Assert.NotNull(shader.BytecodeInfo);
+        Assert.True(shader.BytecodeInfo.IsValid);
+        Assert.Equal(DxShaderBytecodeContainerKind.Dxbc, shader.BytecodeInfo.ContainerKind);
+        Assert.Equal(DxShaderProgramKind.Vertex, shader.BytecodeInfo.ProgramKind);
+        Assert.Equal(5u, shader.BytecodeInfo.ShaderModelMajor);
+        Assert.Equal(0u, shader.BytecodeInfo.ShaderModelMinor);
+        Assert.True(shader.BytecodeInfo.HasInputSignature);
+        Assert.True(shader.BytecodeInfo.HasResourceDefinition);
+        Assert.True(shader.BytecodeInfo.HasTokenizedProgram);
+        Assert.Equal(3, shader.BytecodeInfo.Chunks.Count);
+        Assert.NotNull(shader.BytecodeInfo.GetChunk("SHEX"));
+
+        var input = Assert.Single(shader.BytecodeInfo.InputSignature);
+        Assert.Equal("POSITION", input.SemanticName);
+        Assert.Equal(0u, input.SemanticIndex);
+        Assert.Equal(0u, input.Register);
+        Assert.Equal(0x7u, input.Mask);
+        Assert.Equal(0x7u, input.ReadWriteMask);
+
+        var resource = Assert.Single(shader.BytecodeInfo.ResourceBindings);
+        Assert.Equal("SourceTexture", resource.Name);
+        Assert.Equal(2u, resource.Type);
+        Assert.Equal(4u, resource.Dimension);
+        Assert.Equal(0u, resource.BindPoint);
+        Assert.Equal(1u, resource.BindCount);
     }
 
     [Fact]
@@ -4868,6 +4917,142 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
         });
         Assert.Throws<ArgumentException>(() =>
             context.SetConstantBuffer(DxShaderStage.Vertex, 0, vertexBuffer));
+    }
+
+    private static byte[] CreateDxbcBytecode(params (string FourCC, byte[] Data)[] chunks)
+    {
+        var headerSize = checked(32 + chunks.Length * 4);
+        var bytes = Enumerable.Repeat((byte)0, headerSize).ToList();
+        WriteAscii(bytes, 0, "DXBC");
+        WriteUInt32(bytes, 20, 1);
+        WriteUInt32(bytes, 28, checked((uint)chunks.Length));
+
+        for (var i = 0; i < chunks.Length; i++)
+        {
+            Align4(bytes);
+            var chunkOffset = checked((uint)bytes.Count);
+            WriteUInt32(bytes, 32 + i * 4, chunkOffset);
+            AppendAscii(bytes, chunks[i].FourCC);
+            AppendUInt32(bytes, checked((uint)chunks[i].Data.Length));
+            bytes.AddRange(chunks[i].Data);
+        }
+
+        WriteUInt32(bytes, 24, checked((uint)bytes.Count));
+        return bytes.ToArray();
+    }
+
+    private static byte[] CreateProgramChunk(DxShaderProgramKind kind, uint major, uint minor)
+    {
+        var bytes = new List<byte>();
+        var programKind = kind switch
+        {
+            DxShaderProgramKind.Pixel => 0u,
+            DxShaderProgramKind.Vertex => 1u,
+            DxShaderProgramKind.Geometry => 2u,
+            DxShaderProgramKind.Hull => 3u,
+            DxShaderProgramKind.Domain => 4u,
+            DxShaderProgramKind.Compute => 5u,
+            _ => 0xFFFFu
+        };
+        AppendUInt32(bytes, (programKind << 16) | ((major & 0xFu) << 4) | (minor & 0xFu));
+        return bytes.ToArray();
+    }
+
+    private static byte[] CreateSignatureChunk(
+        params (string SemanticName, uint SemanticIndex, uint SystemValueType, uint ComponentType, uint Register, uint Mask, uint ReadWriteMask)[] parameters)
+    {
+        const int headerSize = 8;
+        const int entrySize = 24;
+        var bytes = Enumerable.Repeat((byte)0, headerSize + parameters.Length * entrySize).ToList();
+        WriteUInt32(bytes, 0, checked((uint)parameters.Length));
+        WriteUInt32(bytes, 4, headerSize);
+
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var entryOffset = headerSize + i * entrySize;
+            var nameOffset = checked((uint)bytes.Count);
+            AppendNullTerminatedAscii(bytes, parameters[i].SemanticName);
+            WriteUInt32(bytes, entryOffset, nameOffset);
+            WriteUInt32(bytes, entryOffset + 4, parameters[i].SemanticIndex);
+            WriteUInt32(bytes, entryOffset + 8, parameters[i].SystemValueType);
+            WriteUInt32(bytes, entryOffset + 12, parameters[i].ComponentType);
+            WriteUInt32(bytes, entryOffset + 16, parameters[i].Register);
+            bytes[entryOffset + 20] = checked((byte)parameters[i].Mask);
+            bytes[entryOffset + 21] = checked((byte)parameters[i].ReadWriteMask);
+        }
+
+        return bytes.ToArray();
+    }
+
+    private static byte[] CreateResourceDefinitionChunk(
+        params (string Name, uint Type, uint ReturnType, uint Dimension, uint BindPoint, uint BindCount, uint Flags)[] resources)
+    {
+        const int headerSize = 28;
+        const int entrySize = 32;
+        var bytes = Enumerable.Repeat((byte)0, headerSize + resources.Length * entrySize).ToList();
+        WriteUInt32(bytes, 8, checked((uint)resources.Length));
+        WriteUInt32(bytes, 12, headerSize);
+
+        for (var i = 0; i < resources.Length; i++)
+        {
+            var entryOffset = headerSize + i * entrySize;
+            var nameOffset = checked((uint)bytes.Count);
+            AppendNullTerminatedAscii(bytes, resources[i].Name);
+            WriteUInt32(bytes, entryOffset, nameOffset);
+            WriteUInt32(bytes, entryOffset + 4, resources[i].Type);
+            WriteUInt32(bytes, entryOffset + 8, resources[i].ReturnType);
+            WriteUInt32(bytes, entryOffset + 12, resources[i].Dimension);
+            WriteUInt32(bytes, entryOffset + 20, resources[i].BindPoint);
+            WriteUInt32(bytes, entryOffset + 24, resources[i].BindCount);
+            WriteUInt32(bytes, entryOffset + 28, resources[i].Flags);
+        }
+
+        return bytes.ToArray();
+    }
+
+    private static void AppendUInt32(List<byte> bytes, uint value)
+    {
+        Span<byte> buffer = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
+        bytes.AddRange(buffer.ToArray());
+    }
+
+    private static void WriteUInt32(List<byte> bytes, int offset, uint value)
+    {
+        Span<byte> buffer = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            bytes[offset + i] = buffer[i];
+        }
+    }
+
+    private static void AppendAscii(List<byte> bytes, string value)
+    {
+        bytes.AddRange(System.Text.Encoding.ASCII.GetBytes(value));
+    }
+
+    private static void WriteAscii(List<byte> bytes, int offset, string value)
+    {
+        var ascii = System.Text.Encoding.ASCII.GetBytes(value);
+        for (var i = 0; i < ascii.Length; i++)
+        {
+            bytes[offset + i] = ascii[i];
+        }
+    }
+
+    private static void AppendNullTerminatedAscii(List<byte> bytes, string value)
+    {
+        AppendAscii(bytes, value);
+        bytes.Add(0);
+    }
+
+    private static void Align4(List<byte> bytes)
+    {
+        while ((bytes.Count & 3) != 0)
+        {
+            bytes.Add(0);
+        }
     }
 
     private static (byte R, byte G, byte B, byte A) ReadRgbaPixel(byte[] pixels, int width, int x, int y)

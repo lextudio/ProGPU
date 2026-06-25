@@ -18,6 +18,9 @@ public sealed unsafe class ProGpuDirectXShader : IDisposable
         Descriptor = descriptor with { EntryPoint = ResolveEntryPoint(descriptor) };
         ValidateDescriptor(Descriptor);
         SourceHash = ComputeSourceHash(Descriptor);
+        BytecodeInfo = Descriptor.SourceKind == DxShaderSourceKind.HlslBytecode
+            ? ProGpuDirectXShaderBytecodeParser.Parse(Descriptor.Bytecode.Span)
+            : null;
         BackendSource = ResolveBackendSource(Descriptor);
 
         if (device.Context is { } context &&
@@ -33,6 +36,8 @@ public sealed unsafe class ProGpuDirectXShader : IDisposable
     public string EntryPoint => Descriptor.EntryPoint!;
 
     public string SourceHash { get; }
+
+    public ProGpuDirectXShaderBytecodeInfo? BytecodeInfo { get; }
 
     public string? BackendSource { get; }
 
