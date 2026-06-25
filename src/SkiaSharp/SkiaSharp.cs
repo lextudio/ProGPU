@@ -257,6 +257,7 @@ public struct SKRect
     public float Height => Bottom - Top;
     public float MidX => Left + Width / 2f;
     public float MidY => Top + Height / 2f;
+    public bool IsEmpty => Left >= Right || Top >= Bottom;
 
     public SKRect(float left, float top, float right, float bottom)
     {
@@ -270,6 +271,17 @@ public struct SKRect
 
     public void Union(SKRect rect)
     {
+        if (rect.IsEmpty)
+        {
+            return;
+        }
+
+        if (IsEmpty)
+        {
+            this = rect;
+            return;
+        }
+
         Left = Math.Min(Left, rect.Left);
         Top = Math.Min(Top, rect.Top);
         Right = Math.Max(Right, rect.Right);

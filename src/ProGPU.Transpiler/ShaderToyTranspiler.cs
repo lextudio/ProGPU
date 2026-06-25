@@ -1234,6 +1234,7 @@ namespace ProGPU.Transpiler
         private readonly List<Token> _tokens;
         private readonly Dictionary<string, StructType> _structs;
         private readonly Dictionary<string, string> _userFunctions;
+        private readonly Stack<Dictionary<string, int>> _integerConstantScopes = new();
         private int _currentTokenIndex = 0;
 
         public ParserState(List<Token> tokens, Dictionary<string, StructType> structs, Dictionary<string, string> userFunctions)
@@ -1241,6 +1242,7 @@ namespace ProGPU.Transpiler
             _tokens = tokens;
             _structs = structs;
             _userFunctions = userFunctions;
+            _integerConstantScopes.Push(new Dictionary<string, int>(StringComparer.Ordinal));
         }
 
         public bool IsAtEnd() => Peek().Type == TokenType.EOF;
@@ -1394,6 +1396,7 @@ namespace ProGPU.Transpiler
                     IsConst = isConst,
                     IsUniform = isUniform
                 });
+                RegisterIntegerConstant(type, currentVarName, isConst, initializer);
 
                 if (!Match(TokenType.Punctuation, ","))
                 {
@@ -1467,12 +1470,21 @@ namespace ProGPU.Transpiler
         private BlockStatement ParseBlockStatement()
         {
             Consume(TokenType.Punctuation, "{", "Expected '{' to start block");
+            _integerConstantScopes.Push(new Dictionary<string, int>(StringComparer.Ordinal));
             var statements = new List<Statement>();
-            while (!Check(TokenType.Punctuation, "}"))
+            try
             {
-                statements.AddRange(ParseStatement());
+                while (!Check(TokenType.Punctuation, "}"))
+                {
+                    statements.AddRange(ParseStatement());
+                }
+                Consume(TokenType.Punctuation, "}", "Expected '}' to end block");
             }
-            Consume(TokenType.Punctuation, "}", "Expected '}' to end block");
+            finally
+            {
+                _integerConstantScopes.Pop();
+            }
+
             return new BlockStatement(statements);
         }
 
@@ -1610,6 +1622,7 @@ namespace ProGPU.Transpiler
                     IsConst = isConst,
                     IsUniform = isUniform
                 });
+                RegisterIntegerConstant(type, name, isConst, initializer);
 
             } while (Match(TokenType.Punctuation, ","));
 
@@ -1622,12 +1635,137 @@ namespace ProGPU.Transpiler
             var sizeExpr = ParseExpression();
             Consume(TokenType.Punctuation, "]", "Expected ']' after array size");
 
-            if (sizeExpr is LiteralExpression { Value: int size } && size > 0)
+            if (TryEvaluateIntegerConstant(sizeExpr, out var size) && size > 0)
             {
                 return size;
             }
 
-            throw new NotSupportedException("Only positive integer literal ShaderToy array sizes are supported.");
+            throw new NotSupportedException("Only positive integer constant ShaderToy array sizes are supported.");
+        }
+
+        private void RegisterIntegerConstant(string type, string name, bool isConst, Expression initializer)
+        {
+            if (!isConst || initializer == null || type is not ("int" or "uint"))
+            {
+                return;
+            }
+
+            if (TryEvaluateIntegerConstant(initializer, out var value))
+            {
+                _integerConstantScopes.Peek()[name] = value;
+            }
+        }
+
+        private bool TryEvaluateIntegerConstant(Expression expression, out int value)
+        {
+            if (TryEvaluateIntegerConstant64(expression, out var longValue)
+                && longValue >= int.MinValue
+                && longValue <= int.MaxValue)
+            {
+                value = (int)longValue;
+                return true;
+            }
+
+            value = default;
+            return false;
+        }
+
+        private bool TryEvaluateIntegerConstant64(Expression expression, out long value)
+        {
+            switch (expression)
+            {
+                case LiteralExpression { Value: int intValue }:
+                    value = intValue;
+                    return true;
+                case LiteralExpression { Value: uint uintValue } when uintValue <= int.MaxValue:
+                    value = uintValue;
+                    return true;
+                case IdentifierExpression identifier:
+                    foreach (var scope in _integerConstantScopes)
+                    {
+                        if (scope.TryGetValue(identifier.Name, out var constantValue))
+                        {
+                            value = constantValue;
+                            return true;
+                        }
+                    }
+                    break;
+                case UnaryExpression { Op: "+", Operand: var operand }:
+                    return TryEvaluateIntegerConstant64(operand, out value);
+                case UnaryExpression { Op: "-", Operand: var operand }:
+                    if (TryEvaluateIntegerConstant64(operand, out var negated))
+                    {
+                        value = -negated;
+                        return true;
+                    }
+                    break;
+                case BinaryExpression binary:
+                    if (TryEvaluateIntegerConstant64(binary.Left, out var left)
+                        && TryEvaluateIntegerConstant64(binary.Right, out var right))
+                    {
+                        return TryEvaluateIntegerBinary(binary.Op, left, right, out value);
+                    }
+                    break;
+            }
+
+            value = default;
+            return false;
+        }
+
+        private static bool TryEvaluateIntegerBinary(string op, long left, long right, out long value)
+        {
+            switch (op)
+            {
+                case "+":
+                    value = left + right;
+                    return true;
+                case "-":
+                    value = left - right;
+                    return true;
+                case "*":
+                    value = left * right;
+                    return true;
+                case "/":
+                    if (right != 0)
+                    {
+                        value = left / right;
+                        return true;
+                    }
+                    break;
+                case "%":
+                    if (right != 0)
+                    {
+                        value = left % right;
+                        return true;
+                    }
+                    break;
+                case "<<":
+                    if (right is >= 0 and < 63)
+                    {
+                        value = left << (int)right;
+                        return true;
+                    }
+                    break;
+                case ">>":
+                    if (right is >= 0 and < 63)
+                    {
+                        value = left >> (int)right;
+                        return true;
+                    }
+                    break;
+                case "&":
+                    value = left & right;
+                    return true;
+                case "|":
+                    value = left | right;
+                    return true;
+                case "^":
+                    value = left ^ right;
+                    return true;
+            }
+
+            value = default;
+            return false;
         }
 
         private List<Expression> ParseForIncrementExpressions()

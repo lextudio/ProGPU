@@ -37,6 +37,26 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 """;
 
     [Fact]
+    public void SkRectUnionReplacesEmptyBoundsWithFirstNonEmptyRect()
+    {
+        var bounds = SKRect.Empty;
+
+        bounds.Union(new SKRect(50f, 60f, 70f, 90f));
+
+        Assert.Equal(50f, bounds.Left);
+        Assert.Equal(60f, bounds.Top);
+        Assert.Equal(70f, bounds.Right);
+        Assert.Equal(90f, bounds.Bottom);
+
+        bounds.Union(SKRect.Empty);
+
+        Assert.Equal(50f, bounds.Left);
+        Assert.Equal(60f, bounds.Top);
+        Assert.Equal(70f, bounds.Right);
+        Assert.Equal(90f, bounds.Bottom);
+    }
+
+    [Fact]
     public void CombinedPathAtlasBoundsUseGeometryCoordinatesBeforePadding()
     {
         using var atlas = new PathAtlas(HeadlessWindow.Shared.Context, atlasSize: 256);
@@ -240,6 +260,30 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.NotNull(pen);
         var strokeBrush = Assert.IsType<LinearGradientBrush>(pen.Brush);
         Assert.Equal(64f / 255f, strokeBrush.Opacity, precision: 6);
+    }
+
+    [Fact]
+    public void ShaderToyAcceptsConstIntegerArraySizes()
+    {
+        var wgsl = ShaderToyTranspiler.Translate(
+            """
+            const int KernelSize = 2 + 1;
+
+            void mainImage(out vec4 fragColor, in vec2 fragCoord)
+            {
+                const int LocalSize = KernelSize;
+                float weights[LocalSize];
+                weights[0] = 0.25;
+                weights[1] = 0.5;
+                weights[2] = 0.25;
+                fragColor = vec4(weights[0] + weights[1] + weights[2], 0.0, 0.0, 1.0);
+            }
+            """);
+
+        Assert.Contains("var<private> KernelSize: i32;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("var LocalSize: i32 = KernelSize;", wgsl, System.StringComparison.Ordinal);
+        Assert.Contains("var weights: array<f32, 3>;", wgsl, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("var weights: f32;", wgsl, System.StringComparison.Ordinal);
     }
 
     [Fact]
