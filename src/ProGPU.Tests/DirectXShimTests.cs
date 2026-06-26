@@ -7637,6 +7637,84 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void FlushSubmitsGpuBackedDrawIntoMultisampleArraySlice()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var source = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget,
+            SampleCount = 4,
+            ArraySize = 2
+        });
+        using var destination = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource,
+            CpuAccess = DxCpuAccessFlags.Read,
+            ArraySize = 2
+        });
+        using var sourceSlice1 = device.CreateRenderTargetView(source, new DxRenderTargetViewDescriptor
+        {
+            Dimension = DxResourceViewDimension.Texture2DArray,
+            FirstArraySlice = 1,
+            ArraySize = 1,
+            Label = "DrawSourceSlice1"
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            SampleCount = 4,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(sourceSlice1);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(sourceSlice1, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.Draw(3);
+        context.ResolveSubresource(destination, destinationSubresource: 1, source, sourceSubresource: 1, DxResourceFormat.R8G8B8A8Unorm);
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedClearCount);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Equal(1ul, context.SubmittedResolveCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = destination.ReadPixels();
+        var sliceSize = checked((int)(destination.Width * destination.Height * 4));
+        var slice0Center = ReadRgbaPixel(pixels.AsSpan(0, sliceSize).ToArray(), 32, 16, 16);
+        var slice1Center = ReadRgbaPixel(pixels.AsSpan(sliceSize, sliceSize).ToArray(), 32, 16, 16);
+        Assert.True(slice0Center.R < 50, $"Expected unresolved layer 0 low red, actual: {slice0Center}");
+        Assert.True(slice1Center.R > 200, $"Expected red resolved draw pixel, actual: {slice1Center}");
+        Assert.True(slice1Center.G < 50, $"Expected low green resolved draw pixel, actual: {slice1Center}");
+        Assert.True(slice1Center.B < 50, $"Expected low blue resolved draw pixel, actual: {slice1Center}");
+        Assert.True(slice1Center.A > 200, $"Expected opaque resolved draw pixel, actual: {slice1Center}");
+    }
+
+    [Fact]
     public void CpuReadableBuffersSupportMetadataShadowCopies()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
