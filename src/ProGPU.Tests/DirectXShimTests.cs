@@ -667,6 +667,48 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void NativeFacadeSourceEmitterGeneratesNativeAotExportScaffold()
+    {
+        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var plan = ProGpuDirectXNativeAbiPlanner.Create(report);
+        var source = ProGpuDirectXNativeFacadeSourceEmitter.Emit(
+            plan,
+            new ProGpuDirectXNativeFacadeSourceOptions(
+                "ProGPU.Tests.GeneratedNativeFacade",
+                "SciChartNativeFacadeExports"));
+
+        Assert.Contains("namespace ProGPU.Tests.GeneratedNativeFacade", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("public static unsafe partial class SciChartNativeFacadeExports", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("[UnmanagedCallersOnly(EntryPoint = \"D3D11CreateDevice\", CallConvs = new[] { typeof(CallConvStdcall) })]", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("public static int d3d11_dll_D3D11CreateDevice()", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("[UnmanagedCallersOnly(EntryPoint = \"MessageBoxW\", CallConvs = new[] { typeof(CallConvStdcall) })]", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("public static int user32_dll_MessageBoxW(nint hwnd, nint text, nint caption, uint type)", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("return 0;", source.SourceText, StringComparison.Ordinal);
+        Assert.Contains("supported native facade exports", source.DescribeSupport(), StringComparison.Ordinal);
+
+        var d3dExport = Assert.Single(
+            source.SupportedExports,
+            export => export.EntryPoint == "D3D11CreateDevice");
+        Assert.Equal("d3d11.dll", d3dExport.ModuleName);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, d3dExport.Action);
+        Assert.Equal(CallingConvention.Winapi, d3dExport.CallingConvention);
+        Assert.Equal(
+            "System.Int32 ProGPU.Tests.DirectXShimTests+NativeDependencyFixture.D3D11CreateDevice()",
+            d3dExport.ManagedSignature);
+
+        var messageBoxExport = Assert.Single(
+            source.SupportedExports,
+            export => export.EntryPoint == "MessageBoxW");
+        Assert.Equal("user32.dll", messageBoxExport.ModuleName);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementHostOsAbstraction, messageBoxExport.Action);
+        Assert.Equal(CallingConvention.StdCall, messageBoxExport.CallingConvention);
+
+        Assert.DoesNotContain(
+            source.Exports,
+            export => export.ModuleName.Equals("VXccelEngine3D.dll", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void NativeResolverClassifiesRequestsWithoutMaskingMissingFacade()
     {
         var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
