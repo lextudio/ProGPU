@@ -769,6 +769,80 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextRecordsBasePrimitivesAndClip()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        var pen = renderContext.CreatePen(0xFF00FF00);
+        var thickPen = renderContext.CreatePen(0xFF00FF00, strokeThickness: 2f);
+        var brush = renderContext.CreateBrush(0xFF00FF00);
+        ProGpuDirectXSciChartPoint[] points =
+        [
+            new(0, 8),
+            new(16, 8),
+            new(32, 16)
+        ];
+        ProGpuDirectXSciChartPoint[] polygon =
+        [
+            new(0, 0),
+            new(16, 0),
+            new(16, 16),
+            new(0, 16)
+        ];
+        ProGpuDirectXSciChartAreaSegment[] area =
+        [
+            new(new ProGpuDirectXSciChartPoint(0, 4), new ProGpuDirectXSciChartPoint(0, 12)),
+            new(new ProGpuDirectXSciChartPoint(16, 4), new ProGpuDirectXSciChartPoint(16, 12))
+        ];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 32, 32));
+        renderContext.DrawLine(pen, new ProGpuDirectXSciChartPoint(0, 4), new ProGpuDirectXSciChartPoint(16, 4));
+        renderContext.DrawLines(pen, points);
+        renderContext.DrawQuad(thickPen, new ProGpuDirectXSciChartPoint(0, 0), new ProGpuDirectXSciChartPoint(16, 16));
+        renderContext.FillRectangle(brush, new ProGpuDirectXSciChartPoint(0, 0), new ProGpuDirectXSciChartPoint(16, 16), opacity: 0.5d);
+        renderContext.FillPolygon(brush, polygon);
+        renderContext.FillArea(brush, area, isVerticalChart: true, gradientRotationAngle: 90d);
+
+        Assert.Equal(6, renderContext.PrimitiveDraws.Count);
+        Assert.Equal(
+            [
+                ProGpuDirectXSciChartPrimitiveKind.Line,
+                ProGpuDirectXSciChartPrimitiveKind.Lines,
+                ProGpuDirectXSciChartPrimitiveKind.Quad,
+                ProGpuDirectXSciChartPrimitiveKind.RectangleFill,
+                ProGpuDirectXSciChartPrimitiveKind.PolygonFill,
+                ProGpuDirectXSciChartPrimitiveKind.AreaFill
+            ],
+            renderContext.PrimitiveDraws.Select(draw => draw.Kind).ToArray());
+        Assert.Equal(new DxRect(0, 0, 32, 32), renderContext.PrimitiveDraws[0].ClipRect);
+        Assert.Equal(0.5d, renderContext.PrimitiveDraws[3].Opacity);
+        Assert.True(renderContext.PrimitiveDraws[5].IsVerticalChart);
+        Assert.Equal(90d, renderContext.PrimitiveDraws[5].GradientRotationAngle);
+        Assert.Equal(4, renderContext.PrimitiveDraws[5].Points.Count);
+
+        var drawVertexCounts = renderContext.ImmediateContext.Commands
+            .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
+            .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart primitive draw payload.")).VertexCount)
+            .ToArray();
+        Assert.Equal([2u, 4u, 24u, 6u, 6u, 6u], drawVertexCounts);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawLines(pen, points, count: 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.FillPolygon(brush, polygon, count: 2));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.FillArea(brush, area, count: 1, isVerticalChart: false, gradientRotationAngle: 0d));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.FillRectangle(brush, new ProGpuDirectXSciChartPoint(0, 0), new ProGpuDirectXSciChartPoint(16, 16), opacity: 2d));
+
+        renderContext.BeginFrame();
+        renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
+        renderContext.DrawLine(pen, new ProGpuDirectXSciChartPoint(0, 0), new ProGpuDirectXSciChartPoint(16, 0));
+        renderContext.FillRectangle(brush, new ProGpuDirectXSciChartPoint(0, 0), new ProGpuDirectXSciChartPoint(16, 16));
+        Assert.Empty(renderContext.PrimitiveDraws);
+    }
+
+    [Fact]
     public void SciChartRenderContextRecordsMountainBatches()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -2711,6 +2785,44 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(outside.G < 50, $"Expected black outside thick line, actual: {outside}");
         Assert.True(outside.B < 50, $"Expected black outside thick line, actual: {outside}");
         Assert.True(outside.A > 200, $"Expected opaque clear alpha outside thick line, actual: {outside}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartPrimitiveFillCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 8, 16));
+        renderContext.FillRectangle(
+            renderContext.CreateBrush(0xFF00FF00),
+            new ProGpuDirectXSciChartPoint(0, 0),
+            new ProGpuDirectXSciChartPoint(16, 16));
+        renderContext.Flush();
+
+        Assert.Single(renderContext.PrimitiveDraws);
+        Assert.Equal(ProGpuDirectXSciChartPrimitiveKind.RectangleFill, renderContext.PrimitiveDraws[0].Kind);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var clippedIn = ReadRgbaPixel(targetPixels, 16, 4, 8);
+        Assert.True(clippedIn.R < 50, $"Expected primitive fill low red pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.G > 200, $"Expected primitive fill green pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.B < 50, $"Expected primitive fill low blue pixel inside SciChart clip, actual: {clippedIn}");
+        Assert.True(clippedIn.A > 200, $"Expected primitive fill opaque pixel inside SciChart clip, actual: {clippedIn}");
+
+        var clippedOut = ReadRgbaPixel(targetPixels, 16, 12, 8);
+        Assert.True(clippedOut.R < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
+        Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
+        Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
+        Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart primitive clip, actual: {clippedOut}");
     }
 
     [Fact]

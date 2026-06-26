@@ -58,6 +58,12 @@ public sealed record ProGpuDirectXSciChartBrush2D(uint ColorArgb)
     public static ProGpuDirectXSciChartBrush2D Transparent { get; } = new(0);
 }
 
+public readonly record struct ProGpuDirectXSciChartPoint(float X, float Y);
+
+public readonly record struct ProGpuDirectXSciChartAreaSegment(
+    ProGpuDirectXSciChartPoint Start,
+    ProGpuDirectXSciChartPoint End);
+
 public sealed record ProGpuDirectXSciChartPalette(
     IReadOnlyList<uint>? LineAColors = null,
     IReadOnlyList<uint>? LineBColors = null,
@@ -125,6 +131,26 @@ public readonly record struct ProGpuDirectXSciChartOhlcCandleVertex(
     uint StrokeColorArgb);
 
 public readonly record struct ProGpuDirectXSciChartVertexTransform(bool SwapAxis = false);
+
+public enum ProGpuDirectXSciChartPrimitiveKind
+{
+    Line,
+    Lines,
+    Quad,
+    RectangleFill,
+    PolygonFill,
+    AreaFill
+}
+
+public sealed record ProGpuDirectXSciChartPrimitiveDraw(
+    ProGpuDirectXSciChartPrimitiveKind Kind,
+    IReadOnlyList<ProGpuDirectXSciChartPoint> Points,
+    ProGpuDirectXSciChartPen2D? Pen,
+    ProGpuDirectXSciChartBrush2D? Brush,
+    double Opacity,
+    bool IsVerticalChart,
+    double GradientRotationAngle,
+    DxRect? ClipRect);
 
 public sealed record ProGpuDirectXSciChartLineBatchDraw(
     IReadOnlyList<ProGpuDirectXSciChartColorVertex> Vertices,
@@ -405,6 +431,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private readonly ProGpuDirectXDeviceContext _context;
     private readonly List<IDisposable> _transientResources = new();
     private readonly List<ProGpuDirectXSciChartTextureDraw> _textureDraws = new();
+    private readonly List<ProGpuDirectXSciChartPrimitiveDraw> _primitiveDraws = new();
     private readonly List<ProGpuDirectXSciChartLineBatchDraw> _lineBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartMountainBatchDraw> _mountainBatchDraws = new();
     private readonly List<ProGpuDirectXSciChartBandBatchDraw> _bandBatchDraws = new();
@@ -463,6 +490,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     public ProGpuDirectXTexture2D RenderTarget { get; }
 
     public IReadOnlyList<ProGpuDirectXSciChartTextureDraw> TextureDraws => _textureDraws;
+
+    public IReadOnlyList<ProGpuDirectXSciChartPrimitiveDraw> PrimitiveDraws => _primitiveDraws;
 
     public IReadOnlyList<ProGpuDirectXSciChartLineBatchDraw> LineBatchDraws => _lineBatchDraws;
 
@@ -536,6 +565,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     {
         ThrowIfDisposed();
         _textureDraws.Clear();
+        _primitiveDraws.Clear();
         _lineBatchDraws.Clear();
         _mountainBatchDraws.Clear();
         _bandBatchDraws.Clear();
@@ -601,6 +631,189 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         _textureDraws.Add(new ProGpuDirectXSciChartTextureDraw(texture, effectiveRect, filtering, isUniform));
         _transientResources.Add(vertexBuffer);
         _transientResources.Add(shaderResourceView);
+    }
+
+    public void DrawLine(
+        ProGpuDirectXSciChartPen2D? pen,
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2)
+    {
+        Span<ProGpuDirectXSciChartPoint> points = stackalloc ProGpuDirectXSciChartPoint[2];
+        points[0] = pt1;
+        points[1] = pt2;
+        DrawPrimitiveLineCore(ProGpuDirectXSciChartPrimitiveKind.Line, pen, points, points.Length);
+    }
+
+    public void DrawLines(
+        ProGpuDirectXSciChartPen2D? pen,
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points)
+    {
+        DrawLines(pen, points, points.Length);
+    }
+
+    public void DrawLines(
+        ProGpuDirectXSciChartPen2D? pen,
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
+        int count)
+    {
+        DrawPrimitiveLineCore(ProGpuDirectXSciChartPrimitiveKind.Lines, pen, points, count);
+    }
+
+    public void DrawQuad(
+        ProGpuDirectXSciChartPen2D? pen,
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2)
+    {
+        Span<ProGpuDirectXSciChartPoint> points = stackalloc ProGpuDirectXSciChartPoint[5];
+        points[0] = pt1;
+        points[1] = new ProGpuDirectXSciChartPoint(pt2.X, pt1.Y);
+        points[2] = pt2;
+        points[3] = new ProGpuDirectXSciChartPoint(pt1.X, pt2.Y);
+        points[4] = pt1;
+        DrawPrimitiveLineCore(ProGpuDirectXSciChartPrimitiveKind.Quad, pen, points, points.Length);
+    }
+
+    public void FillRectangle(
+        uint colorArgb,
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2)
+    {
+        FillRectangle(new ProGpuDirectXSciChartBrush2D(colorArgb), pt1, pt2);
+    }
+
+    public void FillRectangle(
+        ProGpuDirectXSciChartBrush2D? brush,
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2,
+        double opacity = 1d)
+    {
+        ThrowIfDisposed();
+        ValidateOpacity(opacity);
+        brush ??= ProGpuDirectXSciChartBrush2D.Transparent;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var colorArgb = ApplyOpacity(brush.ColorArgb, opacity);
+        var vertexBuffer = CreateRectangleFillVertexBuffer(pt1, pt2, colorArgb, out var submittedVertexCount);
+        if (vertexBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        DrawSolidColorBuffer(
+            vertexBuffer,
+            GetColumnFillPipeline(RenderTarget.Descriptor.Format),
+            submittedVertexCount);
+
+        _primitiveDraws.Add(new ProGpuDirectXSciChartPrimitiveDraw(
+            ProGpuDirectXSciChartPrimitiveKind.RectangleFill,
+            new[] { pt1, pt2 },
+            null,
+            brush,
+            opacity,
+            false,
+            0d,
+            _clipRect));
+    }
+
+    public void FillPolygon(
+        ProGpuDirectXSciChartBrush2D? brush,
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points)
+    {
+        FillPolygon(brush, points, points.Length);
+    }
+
+    public void FillPolygon(
+        ProGpuDirectXSciChartBrush2D? brush,
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
+        int count)
+    {
+        ThrowIfDisposed();
+        ValidatePointRange(points.Length, count, minCount: 3, shapeName: "polygon fills");
+        brush ??= ProGpuDirectXSciChartBrush2D.Transparent;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var colorArgb = brush.ColorArgb;
+        var copiedPoints = points[..count].ToArray();
+        var vertexBuffer = CreatePolygonFillVertexBuffer(copiedPoints, colorArgb, out var submittedVertexCount);
+        if (vertexBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        DrawSolidColorBuffer(
+            vertexBuffer,
+            GetColumnFillPipeline(RenderTarget.Descriptor.Format),
+            submittedVertexCount);
+
+        _primitiveDraws.Add(new ProGpuDirectXSciChartPrimitiveDraw(
+            ProGpuDirectXSciChartPrimitiveKind.PolygonFill,
+            copiedPoints,
+            null,
+            brush,
+            1d,
+            false,
+            0d,
+            _clipRect));
+    }
+
+    public void FillArea(
+        ProGpuDirectXSciChartBrush2D? brush,
+        ReadOnlySpan<ProGpuDirectXSciChartAreaSegment> lines,
+        bool isVerticalChart,
+        double gradientRotationAngle)
+    {
+        FillArea(brush, lines, lines.Length, isVerticalChart, gradientRotationAngle);
+    }
+
+    public void FillArea(
+        ProGpuDirectXSciChartBrush2D? brush,
+        ReadOnlySpan<ProGpuDirectXSciChartAreaSegment> lines,
+        int count,
+        bool isVerticalChart,
+        double gradientRotationAngle)
+    {
+        ThrowIfDisposed();
+        ValidatePointRange(lines.Length, count, minCount: 2, shapeName: "area fills");
+        ValidateGradientRotationAngle(gradientRotationAngle);
+        brush ??= ProGpuDirectXSciChartBrush2D.Transparent;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedLines = lines[..count].ToArray();
+        var vertexBuffer = CreateAreaFillVertexBuffer(copiedLines, brush.ColorArgb, out var submittedVertexCount);
+        if (vertexBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        DrawSolidColorBuffer(
+            vertexBuffer,
+            GetColumnFillPipeline(RenderTarget.Descriptor.Format),
+            submittedVertexCount);
+
+        _primitiveDraws.Add(new ProGpuDirectXSciChartPrimitiveDraw(
+            ProGpuDirectXSciChartPrimitiveKind.AreaFill,
+            CopyAreaPoints(copiedLines),
+            null,
+            brush,
+            1d,
+            isVerticalChart,
+            gradientRotationAngle,
+            _clipRect));
     }
 
     public void DrawLinesBatch(
@@ -1413,6 +1626,174 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         _context.SetVertexBuffer(vertexBuffer);
         _context.Draw(vertexCount);
         _transientResources.Add(vertexBuffer);
+    }
+
+    private void DrawPrimitiveLineCore(
+        ProGpuDirectXSciChartPrimitiveKind kind,
+        ProGpuDirectXSciChartPen2D? pen,
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
+        int count)
+    {
+        ThrowIfDisposed();
+        ValidatePointRange(points.Length, count, minCount: 2, shapeName: "line primitives");
+        pen ??= ProGpuDirectXSciChartPen2D.Default;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedPoints = points[..count].ToArray();
+        var lineVertices = CreateLineVertices(copiedPoints, pen.ColorArgb);
+        var vertexBuffer = CreateLineBatchVertexBuffer(
+            lineVertices,
+            default,
+            pen,
+            isStrips: true,
+            isDigital: false,
+            isDrawNanAsGaps: true,
+            out var submittedVertexCount,
+            out var usesTriangleTopology);
+        if (vertexBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        DrawSolidColorBuffer(
+            vertexBuffer,
+            usesTriangleTopology
+                ? GetColumnFillPipeline(RenderTarget.Descriptor.Format)
+                : GetLinePipeline(RenderTarget.Descriptor.Format),
+            submittedVertexCount);
+
+        _primitiveDraws.Add(new ProGpuDirectXSciChartPrimitiveDraw(
+            kind,
+            copiedPoints,
+            pen,
+            null,
+            1d,
+            false,
+            0d,
+            _clipRect));
+    }
+
+    private static ProGpuDirectXSciChartColorVertex[] CreateLineVertices(
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
+        uint colorArgb)
+    {
+        var vertices = new ProGpuDirectXSciChartColorVertex[points.Length];
+        for (var i = 0; i < points.Length; i++)
+        {
+            var point = points[i];
+            vertices[i] = new ProGpuDirectXSciChartColorVertex(point.X, point.Y, 0f, colorArgb);
+        }
+
+        return vertices;
+    }
+
+    private ProGpuDirectXBuffer? CreateRectangleFillVertexBuffer(
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2,
+        uint colorArgb,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(36);
+        if (TryGetPrimitiveRect(pt1, pt2, out var left, out var top, out var right, out var bottom)
+            && HasVisibleColor(colorArgb))
+        {
+            AppendSolidColorQuad(vertexData, left, top, right, bottom, colorArgb);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitiveRectangleFillVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreatePolygonFillVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
+        uint colorArgb,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(Math.Max(points.Length - 2, 0) * 18));
+        if (HasVisibleColor(colorArgb)
+            && HasFinitePoint(points[0]))
+        {
+            var origin = points[0];
+            for (var i = 1; i < points.Length - 1; i++)
+            {
+                var pt1 = points[i];
+                var pt2 = points[i + 1];
+                if (!HasFinitePoint(pt1)
+                    || !HasFinitePoint(pt2))
+                {
+                    continue;
+                }
+
+                AppendSolidColorVertex(vertexData, origin.X, origin.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, pt1.X, pt1.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, pt2.X, pt2.Y, colorArgb);
+            }
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitivePolygonFillVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreateAreaFillVertexBuffer(
+        ReadOnlySpan<ProGpuDirectXSciChartAreaSegment> lines,
+        uint colorArgb,
+        out uint submittedVertexCount)
+    {
+        var vertexData = new List<float>(checked(Math.Max(lines.Length - 1, 0) * 36));
+        if (HasVisibleColor(colorArgb))
+        {
+            for (var i = 0; i < lines.Length - 1; i++)
+            {
+                var start = lines[i];
+                var end = lines[i + 1];
+                if (!HasFiniteAreaSegment(start)
+                    || !HasFiniteAreaSegment(end))
+                {
+                    continue;
+                }
+
+                AppendSolidColorVertex(vertexData, start.Start.X, start.Start.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, end.Start.X, end.Start.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, end.End.X, end.End.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, start.Start.X, start.Start.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, end.End.X, end.End.Y, colorArgb);
+                AppendSolidColorVertex(vertexData, start.End.X, start.End.Y, colorArgb);
+            }
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitiveAreaFillVertices", out submittedVertexCount);
+    }
+
+    private void AppendSolidColorQuad(
+        List<float> vertexData,
+        float left,
+        float top,
+        float right,
+        float bottom,
+        uint colorArgb)
+    {
+        AppendSolidColorVertex(vertexData, left, top, colorArgb);
+        AppendSolidColorVertex(vertexData, right, top, colorArgb);
+        AppendSolidColorVertex(vertexData, right, bottom, colorArgb);
+        AppendSolidColorVertex(vertexData, left, top, colorArgb);
+        AppendSolidColorVertex(vertexData, right, bottom, colorArgb);
+        AppendSolidColorVertex(vertexData, left, bottom, colorArgb);
+    }
+
+    private static ProGpuDirectXSciChartPoint[] CopyAreaPoints(
+        ReadOnlySpan<ProGpuDirectXSciChartAreaSegment> lines)
+    {
+        var points = new ProGpuDirectXSciChartPoint[checked(lines.Length * 2)];
+        for (var i = 0; i < lines.Length; i++)
+        {
+            points[i * 2] = lines[i].Start;
+            points[(i * 2) + 1] = lines[i].End;
+        }
+
+        return points;
     }
 
     private ProGpuDirectXBuffer? CreateMountainFillVertexBuffer(
@@ -2685,6 +3066,51 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
     }
 
+    private static void ValidatePointRange(
+        int pointLength,
+        int count,
+        int minCount,
+        string shapeName)
+    {
+        if (count < minCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), $"SciChart {shapeName} require at least {minCount} point(s).");
+        }
+
+        if (count > pointLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), $"SciChart {shapeName} point count exceeds the supplied point span.");
+        }
+    }
+
+    private static void ValidateOpacity(double opacity)
+    {
+        if (!double.IsFinite(opacity) || opacity < 0d || opacity > 1d)
+        {
+            throw new ArgumentOutOfRangeException(nameof(opacity), "SciChart primitive opacity must be finite and between 0 and 1.");
+        }
+    }
+
+    private static void ValidateGradientRotationAngle(double gradientRotationAngle)
+    {
+        if (!double.IsFinite(gradientRotationAngle))
+        {
+            throw new ArgumentOutOfRangeException(nameof(gradientRotationAngle), "SciChart area-fill gradient rotation angle must be finite.");
+        }
+    }
+
+    private static uint ApplyOpacity(uint colorArgb, double opacity)
+    {
+        if (opacity >= 1d)
+        {
+            return colorArgb;
+        }
+
+        var alpha = (int)((colorArgb >> 24) & 0xFF);
+        var adjustedAlpha = (uint)Math.Clamp((int)Math.Round(alpha * opacity, MidpointRounding.AwayFromZero), 0, 255);
+        return (colorArgb & 0x00FFFFFFu) | (adjustedAlpha << 24);
+    }
+
     private static void ValidateColumnVertexRange(int vertexLength, int count)
     {
         if (count <= 0)
@@ -2803,6 +3229,18 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             && float.IsFinite(vertex.Y1);
     }
 
+    private static bool HasFinitePoint(ProGpuDirectXSciChartPoint point)
+    {
+        return float.IsFinite(point.X)
+            && float.IsFinite(point.Y);
+    }
+
+    private static bool HasFiniteAreaSegment(ProGpuDirectXSciChartAreaSegment segment)
+    {
+        return HasFinitePoint(segment.Start)
+            && HasFinitePoint(segment.End);
+    }
+
     private static uint GetPaletteColor(IReadOnlyList<uint>? colors, int index, uint fallbackColorArgb)
     {
         return colors is not null && (uint)index < (uint)colors.Count
@@ -2874,6 +3312,28 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             ? pen.ColorArgb
             : vertex.ColorArgb;
         return HasVisibleColor(colorArgb);
+    }
+
+    private static bool TryGetPrimitiveRect(
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2,
+        out float left,
+        out float top,
+        out float right,
+        out float bottom)
+    {
+        if (!HasFinitePoint(pt1)
+            || !HasFinitePoint(pt2))
+        {
+            left = top = right = bottom = 0f;
+            return false;
+        }
+
+        left = MathF.Min(pt1.X, pt2.X);
+        right = MathF.Max(pt1.X, pt2.X);
+        top = MathF.Min(pt1.Y, pt2.Y);
+        bottom = MathF.Max(pt1.Y, pt2.Y);
+        return left != right && top != bottom;
     }
 
     private static bool HasFiniteFinancialVertex(ProGpuDirectXSciChartOhlcCandleVertex vertex)
