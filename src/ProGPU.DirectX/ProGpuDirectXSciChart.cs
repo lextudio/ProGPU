@@ -263,6 +263,25 @@ public sealed record ProGpuDirectXSciChartXyzSeries3DOptions
     public Vector3 Normal { get; init; } = new(0f, 0f, 1f);
 }
 
+public sealed record ProGpuDirectXSciChartWaterfall3DOptions
+{
+    public ProGpuDirectXSciChartDoubleRange? XRange { get; init; }
+
+    public ProGpuDirectXSciChartDoubleRange? YRange { get; init; }
+
+    public ProGpuDirectXSciChartDoubleRange? ZRange { get; init; }
+
+    public bool NormalizeToUnitCube { get; init; } = true;
+
+    public float BaseY { get; init; } = -1f;
+
+    public uint LowColorArgb { get; init; } = 0xFF1668C7;
+
+    public uint HighColorArgb { get; init; } = 0xFFFFD166;
+
+    public Vector3 Normal { get; init; } = new(0f, 0f, 1f);
+}
+
 public readonly record struct ProGpuDirectXSciChartVertexTransform(bool SwapAxis = false);
 
 public enum ProGpuDirectXSciChartPrimitiveKind
@@ -430,6 +449,23 @@ public sealed record ProGpuDirectXSciChartSurfaceMesh3DDraw(
     int Rows,
     Vector2 XRange,
     Vector2 ZRange,
+    uint LowColorArgb,
+    uint HighColorArgb,
+    IReadOnlyList<ProGpuDirectXSciChartVertex3D> Vertices,
+    IReadOnlyList<uint> Indices,
+    Matrix4x4 WorldViewProjection,
+    Vector3 LightDirection,
+    DxCullMode CullMode,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartWaterfall3DDraw(
+    IReadOnlyList<float> Heights,
+    int Columns,
+    int Rows,
+    ProGpuDirectXSciChartDoubleRange XRange,
+    ProGpuDirectXSciChartDoubleRange YRange,
+    ProGpuDirectXSciChartDoubleRange ZRange,
+    float BaseY,
     uint LowColorArgb,
     uint HighColorArgb,
     IReadOnlyList<ProGpuDirectXSciChartVertex3D> Vertices,
@@ -5699,6 +5735,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
     private readonly List<ProGpuDirectXSciChartMesh3DDraw> _meshDraws = new();
     private readonly List<ProGpuDirectXSciChartTriangleStrip3DDraw> _triangleStripDraws = new();
     private readonly List<ProGpuDirectXSciChartSurfaceMesh3DDraw> _surfaceMeshDraws = new();
+    private readonly List<ProGpuDirectXSciChartWaterfall3DDraw> _waterfallDraws = new();
     private readonly Dictionary<(DxPrimitiveTopology Topology, DxCullMode CullMode), ProGpuDirectXGraphicsPipeline> _pipelines = new();
     private ProGpuDirectXShader? _vertexShader;
     private ProGpuDirectXShader? _pixelShader;
@@ -5751,6 +5788,8 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
 
     public IReadOnlyList<ProGpuDirectXSciChartSurfaceMesh3DDraw> SurfaceMeshDraws => _surfaceMeshDraws;
 
+    public IReadOnlyList<ProGpuDirectXSciChartWaterfall3DDraw> WaterfallDraws => _waterfallDraws;
+
     public void BeginFrame()
     {
         ThrowIfDisposed();
@@ -5759,6 +5798,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         _meshDraws.Clear();
         _triangleStripDraws.Clear();
         _surfaceMeshDraws.Clear();
+        _waterfallDraws.Clear();
         _clipRect = null;
     }
 
@@ -5969,6 +6009,65 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             resolvedZRange,
             lowColorArgb,
             highColorArgb,
+            vertices,
+            indices,
+            worldViewProjection,
+            light,
+            cullMode,
+            _clipRect));
+        _transientResources.Add(vertexBuffer);
+        _transientResources.Add(indexBuffer);
+        _transientResources.Add(cameraBuffer);
+    }
+
+    public void DrawWaterfallDataSeries(
+        ReadOnlySpan<float> heights,
+        int columns,
+        int rows,
+        Matrix4x4 worldViewProjection,
+        ProGpuDirectXSciChartWaterfall3DOptions? options = null,
+        Vector3? lightDirection = null,
+        DxCullMode cullMode = DxCullMode.None)
+    {
+        ThrowIfDisposed();
+        options ??= new ProGpuDirectXSciChartWaterfall3DOptions();
+        ValidateWaterfallDataSeries(heights, columns, rows, options);
+        ValidateMatrix(worldViewProjection);
+        if (!Enum.IsDefined(cullMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(cullMode), "Unknown SciChart 3D waterfall cull mode.");
+        }
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedHeights = heights.ToArray();
+        var xRange = ResolveWaterfallRange(options.XRange, columns);
+        var yRange = ResolveWaterfallHeightRange(copiedHeights, options.YRange);
+        var zRange = ResolveWaterfallRange(options.ZRange, rows);
+        var vertices = CreateWaterfallVertices(copiedHeights, columns, rows, options, xRange, yRange, zRange);
+        var indices = CreateWaterfallIndices(columns, rows);
+        var light = ResolveLightDirection(lightDirection);
+        var vertexBuffer = CreateVertexBuffer(vertices);
+        var indexBuffer = CreateIndexBuffer(indices);
+        var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
+        var pipeline = GetPipeline(DxPrimitiveTopology.TriangleList, cullMode);
+
+        SetDrawState(pipeline, vertexBuffer, cameraBuffer);
+        _context.SetIndexBuffer(indexBuffer, DxIndexFormat.UInt32);
+        _context.DrawIndexed((uint)indices.Length, indexFormat: DxIndexFormat.UInt32);
+        _waterfallDraws.Add(new ProGpuDirectXSciChartWaterfall3DDraw(
+            copiedHeights,
+            columns,
+            rows,
+            xRange,
+            yRange,
+            zRange,
+            options.BaseY,
+            options.LowColorArgb,
+            options.HighColorArgb,
             vertices,
             indices,
             worldViewProjection,
@@ -6334,6 +6433,76 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             Lerp(zRange.X, zRange.Y, rows == 1 ? 0f : row / (float)(rows - 1)));
     }
 
+    private static ProGpuDirectXSciChartVertex3D[] CreateWaterfallVertices(
+        ReadOnlySpan<float> heights,
+        int columns,
+        int rows,
+        ProGpuDirectXSciChartWaterfall3DOptions options,
+        ProGpuDirectXSciChartDoubleRange xRange,
+        ProGpuDirectXSciChartDoubleRange yRange,
+        ProGpuDirectXSciChartDoubleRange zRange)
+    {
+        var normal = Vector3.Normalize(options.Normal);
+        var vertices = new ProGpuDirectXSciChartVertex3D[checked(rows * columns * 2)];
+        for (var row = 0; row < rows; row++)
+        {
+            var z = ToSeriesCoordinate(row, zRange, options.NormalizeToUnitCube);
+            for (var column = 0; column < columns; column++)
+            {
+                var sourceIndex = checked((row * columns) + column);
+                var height = heights[sourceIndex];
+                var colorWeight = GetRangeWeight(height, yRange);
+                var color = LerpColorArgb(options.LowColorArgb, options.HighColorArgb, colorWeight);
+                var x = ToSeriesCoordinate(column, xRange, options.NormalizeToUnitCube);
+                var y = ToSeriesCoordinate(height, yRange, options.NormalizeToUnitCube);
+                var target = checked(sourceIndex * 2);
+                vertices[target] = new ProGpuDirectXSciChartVertex3D(
+                    x,
+                    y,
+                    z,
+                    normal.X,
+                    normal.Y,
+                    normal.Z,
+                    color);
+                vertices[target + 1] = new ProGpuDirectXSciChartVertex3D(
+                    x,
+                    options.BaseY,
+                    z,
+                    normal.X,
+                    normal.Y,
+                    normal.Z,
+                    color);
+            }
+        }
+
+        return vertices;
+    }
+
+    private static uint[] CreateWaterfallIndices(int columns, int rows)
+    {
+        var indices = new uint[checked(rows * (columns - 1) * 6)];
+        var target = 0;
+        for (var row = 0; row < rows; row++)
+        {
+            for (var column = 0; column < columns - 1; column++)
+            {
+                var topLeft = checked((uint)(((row * columns) + column) * 2));
+                var bottomLeft = topLeft + 1;
+                var topRight = topLeft + 2;
+                var bottomRight = topRight + 1;
+
+                indices[target++] = topLeft;
+                indices[target++] = bottomLeft;
+                indices[target++] = topRight;
+                indices[target++] = topRight;
+                indices[target++] = bottomLeft;
+                indices[target++] = bottomRight;
+            }
+        }
+
+        return indices;
+    }
+
     private static ProGpuDirectXSciChartVertex3D[] CreateXyzSeriesVertices(
         ReadOnlySpan<ProGpuDirectXSciChartXyzPoint3D> points,
         ProGpuDirectXSciChartXyzSeries3DOptions? options,
@@ -6405,6 +6574,42 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         return new ProGpuDirectXSciChartDoubleRange(minimum, maximum);
     }
 
+    private static ProGpuDirectXSciChartDoubleRange ResolveWaterfallRange(
+        ProGpuDirectXSciChartDoubleRange? requestedRange,
+        int count)
+    {
+        if (requestedRange is { } range)
+        {
+            ValidateXyzRange(range);
+            return range;
+        }
+
+        return count <= 1
+            ? new ProGpuDirectXSciChartDoubleRange(0d, 0d)
+            : new ProGpuDirectXSciChartDoubleRange(0d, count - 1d);
+    }
+
+    private static ProGpuDirectXSciChartDoubleRange ResolveWaterfallHeightRange(
+        ReadOnlySpan<float> heights,
+        ProGpuDirectXSciChartDoubleRange? requestedRange)
+    {
+        if (requestedRange is { } range)
+        {
+            ValidateXyzRange(range);
+            return range;
+        }
+
+        var minimum = double.PositiveInfinity;
+        var maximum = double.NegativeInfinity;
+        foreach (var height in heights)
+        {
+            minimum = Math.Min(minimum, height);
+            maximum = Math.Max(maximum, height);
+        }
+
+        return new ProGpuDirectXSciChartDoubleRange(minimum, maximum);
+    }
+
     private static float ToSeriesCoordinate(
         double value,
         ProGpuDirectXSciChartDoubleRange range,
@@ -6434,6 +6639,14 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         }
 
         return (float)value;
+    }
+
+    private static float GetRangeWeight(double value, ProGpuDirectXSciChartDoubleRange range)
+    {
+        var span = range.Maximum - range.Minimum;
+        return Math.Abs(span) <= double.Epsilon
+            ? 0.5f
+            : Math.Clamp((float)((value - range.Minimum) / span), 0f, 1f);
     }
 
     private DxRect FullRenderTargetRect =>
@@ -6534,6 +6747,70 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         if (!float.IsFinite(range.X) || !float.IsFinite(range.Y))
         {
             throw new ArgumentOutOfRangeException(parameterName, "SciChart 3D surface mesh ranges must contain finite values.");
+        }
+    }
+
+    private static void ValidateWaterfallDataSeries(
+        ReadOnlySpan<float> heights,
+        int columns,
+        int rows,
+        ProGpuDirectXSciChartWaterfall3DOptions options)
+    {
+        if (columns < 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(columns), "SciChart 3D waterfall series require at least two columns.");
+        }
+
+        if (rows < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rows), "SciChart 3D waterfall series require at least one row.");
+        }
+
+        var expectedHeightCount = checked(columns * rows);
+        if (heights.Length != expectedHeightCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(heights), "SciChart 3D waterfall heights must exactly match columns times rows.");
+        }
+
+        foreach (var height in heights)
+        {
+            if (!float.IsFinite(height))
+            {
+                throw new ArgumentOutOfRangeException(nameof(heights), "SciChart 3D waterfall heights must be finite.");
+            }
+        }
+
+        ValidateWaterfallOptions(options);
+    }
+
+    private static void ValidateWaterfallOptions(ProGpuDirectXSciChartWaterfall3DOptions options)
+    {
+        if (options.XRange is { } xRange)
+        {
+            ValidateXyzRange(xRange);
+        }
+
+        if (options.YRange is { } yRange)
+        {
+            ValidateXyzRange(yRange);
+        }
+
+        if (options.ZRange is { } zRange)
+        {
+            ValidateXyzRange(zRange);
+        }
+
+        if (!float.IsFinite(options.BaseY))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "SciChart 3D waterfall base coordinates must be finite.");
+        }
+
+        if (!float.IsFinite(options.Normal.X) ||
+            !float.IsFinite(options.Normal.Y) ||
+            !float.IsFinite(options.Normal.Z) ||
+            options.Normal.LengthSquared() <= 0.000001f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "SciChart 3D waterfall normals must be finite and non-zero.");
         }
     }
 

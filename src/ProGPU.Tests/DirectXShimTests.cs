@@ -716,6 +716,76 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContext3DDrawsWaterfallDataSeriesThroughNativeMeshPath()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext3D(device, 64, 64);
+        float[] heights = [0f, 1f, 2f, 3f, 4f, 5f];
+        var options = new ProGpuDirectXSciChartWaterfall3DOptions
+        {
+            LowColorArgb = 0xFF1455D9,
+            HighColorArgb = 0xFFFFD166,
+            Normal = new Vector3(0f, 0f, 1f)
+        };
+
+        renderContext.SetClipRect(new DxRect(2, 4, 40, 42));
+        renderContext.DrawWaterfallDataSeries(
+            heights,
+            columns: 3,
+            rows: 2,
+            worldViewProjection: Matrix4x4.Identity,
+            options,
+            new Vector3(0f, 0f, 1f),
+            DxCullMode.None);
+
+        Assert.Single(renderContext.WaterfallDraws);
+        Assert.Equal(new DxRect(2, 4, 40, 42), renderContext.WaterfallDraws[0].ClipRect);
+        Assert.Equal(12, renderContext.WaterfallDraws[0].Vertices.Count);
+        Assert.Equal(24, renderContext.WaterfallDraws[0].Indices.Count);
+        Assert.Equal(heights, renderContext.WaterfallDraws[0].Heights);
+        Assert.Equal(new ProGpuDirectXSciChartDoubleRange(0d, 2d), renderContext.WaterfallDraws[0].XRange);
+        Assert.Equal(new ProGpuDirectXSciChartDoubleRange(0d, 5d), renderContext.WaterfallDraws[0].YRange);
+        Assert.Equal(new ProGpuDirectXSciChartDoubleRange(0d, 1d), renderContext.WaterfallDraws[0].ZRange);
+
+        var vertices = renderContext.WaterfallDraws[0].Vertices;
+        Assert.Equal(-1f, vertices[0].X);
+        Assert.Equal(-1f, vertices[0].Y);
+        Assert.Equal(-1f, vertices[0].Z);
+        Assert.Equal(0xFF1455D9u, vertices[0].ColorArgb);
+        Assert.Equal(-1f, vertices[1].Y);
+        Assert.Equal(1f, vertices[^2].X);
+        Assert.Equal(1f, vertices[^2].Y);
+        Assert.Equal(1f, vertices[^2].Z);
+        Assert.Equal(0xFFFFD166u, vertices[^2].ColorArgb);
+        Assert.Equal(-1f, vertices[^1].Y);
+        Assert.Equal(DxPrimitiveTopology.TriangleList, renderContext.ImmediateContext.GraphicsPipeline?.Descriptor.Topology);
+        Assert.Equal(ProGpuDirectXCommandKind.DrawIndexed, renderContext.ImmediateContext.Commands[^1].Kind);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawWaterfallDataSeries([0f], columns: 1, rows: 1, worldViewProjection: Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawWaterfallDataSeries([0f, 1f], columns: 2, rows: 0, worldViewProjection: Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawWaterfallDataSeries([0f, 1f, 2f], columns: 2, rows: 2, worldViewProjection: Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawWaterfallDataSeries([0f, float.NaN], columns: 2, rows: 1, worldViewProjection: Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawWaterfallDataSeries(
+                [0f, 1f],
+                columns: 2,
+                rows: 1,
+                worldViewProjection: Matrix4x4.Identity,
+                new ProGpuDirectXSciChartWaterfall3DOptions { Normal = Vector3.Zero }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawWaterfallDataSeries(
+                [0f, 1f],
+                columns: 2,
+                rows: 1,
+                worldViewProjection: Matrix4x4.Identity,
+                new ProGpuDirectXSciChartWaterfall3DOptions { BaseY = float.NaN }));
+    }
+
+    [Fact]
     public void SciChartRenderContextRecordsTextDrawsAndClip()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -3765,6 +3835,55 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart 3D surface mesh clip, actual: {clippedOut}");
         Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart 3D surface mesh clip, actual: {clippedOut}");
         Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart 3D surface mesh clip, actual: {clippedOut}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChart3DWaterfallCommandsWithClip()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext3D(
+            device,
+            32,
+            32,
+            DxResourceFormat.R8G8B8A8Unorm);
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 16, 32));
+        renderContext.DrawWaterfallDataSeries(
+            [0.8f, 0.8f],
+            columns: 2,
+            rows: 1,
+            worldViewProjection: Matrix4x4.Identity,
+            new ProGpuDirectXSciChartWaterfall3DOptions
+            {
+                YRange = new ProGpuDirectXSciChartDoubleRange(-0.8d, 0.8d),
+                BaseY = -1f,
+                LowColorArgb = 0xFF00FF00,
+                HighColorArgb = 0xFF00FF00,
+                Normal = new Vector3(0f, 0f, 1f)
+            },
+            new Vector3(0f, 0f, 1f),
+            DxCullMode.None);
+        renderContext.Flush();
+
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+        Assert.Single(renderContext.WaterfallDraws);
+        Assert.Equal(DxPrimitiveTopology.TriangleList, renderContext.ImmediateContext.GraphicsPipeline?.Descriptor.Topology);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var clippedIn = ReadRgbaPixel(targetPixels, 32, 8, 16);
+        Assert.True(clippedIn.R < 50, $"Expected waterfall low red pixel inside clip, actual: {clippedIn}");
+        Assert.True(clippedIn.G > 120, $"Expected visible waterfall green pixel inside clip, actual: {clippedIn}");
+        Assert.True(clippedIn.B < 50, $"Expected waterfall low blue pixel inside clip, actual: {clippedIn}");
+        Assert.True(clippedIn.A > 200, $"Expected opaque waterfall pixel inside clip, actual: {clippedIn}");
+
+        var clippedOut = ReadRgbaPixel(targetPixels, 32, 24, 16);
+        Assert.True(clippedOut.R < 50, $"Expected black pixel outside SciChart 3D waterfall clip, actual: {clippedOut}");
+        Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart 3D waterfall clip, actual: {clippedOut}");
+        Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart 3D waterfall clip, actual: {clippedOut}");
+        Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart 3D waterfall clip, actual: {clippedOut}");
     }
 
     [Fact]
