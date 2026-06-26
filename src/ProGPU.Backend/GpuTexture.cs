@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using Silk.NET.Core.Native;
 using Silk.NET.WebGPU;
@@ -19,6 +20,11 @@ public enum GpuTextureDimension
 
 public unsafe class GpuTexture : IDisposable
 {
+    static GpuTexture()
+    {
+        WgpuContext.Disposing += ReleaseMipGeneratorCache;
+    }
+
     private const string MipGeneratorShader = """
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -50,6 +56,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 """;
 
     private static long s_idCounter = 0;
+    private static readonly object s_mipGeneratorCacheLock = new();
+    private static readonly Dictionary<WgpuContext, MipGeneratorResourceCache> s_mipGeneratorCaches = new();
     public static event Action<ulong>? OnDisposedWithId;
 
     private readonly WgpuContext _context;
@@ -73,6 +81,124 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     private bool _isDisposed;
     public bool IsDisposed => _isDisposed;
+
+    private readonly unsafe struct MipGeneratorResources
+    {
+        public MipGeneratorResources(
+            Sampler* sampler,
+            BindGroupLayout* bindGroupLayout,
+            RenderPipeline* pipeline)
+        {
+            Sampler = sampler;
+            BindGroupLayout = bindGroupLayout;
+            Pipeline = pipeline;
+        }
+
+        public Sampler* Sampler { get; }
+
+        public BindGroupLayout* BindGroupLayout { get; }
+
+        public RenderPipeline* Pipeline { get; }
+    }
+
+    private sealed unsafe class MipGeneratorResourceCache
+    {
+        private readonly WgpuContext _context;
+        private readonly object _lock = new();
+        private readonly Dictionary<TextureFormat, IntPtr> _pipelines = new();
+        private IntPtr _shader;
+        private IntPtr _sampler;
+        private IntPtr _bindGroupLayout;
+        private IntPtr _pipelineLayout;
+
+        public MipGeneratorResourceCache(WgpuContext context)
+        {
+            _context = context;
+        }
+
+        public MipGeneratorResources GetOrCreate(TextureFormat format)
+        {
+            if (_context.IsDisposed)
+            {
+                throw new ObjectDisposedException(nameof(WgpuContext));
+            }
+
+            lock (_lock)
+            {
+                EnsureCommonResources();
+
+                if (!_pipelines.TryGetValue(format, out var pipeline))
+                {
+                    pipeline = (IntPtr)CreateMipGeneratorPipeline(
+                        _context,
+                        (ShaderModule*)_shader,
+                        (PipelineLayout*)_pipelineLayout,
+                        format);
+                    _pipelines.Add(format, pipeline);
+                }
+
+                return new MipGeneratorResources(
+                    (Sampler*)_sampler,
+                    (BindGroupLayout*)_bindGroupLayout,
+                    (RenderPipeline*)pipeline);
+            }
+        }
+
+        public void QueueDisposal()
+        {
+            lock (_lock)
+            {
+                if (!_context.IsDisposed)
+                {
+                    foreach (var pipeline in _pipelines.Values)
+                    {
+                        _context.QueueRenderPipelineDisposal(pipeline);
+                    }
+
+                    _context.QueuePipelineLayoutDisposal(_pipelineLayout);
+                    _context.QueueBindGroupLayoutDisposal(_bindGroupLayout);
+                    _context.QueueSamplerDisposal(_sampler);
+                    _context.QueueShaderModuleDisposal(_shader);
+                }
+
+                _pipelines.Clear();
+                _pipelineLayout = IntPtr.Zero;
+                _bindGroupLayout = IntPtr.Zero;
+                _sampler = IntPtr.Zero;
+                _shader = IntPtr.Zero;
+            }
+        }
+
+        private void EnsureCommonResources()
+        {
+            if (_shader != IntPtr.Zero)
+            {
+                return;
+            }
+
+            ShaderModule* shader = null;
+            Sampler* sampler = null;
+            BindGroupLayout* bindGroupLayout = null;
+            PipelineLayout* pipelineLayout = null;
+            try
+            {
+                shader = CreateMipGeneratorShaderModule(_context);
+                sampler = CreateMipGeneratorSampler(_context);
+                bindGroupLayout = CreateMipGeneratorBindGroupLayout(_context);
+                pipelineLayout = CreateMipGeneratorPipelineLayout(_context, bindGroupLayout);
+
+                _shader = (IntPtr)shader;
+                _sampler = (IntPtr)sampler;
+                _bindGroupLayout = (IntPtr)bindGroupLayout;
+                _pipelineLayout = (IntPtr)pipelineLayout;
+            }
+            catch
+            {
+                ReleaseMipGeneratorResourcesNow(_context, shader, sampler, null, bindGroupLayout, pipelineLayout);
+                throw;
+            }
+        }
+    }
 
     public GpuTexture(
         WgpuContext context,
@@ -441,20 +567,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         var layers = arrayLayerCount ?? (DepthOrArrayLayers - baseArrayLayer);
         var wgpu = _context.Wgpu;
-        ShaderModule* shader = null;
-        Sampler* sampler = null;
-        BindGroupLayout* bindGroupLayout = null;
-        PipelineLayout* pipelineLayout = null;
-        RenderPipeline* pipeline = null;
         CommandEncoder* encoder = null;
         CommandBuffer* commandBuffer = null;
         try
         {
-            shader = CreateMipGeneratorShaderModule();
-            sampler = CreateMipGeneratorSampler();
-            bindGroupLayout = CreateMipGeneratorBindGroupLayout();
-            pipelineLayout = CreateMipGeneratorPipelineLayout(bindGroupLayout);
-            pipeline = CreateMipGeneratorPipeline(shader, pipelineLayout);
+            var resources = GetMipGeneratorResources();
 
             var encoderDesc = new CommandEncoderDescriptor();
             encoder = wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
@@ -469,9 +586,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 {
                     GenerateMipLevel2DLinear(
                         encoder,
-                        pipeline,
-                        bindGroupLayout,
-                        sampler,
+                        resources.Pipeline,
+                        resources.BindGroupLayout,
+                        resources.Sampler,
                         sourceMipLevel: destinationMip - 1,
                         destinationMipLevel: destinationMip,
                         arrayLayer);
@@ -496,8 +613,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             {
                 wgpu.CommandEncoderRelease(encoder);
             }
-
-            ReleaseMipGeneratorResources(shader, sampler, pipeline, bindGroupLayout, pipelineLayout);
         }
 
         Generation++;
@@ -568,7 +683,36 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    private ShaderModule* CreateMipGeneratorShaderModule()
+    private MipGeneratorResources GetMipGeneratorResources()
+    {
+        MipGeneratorResourceCache cache;
+        lock (s_mipGeneratorCacheLock)
+        {
+            if (!s_mipGeneratorCaches.TryGetValue(_context, out cache!))
+            {
+                cache = new MipGeneratorResourceCache(_context);
+                s_mipGeneratorCaches.Add(_context, cache);
+            }
+        }
+
+        return cache.GetOrCreate(Format);
+    }
+
+    private static void ReleaseMipGeneratorCache(WgpuContext context)
+    {
+        MipGeneratorResourceCache? cache;
+        lock (s_mipGeneratorCacheLock)
+        {
+            if (!s_mipGeneratorCaches.Remove(context, out cache))
+            {
+                return;
+            }
+        }
+
+        cache.QueueDisposal();
+    }
+
+    private static ShaderModule* CreateMipGeneratorShaderModule(WgpuContext context)
     {
         var sourcePtr = SilkMarshal.StringToPtr(MipGeneratorShader);
         var labelPtr = SilkMarshal.StringToPtr("ProGPU Mip Generator Shader");
@@ -589,7 +733,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 Label = (byte*)labelPtr
             };
 
-            var module = _context.Wgpu.DeviceCreateShaderModule(_context.Device, &moduleDesc);
+            var module = context.Wgpu.DeviceCreateShaderModule(context.Device, &moduleDesc);
             if (module == null)
             {
                 throw new InvalidOperationException("Failed to create mip generator shader module.");
@@ -604,7 +748,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    private Sampler* CreateMipGeneratorSampler()
+    private static Sampler* CreateMipGeneratorSampler(WgpuContext context)
     {
         var samplerDesc = new SamplerDescriptor
         {
@@ -619,7 +763,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             MaxAnisotropy = 1
         };
 
-        var sampler = _context.Wgpu.DeviceCreateSampler(_context.Device, &samplerDesc);
+        var sampler = context.Wgpu.DeviceCreateSampler(context.Device, &samplerDesc);
         if (sampler == null)
         {
             throw new InvalidOperationException("Failed to create mip generator sampler.");
@@ -628,7 +772,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return sampler;
     }
 
-    private BindGroupLayout* CreateMipGeneratorBindGroupLayout()
+    private static BindGroupLayout* CreateMipGeneratorBindGroupLayout(WgpuContext context)
     {
         var entries = stackalloc BindGroupLayoutEntry[2];
         entries[0] = new BindGroupLayoutEntry
@@ -657,7 +801,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             Entries = entries
         };
 
-        var layout = _context.Wgpu.DeviceCreateBindGroupLayout(_context.Device, &desc);
+        var layout = context.Wgpu.DeviceCreateBindGroupLayout(context.Device, &desc);
         if (layout == null)
         {
             throw new InvalidOperationException("Failed to create mip generator bind-group layout.");
@@ -666,7 +810,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return layout;
     }
 
-    private PipelineLayout* CreateMipGeneratorPipelineLayout(BindGroupLayout* bindGroupLayout)
+    private static PipelineLayout* CreateMipGeneratorPipelineLayout(WgpuContext context, BindGroupLayout* bindGroupLayout)
     {
         var layouts = stackalloc BindGroupLayout*[1];
         layouts[0] = bindGroupLayout;
@@ -676,7 +820,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             BindGroupLayouts = layouts
         };
 
-        var layout = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &desc);
+        var layout = context.Wgpu.DeviceCreatePipelineLayout(context.Device, &desc);
         if (layout == null)
         {
             throw new InvalidOperationException("Failed to create mip generator pipeline layout.");
@@ -685,7 +829,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return layout;
     }
 
-    private RenderPipeline* CreateMipGeneratorPipeline(ShaderModule* shader, PipelineLayout* pipelineLayout)
+    private static RenderPipeline* CreateMipGeneratorPipeline(
+        WgpuContext context,
+        ShaderModule* shader,
+        PipelineLayout* pipelineLayout,
+        TextureFormat format)
     {
         var vertexEntryPtr = SilkMarshal.StringToPtr("vs_main");
         var fragmentEntryPtr = SilkMarshal.StringToPtr("fs_main");
@@ -701,7 +849,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             };
             var colorTarget = new ColorTargetState
             {
-                Format = Format,
+                Format = format,
                 Blend = null,
                 WriteMask = ColorWriteMask.All
             };
@@ -734,7 +882,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 Fragment = &fragmentState
             };
 
-            var pipeline = _context.Wgpu.DeviceCreateRenderPipeline(_context.Device, &pipelineDesc);
+            var pipeline = context.Wgpu.DeviceCreateRenderPipeline(context.Device, &pipelineDesc);
             if (pipeline == null)
             {
                 throw new InvalidOperationException("Failed to create mip generator render pipeline.");
@@ -804,14 +952,15 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         return bindGroup;
     }
 
-    private void ReleaseMipGeneratorResources(
+    private static void ReleaseMipGeneratorResourcesNow(
+        WgpuContext context,
         ShaderModule* shader,
         Sampler* sampler,
         RenderPipeline* pipeline,
         BindGroupLayout* bindGroupLayout,
         PipelineLayout* pipelineLayout)
     {
-        var wgpu = _context.Wgpu;
+        var wgpu = context.Wgpu;
         if (pipeline != null)
         {
             wgpu.RenderPipelineRelease(pipeline);

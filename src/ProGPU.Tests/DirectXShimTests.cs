@@ -7938,6 +7938,67 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void GenerateMipsReusesNativeGpuPathAcrossTexturesAndCalls()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var textureA = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 4,
+            Height = 4,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource |
+                DxTextureUsage.RenderTarget |
+                DxTextureUsage.CopySource,
+            MipLevels = 2
+        });
+        using var textureB = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 8,
+            Height = 8,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource |
+                DxTextureUsage.RenderTarget |
+                DxTextureUsage.CopySource,
+            MipLevels = 2
+        });
+        using var renderTargetA = device.CreateRenderTargetView(textureA);
+        using var renderTargetB = device.CreateRenderTargetView(textureB);
+        using var shaderResourceA = device.CreateShaderResourceView(textureA);
+        using var shaderResourceB = device.CreateShaderResourceView(textureB);
+        using var context = device.CreateImmediateContext();
+
+        GenerateMipFromRenderedClear(context, renderTargetA, shaderResourceA, new DxColor(1f, 0f, 0f, 1f));
+        var redMip = textureA.BackendTexture!.ReadPixels(mipLevel: 1);
+        Assert.True(redMip[0] > 200, $"Expected red mip from first cached-path call, actual R={redMip[0]}.");
+        Assert.True(redMip[1] < 50, $"Expected low green from first cached-path call, actual G={redMip[1]}.");
+
+        GenerateMipFromRenderedClear(context, renderTargetB, shaderResourceB, new DxColor(0f, 1f, 0f, 1f));
+        var greenMip = textureB.BackendTexture!.ReadPixels(mipLevel: 1);
+        Assert.True(greenMip[1] > 200, $"Expected green mip from second cached-path texture, actual G={greenMip[1]}.");
+        Assert.True(greenMip[0] < 50, $"Expected low red from second cached-path texture, actual R={greenMip[0]}.");
+
+        GenerateMipFromRenderedClear(context, renderTargetA, shaderResourceA, new DxColor(0f, 0f, 1f, 1f));
+        var blueMip = textureA.BackendTexture!.ReadPixels(mipLevel: 1);
+        Assert.True(blueMip[2] > 200, $"Expected blue mip from repeated cached-path call, actual B={blueMip[2]}.");
+        Assert.True(blueMip[0] < 50, $"Expected low red from repeated cached-path call, actual R={blueMip[0]}.");
+        Assert.True(blueMip[3] > 200, $"Expected opaque generated mip, actual A={blueMip[3]}.");
+
+        static void GenerateMipFromRenderedClear(
+            ProGpuDirectXDeviceContext context,
+            ProGpuDirectXRenderTargetView renderTargetView,
+            ProGpuDirectXShaderResourceView shaderResourceView,
+            DxColor color)
+        {
+            context.ClearRenderTarget(renderTargetView, color);
+            context.Flush();
+            context.GenerateMips(shaderResourceView);
+            context.ClearRecordedCommands();
+        }
+    }
+
+    [Fact]
     public void TextureMapSupportsMipSubresourcePitchesForNonPowerOfTwoTextures()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
