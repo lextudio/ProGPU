@@ -122,10 +122,8 @@ internal static class ProGpuDirectXFormatConverter
     {
         return format switch
         {
-            DxResourceFormat.R8Unorm => VertexFormat.Unorm8x2,
             DxResourceFormat.R8G8B8A8Unorm or DxResourceFormat.R8G8B8A8UnormSrgb => VertexFormat.Unorm8x4,
             DxResourceFormat.B8G8R8A8Unorm or DxResourceFormat.B8G8R8A8UnormSrgb => VertexFormat.Unorm8x4,
-            DxResourceFormat.R16Float => VertexFormat.Float16x2,
             DxResourceFormat.R32Float => VertexFormat.Float32,
             DxResourceFormat.R32UInt => VertexFormat.Uint32,
             DxResourceFormat.R32SInt => VertexFormat.Sint32,
@@ -138,8 +136,29 @@ internal static class ProGpuDirectXFormatConverter
             DxResourceFormat.R32G32B32A32Float => VertexFormat.Float32x4,
             DxResourceFormat.R32G32B32A32UInt => VertexFormat.Uint32x4,
             DxResourceFormat.R32G32B32A32SInt => VertexFormat.Sint32x4,
-            _ => VertexFormat.Float32x4
+            _ => throw new NotSupportedException($"DirectX resource format {format} does not map to a WebGPU vertex format.")
         };
+    }
+
+    public static bool IsSupportedVertexFormat(DxResourceFormat format)
+    {
+        return format is
+            DxResourceFormat.R8G8B8A8Unorm or
+            DxResourceFormat.R8G8B8A8UnormSrgb or
+            DxResourceFormat.B8G8R8A8Unorm or
+            DxResourceFormat.B8G8R8A8UnormSrgb or
+            DxResourceFormat.R32Float or
+            DxResourceFormat.R32UInt or
+            DxResourceFormat.R32SInt or
+            DxResourceFormat.R32G32Float or
+            DxResourceFormat.R32G32UInt or
+            DxResourceFormat.R32G32SInt or
+            DxResourceFormat.R32G32B32Float or
+            DxResourceFormat.R32G32B32UInt or
+            DxResourceFormat.R32G32B32SInt or
+            DxResourceFormat.R32G32B32A32Float or
+            DxResourceFormat.R32G32B32A32UInt or
+            DxResourceFormat.R32G32B32A32SInt;
     }
 
     public static uint GetVertexFormatSizeInBytes(DxResourceFormat format)
@@ -315,8 +334,6 @@ internal static class ProGpuDirectXFormatConverter
 
     public static GpuTextureAlphaMode ToTextureAlphaMode(DxResourceFormat format)
     {
-        return format is DxResourceFormat.B8G8R8A8Unorm or DxResourceFormat.R8G8B8A8Unorm
-            ? GpuTextureAlphaMode.Premultiplied
-            : GpuTextureAlphaMode.Straight;
+        return GpuTextureAlphaMode.Straight;
     }
 }

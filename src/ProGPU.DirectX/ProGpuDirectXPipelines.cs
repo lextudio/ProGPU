@@ -263,6 +263,11 @@ public sealed class ProGpuDirectXInputLayout
             {
                 throw new ArgumentException($"Input elements map more than one semantic to shader location {shaderLocation}.", nameof(elements));
             }
+
+            if (!ProGpuDirectXFormatConverter.IsSupportedVertexFormat(element.Format))
+            {
+                throw new ArgumentException($"Input element '{element.SemanticName}{element.SemanticIndex}' uses DirectX format {element.Format}, which has no compatible WebGPU vertex format.", nameof(elements));
+            }
         }
     }
 

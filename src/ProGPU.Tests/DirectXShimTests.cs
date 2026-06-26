@@ -2184,6 +2184,29 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.Contains("shader location", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(DxResourceFormat.R8Unorm)]
+    [InlineData(DxResourceFormat.R16Float)]
+    public void InputLayoutRejectsScalarFormatsWithoutWebGpuVertexEquivalent(DxResourceFormat format)
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+
+        var exception = Assert.Throws<ArgumentException>(() => device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "WEIGHT",
+                    Format = format,
+                    ShaderLocation = 0
+                }
+            ]
+        }));
+
+        Assert.Contains("WebGPU vertex format", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void HlslBytecodeInputSignatureInfersIntegerVectorFormats()
     {
@@ -8660,6 +8683,25 @@ float4 PSMain() : SV_Target
 
         using var readMap = texture.Map(DxMapMode.Read, subresource: 1);
         Assert.Equal(mipPixels, readMap.Read<byte>(16));
+    }
+
+    [Theory]
+    [InlineData(DxResourceFormat.R8G8B8A8Unorm)]
+    [InlineData(DxResourceFormat.B8G8R8A8Unorm)]
+    public void GpuBackedDirectXColorTexturesUseStraightAlpha(DxResourceFormat format)
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 1,
+            Height = 1,
+            Format = format,
+            Usage = DxTextureUsage.ShaderResource | DxTextureUsage.CopyDestination | DxTextureUsage.CopySource
+        });
+
+        Assert.Equal(GpuTextureAlphaMode.Straight, texture.BackendTexture!.AlphaMode);
     }
 
     [Fact]
