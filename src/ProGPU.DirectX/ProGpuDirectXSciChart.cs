@@ -220,6 +220,15 @@ public readonly record struct ProGpuDirectXSciChartOhlcCandleVertex(
     uint FillColorArgb,
     uint StrokeColorArgb);
 
+public readonly record struct ProGpuDirectXSciChartVertex3D(
+    float X,
+    float Y,
+    float Z,
+    float NormalX,
+    float NormalY,
+    float NormalZ,
+    uint ColorArgb);
+
 public readonly record struct ProGpuDirectXSciChartVertexTransform(bool SwapAxis = false);
 
 public enum ProGpuDirectXSciChartPrimitiveKind
@@ -329,6 +338,20 @@ public sealed record ProGpuDirectXSciChartHeightTextureContoursDraw(
     float ZStep,
     float StrokeThickness,
     float Opacity,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartPointCloud3DDraw(
+    IReadOnlyList<ProGpuDirectXSciChartVertex3D> Vertices,
+    Matrix4x4 WorldViewProjection,
+    Vector3 LightDirection,
+    DxRect? ClipRect);
+
+public sealed record ProGpuDirectXSciChartMesh3DDraw(
+    IReadOnlyList<ProGpuDirectXSciChartVertex3D> Vertices,
+    IReadOnlyList<uint> Indices,
+    Matrix4x4 WorldViewProjection,
+    Vector3 LightDirection,
+    DxCullMode CullMode,
     DxRect? ClipRect);
 
 public sealed class ProGpuDirectXSciChartTexture2D : IDisposable
@@ -4841,6 +4864,524 @@ fn vs_main(input: VertexIn) -> VertexOut {
         _heightContourPixelShader?.Dispose();
         _textCompositor?.Dispose();
         _context.Dispose();
+        RenderTarget.Dispose();
+        _isDisposed = true;
+    }
+}
+
+public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
+{
+    private readonly ProGpuDirectXDevice _device;
+    private readonly ProGpuDirectXDeviceContext _context;
+    private readonly List<IDisposable> _transientResources = new();
+    private readonly List<ProGpuDirectXSciChartPointCloud3DDraw> _pointCloudDraws = new();
+    private readonly List<ProGpuDirectXSciChartMesh3DDraw> _meshDraws = new();
+    private readonly Dictionary<(DxPrimitiveTopology Topology, DxCullMode CullMode), ProGpuDirectXGraphicsPipeline> _pipelines = new();
+    private ProGpuDirectXShader? _vertexShader;
+    private ProGpuDirectXShader? _pixelShader;
+    private ProGpuDirectXInputLayout? _inputLayout;
+    private DxRect? _clipRect;
+    private bool _isDisposed;
+
+    public ProGpuDirectXSciChartRenderContext3D(
+        ProGpuDirectXDevice device,
+        uint width,
+        uint height,
+        DxResourceFormat renderTargetFormat = DxResourceFormat.R8G8B8A8Unorm)
+    {
+        _device = device ?? throw new ArgumentNullException(nameof(device));
+        _context = device.CreateImmediateContext();
+        RenderTarget = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = width,
+            Height = height,
+            Format = renderTargetFormat,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource | DxTextureUsage.CopyDestination,
+            CpuAccess = DxCpuAccessFlags.Read,
+            Label = "SciChart3DRenderTarget"
+        });
+        DepthStencil = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = width,
+            Height = height,
+            Format = DxResourceFormat.D32Float,
+            Usage = DxTextureUsage.DepthStencil,
+            Label = "SciChart3DDepth"
+        });
+    }
+
+    public ProGpuDirectXDevice Device => _device;
+
+    public ProGpuDirectXDeviceContext ImmediateContext => _context;
+
+    public ProGpuDirectXTexture2D RenderTarget { get; }
+
+    public ProGpuDirectXTexture2D DepthStencil { get; }
+
+    public IReadOnlyList<ProGpuDirectXSciChartPointCloud3DDraw> PointCloudDraws => _pointCloudDraws;
+
+    public IReadOnlyList<ProGpuDirectXSciChartMesh3DDraw> MeshDraws => _meshDraws;
+
+    public void BeginFrame()
+    {
+        ThrowIfDisposed();
+        _pointCloudDraws.Clear();
+        _meshDraws.Clear();
+        _clipRect = null;
+    }
+
+    public void SetClipRect(DxRect? clipRect)
+    {
+        ThrowIfDisposed();
+        if (clipRect is { } rect)
+        {
+            if (rect.Width < 0 || rect.Height < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(clipRect), "SciChart 3D clip rectangles cannot have negative dimensions.");
+            }
+
+            _clipRect = ClampClipRect(rect);
+        }
+        else
+        {
+            _clipRect = null;
+        }
+    }
+
+    public void Clear(DxColor color, float depth = 1f)
+    {
+        ThrowIfDisposed();
+        if (!float.IsFinite(depth))
+        {
+            throw new ArgumentOutOfRangeException(nameof(depth), "SciChart 3D depth clear values must be finite.");
+        }
+
+        _context.SetRenderTargets(RenderTarget, DepthStencil);
+        _context.SetViewport(new DxViewport(0, 0, RenderTarget.Width, RenderTarget.Height));
+        _context.SetScissorRect(FullRenderTargetRect);
+        _context.ClearRenderTarget(RenderTarget, color);
+        _context.ClearDepthStencil(DepthStencil, DxDepthStencilClearFlags.Depth, depth, 0);
+    }
+
+    public void DrawPointCloud(
+        ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices,
+        Matrix4x4 worldViewProjection,
+        Vector3? lightDirection = null)
+    {
+        ThrowIfDisposed();
+        ValidateVertices(vertices, minCount: 1);
+        ValidateMatrix(worldViewProjection);
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices.ToArray();
+        var light = ResolveLightDirection(lightDirection);
+        var vertexBuffer = CreateVertexBuffer(copiedVertices);
+        var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
+        var pipeline = GetPipeline(DxPrimitiveTopology.PointList, DxCullMode.None);
+
+        SetDrawState(pipeline, vertexBuffer, cameraBuffer);
+        _context.Draw((uint)copiedVertices.Length);
+        _pointCloudDraws.Add(new ProGpuDirectXSciChartPointCloud3DDraw(
+            copiedVertices,
+            worldViewProjection,
+            light,
+            _clipRect));
+        _transientResources.Add(vertexBuffer);
+        _transientResources.Add(cameraBuffer);
+    }
+
+    public void DrawTriangleMesh(
+        ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices,
+        ReadOnlySpan<uint> indices,
+        Matrix4x4 worldViewProjection,
+        Vector3? lightDirection = null,
+        DxCullMode cullMode = DxCullMode.Back)
+    {
+        ThrowIfDisposed();
+        ValidateVertices(vertices, minCount: 3);
+        ValidateIndices(indices, vertices.Length);
+        ValidateMatrix(worldViewProjection);
+        if (!Enum.IsDefined(cullMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(cullMode), "Unknown SciChart 3D mesh cull mode.");
+        }
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices.ToArray();
+        var copiedIndices = indices.ToArray();
+        var light = ResolveLightDirection(lightDirection);
+        var vertexBuffer = CreateVertexBuffer(copiedVertices);
+        var indexBuffer = CreateIndexBuffer(copiedIndices);
+        var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
+        var pipeline = GetPipeline(DxPrimitiveTopology.TriangleList, cullMode);
+
+        SetDrawState(pipeline, vertexBuffer, cameraBuffer);
+        _context.SetIndexBuffer(indexBuffer, DxIndexFormat.UInt32);
+        _context.DrawIndexed((uint)copiedIndices.Length, indexFormat: DxIndexFormat.UInt32);
+        _meshDraws.Add(new ProGpuDirectXSciChartMesh3DDraw(
+            copiedVertices,
+            copiedIndices,
+            worldViewProjection,
+            light,
+            cullMode,
+            _clipRect));
+        _transientResources.Add(vertexBuffer);
+        _transientResources.Add(indexBuffer);
+        _transientResources.Add(cameraBuffer);
+    }
+
+    public void Flush(bool clearRecordedCommands = true)
+    {
+        ThrowIfDisposed();
+        _context.Flush(clearRecordedCommands);
+        DisposeTransientResources();
+    }
+
+    public byte[] ReadTargetPixels()
+    {
+        ThrowIfDisposed();
+        return RenderTarget.ReadPixels();
+    }
+
+    private void SetDrawState(
+        ProGpuDirectXGraphicsPipeline pipeline,
+        ProGpuDirectXBuffer vertexBuffer,
+        ProGpuDirectXBuffer cameraBuffer)
+    {
+        _context.SetRenderTargets(RenderTarget, DepthStencil);
+        _context.SetViewport(new DxViewport(0, 0, RenderTarget.Width, RenderTarget.Height));
+        _context.SetScissorRect(_clipRect ?? FullRenderTargetRect);
+        _context.SetGraphicsPipeline(pipeline);
+        _context.SetVertexBuffer(vertexBuffer);
+        _context.SetConstantBuffer(DxShaderStage.Vertex, 0, cameraBuffer);
+    }
+
+    private ProGpuDirectXGraphicsPipeline GetPipeline(DxPrimitiveTopology topology, DxCullMode cullMode)
+    {
+        var key = (topology, cullMode);
+        if (_pipelines.TryGetValue(key, out var pipeline))
+        {
+            return pipeline;
+        }
+
+        EnsurePipelineResources();
+        pipeline = _device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = _vertexShader ?? throw new InvalidOperationException("SciChart 3D vertex shader was not initialized."),
+            PixelShader = _pixelShader ?? throw new InvalidOperationException("SciChart 3D pixel shader was not initialized."),
+            InputLayout = _inputLayout,
+            RenderTargetFormat = RenderTarget.Descriptor.Format,
+            DepthStencilFormat = DxResourceFormat.D32Float,
+            Topology = topology,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = true },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = cullMode },
+            DepthStencilState = new DxDepthStencilStateDescriptor
+            {
+                DepthEnable = true,
+                DepthWriteMask = DxDepthWriteMask.All,
+                DepthFunction = DxComparisonFunction.LessEqual
+            },
+            Label = $"SciChart 3D {topology} {cullMode}"
+        });
+        _pipelines[key] = pipeline;
+        return pipeline;
+    }
+
+    private void EnsurePipelineResources()
+    {
+        _vertexShader ??= _device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SciChart3DVertexShader,
+            EntryPoint = "vs_main",
+            Label = "SciChart 3D Vertex"
+        });
+        _pixelShader ??= _device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SciChart3DPixelShader,
+            EntryPoint = "fs_main",
+            Label = "SciChart 3D Pixel"
+        });
+        _inputLayout ??= _device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Label = "SciChart 3D Vertex Layout",
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "NORMAL",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 12,
+                    ShaderLocation = 1
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    AlignedByteOffset = 24,
+                    ShaderLocation = 2
+                }
+            ]
+        });
+    }
+
+    private ProGpuDirectXBuffer CreateVertexBuffer(IReadOnlyList<ProGpuDirectXSciChartVertex3D> vertices)
+    {
+        var data = new float[checked(vertices.Count * 10)];
+        for (var i = 0; i < vertices.Count; i++)
+        {
+            var vertex = vertices[i];
+            var offset = i * 10;
+            data[offset] = vertex.X;
+            data[offset + 1] = vertex.Y;
+            data[offset + 2] = vertex.Z;
+            var normal = ResolveNormal(vertex);
+            data[offset + 3] = normal.X;
+            data[offset + 4] = normal.Y;
+            data[offset + 5] = normal.Z;
+            WriteColorArgb(data, offset + 6, vertex.ColorArgb);
+        }
+
+        var buffer = _device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = checked((uint)(data.Length * sizeof(float))),
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
+            StrideInBytes = 40,
+            Label = $"SciChart3DVertices {vertices.Count}"
+        });
+        buffer.Write(data);
+        return buffer;
+    }
+
+    private ProGpuDirectXBuffer CreateIndexBuffer(ReadOnlySpan<uint> indices)
+    {
+        var buffer = _device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = checked((uint)(indices.Length * sizeof(uint))),
+            Usage = DxBufferUsage.Index | DxBufferUsage.CopyDestination,
+            StrideInBytes = sizeof(uint),
+            Label = $"SciChart3DIndices {indices.Length}"
+        });
+        buffer.Write(indices);
+        return buffer;
+    }
+
+    private ProGpuDirectXBuffer CreateCameraBuffer(Matrix4x4 worldViewProjection, Vector3 lightDirection)
+    {
+        ReadOnlySpan<float> data =
+        [
+            worldViewProjection.M11, worldViewProjection.M12, worldViewProjection.M13, worldViewProjection.M14,
+            worldViewProjection.M21, worldViewProjection.M22, worldViewProjection.M23, worldViewProjection.M24,
+            worldViewProjection.M31, worldViewProjection.M32, worldViewProjection.M33, worldViewProjection.M34,
+            worldViewProjection.M41, worldViewProjection.M42, worldViewProjection.M43, worldViewProjection.M44,
+            lightDirection.X, lightDirection.Y, lightDirection.Z, 0f
+        ];
+
+        var buffer = _device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = checked((uint)(data.Length * sizeof(float))),
+            Usage = DxBufferUsage.Constant | DxBufferUsage.CopyDestination,
+            Label = "SciChart3DCamera"
+        });
+        buffer.Write(data);
+        return buffer;
+    }
+
+    private DxRect FullRenderTargetRect =>
+        new(0, 0, checked((int)RenderTarget.Width), checked((int)RenderTarget.Height));
+
+    private bool HasEmptyClip => _clipRect is { Width: <= 0 } or { Height: <= 0 };
+
+    private DxRect ClampClipRect(DxRect rect)
+    {
+        var left = Math.Clamp(rect.X, 0, checked((int)RenderTarget.Width));
+        var top = Math.Clamp(rect.Y, 0, checked((int)RenderTarget.Height));
+        var right = Math.Clamp(rect.X + rect.Width, 0, checked((int)RenderTarget.Width));
+        var bottom = Math.Clamp(rect.Y + rect.Height, 0, checked((int)RenderTarget.Height));
+        return new DxRect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+    }
+
+    private static void ValidateVertices(ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices, int minCount)
+    {
+        if (vertices.Length < minCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(vertices), $"SciChart 3D draws require at least {minCount} vertex/vertices.");
+        }
+
+        foreach (var vertex in vertices)
+        {
+            if (!float.IsFinite(vertex.X) ||
+                !float.IsFinite(vertex.Y) ||
+                !float.IsFinite(vertex.Z) ||
+                !float.IsFinite(vertex.NormalX) ||
+                !float.IsFinite(vertex.NormalY) ||
+                !float.IsFinite(vertex.NormalZ))
+            {
+                throw new ArgumentOutOfRangeException(nameof(vertices), "SciChart 3D vertices must contain finite position and normal components.");
+            }
+        }
+    }
+
+    private static void ValidateIndices(ReadOnlySpan<uint> indices, int vertexCount)
+    {
+        if (indices.Length < 3 || indices.Length % 3 != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(indices), "SciChart 3D mesh indices must contain complete triangles.");
+        }
+
+        foreach (var index in indices)
+        {
+            if (index >= vertexCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(indices), "SciChart 3D mesh indices must reference supplied vertices.");
+            }
+        }
+    }
+
+    private static void ValidateMatrix(Matrix4x4 matrix)
+    {
+        if (!float.IsFinite(matrix.M11) || !float.IsFinite(matrix.M12) || !float.IsFinite(matrix.M13) || !float.IsFinite(matrix.M14) ||
+            !float.IsFinite(matrix.M21) || !float.IsFinite(matrix.M22) || !float.IsFinite(matrix.M23) || !float.IsFinite(matrix.M24) ||
+            !float.IsFinite(matrix.M31) || !float.IsFinite(matrix.M32) || !float.IsFinite(matrix.M33) || !float.IsFinite(matrix.M34) ||
+            !float.IsFinite(matrix.M41) || !float.IsFinite(matrix.M42) || !float.IsFinite(matrix.M43) || !float.IsFinite(matrix.M44))
+        {
+            throw new ArgumentOutOfRangeException(nameof(matrix), "SciChart 3D camera matrices must contain finite values.");
+        }
+    }
+
+    private static Vector3 ResolveLightDirection(Vector3? lightDirection)
+    {
+        var light = lightDirection ?? new Vector3(0f, 0f, 1f);
+        if (!float.IsFinite(light.X) || !float.IsFinite(light.Y) || !float.IsFinite(light.Z) || light.LengthSquared() <= 0.000001f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lightDirection), "SciChart 3D light directions must be finite non-zero vectors.");
+        }
+
+        return Vector3.Normalize(light);
+    }
+
+    private static Vector3 ResolveNormal(ProGpuDirectXSciChartVertex3D vertex)
+    {
+        var normal = new Vector3(vertex.NormalX, vertex.NormalY, vertex.NormalZ);
+        return normal.LengthSquared() <= 0.000001f
+            ? new Vector3(0f, 0f, 1f)
+            : Vector3.Normalize(normal);
+    }
+
+    private static void WriteColorArgb(float[] target, int offset, uint colorArgb)
+    {
+        target[offset] = ((colorArgb >> 16) & 0xFF) / 255f;
+        target[offset + 1] = ((colorArgb >> 8) & 0xFF) / 255f;
+        target[offset + 2] = (colorArgb & 0xFF) / 255f;
+        target[offset + 3] = ((colorArgb >> 24) & 0xFF) / 255f;
+    }
+
+    private static string SciChart3DVertexShader => """
+struct Camera {
+    worldViewProjection: mat4x4<f32>,
+    lightDirection: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> CameraData: Camera;
+
+struct VertexIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+};
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec3<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexIn) -> VertexOut {
+    var output: VertexOut;
+    output.position = CameraData.worldViewProjection * vec4<f32>(input.position, 1.0);
+    output.color = input.color;
+    output.normal = input.normal;
+    return output;
+}
+""";
+
+    private static string SciChart3DPixelShader => """
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec3<f32>,
+};
+
+struct Camera {
+    worldViewProjection: mat4x4<f32>,
+    lightDirection: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> CameraData: Camera;
+
+@fragment
+fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
+    let normal = normalize(input.normal);
+    let light = normalize(CameraData.lightDirection.xyz);
+    let diffuse = max(dot(normal, light), 0.0);
+    let shaded = input.color.rgb * (0.25 + diffuse * 0.75);
+    return vec4<f32>(shaded, input.color.a);
+}
+""";
+
+    private void DisposeTransientResources()
+    {
+        foreach (var resource in _transientResources)
+        {
+            resource.Dispose();
+        }
+
+        _transientResources.Clear();
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_isDisposed)
+        {
+            throw new ObjectDisposedException(nameof(ProGpuDirectXSciChartRenderContext3D));
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        DisposeTransientResources();
+        foreach (var pipeline in _pipelines.Values)
+        {
+            pipeline.Dispose();
+        }
+
+        _vertexShader?.Dispose();
+        _pixelShader?.Dispose();
+        _context.Dispose();
+        DepthStencil.Dispose();
         RenderTarget.Dispose();
         _isDisposed = true;
     }

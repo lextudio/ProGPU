@@ -1,6 +1,7 @@
 using ProGPU.Backend;
 using ProGPU.DirectX;
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using Xunit;
 
@@ -502,6 +503,49 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.Equal(DxResourceFormat.R32UInt, uintTexture.Resource.Descriptor.Format);
         Assert.Throws<NotSupportedException>(() =>
             renderContext.DrawTexture(uintTexture, new DxRect(0, 0, 8, 8)));
+    }
+
+    [Fact]
+    public void SciChartRenderContext3DRecordsPointCloudAndTriangleMesh()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext3D(device, 64, 64);
+        ProGpuDirectXSciChartVertex3D[] pointVertices =
+        [
+            new(0f, 0f, 0.5f, 0f, 0f, 1f, 0xFFFFFFFF)
+        ];
+        ProGpuDirectXSciChartVertex3D[] meshVertices =
+        [
+            new(-0.75f, -0.75f, 0.5f, 0f, 0f, 1f, 0xFFFF0000),
+            new( 0.75f, -0.75f, 0.5f, 0f, 0f, 1f, 0xFF00FF00),
+            new( 0.00f,  0.75f, 0.5f, 0f, 0f, 1f, 0xFF0000FF)
+        ];
+        uint[] indices = [0, 1, 2];
+
+        renderContext.SetClipRect(new DxRect(0, 0, 32, 64));
+        renderContext.DrawPointCloud(pointVertices, Matrix4x4.Identity);
+        renderContext.DrawTriangleMesh(
+            meshVertices,
+            indices,
+            Matrix4x4.Identity,
+            new Vector3(0f, 0f, 1f),
+            DxCullMode.None);
+
+        Assert.Single(renderContext.PointCloudDraws);
+        Assert.Single(renderContext.MeshDraws);
+        Assert.Equal(new DxRect(0, 0, 32, 64), renderContext.PointCloudDraws[0].ClipRect);
+        Assert.Equal(new DxRect(0, 0, 32, 64), renderContext.MeshDraws[0].ClipRect);
+        Assert.Equal(DxPrimitiveTopology.TriangleList, renderContext.ImmediateContext.GraphicsPipeline?.Descriptor.Topology);
+        Assert.Equal(DxResourceFormat.D32Float, renderContext.ImmediateContext.GraphicsPipeline?.Descriptor.DepthStencilFormat);
+        Assert.True(renderContext.ImmediateContext.GraphicsPipeline?.Descriptor.DepthStencilState.DepthEnable);
+        Assert.Equal(ProGpuDirectXCommandKind.DrawIndexed, renderContext.ImmediateContext.Commands[^1].Kind);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawTriangleMesh(meshVertices, [0, 1], Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawTriangleMesh(meshVertices, [0, 1, 3], Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawPointCloud(pointVertices, Matrix4x4.Identity, Vector3.Zero));
     }
 
     [Fact]
@@ -2599,6 +2643,57 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected low green center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after SciChart texture draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after SciChart texture draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChart3DDepthTestedMeshCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext3D(
+            device,
+            32,
+            32,
+            DxResourceFormat.R8G8B8A8Unorm);
+        ProGpuDirectXSciChartVertex3D[] nearRedTriangle =
+        [
+            new(-0.8f, -0.8f, 0.25f, 0f, 0f, 1f, 0xFFFF0000),
+            new( 0.8f, -0.8f, 0.25f, 0f, 0f, 1f, 0xFFFF0000),
+            new( 0.0f,  0.8f, 0.25f, 0f, 0f, 1f, 0xFFFF0000)
+        ];
+        ProGpuDirectXSciChartVertex3D[] farGreenTriangle =
+        [
+            new(-0.8f, -0.8f, 0.75f, 0f, 0f, 1f, 0xFF00FF00),
+            new( 0.8f, -0.8f, 0.75f, 0f, 0f, 1f, 0xFF00FF00),
+            new( 0.0f,  0.8f, 0.75f, 0f, 0f, 1f, 0xFF00FF00)
+        ];
+        uint[] indices = [0, 1, 2];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.DrawTriangleMesh(
+            nearRedTriangle,
+            indices,
+            Matrix4x4.Identity,
+            new Vector3(0f, 0f, 1f),
+            DxCullMode.None);
+        renderContext.DrawTriangleMesh(
+            farGreenTriangle,
+            indices,
+            Matrix4x4.Identity,
+            new Vector3(0f, 0f, 1f),
+            DxCullMode.None);
+        renderContext.Flush();
+
+        Assert.Equal(2ul, renderContext.ImmediateContext.SubmittedDrawCount);
+        Assert.Equal(2, renderContext.MeshDraws.Count);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var center = ReadRgbaPixel(targetPixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel from nearer SciChart 3D triangle, actual: {center}");
+        Assert.True(center.G < 50, $"Expected far green triangle to fail depth at center, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after SciChart 3D draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after SciChart 3D draw, actual: {center}");
     }
 
     [Fact]
