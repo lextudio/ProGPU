@@ -954,7 +954,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
                     Descriptor.Width,
                     Descriptor.Height,
                     ProGpuDirectXFormatConverter.ToTextureFormat(Descriptor.Format),
-                    ProGpuDirectXFormatConverter.ToTextureUsage(Descriptor.Usage),
+                    ProGpuDirectXFormatConverter.ToTextureUsage(Descriptor.Usage, Descriptor.CpuAccess),
                     $"{Descriptor.Label}[{arraySlice}]",
                     Descriptor.SampleCount,
                     ProGpuDirectXFormatConverter.ToTextureAlphaMode(Descriptor.Format),
@@ -970,7 +970,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             Descriptor.Width,
             Descriptor.Height,
             ProGpuDirectXFormatConverter.ToTextureFormat(Descriptor.Format),
-            ProGpuDirectXFormatConverter.ToTextureUsage(Descriptor.Usage),
+            ProGpuDirectXFormatConverter.ToTextureUsage(Descriptor.Usage, Descriptor.CpuAccess),
             Descriptor.Label,
             Descriptor.SampleCount,
             ProGpuDirectXFormatConverter.ToTextureAlphaMode(Descriptor.Format),
@@ -986,7 +986,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         }
 
         if (_backendTexture is { IsDisposed: false } &&
-            (Descriptor.Usage & DxTextureUsage.CopySource) != 0)
+            HasEffectiveCopySourceAccess())
         {
             SynchronizeShadowForRead(subresource);
             return;
@@ -999,6 +999,12 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
     {
         return subresource < _writeShadowSubresourcesCurrent.Length &&
             _writeShadowSubresourcesCurrent[checked((int)subresource)];
+    }
+
+    private bool HasEffectiveCopySourceAccess()
+    {
+        return (Descriptor.Usage & DxTextureUsage.CopySource) != 0 ||
+            (Descriptor.CpuAccess & DxCpuAccessFlags.Read) != 0;
     }
 
     private void MarkShadowSubresourceCurrent(uint subresource)
@@ -1586,7 +1592,7 @@ public sealed class ProGpuDirectXTexture3D : ProGpuDirectXResource
             Descriptor.Width,
             Descriptor.Height,
             ProGpuDirectXFormatConverter.ToTextureFormat(Descriptor.Format),
-            ProGpuDirectXFormatConverter.ToTextureUsage(Descriptor.Usage),
+            ProGpuDirectXFormatConverter.ToTextureUsage(Descriptor.Usage, Descriptor.CpuAccess),
             Descriptor.Label,
             sampleCount: 1,
             ProGpuDirectXFormatConverter.ToTextureAlphaMode(Descriptor.Format),

@@ -8705,6 +8705,51 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void GpuBackedCpuReadableTextureAllocatesCopySourceUsage()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 1,
+            Height = 1,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget,
+            CpuAccess = DxCpuAccessFlags.Read
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearRenderTarget(texture, new DxColor(1f, 0f, 0f, 1f));
+        context.Flush();
+
+        Assert.Equal([255, 0, 0, 255], texture.ReadPixels());
+    }
+
+    [Fact]
+    public void GpuBackedCpuWritableTextureAllocatesCopyDestinationUsage()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 1,
+            Height = 1,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource | DxTextureUsage.CopySource,
+            CpuAccess = DxCpuAccessFlags.Write
+        });
+        byte[] pixels = [10, 20, 30, 40];
+
+        using var mapping = texture.Map(DxMapMode.WriteDiscard);
+        mapping.Write<byte>(pixels);
+        mapping.Unmap();
+
+        Assert.Equal(pixels, texture.BackendTexture!.ReadPixels());
+    }
+
+    [Fact]
     public void Texture3DMapMipSubresourceUploadsGpuBackedTextureOnUnmap()
     {
         using var wgpu = new WgpuContext();

@@ -30,7 +30,7 @@ internal static class ProGpuDirectXFormatConverter
         };
     }
 
-    public static TextureUsage ToTextureUsage(DxTextureUsage usage)
+    public static TextureUsage ToTextureUsage(DxTextureUsage usage, DxCpuAccessFlags cpuAccess = DxCpuAccessFlags.None)
     {
         var result = TextureUsage.None;
         if ((usage & DxTextureUsage.ShaderResource) != 0)
@@ -54,6 +54,16 @@ internal static class ProGpuDirectXFormatConverter
         }
 
         if ((usage & DxTextureUsage.CopyDestination) != 0)
+        {
+            result |= TextureUsage.CopyDst;
+        }
+
+        if ((cpuAccess & DxCpuAccessFlags.Read) != 0)
+        {
+            result |= TextureUsage.CopySrc;
+        }
+
+        if ((cpuAccess & DxCpuAccessFlags.Write) != 0)
         {
             result |= TextureUsage.CopyDst;
         }
