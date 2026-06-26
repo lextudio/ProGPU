@@ -96,7 +96,8 @@ internal static class ProGpuDirectXFormatConverter
             result |= BufferUsage.Storage;
         }
 
-        if ((usage & DxBufferUsage.CopySource) != 0)
+        if ((usage & DxBufferUsage.CopySource) != 0 &&
+            (cpuAccess & DxCpuAccessFlags.Read) == 0)
         {
             result |= BufferUsage.CopySrc;
         }
@@ -109,6 +110,11 @@ internal static class ProGpuDirectXFormatConverter
         if ((cpuAccess & DxCpuAccessFlags.Read) != 0)
         {
             result |= BufferUsage.MapRead | BufferUsage.CopyDst;
+        }
+
+        if ((cpuAccess & DxCpuAccessFlags.Write) != 0)
+        {
+            result |= BufferUsage.CopyDst;
         }
 
         return result == BufferUsage.None

@@ -240,6 +240,29 @@ public readonly record struct ProGpuDirectXSciChartVertex3D(
     float NormalZ,
     uint ColorArgb);
 
+public readonly record struct ProGpuDirectXSciChartXyzPoint3D(
+    double X,
+    double Y,
+    double Z,
+    uint ColorArgb = 0);
+
+public readonly record struct ProGpuDirectXSciChartDoubleRange(double Minimum, double Maximum);
+
+public sealed record ProGpuDirectXSciChartXyzSeries3DOptions
+{
+    public ProGpuDirectXSciChartDoubleRange? XRange { get; init; }
+
+    public ProGpuDirectXSciChartDoubleRange? YRange { get; init; }
+
+    public ProGpuDirectXSciChartDoubleRange? ZRange { get; init; }
+
+    public bool NormalizeToUnitCube { get; init; } = true;
+
+    public uint ColorArgb { get; init; } = 0xFF42C6FF;
+
+    public Vector3 Normal { get; init; } = new(0f, 0f, 1f);
+}
+
 public readonly record struct ProGpuDirectXSciChartVertexTransform(bool SwapAxis = false);
 
 public enum ProGpuDirectXSciChartPrimitiveKind
@@ -5957,6 +5980,52 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         _transientResources.Add(cameraBuffer);
     }
 
+    public void DrawXyzDataSeriesPointCloud(
+        ReadOnlySpan<ProGpuDirectXSciChartXyzPoint3D> points,
+        Matrix4x4 worldViewProjection,
+        ProGpuDirectXSciChartXyzSeries3DOptions? options = null,
+        Vector3? lightDirection = null)
+    {
+        var vertices = CreateXyzSeriesVertices(points, options, minCount: 1);
+        DrawPointCloud(vertices, worldViewProjection, lightDirection);
+    }
+
+    public void DrawXyzDataSeriesLineStrip(
+        ReadOnlySpan<ProGpuDirectXSciChartXyzPoint3D> points,
+        Matrix4x4 worldViewProjection,
+        ProGpuDirectXSciChartXyzSeries3DOptions? options = null,
+        Vector3? lightDirection = null)
+    {
+        var vertices = CreateXyzSeriesVertices(points, options, minCount: 2);
+        DrawLineStrip(vertices, worldViewProjection, lightDirection);
+    }
+
+    public void DrawXyzDataSeriesRibbon(
+        ReadOnlySpan<ProGpuDirectXSciChartXyzPoint3D> points,
+        Matrix4x4 worldViewProjection,
+        float halfThickness = 0.015f,
+        ProGpuDirectXSciChartXyzSeries3DOptions? options = null,
+        Vector3? lightDirection = null,
+        DxCullMode cullMode = DxCullMode.None)
+    {
+        if (!float.IsFinite(halfThickness) || halfThickness <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(halfThickness), "SciChart 3D XYZ ribbons require a finite positive half-thickness.");
+        }
+
+        var vertices = CreateXyzSeriesVertices(points, options, minCount: 2);
+        var ribbon = new ProGpuDirectXSciChartVertex3D[checked(vertices.Length * 2)];
+        for (var i = 0; i < vertices.Length; i++)
+        {
+            var vertex = vertices[i];
+            var target = i * 2;
+            ribbon[target] = vertex with { Y = vertex.Y - halfThickness };
+            ribbon[target + 1] = vertex with { Y = vertex.Y + halfThickness };
+        }
+
+        DrawTriangleStrip(ribbon, worldViewProjection, lightDirection, cullMode);
+    }
+
     private void DrawLines(
         ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices,
         bool isStrip,
@@ -6265,6 +6334,108 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             Lerp(zRange.X, zRange.Y, rows == 1 ? 0f : row / (float)(rows - 1)));
     }
 
+    private static ProGpuDirectXSciChartVertex3D[] CreateXyzSeriesVertices(
+        ReadOnlySpan<ProGpuDirectXSciChartXyzPoint3D> points,
+        ProGpuDirectXSciChartXyzSeries3DOptions? options,
+        int minCount)
+    {
+        if (points.Length < minCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(points), $"SciChart 3D XYZ series draws require at least {minCount} point/points.");
+        }
+
+        options ??= new ProGpuDirectXSciChartXyzSeries3DOptions();
+        ValidateXyzSeriesOptions(options);
+        var xRange = ResolveXyzRange(points, options.XRange, Axis.X);
+        var yRange = ResolveXyzRange(points, options.YRange, Axis.Y);
+        var zRange = ResolveXyzRange(points, options.ZRange, Axis.Z);
+        var normal = Vector3.Normalize(options.Normal);
+        var vertices = new ProGpuDirectXSciChartVertex3D[points.Length];
+
+        for (var i = 0; i < points.Length; i++)
+        {
+            var point = points[i];
+            ValidateXyzPoint(point);
+            vertices[i] = new ProGpuDirectXSciChartVertex3D(
+                ToSeriesCoordinate(point.X, xRange, options.NormalizeToUnitCube),
+                ToSeriesCoordinate(point.Y, yRange, options.NormalizeToUnitCube),
+                ToSeriesCoordinate(point.Z, zRange, options.NormalizeToUnitCube),
+                normal.X,
+                normal.Y,
+                normal.Z,
+                point.ColorArgb == 0 ? options.ColorArgb : point.ColorArgb);
+        }
+
+        return vertices;
+    }
+
+    private enum Axis
+    {
+        X,
+        Y,
+        Z
+    }
+
+    private static ProGpuDirectXSciChartDoubleRange ResolveXyzRange(
+        ReadOnlySpan<ProGpuDirectXSciChartXyzPoint3D> points,
+        ProGpuDirectXSciChartDoubleRange? requestedRange,
+        Axis axis)
+    {
+        if (requestedRange is { } range)
+        {
+            ValidateXyzRange(range);
+            return range;
+        }
+
+        var minimum = double.PositiveInfinity;
+        var maximum = double.NegativeInfinity;
+        foreach (var point in points)
+        {
+            ValidateXyzPoint(point);
+            var value = axis switch
+            {
+                Axis.X => point.X,
+                Axis.Y => point.Y,
+                _ => point.Z
+            };
+            minimum = Math.Min(minimum, value);
+            maximum = Math.Max(maximum, value);
+        }
+
+        return new ProGpuDirectXSciChartDoubleRange(minimum, maximum);
+    }
+
+    private static float ToSeriesCoordinate(
+        double value,
+        ProGpuDirectXSciChartDoubleRange range,
+        bool normalizeToUnitCube)
+    {
+        if (!normalizeToUnitCube)
+        {
+            return ToFiniteFloat(value);
+        }
+
+        var span = range.Maximum - range.Minimum;
+        if (Math.Abs(span) <= double.Epsilon)
+        {
+            return 0f;
+        }
+
+        return ToFiniteFloat(((value - range.Minimum) / span * 2d) - 1d);
+    }
+
+    private static float ToFiniteFloat(double value)
+    {
+        if (!double.IsFinite(value) ||
+            value < -float.MaxValue ||
+            value > float.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "SciChart 3D XYZ values must fit in finite single-precision coordinates.");
+        }
+
+        return (float)value;
+    }
+
     private DxRect FullRenderTargetRect =>
         new(0, 0, checked((int)RenderTarget.Width), checked((int)RenderTarget.Height));
 
@@ -6363,6 +6534,50 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         if (!float.IsFinite(range.X) || !float.IsFinite(range.Y))
         {
             throw new ArgumentOutOfRangeException(parameterName, "SciChart 3D surface mesh ranges must contain finite values.");
+        }
+    }
+
+    private static void ValidateXyzSeriesOptions(ProGpuDirectXSciChartXyzSeries3DOptions options)
+    {
+        if (options.XRange is { } xRange)
+        {
+            ValidateXyzRange(xRange);
+        }
+
+        if (options.YRange is { } yRange)
+        {
+            ValidateXyzRange(yRange);
+        }
+
+        if (options.ZRange is { } zRange)
+        {
+            ValidateXyzRange(zRange);
+        }
+
+        if (!float.IsFinite(options.Normal.X) ||
+            !float.IsFinite(options.Normal.Y) ||
+            !float.IsFinite(options.Normal.Z) ||
+            options.Normal.LengthSquared() <= 0.000001f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "SciChart 3D XYZ series normals must be finite and non-zero.");
+        }
+    }
+
+    private static void ValidateXyzRange(ProGpuDirectXSciChartDoubleRange range)
+    {
+        if (!double.IsFinite(range.Minimum) || !double.IsFinite(range.Maximum))
+        {
+            throw new ArgumentOutOfRangeException(nameof(range), "SciChart 3D XYZ ranges must contain finite values.");
+        }
+    }
+
+    private static void ValidateXyzPoint(ProGpuDirectXSciChartXyzPoint3D point)
+    {
+        if (!double.IsFinite(point.X) ||
+            !double.IsFinite(point.Y) ||
+            !double.IsFinite(point.Z))
+        {
+            throw new ArgumentOutOfRangeException(nameof(point), "SciChart 3D XYZ points must contain finite coordinates.");
         }
     }
 

@@ -656,6 +656,66 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContext3DDrawsXyzSeriesThroughNativePointLineAndRibbonPaths()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext3D(device, 64, 64);
+        ProGpuDirectXSciChartXyzPoint3D[] points =
+        [
+            new(10d, -2d, 100d),
+            new(15d,  0d, 150d, 0xFFFF0000),
+            new(20d,  2d, 200d)
+        ];
+        var options = new ProGpuDirectXSciChartXyzSeries3DOptions
+        {
+            ColorArgb = 0xFF42C6FF,
+            Normal = new Vector3(0f, 1f, 0f)
+        };
+
+        renderContext.SetClipRect(new DxRect(4, 6, 48, 40));
+        renderContext.DrawXyzDataSeriesLineStrip(points, Matrix4x4.Identity, options);
+        renderContext.DrawXyzDataSeriesRibbon(points, Matrix4x4.Identity, halfThickness: 0.05f, options);
+        renderContext.DrawXyzDataSeriesPointCloud(points, Matrix4x4.Identity, options);
+
+        Assert.Single(renderContext.LineDraws);
+        Assert.Single(renderContext.TriangleStripDraws);
+        Assert.Single(renderContext.PointCloudDraws);
+        Assert.True(renderContext.LineDraws[0].IsStrip);
+        Assert.Equal(new DxRect(4, 6, 48, 40), renderContext.LineDraws[0].ClipRect);
+        Assert.Equal(new DxRect(4, 6, 48, 40), renderContext.TriangleStripDraws[0].ClipRect);
+        Assert.Equal(new DxRect(4, 6, 48, 40), renderContext.PointCloudDraws[0].ClipRect);
+
+        var lineVertices = renderContext.LineDraws[0].Vertices;
+        Assert.Equal(-1f, lineVertices[0].X);
+        Assert.Equal(0f, lineVertices[1].X);
+        Assert.Equal(1f, lineVertices[2].X);
+        Assert.Equal(-1f, lineVertices[0].Y);
+        Assert.Equal(0f, lineVertices[1].Y);
+        Assert.Equal(1f, lineVertices[2].Y);
+        Assert.Equal(-1f, lineVertices[0].Z);
+        Assert.Equal(0f, lineVertices[1].Z);
+        Assert.Equal(1f, lineVertices[2].Z);
+        Assert.Equal(0xFF42C6FFu, lineVertices[0].ColorArgb);
+        Assert.Equal(0xFFFF0000u, lineVertices[1].ColorArgb);
+        Assert.Equal(0f, lineVertices[0].NormalX);
+        Assert.Equal(1f, lineVertices[0].NormalY);
+        Assert.Equal(0f, lineVertices[0].NormalZ);
+        Assert.Equal(6, renderContext.TriangleStripDraws[0].Vertices.Count);
+        Assert.Equal(-1.05f, renderContext.TriangleStripDraws[0].Vertices[0].Y);
+        Assert.Equal(-0.95f, renderContext.TriangleStripDraws[0].Vertices[1].Y);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawXyzDataSeriesLineStrip([new ProGpuDirectXSciChartXyzPoint3D(double.NaN, 0d, 0d)], Matrix4x4.Identity));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawXyzDataSeriesRibbon(points, Matrix4x4.Identity, halfThickness: 0f, options));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawXyzDataSeriesPointCloud(
+                points,
+                Matrix4x4.Identity,
+                new ProGpuDirectXSciChartXyzSeries3DOptions { Normal = Vector3.Zero }));
+    }
+
+    [Fact]
     public void SciChartRenderContextRecordsTextDrawsAndClip()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -8190,6 +8250,23 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void GpuBackedCpuReadableCopySourceBuffersAreRejected()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+
+        var exception = Assert.Throws<ArgumentException>(() => device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 16,
+            Usage = DxBufferUsage.CopySource | DxBufferUsage.CopyDestination,
+            CpuAccess = DxCpuAccessFlags.Read
+        }));
+
+        Assert.Contains("map-read", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TextureMapWriteDiscardAndReadBackUsesDirectXPitches()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -8976,7 +9053,7 @@ float4 PSMain() : SV_Target
         using var buffer = device.CreateBuffer(new DxBufferDescriptor
         {
             SizeInBytes = 16,
-            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopySource | DxBufferUsage.CopyDestination,
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopySource,
             CpuAccess = DxCpuAccessFlags.Write
         });
         using var context = device.CreateImmediateContext();

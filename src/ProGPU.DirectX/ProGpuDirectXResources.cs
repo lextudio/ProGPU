@@ -54,7 +54,7 @@ public sealed class ProGpuDirectXBuffer : ProGpuDirectXResource
     internal ProGpuDirectXBuffer(ProGpuDirectXDevice device, DxBufferDescriptor descriptor)
         : base(device, descriptor.Label)
     {
-        ValidateDescriptor(descriptor);
+        ValidateDescriptor(descriptor, device.IsGpuBacked);
 
         Descriptor = descriptor;
         if ((descriptor.CpuAccess & DxCpuAccessFlags.Read) != 0 ||
@@ -268,7 +268,7 @@ public sealed class ProGpuDirectXBuffer : ProGpuDirectXResource
         }
     }
 
-    private static void ValidateDescriptor(DxBufferDescriptor descriptor)
+    private static void ValidateDescriptor(DxBufferDescriptor descriptor, bool isGpuBacked)
     {
         if (descriptor.SizeInBytes == 0)
         {
@@ -279,6 +279,13 @@ public sealed class ProGpuDirectXBuffer : ProGpuDirectXResource
             (descriptor.Usage & ~(DxBufferUsage.CopySource | DxBufferUsage.CopyDestination)) != 0)
         {
             throw new ArgumentException("CPU-readable DirectX buffers must be staging/copy resources without bind flags.", nameof(descriptor));
+        }
+
+        if (isGpuBacked &&
+            (descriptor.CpuAccess & DxCpuAccessFlags.Read) != 0 &&
+            (descriptor.Usage & DxBufferUsage.CopySource) != 0)
+        {
+            throw new ArgumentException("GPU-backed CPU-readable DirectX buffers cannot also be copy-source buffers because WebGPU map-read buffers cannot include copy-source usage.", nameof(descriptor));
         }
     }
 
