@@ -207,7 +207,14 @@ public unsafe class GpuTexture : IDisposable
         AlphaMode = GpuTextureAlphaMode.Premultiplied;
     }
 
-    public void WritePixelsSubRect<T>(ReadOnlySpan<T> pixels, uint x, uint y, uint subWidth, uint subHeight) where T : unmanaged
+    public void WritePixelsSubRect<T>(
+        ReadOnlySpan<T> pixels,
+        uint x,
+        uint y,
+        uint subWidth,
+        uint subHeight,
+        uint arrayLayer = 0)
+        where T : unmanaged
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
         if (subWidth == 0)
@@ -228,6 +235,11 @@ public unsafe class GpuTexture : IDisposable
             throw new ArgumentOutOfRangeException(nameof(pixels), "Pixel sub-rect does not fit inside the texture bounds.");
         }
 
+        if (arrayLayer >= DepthOrArrayLayers)
+        {
+            throw new ArgumentOutOfRangeException(nameof(arrayLayer), "Pixel sub-rect array layer is outside the texture array.");
+        }
+
         uint bytesPerPixel = Format switch
         {
             TextureFormat.Rgba8Unorm or TextureFormat.Rgba8UnormSrgb or TextureFormat.Bgra8Unorm or TextureFormat.Bgra8UnormSrgb => 4,
@@ -246,7 +258,7 @@ public unsafe class GpuTexture : IDisposable
         {
             Texture = TexturePtr,
             MipLevel = 0,
-            Origin = new Origin3D { X = x, Y = y, Z = 0 },
+            Origin = new Origin3D { X = x, Y = y, Z = arrayLayer },
             Aspect = TextureAspect.All
         };
 

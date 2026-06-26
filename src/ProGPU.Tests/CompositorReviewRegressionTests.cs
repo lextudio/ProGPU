@@ -1738,6 +1738,41 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void GpuTextureWritePixelsSubRectTargetsRequestedArrayLayer()
+    {
+        using var window = new HeadlessWindow(2, 2);
+        using var texture = new GpuTexture(
+            window.Context,
+            2,
+            2,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
+            "SubRect Array Layer Texture",
+            depthOrArrayLayers: 2);
+        byte[] layer0Pixels =
+        [
+            10, 20, 30, 255, 40, 50, 60, 255,
+            70, 80, 90, 255, 100, 110, 120, 255
+        ];
+        byte[] layer1Pixels =
+        [
+            200, 10, 20, 255, 20, 200, 10, 255,
+            10, 20, 200, 255, 240, 240, 240, 255
+        ];
+
+        texture.WritePixelsSubRect(layer0Pixels, x: 0, y: 0, subWidth: 2, subHeight: 2, arrayLayer: 0);
+        texture.WritePixelsSubRect(layer1Pixels, x: 0, y: 0, subWidth: 2, subHeight: 2, arrayLayer: 1);
+
+        var pixels = texture.ReadPixels();
+        Assert.Equal(layer0Pixels, pixels[..16]);
+        Assert.Equal(layer1Pixels, pixels[16..32]);
+
+        var exception = Assert.Throws<System.ArgumentOutOfRangeException>(
+            () => texture.WritePixelsSubRect(layer1Pixels, x: 0, y: 0, subWidth: 2, subHeight: 2, arrayLayer: 2));
+        Assert.Equal("arrayLayer", exception.ParamName);
+    }
+
+    [Fact]
     public void DrawCallScissorPreservesNonEmptySubpixelClips()
     {
         var subpixel = InvokeTryComputeScissorRect(

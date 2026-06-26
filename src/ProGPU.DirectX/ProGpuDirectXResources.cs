@@ -575,20 +575,21 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
         var rowPitch = GetRowPitchInBytes(Descriptor);
         var depthPitch = GetSubresourceSizeInBytes(Descriptor);
+        var subresourceOffset = GetSubresourceOffsetInBytes(Descriptor, subresource);
         if (requiresRead)
         {
             SynchronizeShadowForRead();
         }
         else if (mode == DxMapMode.WriteDiscard)
         {
-            _writeShadow.AsSpan(0, checked((int)depthPitch)).Clear();
+            _writeShadow.AsSpan(checked((int)subresourceOffset), checked((int)depthPitch)).Clear();
         }
 
         _activeMapping = new ProGpuDirectXMappedSubresource(
             this,
             mode,
             flags,
-            offsetBytes: 0,
+            offsetBytes: subresourceOffset,
             sizeInBytes: depthPitch,
             rowPitch,
             depthPitch,
@@ -647,11 +648,27 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
         if (mapping.UploadOnUnmap)
         {
-            var mappedBytes = _writeShadow.AsSpan(0, checked((int)mapping.SizeInBytes));
-            _backendTexture?.WritePixels(mappedBytes);
+            var mappedBytes = _writeShadow.AsSpan(
+                checked((int)mapping.OffsetBytes),
+                checked((int)mapping.SizeInBytes));
+            if (_backendTexture is not null)
+            {
+                var subresourceSize = GetSubresourceSizeInBytes(Descriptor);
+                var arrayLayer = checked(mapping.OffsetBytes / subresourceSize);
+                _backendTexture.WritePixelsSubRect(
+                    mappedBytes,
+                    x: 0,
+                    y: 0,
+                    subWidth: Descriptor.Width,
+                    subHeight: Descriptor.Height,
+                    arrayLayer);
+            }
+
             if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
             {
-                mappedBytes.CopyTo(_cpuShadow.AsSpan(0, checked((int)mapping.SizeInBytes)));
+                mappedBytes.CopyTo(_cpuShadow.AsSpan(
+                    checked((int)mapping.OffsetBytes),
+                    checked((int)mapping.SizeInBytes)));
             }
 
             LastWriteSizeInBytes = mapping.SizeInBytes;
@@ -713,14 +730,14 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
     private void ValidateMappableSubresource(uint subresource)
     {
-        if (subresource != 0)
+        if (Descriptor.MipLevels != 1)
         {
-            throw new NotSupportedException("DirectX texture mapping currently supports only subresource 0.");
+            throw new NotSupportedException("DirectX texture mapping currently supports only single-mip textures.");
         }
 
-        if (Descriptor.MipLevels != 1 || Descriptor.ArraySize != 1)
+        if (subresource >= Descriptor.ArraySize)
         {
-            throw new NotSupportedException("DirectX texture mapping currently supports only single-mip, single-array textures.");
+            throw new ArgumentOutOfRangeException(nameof(subresource), "DirectX texture mapping subresource is outside the texture array.");
         }
 
         if (Descriptor.SampleCount != 1)
@@ -785,6 +802,11 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
     private static uint GetTextureSizeInBytes(DxTexture2DDescriptor descriptor)
     {
         return checked(GetSubresourceSizeInBytes(descriptor) * descriptor.ArraySize);
+    }
+
+    private static uint GetSubresourceOffsetInBytes(DxTexture2DDescriptor descriptor, uint subresource)
+    {
+        return checked(GetSubresourceSizeInBytes(descriptor) * subresource);
     }
 
     private static uint GetRowPitchInBytes(DxTexture2DDescriptor descriptor)

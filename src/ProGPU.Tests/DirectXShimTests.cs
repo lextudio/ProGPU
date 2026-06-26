@@ -7315,9 +7315,9 @@ float4 PSMain() : SV_Target
         Assert.Throws<InvalidOperationException>(() => gpuOnly.Map(DxMapMode.Read));
         Assert.Throws<InvalidOperationException>(() => readOnly.Map(DxMapMode.Write));
         Assert.Throws<InvalidOperationException>(() => writeOnly.Map(DxMapMode.Read));
-        Assert.Throws<NotSupportedException>(() => writeOnly.Map(DxMapMode.Write, subresource: 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => writeOnly.Map(DxMapMode.Write, subresource: 1));
         Assert.Throws<NotSupportedException>(() => multisampled.Map(DxMapMode.Write));
-        Assert.Throws<NotSupportedException>(() => arrayTexture.Map(DxMapMode.Write));
+        Assert.Throws<ArgumentOutOfRangeException>(() => arrayTexture.Map(DxMapMode.Write, subresource: 2));
     }
 
     [Fact]
@@ -7347,6 +7347,75 @@ float4 PSMain() : SV_Target
 
         Assert.Equal(16u, texture.LastWriteSizeInBytes);
         Assert.Equal(pixels, texture.BackendTexture!.ReadPixels());
+    }
+
+    [Fact]
+    public void TextureMapSupportsArraySubresources()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 2,
+            Height = 2,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.CopyDestination | DxTextureUsage.CopySource,
+            CpuAccess = DxCpuAccessFlags.Read | DxCpuAccessFlags.Write,
+            ArraySize = 2
+        });
+        byte[] layerPixels =
+        [
+            10, 20, 30, 255, 40, 50, 60, 255,
+            70, 80, 90, 255, 100, 110, 120, 255
+        ];
+
+        using var mapping = texture.Map(DxMapMode.WriteDiscard, subresource: 1);
+        Assert.Equal(16u, mapping.OffsetBytes);
+        Assert.Equal(8u, mapping.RowPitch);
+        Assert.Equal(16u, mapping.DepthPitch);
+        mapping.Write<byte>(layerPixels);
+        mapping.Unmap();
+
+        Assert.Equal(16u, texture.LastWriteSizeInBytes);
+        var pixels = texture.ReadPixels();
+        Assert.Equal(new byte[16], pixels[..16]);
+        Assert.Equal(layerPixels, pixels[16..32]);
+    }
+
+    [Fact]
+    public void TextureMapArraySubresourceUploadsGpuBackedTextureOnUnmap()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 2,
+            Height = 2,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.CopyDestination | DxTextureUsage.CopySource | DxTextureUsage.ShaderResource,
+            CpuAccess = DxCpuAccessFlags.Write,
+            ArraySize = 2
+        });
+        byte[] layer0Pixels =
+        [
+            10, 10, 10, 255, 20, 20, 20, 255,
+            30, 30, 30, 255, 40, 40, 40, 255
+        ];
+        byte[] layerPixels =
+        [
+            255, 0, 0, 255, 0, 255, 0, 255,
+            0, 0, 255, 255, 255, 255, 255, 255
+        ];
+        byte[] initialPixels = [.. layer0Pixels, .. new byte[16]];
+        texture.BackendTexture!.WritePixels(initialPixels);
+
+        using var mapping = texture.Map(DxMapMode.WriteDiscard, subresource: 1);
+        mapping.Write<byte>(layerPixels);
+        mapping.Unmap();
+
+        var pixels = texture.BackendTexture!.ReadPixels();
+        Assert.Equal(layer0Pixels, pixels[..16]);
+        Assert.Equal(layerPixels, pixels[16..32]);
     }
 
     [Fact]
