@@ -3806,6 +3806,53 @@ VertexOutput VSMain(VertexInput input)
     }
 
     [Fact]
+    public void FlushSubmitsGpuBackedSciChartLineBatchAppliesVertexOffset()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+        var pen = renderContext.CreatePen(0xFF00FF00, strokeThickness: 3f, isAntiAliased: false);
+        ProGpuDirectXSciChartColorVertex[] vertices =
+        [
+            new(2, 4, 6, 0),
+            new(13, 4, 6, 0)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.DrawLinesBatch(
+            vertices,
+            count: vertices.Length,
+            pen,
+            isStrips: true,
+            isDigital: false,
+            isDrawNanAsGaps: true,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+        renderContext.Flush();
+
+        Assert.Single(renderContext.LineBatchDraws);
+        Assert.Equal(pen, renderContext.LineBatchDraws[0].Pen);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var shifted = ReadRgbaPixel(targetPixels, 16, 8, 10);
+        Assert.True(shifted.R < 50, $"Expected low red shifted line pixel, actual: {shifted}");
+        Assert.True(shifted.G > 150, $"Expected green shifted line pixel, actual: {shifted}");
+        Assert.True(shifted.B < 50, $"Expected low blue shifted line pixel, actual: {shifted}");
+        Assert.True(shifted.A > 200, $"Expected opaque shifted line pixel, actual: {shifted}");
+
+        var unshifted = ReadRgbaPixel(targetPixels, 16, 8, 4);
+        Assert.True(unshifted.R < 50, $"Expected black unshifted line pixel, actual: {unshifted}");
+        Assert.True(unshifted.G < 50, $"Expected black unshifted line pixel, actual: {unshifted}");
+        Assert.True(unshifted.B < 50, $"Expected black unshifted line pixel, actual: {unshifted}");
+        Assert.True(unshifted.A > 200, $"Expected opaque clear alpha at unshifted line pixel, actual: {unshifted}");
+    }
+
+    [Fact]
     public void FlushSubmitsGpuBackedSciChartPrimitiveFillCommands()
     {
         using var wgpu = new WgpuContext();

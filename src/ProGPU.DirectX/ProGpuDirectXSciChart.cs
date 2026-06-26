@@ -2941,11 +2941,12 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         var hasPrevious = false;
         float previousX = 0f;
         float previousY = 0f;
+        float previousOffset = 0f;
         uint previousColor = 0;
 
         foreach (var vertex in vertices)
         {
-            if (!TryGetLinePoint(vertex, transform, pen, out var x, out var y, out var color))
+            if (!TryGetLinePoint(vertex, transform, pen, out var x, out var y, out var offset, out var color))
             {
                 if (resetOnInvalid)
                 {
@@ -2961,9 +2962,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                     vertexData,
                     previousX,
                     previousY,
+                    previousOffset,
                     previousColor,
                     x,
                     y,
+                    offset,
                     color,
                     pen.StrokeThickness,
                     pen.IsAntiAliased,
@@ -2973,6 +2976,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
             previousX = x;
             previousY = y;
+            previousOffset = offset;
             previousColor = color;
             hasPrevious = true;
         }
@@ -2988,8 +2992,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     {
         for (var i = 0; i < vertices.Length - 1; i += 2)
         {
-            if (!TryGetLinePoint(vertices[i], transform, pen, out var x0, out var y0, out var color0) ||
-                !TryGetLinePoint(vertices[i + 1], transform, pen, out var x1, out var y1, out var color1))
+            if (!TryGetLinePoint(vertices[i], transform, pen, out var x0, out var y0, out var offset0, out var color0) ||
+                !TryGetLinePoint(vertices[i + 1], transform, pen, out var x1, out var y1, out var offset1, out var color1))
             {
                 continue;
             }
@@ -2998,9 +3002,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                 vertexData,
                 x0,
                 y0,
+                offset0,
                 color0,
                 x1,
                 y1,
+                offset1,
                 color1,
                 pen.StrokeThickness,
                 pen.IsAntiAliased,
@@ -3013,9 +3019,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         List<float> vertexData,
         float x0,
         float y0,
+        float offset0,
         uint color0,
         float x1,
         float y1,
+        float offset1,
         uint color1,
         float strokeThickness,
         bool isAntiAliased,
@@ -3030,9 +3038,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                 vertexData,
                 x0,
                 y0,
+                offset0,
                 color0,
                 x1,
                 y0,
+                offset0,
                 color0,
                 strokeThickness,
                 isAntiAliased,
@@ -3041,9 +3051,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                 vertexData,
                 x1,
                 y0,
+                offset0,
                 color0,
                 x1,
                 y1,
+                offset1,
                 color1,
                 strokeThickness,
                 isAntiAliased,
@@ -3055,9 +3067,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             vertexData,
             x0,
             y0,
+            offset0,
             color0,
             x1,
             y1,
+            offset1,
             color1,
             strokeThickness,
             isAntiAliased,
@@ -3068,14 +3082,21 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         List<float> vertexData,
         float x0,
         float y0,
+        float offset0,
         uint color0,
         float x1,
         float y1,
+        float offset1,
         uint color1,
         float strokeThickness,
         bool isAntiAliased,
         bool usesTriangleTopology)
     {
+        if (!TryOffsetLineEndpoints(x0, y0, offset0, x1, y1, offset1, out x0, out y0, out x1, out y1))
+        {
+            return;
+        }
+
         if (usesTriangleTopology)
         {
             AppendThickLineQuad(vertexData, x0, y0, color0, x1, y1, color1, strokeThickness, isAntiAliased);
@@ -3084,6 +3105,44 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
         AppendSolidColorVertex(vertexData, x0, y0, color0);
         AppendSolidColorVertex(vertexData, x1, y1, color1);
+    }
+
+    private static bool TryOffsetLineEndpoints(
+        float x0,
+        float y0,
+        float offset0,
+        float x1,
+        float y1,
+        float offset1,
+        out float offsetX0,
+        out float offsetY0,
+        out float offsetX1,
+        out float offsetY1)
+    {
+        offsetX0 = x0;
+        offsetY0 = y0;
+        offsetX1 = x1;
+        offsetY1 = y1;
+        if (offset0 == 0f && offset1 == 0f)
+        {
+            return true;
+        }
+
+        var dx = x1 - x0;
+        var dy = y1 - y0;
+        var length = MathF.Sqrt((dx * dx) + (dy * dy));
+        if (length <= float.Epsilon)
+        {
+            return false;
+        }
+
+        var unitNx = -dy / length;
+        var unitNy = dx / length;
+        offsetX0 += unitNx * offset0;
+        offsetY0 += unitNy * offset0;
+        offsetX1 += unitNx * offset1;
+        offsetY1 += unitNy * offset1;
+        return true;
     }
 
     private void AppendThickLineQuad(
@@ -4150,17 +4209,20 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         ProGpuDirectXSciChartPen2D pen,
         out float x,
         out float y,
+        out float offset,
         out uint colorArgb)
     {
         if (!HasFiniteLinePosition(vertex))
         {
             x = y = 0f;
+            offset = 0f;
             colorArgb = 0;
             return false;
         }
 
         x = transform.SwapAxis ? vertex.Y : vertex.X;
         y = transform.SwapAxis ? vertex.X : vertex.Y;
+        offset = vertex.Offset;
         colorArgb = vertex.ColorArgb == 0
             ? pen.ColorArgb
             : vertex.ColorArgb;
