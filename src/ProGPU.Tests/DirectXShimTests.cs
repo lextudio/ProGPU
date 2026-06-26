@@ -3631,6 +3631,136 @@ float4 PSMain(float4 color : COLOR0, bool isFrontFace : SV_IsFrontFace) : SV_Tar
     }
 
     [Fact]
+    public void GpuBackedHlslFragmentFrontFaceEmulationRejectsNoCullBlendedPipelines()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = PassthroughVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+float4 PSMain(float4 color : COLOR0, bool isFrontFace : SV_IsFrontFace) : SV_Target
+{
+    return isFrontFace
+        ? float4(1.0, 0.0, 0.0, 0.5)
+        : float4(0.0, 0.0, 1.0, 0.5);
+}
+""",
+            EntryPoint = "PSMain",
+            Label = "HLSL Blended FrontFace Pixel"
+        });
+        var inputLayout = device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    AlignedByteOffset = 12,
+                    ShaderLocation = 1
+                }
+            ]
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            InputLayout = inputLayout,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = true },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+
+        Assert.True(pixelShader.HasBackendShaderModule);
+        Assert.Contains("@builtin(front_facing) isFrontFace: bool", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.False(pipeline.HasBackendPipeline);
+        Assert.False(pipeline.UsesFragmentFrontFacingEmulation);
+        Assert.Contains("Order-preserving", pipeline.FrontFacingEmulationFailureReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GpuBackedHlslFragmentFrontFaceEmulationAllowsCulledBlendedPipelines()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = PassthroughVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+float4 PSMain(float4 color : COLOR0, bool isFrontFace : SV_IsFrontFace) : SV_Target
+{
+    return isFrontFace
+        ? float4(1.0, 0.0, 0.0, 0.5)
+        : float4(0.0, 0.0, 1.0, 0.5);
+}
+""",
+            EntryPoint = "PSMain",
+            Label = "HLSL Culled Blended FrontFace Pixel"
+        });
+        var inputLayout = device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    AlignedByteOffset = 12,
+                    ShaderLocation = 1
+                }
+            ]
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            InputLayout = inputLayout,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = true },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.Back }
+        });
+
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.True(pipeline.UsesFragmentFrontFacingEmulation);
+        Assert.Null(pipeline.FrontFacingEmulationFailureReason);
+    }
+
+    [Fact]
     public void GpuBackedHlslFragmentFrontFaceInputStructUsesNativeEmulation()
     {
         using var wgpu = new WgpuContext();

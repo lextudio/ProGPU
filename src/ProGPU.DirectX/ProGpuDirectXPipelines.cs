@@ -273,6 +273,7 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
     private readonly IntPtr _frontFacingBackPipeline;
     private readonly IntPtr _frontFacingTrueShaderModule;
     private readonly IntPtr _frontFacingFalseShaderModule;
+    private readonly string? _frontFacingEmulationFailureReason;
     private bool _isDisposed;
 
     internal ProGpuDirectXGraphicsPipeline(ProGpuDirectXDevice device, DxGraphicsPipelineDescriptor descriptor)
@@ -304,7 +305,7 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
             if (descriptor.PixelShader is { UsesFragmentFrontFacingBuiltin: true } &&
                 !device.Capabilities.SupportsFragmentFrontFacingBuiltin)
             {
-                TryCreateFrontFacingEmulationPipelines(
+                var frontFacingEmulationSupported = TryCreateFrontFacingEmulationPipelines(
                     context,
                     descriptor,
                     EffectiveInputLayout,
@@ -312,7 +313,13 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
                     out _frontFacingFrontPipeline,
                     out _frontFacingBackPipeline,
                     out _frontFacingTrueShaderModule,
-                    out _frontFacingFalseShaderModule);
+                    out _frontFacingFalseShaderModule,
+                    out var frontFacingEmulationFailureReason);
+                if (!frontFacingEmulationSupported)
+                {
+                    _frontFacingEmulationFailureReason = frontFacingEmulationFailureReason;
+                }
+
                 return;
             }
 
@@ -345,6 +352,8 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
     public bool UsesFragmentFrontFacingEmulation =>
         _frontFacingFrontPipeline != IntPtr.Zero ||
         _frontFacingBackPipeline != IntPtr.Zero;
+
+    public string? FrontFacingEmulationFailureReason => _frontFacingEmulationFailureReason;
 
     public IntPtr BackendPipelineHandle => _backendPipeline;
 
@@ -551,17 +560,32 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
         out IntPtr frontPipeline,
         out IntPtr backPipeline,
         out IntPtr trueShaderModule,
-        out IntPtr falseShaderModule)
+        out IntPtr falseShaderModule,
+        out string? failureReason)
     {
         frontPipeline = IntPtr.Zero;
         backPipeline = IntPtr.Zero;
         trueShaderModule = IntPtr.Zero;
         falseShaderModule = IntPtr.Zero;
+        failureReason = null;
 
-        if (descriptor.PixelShader?.BackendSource is not { } pixelSource ||
-            descriptor.Topology is not (DxPrimitiveTopology.TriangleList or DxPrimitiveTopology.TriangleStrip) ||
+        if (descriptor.PixelShader?.BackendSource is not { } pixelSource)
+        {
+            failureReason = "Fragment front-facing emulation requires a translated WGSL pixel shader source.";
+            return false;
+        }
+
+        if (descriptor.Topology is not (DxPrimitiveTopology.TriangleList or DxPrimitiveTopology.TriangleStrip) ||
             descriptor.RasterizerState.FillMode != DxFillMode.Solid)
         {
+            failureReason = "Fragment front-facing emulation currently supports solid triangle-list or triangle-strip pipelines.";
+            return false;
+        }
+
+        if (descriptor.RasterizerState.CullMode == DxCullMode.None &&
+            descriptor.BlendState.EnableBlend)
+        {
+            failureReason = "Order-preserving fragment front-facing emulation for no-cull blended pipelines is not supported.";
             return false;
         }
 
@@ -603,7 +627,13 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
             }
         }
 
-        return frontPipeline != IntPtr.Zero || backPipeline != IntPtr.Zero;
+        if (frontPipeline != IntPtr.Zero || backPipeline != IntPtr.Zero)
+        {
+            return true;
+        }
+
+        failureReason = "Fragment front-facing shader variants could not be created.";
+        return false;
     }
 
     private static PrimitiveTopology GetBackendPrimitiveTopology(DxGraphicsPipelineDescriptor descriptor)
