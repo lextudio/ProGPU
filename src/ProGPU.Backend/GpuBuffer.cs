@@ -21,12 +21,13 @@ public unsafe class GpuBuffer : IDisposable
         _context = context;
         Size = size;
         Usage = usage;
+        var allocatedSize = AlignToQueueWriteSize(size);
 
         var labelPtr = SilkMarshal.StringToPtr(label);
         var desc = new BufferDescriptor
         {
             Label = (byte*)labelPtr,
-            Size = size,
+            Size = allocatedSize,
             Usage = usage,
             MappedAtCreation = false
         };
@@ -68,6 +69,11 @@ public unsafe class GpuBuffer : IDisposable
                 _context.Wgpu.QueueWriteBuffer(_context.Queue, BufferPtr, offsetBytes, temp, paddedSize);
             }
         }
+    }
+
+    private static uint AlignToQueueWriteSize(uint size)
+    {
+        return (size + 3) & ~3u;
     }
 
     public void WriteSingle<T>(T value, uint offsetBytes = 0) where T : unmanaged
