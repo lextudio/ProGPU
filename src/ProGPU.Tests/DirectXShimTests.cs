@@ -2191,6 +2191,114 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     }
 
     [Fact]
+    public void HlslTextShaderEmitsVectorAwareSaturateForLocalVectors()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+float4 PSMain(float4 color : COLOR0) : SV_Target
+{
+    float4 tone = color;
+    return saturate(tone);
+}
+""",
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("return clamp(tone, vec4<f32>(0.0), vec4<f32>(1.0));", shader.BackendSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("clamp(tone, 0.0, 1.0)", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderEmitsVectorAwareClipForParameters()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+float4 PSMain(float4 color : COLOR0) : SV_Target
+{
+    clip(color);
+    return color;
+}
+""",
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("if (any((color) < vec4<f32>(0.0)))", shader.BackendSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("if ((color) < 0.0)", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderPreservesLocalAndParameterShadowsOverConstantBufferFields()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+cbuffer Settings : register(b0)
+{
+    float scale;
+};
+
+float4 PSMain(float scale : TEXCOORD0) : SV_Target
+{
+    float local = scale;
+    return float4(local, scale, 0.0, 1.0);
+}
+""",
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("var local: f32 = scale;", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("return vec4<f32>(local, scale, 0.0, 1.0);", shader.BackendSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("settings.scale", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderUsesSemanticIndicesForStructLocations()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+struct VertexOut
+{
+    float4 position : SV_Position;
+    float2 uv1 : TEXCOORD1;
+    float2 uv0 : TEXCOORD0;
+};
+
+VertexOut VSMain(float3 position : POSITION)
+{
+    VertexOut output;
+    output.position = float4(position, 1.0);
+    output.uv1 = float2(0.0, 1.0);
+    output.uv0 = float2(1.0, 0.0);
+    return output;
+}
+""",
+            EntryPoint = "VSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("@location(1) uv1: vec2<f32>", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("@location(0) uv0: vec2<f32>", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HlslTextShaderTranslatesTexture2DArraySampleCallsInsideExpressions()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
