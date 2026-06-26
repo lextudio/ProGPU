@@ -3354,7 +3354,9 @@ VertexOutput VSMain(VertexInput input)
             Source = """
 float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
 {
-    return float4(1.0, 0.0, 0.0, 1.0);
+    return isFrontFace
+        ? float4(1.0, 0.0, 0.0, 1.0)
+        : float4(0.0, 0.0, 1.0, 1.0);
 }
 """,
             EntryPoint = "PSMain",
@@ -3393,6 +3395,7 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
 
         Assert.True(pixelShader.HasBackendShaderModule);
         Assert.Contains("@builtin(front_facing) isFrontFace: bool", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.Contains("vec4<bool>(isFrontFace, isFrontFace, isFrontFace, isFrontFace)", pixelShader.BackendSource, StringComparison.Ordinal);
         Assert.Equal(device.Capabilities.SupportsFragmentFrontFacingBuiltin, pipeline.HasBackendPipeline);
         if (!device.Capabilities.SupportsFragmentFrontFacingBuiltin)
         {
@@ -3475,6 +3478,73 @@ float4 PSMain(bool isFrontFace : SV_IsFrontFace) : SV_Target
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL conditional draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL conditional draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL conditional draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslVectorConditionalPixelDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl,
+            EntryPoint = "vs_main",
+            Label = "WGSL Triangle Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+float4 PSMain() : SV_Target
+{
+    return 1.0 > 0.5
+        ? float4(1.0, 0.0, 0.0, 1.0)
+        : float4(0.0, 0.0, 1.0, 1.0);
+}
+""",
+            EntryPoint = "PSMain",
+            Label = "HLSL Vector Conditional Pixel"
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.True(pixelShader.HasBackendShaderModule);
+        Assert.NotNull(pixelShader.BackendSource);
+        Assert.Contains("vec4<bool>(1.0 > 0.5, 1.0 > 0.5, 1.0 > 0.5, 1.0 > 0.5)", pixelShader.BackendSource, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after HLSL vector conditional draw, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after HLSL vector conditional draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL vector conditional draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL vector conditional draw, actual: {center}");
     }
 
     [Fact]

@@ -803,15 +803,45 @@ internal static class ProGpuDirectXHlslTranslator
             return false;
         }
 
+        var translatedTrueValue = TranslateExpression(trueValue, constantBuffers, shaderResources);
+        var translatedFalseValue = TranslateExpression(falseValue, constantBuffers, shaderResources);
+        var translatedCondition = TranslateExpression(condition, constantBuffers, shaderResources);
+        if (TryGetMatchingWgslVectorSelectSize(translatedTrueValue, translatedFalseValue, out var vectorSize))
+        {
+            translatedCondition = $"vec{vectorSize}<bool>({string.Join(", ", Enumerable.Repeat(translatedCondition, vectorSize))})";
+        }
+
         translated = string.Concat(
             "select(",
-            TranslateExpression(falseValue, constantBuffers, shaderResources),
+            translatedFalseValue,
             ", ",
-            TranslateExpression(trueValue, constantBuffers, shaderResources),
+            translatedTrueValue,
             ", ",
-            TranslateExpression(condition, constantBuffers, shaderResources),
+            translatedCondition,
             ")");
         return true;
+    }
+
+    private static bool TryGetMatchingWgslVectorSelectSize(
+        string trueValue,
+        string falseValue,
+        out int vectorSize)
+    {
+        vectorSize = 0;
+        var trueSize = GetWgslVectorConstructorSize(trueValue);
+        if (trueSize == 0 || trueSize != GetWgslVectorConstructorSize(falseValue))
+        {
+            return false;
+        }
+
+        vectorSize = trueSize;
+        return true;
+    }
+
+    private static int GetWgslVectorConstructorSize(string expression)
+    {
+        var match = Regex.Match(expression.TrimStart(), @"^vec(?<size>[234])<");
+        return match.Success ? int.Parse(match.Groups["size"].Value) : 0;
     }
 
     private static bool TrySplitConditionalExpression(
