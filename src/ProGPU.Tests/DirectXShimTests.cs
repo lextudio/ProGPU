@@ -6110,6 +6110,136 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void FlushAppliesQueuedBlendStateToGpuBackedDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor
+            {
+                EnableBlend = false,
+                WriteMask = DxColorWriteMask.All
+            },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.SetGraphicsPipeline(pipeline);
+        context.SetBlendState(new DxBlendStateDescriptor
+        {
+            EnableBlend = false,
+            WriteMask = DxColorWriteMask.None
+        });
+        context.Draw(3);
+
+        var drawCommand = context.Commands.Last(command => command.Kind == ProGpuDirectXCommandKind.Draw);
+        Assert.NotNull(drawCommand.BlendState);
+        Assert.Equal(DxColorWriteMask.None, drawCommand.BlendState!.WriteMask);
+
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedClearCount);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Equal(1, context.CachedDynamicGraphicsPipelineCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R < 50, $"Expected low red center pixel after queued blend write mask disabled color writes, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after queued blend write mask disabled color writes, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after queued blend write mask disabled color writes, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque cleared center pixel after queued blend write mask disabled color writes, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushAppliesQueuedPrimitiveTopologyToGpuBackedDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            Topology = DxPrimitiveTopology.LineList,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.SetGraphicsPipeline(pipeline);
+        context.SetPrimitiveTopology(DxPrimitiveTopology.TriangleList);
+        context.Draw(3);
+
+        var drawCommand = context.Commands.Last(command => command.Kind == ProGpuDirectXCommandKind.Draw);
+        Assert.Equal(DxPrimitiveTopology.TriangleList, drawCommand.Topology);
+
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedClearCount);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Equal(1, context.CachedDynamicGraphicsPipelineCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after queued topology selected triangle pipeline, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after queued topology selected triangle pipeline, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after queued topology selected triangle pipeline, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after queued topology selected triangle pipeline, actual: {center}");
+    }
+
+    [Fact]
     public void FlushSubmitsGpuBackedStencilReferenceAndOperations()
     {
         using var wgpu = new WgpuContext();
