@@ -1744,6 +1744,11 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             {
                 foreach (var pair in vertexBufferBindings.OrderBy(pair => pair.Key))
                 {
+                    if (!pipeline.TryGetBackendVertexBufferSlot(pair.Key, out var backendSlot))
+                    {
+                        continue;
+                    }
+
                     if (pair.Value.Buffer.BackendBuffer is not { BufferPtr: not null } buffer)
                     {
                         throw new InvalidOperationException("GPU-backed DirectX draw requires backend vertex buffers.");
@@ -1757,7 +1762,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
                     context.Wgpu.RenderPassEncoderSetVertexBuffer(
                         pass,
-                        pair.Key,
+                        backendSlot,
                         buffer.BufferPtr,
                         offsetBytes,
                         buffer.Size - offsetBytes);
@@ -1767,12 +1772,17 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             {
                 foreach (var pair in vertexBuffers.OrderBy(pair => pair.Key))
                 {
+                    if (!pipeline.TryGetBackendVertexBufferSlot(pair.Key, out var backendSlot))
+                    {
+                        continue;
+                    }
+
                     if (pair.Value.BackendBuffer is not { BufferPtr: not null } buffer)
                     {
                         throw new InvalidOperationException("GPU-backed DirectX draw requires backend vertex buffers.");
                     }
 
-                    context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, pair.Key, buffer.BufferPtr, 0, buffer.Size);
+                    context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, backendSlot, buffer.BufferPtr, 0, buffer.Size);
                 }
             }
 

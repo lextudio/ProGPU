@@ -246,11 +246,22 @@ public sealed class ProGpuDirectXInputLayout
 
     private static void ValidateElements(IReadOnlyList<DxInputElementDescriptor> elements)
     {
+        var usedLocations = new HashSet<uint>();
         foreach (var element in elements)
         {
             if (string.IsNullOrWhiteSpace(element.SemanticName))
             {
                 throw new ArgumentException("Input elements must provide a semantic name.", nameof(elements));
+            }
+
+            if (element.ShaderLocation is not { } shaderLocation)
+            {
+                throw new ArgumentException("Input elements must provide a shader location derived from shader signature reflection or an explicit adapter mapping.", nameof(elements));
+            }
+
+            if (!usedLocations.Add(shaderLocation))
+            {
+                throw new ArgumentException($"Input elements map more than one semantic to shader location {shaderLocation}.", nameof(elements));
             }
         }
     }
@@ -289,6 +300,7 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
         UsesReflectedInputLayout = usesReflectedInputLayout;
         ReflectedInputLayoutSupported = reflectedInputLayoutSupported;
         ReflectedInputLayoutFailureReason = reflectedInputLayoutFailureReason;
+        InputSlotToBackendSlot = CreateBackendInputSlotMap(EffectiveInputLayout);
         PipelineKey = CreatePipelineKey(descriptor, EffectiveInputLayout);
         ReflectedBindingRequirements = CombineReflectedBindingRequirements(
             descriptor.VertexShader,
@@ -339,6 +351,8 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
 
     public string PipelineKey { get; }
 
+    internal IReadOnlyDictionary<uint, uint> InputSlotToBackendSlot { get; }
+
     public IReadOnlyList<DxReflectedShaderBindingRequirement> ReflectedBindingRequirements { get; }
 
     public bool HasReflectedBindingRequirements => ReflectedBindingRequirements.Count > 0;
@@ -362,6 +376,11 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
     internal RenderPipeline* FrontFacingFrontPipeline => (RenderPipeline*)_frontFacingFrontPipeline;
 
     internal RenderPipeline* FrontFacingBackPipeline => (RenderPipeline*)_frontFacingBackPipeline;
+
+    internal bool TryGetBackendVertexBufferSlot(uint directXInputSlot, out uint backendInputSlot)
+    {
+        return InputSlotToBackendSlot.TryGetValue(directXInputSlot, out backendInputSlot);
+    }
 
     private static RenderPipeline* CreateBackendPipeline(
         WgpuContext context,
@@ -390,19 +409,16 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
         try
         {
             var vertexElements = effectiveInputLayout?.Elements ?? Array.Empty<DxInputElementDescriptor>();
-            var inputSlots = vertexElements
-                .Select(e => e.InputSlot)
-                .Distinct()
-                .OrderBy(slot => slot)
-                .ToArray();
+            var inputSlots = CreateBackendInputSlots(effectiveInputLayout);
+            var bufferLayoutCount = (uint)inputSlots.Length;
 
             var attributes = stackalloc VertexAttribute[vertexElements.Count];
-            var layouts = stackalloc VertexBufferLayout[inputSlots.Length];
+            var layouts = stackalloc VertexBufferLayout[(int)bufferLayoutCount];
             var attributeIndex = 0;
 
-            for (var slotIndex = 0; slotIndex < inputSlots.Length; slotIndex++)
+            for (var slotIndex = 0u; slotIndex < bufferLayoutCount; slotIndex++)
             {
-                var slot = inputSlots[slotIndex];
+                var directXInputSlot = inputSlots[(int)slotIndex];
                 var firstAttributeIndex = attributeIndex;
                 uint stride = 0;
                 DxInputClassification classification = DxInputClassification.PerVertexData;
@@ -411,7 +427,7 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
                 for (var elementIndex = 0; elementIndex < vertexElements.Count; elementIndex++)
                 {
                     var element = vertexElements[elementIndex];
-                    if (element.InputSlot != slot)
+                    if (element.InputSlot != directXInputSlot)
                     {
                         continue;
                     }
@@ -420,7 +436,7 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
                     {
                         Format = ProGpuDirectXFormatConverter.ToVertexFormat(element.Format),
                         Offset = element.AlignedByteOffset,
-                        ShaderLocation = element.ShaderLocation ?? (uint)elementIndex
+                        ShaderLocation = element.ShaderLocation!.Value
                     };
                     attributeIndex++;
 
@@ -431,11 +447,12 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
                     stepRate = element.InstanceDataStepRate;
                 }
 
+                var slotAttributeCount = (uint)(attributeIndex - firstAttributeIndex);
                 layouts[slotIndex] = new VertexBufferLayout
                 {
                     ArrayStride = stride,
                     StepMode = ProGpuDirectXFormatConverter.ToVertexStepMode(classification),
-                    AttributeCount = (uint)(attributeIndex - firstAttributeIndex),
+                    AttributeCount = slotAttributeCount,
                     Attributes = &attributes[firstAttributeIndex]
                 };
 
@@ -449,8 +466,8 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
             {
                 Module = descriptor.VertexShader.BackendShaderModule,
                 EntryPoint = (byte*)vsEntryPtr,
-                BufferCount = (uint)inputSlots.Length,
-                Buffers = inputSlots.Length == 0 ? null : layouts
+                BufferCount = bufferLayoutCount,
+                Buffers = bufferLayoutCount == 0 ? null : layouts
             };
 
             FragmentState fragmentState = default;
@@ -635,6 +652,32 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
 
         failureReason = "Fragment front-facing shader variants could not be created.";
         return false;
+    }
+
+    private static uint[] CreateBackendInputSlots(ProGpuDirectXInputLayout? effectiveInputLayout)
+    {
+        if (effectiveInputLayout is null || effectiveInputLayout.Elements.Count == 0)
+        {
+            return Array.Empty<uint>();
+        }
+
+        return effectiveInputLayout.Elements
+            .Select(element => element.InputSlot)
+            .Distinct()
+            .OrderBy(slot => slot)
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<uint, uint> CreateBackendInputSlotMap(ProGpuDirectXInputLayout? effectiveInputLayout)
+    {
+        var inputSlots = CreateBackendInputSlots(effectiveInputLayout);
+        var inputSlotMap = new Dictionary<uint, uint>(inputSlots.Length);
+        for (var index = 0; index < inputSlots.Length; index++)
+        {
+            inputSlotMap[inputSlots[index]] = (uint)index;
+        }
+
+        return inputSlotMap;
     }
 
     private static PrimitiveTopology GetBackendPrimitiveTopology(DxGraphicsPipelineDescriptor descriptor)

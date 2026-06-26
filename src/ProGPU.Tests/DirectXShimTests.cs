@@ -1894,6 +1894,33 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void InputLayoutRejectsElementsWithoutShaderLocations()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+
+        var exception = Assert.Throws<ArgumentException>(() => device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    AlignedByteOffset = 12
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 0
+                }
+            ]
+        }));
+
+        Assert.Contains("shader location", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void HlslBytecodeInputSignatureInfersIntegerVectorFormats()
     {
         var bytecode = CreateDxbcBytecode(
@@ -3051,6 +3078,102 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(center.G < 50, $"Expected skipped green vertices from offset vertex binding, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel from offset vertex binding, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel from offset vertex binding, actual: {center}");
+    }
+
+    [Fact]
+    public void GpuBackedDrawPreservesNonContiguousInputSlotNumbers()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 84,
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
+            StrideInBytes = 28
+        });
+        vertexBuffer.Write<float>(
+        [
+            -0.8f, -0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+             0.8f, -0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+             0.0f,  0.8f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f
+        ]);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = PassthroughVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = PassthroughPixelHlsl,
+            EntryPoint = "PSMain",
+            Label = "HLSL Pixel"
+        });
+        var inputLayout = device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    InputSlot = 1,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "COLOR",
+                    Format = DxResourceFormat.R32G32B32A32Float,
+                    InputSlot = 1,
+                    AlignedByteOffset = 12,
+                    ShaderLocation = 1
+                }
+            ]
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            InputLayout = inputLayout,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor
+            {
+                CullMode = DxCullMode.None,
+                FrontFace = DxFrontFace.CounterClockwise
+            }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.SetVertexBuffer(1, vertexBuffer);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel from slot 1 vertex binding, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel from slot 1 vertex binding, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel from slot 1 vertex binding, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel from slot 1 vertex binding, actual: {center}");
     }
 
     [Fact]
