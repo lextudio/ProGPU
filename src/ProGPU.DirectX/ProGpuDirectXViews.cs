@@ -137,7 +137,7 @@ public sealed class ProGpuDirectXRenderTargetView : ProGpuDirectXView
         DxRenderTargetViewDescriptor descriptor)
         : base(
             device,
-            texture,
+            ValidateDescriptor(texture, descriptor),
             null,
             descriptor.Dimension,
             descriptor.Format == DxResourceFormat.Unknown ? texture.Descriptor.Format : descriptor.Format,
@@ -148,13 +148,12 @@ public sealed class ProGpuDirectXRenderTargetView : ProGpuDirectXView
             descriptor.ArraySize,
             createTextureView: true)
     {
-        ValidateDescriptor(texture, descriptor);
         Descriptor = descriptor;
     }
 
     public DxRenderTargetViewDescriptor Descriptor { get; }
 
-    private static void ValidateDescriptor(
+    private static ProGpuDirectXTexture2D ValidateDescriptor(
         ProGpuDirectXTexture2D texture,
         DxRenderTargetViewDescriptor descriptor)
     {
@@ -179,6 +178,8 @@ public sealed class ProGpuDirectXRenderTargetView : ProGpuDirectXView
         {
             throw new ArgumentOutOfRangeException(nameof(descriptor), "Render-target view array range exceeds the texture.");
         }
+
+        return texture;
     }
 }
 
@@ -190,7 +191,7 @@ public sealed class ProGpuDirectXDepthStencilView : ProGpuDirectXView
         DxDepthStencilViewDescriptor descriptor)
         : base(
             device,
-            texture,
+            ValidateDescriptor(texture, descriptor),
             null,
             descriptor.Dimension,
             descriptor.Format == DxResourceFormat.Unknown ? texture.Descriptor.Format : descriptor.Format,
@@ -201,13 +202,12 @@ public sealed class ProGpuDirectXDepthStencilView : ProGpuDirectXView
             descriptor.ArraySize,
             createTextureView: true)
     {
-        ValidateDescriptor(texture, descriptor);
         Descriptor = descriptor;
     }
 
     public DxDepthStencilViewDescriptor Descriptor { get; }
 
-    private static void ValidateDescriptor(
+    private static ProGpuDirectXTexture2D ValidateDescriptor(
         ProGpuDirectXTexture2D texture,
         DxDepthStencilViewDescriptor descriptor)
     {
@@ -232,6 +232,8 @@ public sealed class ProGpuDirectXDepthStencilView : ProGpuDirectXView
         {
             throw new ArgumentOutOfRangeException(nameof(descriptor), "Depth-stencil view array range exceeds the texture.");
         }
+
+        return texture;
     }
 }
 
@@ -243,7 +245,7 @@ public sealed class ProGpuDirectXShaderResourceView : ProGpuDirectXView
         DxShaderResourceViewDescriptor descriptor)
         : base(
             device,
-            texture,
+            ValidateTextureDescriptor(texture, descriptor),
             null,
             descriptor.Dimension,
             descriptor.Format == DxResourceFormat.Unknown ? texture.Descriptor.Format : descriptor.Format,
@@ -254,7 +256,6 @@ public sealed class ProGpuDirectXShaderResourceView : ProGpuDirectXView
             descriptor.ArraySize,
             createTextureView: true)
     {
-        ValidateTextureDescriptor(texture, descriptor);
         Descriptor = descriptor;
     }
 
@@ -281,7 +282,7 @@ public sealed class ProGpuDirectXShaderResourceView : ProGpuDirectXView
 
     public DxShaderResourceViewDescriptor Descriptor { get; }
 
-    private static void ValidateTextureDescriptor(
+    private static ProGpuDirectXTexture2D ValidateTextureDescriptor(
         ProGpuDirectXTexture2D texture,
         DxShaderResourceViewDescriptor descriptor)
     {
@@ -307,6 +308,8 @@ public sealed class ProGpuDirectXShaderResourceView : ProGpuDirectXView
         {
             throw new ArgumentOutOfRangeException(nameof(descriptor), "Shader-resource view array range exceeds the texture.");
         }
+
+        return texture;
     }
 
     private static void ValidateBufferDescriptor(
@@ -333,7 +336,7 @@ public sealed class ProGpuDirectXUnorderedAccessView : ProGpuDirectXView
         DxUnorderedAccessViewDescriptor descriptor)
         : base(
             device,
-            texture,
+            ValidateTextureDescriptor(texture, descriptor),
             null,
             descriptor.Dimension,
             descriptor.Format == DxResourceFormat.Unknown ? texture.Descriptor.Format : descriptor.Format,
@@ -344,7 +347,6 @@ public sealed class ProGpuDirectXUnorderedAccessView : ProGpuDirectXView
             descriptor.ArraySize,
             createTextureView: true)
     {
-        ValidateTextureDescriptor(texture, descriptor);
         Descriptor = descriptor;
     }
 
@@ -371,7 +373,7 @@ public sealed class ProGpuDirectXUnorderedAccessView : ProGpuDirectXView
 
     public DxUnorderedAccessViewDescriptor Descriptor { get; }
 
-    private static void ValidateTextureDescriptor(
+    private static ProGpuDirectXTexture2D ValidateTextureDescriptor(
         ProGpuDirectXTexture2D texture,
         DxUnorderedAccessViewDescriptor descriptor)
     {
@@ -393,6 +395,8 @@ public sealed class ProGpuDirectXUnorderedAccessView : ProGpuDirectXView
         {
             throw new ArgumentOutOfRangeException(nameof(descriptor), "Unordered-access view array range exceeds the texture.");
         }
+
+        return texture;
     }
 
     private static void ValidateBufferDescriptor(

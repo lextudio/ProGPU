@@ -7300,6 +7300,77 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void GpuBackedTextureViewsValidateDescriptorsBeforeNativeViewCreation()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var shaderResource = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 8,
+            Height = 8,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource,
+            ArraySize = 1
+        });
+        using var unorderedAccess = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 8,
+            Height = 8,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.UnorderedAccess,
+            ArraySize = 1
+        });
+        using var renderTarget = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 8,
+            Height = 8,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget,
+            ArraySize = 1
+        });
+        using var depthStencil = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 8,
+            Height = 8,
+            Format = DxResourceFormat.D32Float,
+            Usage = DxTextureUsage.DepthStencil,
+            ArraySize = 1
+        });
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            device.CreateShaderResourceView(
+                shaderResource,
+                new DxShaderResourceViewDescriptor
+                {
+                    Dimension = DxResourceViewDimension.Texture2DArray,
+                    ArraySize = 2
+                }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            device.CreateUnorderedAccessView(
+                unorderedAccess,
+                new DxUnorderedAccessViewDescriptor
+                {
+                    Dimension = DxResourceViewDimension.Texture2DArray,
+                    ArraySize = 2
+                }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            device.CreateRenderTargetView(
+                renderTarget,
+                new DxRenderTargetViewDescriptor
+                {
+                    ArraySize = 2
+                }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            device.CreateDepthStencilView(
+                depthStencil,
+                new DxDepthStencilViewDescriptor
+                {
+                    ArraySize = 2
+                }));
+    }
+
+    [Fact]
     public void TextureUnorderedAccessViewsCreateGpuBackedBindGroups()
     {
         using var wgpu = new WgpuContext();
