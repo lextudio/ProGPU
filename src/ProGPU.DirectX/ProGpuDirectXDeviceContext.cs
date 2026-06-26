@@ -1956,7 +1956,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 "ProGPU DirectX Draw Pipeline Bindings");
             if (pipelineBindGroup == null)
             {
-                throw new InvalidOperationException("GPU-backed DirectX draw could not create a pipeline-compatible bind group.");
+                throw new InvalidOperationException(
+                    $"GPU-backed DirectX draw could not create a pipeline-compatible bind group. Bindings: {snapshot.DescribeEntries()}.");
             }
 
             DrawBindGroupCacheMissCount++;
@@ -2308,7 +2309,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 "ProGPU DirectX Dispatch Pipeline Bindings");
             if (pipelineBindGroup == null)
             {
-                throw new InvalidOperationException("GPU-backed DirectX dispatch could not create a pipeline-compatible bind group.");
+                throw new InvalidOperationException(
+                    $"GPU-backed DirectX dispatch could not create a pipeline-compatible bind group. Bindings: {snapshot.DescribeEntries()}.");
             }
 
             DispatchBindGroupCacheMissCount++;

@@ -142,6 +142,17 @@ public sealed unsafe class ProGpuDirectXBindingSnapshot : IDisposable
         }
     }
 
+    internal string DescribeEntries()
+    {
+        if (Entries.Count == 0)
+        {
+            return "no entries";
+        }
+
+        return string.Join(", ", Entries.Select(entry =>
+            $"{entry.Kind} {entry.Stage}[{entry.Slot}] native={entry.NativeBinding} resource={GetBackendResourceToken(entry)}"));
+    }
+
     private static string BuildBindingKey(IReadOnlyList<ProGpuDirectXBindingEntry> entries)
     {
         if (entries.Count == 0)
