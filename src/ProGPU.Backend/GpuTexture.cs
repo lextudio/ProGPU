@@ -19,6 +19,36 @@ public enum GpuTextureDimension
 
 public unsafe class GpuTexture : IDisposable
 {
+    private const string MipGeneratorShader = """
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0));
+    var output: VertexOutput;
+    output.position = vec4<f32>(positions[vertexIndex], 0.0, 1.0);
+    return output;
+}
+
+@group(0) @binding(0) var mipSampler: sampler;
+@group(0) @binding(1) var sourceTexture: texture_2d<f32>;
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let sourceSize = textureDimensions(sourceTexture);
+    let targetSize = vec2<f32>(
+        f32(max(1u, sourceSize.x / 2u)),
+        f32(max(1u, sourceSize.y / 2u)));
+    let uv = input.position.xy / targetSize;
+    return textureSampleLevel(sourceTexture, mipSampler, uv, 0.0);
+}
+""";
+
     private static long s_idCounter = 0;
     public static event Action<ulong>? OnDisposedWithId;
 
@@ -394,6 +424,420 @@ public unsafe class GpuTexture : IDisposable
         Generation++;
     }
 
+    public void GenerateMipmaps2DLinear(
+        uint baseMipLevel = 0,
+        uint? mipLevelCount = null,
+        uint baseArrayLayer = 0,
+        uint? arrayLayerCount = null)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
+        ValidateMipGenerationRange(baseMipLevel, mipLevelCount, baseArrayLayer, arrayLayerCount);
+
+        var levels = mipLevelCount ?? (MipLevelCount - baseMipLevel);
+        if (levels <= 1)
+        {
+            return;
+        }
+
+        var layers = arrayLayerCount ?? (DepthOrArrayLayers - baseArrayLayer);
+        var wgpu = _context.Wgpu;
+        ShaderModule* shader = null;
+        Sampler* sampler = null;
+        BindGroupLayout* bindGroupLayout = null;
+        PipelineLayout* pipelineLayout = null;
+        RenderPipeline* pipeline = null;
+        CommandEncoder* encoder = null;
+        CommandBuffer* commandBuffer = null;
+        try
+        {
+            shader = CreateMipGeneratorShaderModule();
+            sampler = CreateMipGeneratorSampler();
+            bindGroupLayout = CreateMipGeneratorBindGroupLayout();
+            pipelineLayout = CreateMipGeneratorPipelineLayout(bindGroupLayout);
+            pipeline = CreateMipGeneratorPipeline(shader, pipelineLayout);
+
+            var encoderDesc = new CommandEncoderDescriptor();
+            encoder = wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+            if (encoder == null)
+            {
+                throw new InvalidOperationException("Failed to create command encoder for mip generation.");
+            }
+
+            for (var arrayLayer = baseArrayLayer; arrayLayer < baseArrayLayer + layers; arrayLayer++)
+            {
+                for (var destinationMip = baseMipLevel + 1; destinationMip < baseMipLevel + levels; destinationMip++)
+                {
+                    GenerateMipLevel2DLinear(
+                        encoder,
+                        pipeline,
+                        bindGroupLayout,
+                        sampler,
+                        sourceMipLevel: destinationMip - 1,
+                        destinationMipLevel: destinationMip,
+                        arrayLayer);
+                }
+            }
+
+            var commandBufferDesc = new CommandBufferDescriptor();
+            commandBuffer = wgpu.CommandEncoderFinish(encoder, &commandBufferDesc);
+            if (commandBuffer != null)
+            {
+                wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+            }
+        }
+        finally
+        {
+            if (commandBuffer != null)
+            {
+                wgpu.CommandBufferRelease(commandBuffer);
+            }
+
+            if (encoder != null)
+            {
+                wgpu.CommandEncoderRelease(encoder);
+            }
+
+            ReleaseMipGeneratorResources(shader, sampler, pipeline, bindGroupLayout, pipelineLayout);
+        }
+
+        Generation++;
+    }
+
+    private void GenerateMipLevel2DLinear(
+        CommandEncoder* encoder,
+        RenderPipeline* pipeline,
+        BindGroupLayout* bindGroupLayout,
+        Sampler* sampler,
+        uint sourceMipLevel,
+        uint destinationMipLevel,
+        uint arrayLayer)
+    {
+        var wgpu = _context.Wgpu;
+        var sourceView = CreateMipGeneratorTextureView(sourceMipLevel, arrayLayer);
+        var destinationView = CreateMipGeneratorTextureView(destinationMipLevel, arrayLayer);
+        var bindGroup = CreateMipGeneratorBindGroup(bindGroupLayout, sampler, sourceView);
+        RenderPassEncoder* pass = null;
+        try
+        {
+            var colorAttachment = new RenderPassColorAttachment
+            {
+                View = destinationView,
+                ResolveTarget = null,
+                LoadOp = LoadOp.Clear,
+                StoreOp = StoreOp.Store,
+                ClearValue = new Color()
+            };
+            var passDesc = new RenderPassDescriptor
+            {
+                ColorAttachmentCount = 1,
+                ColorAttachments = &colorAttachment
+            };
+
+            pass = wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
+            if (pass == null)
+            {
+                throw new InvalidOperationException("Failed to begin render pass for mip generation.");
+            }
+
+            wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
+            wgpu.RenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+            wgpu.RenderPassEncoderDraw(pass, 3, 1, 0, 0);
+            wgpu.RenderPassEncoderEnd(pass);
+        }
+        finally
+        {
+            if (pass != null)
+            {
+                wgpu.RenderPassEncoderRelease(pass);
+            }
+
+            if (bindGroup != null)
+            {
+                wgpu.BindGroupRelease(bindGroup);
+            }
+
+            if (sourceView != null)
+            {
+                wgpu.TextureViewRelease(sourceView);
+            }
+
+            if (destinationView != null)
+            {
+                wgpu.TextureViewRelease(destinationView);
+            }
+        }
+    }
+
+    private ShaderModule* CreateMipGeneratorShaderModule()
+    {
+        var sourcePtr = SilkMarshal.StringToPtr(MipGeneratorShader);
+        var labelPtr = SilkMarshal.StringToPtr("ProGPU Mip Generator Shader");
+        try
+        {
+            var wgslDesc = new ShaderModuleWGSLDescriptor
+            {
+                Chain = new ChainedStruct
+                {
+                    Next = null,
+                    SType = SType.ShaderModuleWgslDescriptor
+                },
+                Code = (byte*)sourcePtr
+            };
+            var moduleDesc = new ShaderModuleDescriptor
+            {
+                NextInChain = (ChainedStruct*)&wgslDesc,
+                Label = (byte*)labelPtr
+            };
+
+            var module = _context.Wgpu.DeviceCreateShaderModule(_context.Device, &moduleDesc);
+            if (module == null)
+            {
+                throw new InvalidOperationException("Failed to create mip generator shader module.");
+            }
+
+            return module;
+        }
+        finally
+        {
+            SilkMarshal.Free(sourcePtr);
+            SilkMarshal.Free(labelPtr);
+        }
+    }
+
+    private Sampler* CreateMipGeneratorSampler()
+    {
+        var samplerDesc = new SamplerDescriptor
+        {
+            AddressModeU = AddressMode.ClampToEdge,
+            AddressModeV = AddressMode.ClampToEdge,
+            AddressModeW = AddressMode.ClampToEdge,
+            MagFilter = FilterMode.Linear,
+            MinFilter = FilterMode.Linear,
+            MipmapFilter = MipmapFilterMode.Nearest,
+            LodMinClamp = 0f,
+            LodMaxClamp = 0f,
+            MaxAnisotropy = 1
+        };
+
+        var sampler = _context.Wgpu.DeviceCreateSampler(_context.Device, &samplerDesc);
+        if (sampler == null)
+        {
+            throw new InvalidOperationException("Failed to create mip generator sampler.");
+        }
+
+        return sampler;
+    }
+
+    private BindGroupLayout* CreateMipGeneratorBindGroupLayout()
+    {
+        var entries = stackalloc BindGroupLayoutEntry[2];
+        entries[0] = new BindGroupLayoutEntry
+        {
+            Binding = 0,
+            Visibility = ShaderStage.Fragment,
+            Sampler = new SamplerBindingLayout
+            {
+                Type = SamplerBindingType.Filtering
+            }
+        };
+        entries[1] = new BindGroupLayoutEntry
+        {
+            Binding = 1,
+            Visibility = ShaderStage.Fragment,
+            Texture = new TextureBindingLayout
+            {
+                SampleType = TextureSampleType.Float,
+                ViewDimension = TextureViewDimension.Dimension2D,
+                Multisampled = false
+            }
+        };
+        var desc = new BindGroupLayoutDescriptor
+        {
+            EntryCount = 2,
+            Entries = entries
+        };
+
+        var layout = _context.Wgpu.DeviceCreateBindGroupLayout(_context.Device, &desc);
+        if (layout == null)
+        {
+            throw new InvalidOperationException("Failed to create mip generator bind-group layout.");
+        }
+
+        return layout;
+    }
+
+    private PipelineLayout* CreateMipGeneratorPipelineLayout(BindGroupLayout* bindGroupLayout)
+    {
+        var layouts = stackalloc BindGroupLayout*[1];
+        layouts[0] = bindGroupLayout;
+        var desc = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 1,
+            BindGroupLayouts = layouts
+        };
+
+        var layout = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &desc);
+        if (layout == null)
+        {
+            throw new InvalidOperationException("Failed to create mip generator pipeline layout.");
+        }
+
+        return layout;
+    }
+
+    private RenderPipeline* CreateMipGeneratorPipeline(ShaderModule* shader, PipelineLayout* pipelineLayout)
+    {
+        var vertexEntryPtr = SilkMarshal.StringToPtr("vs_main");
+        var fragmentEntryPtr = SilkMarshal.StringToPtr("fs_main");
+        var labelPtr = SilkMarshal.StringToPtr("ProGPU Mip Generator Pipeline");
+        try
+        {
+            var vertexState = new VertexState
+            {
+                Module = shader,
+                EntryPoint = (byte*)vertexEntryPtr,
+                BufferCount = 0,
+                Buffers = null
+            };
+            var colorTarget = new ColorTargetState
+            {
+                Format = Format,
+                Blend = null,
+                WriteMask = ColorWriteMask.All
+            };
+            var fragmentState = new FragmentState
+            {
+                Module = shader,
+                EntryPoint = (byte*)fragmentEntryPtr,
+                TargetCount = 1,
+                Targets = &colorTarget
+            };
+            var pipelineDesc = new RenderPipelineDescriptor
+            {
+                Label = (byte*)labelPtr,
+                Layout = pipelineLayout,
+                Vertex = vertexState,
+                Primitive = new PrimitiveState
+                {
+                    Topology = PrimitiveTopology.TriangleList,
+                    StripIndexFormat = IndexFormat.Undefined,
+                    FrontFace = FrontFace.Ccw,
+                    CullMode = CullMode.None
+                },
+                DepthStencil = null,
+                Multisample = new MultisampleState
+                {
+                    Count = 1,
+                    Mask = 0xFFFFFFFF,
+                    AlphaToCoverageEnabled = false
+                },
+                Fragment = &fragmentState
+            };
+
+            var pipeline = _context.Wgpu.DeviceCreateRenderPipeline(_context.Device, &pipelineDesc);
+            if (pipeline == null)
+            {
+                throw new InvalidOperationException("Failed to create mip generator render pipeline.");
+            }
+
+            return pipeline;
+        }
+        finally
+        {
+            SilkMarshal.Free(vertexEntryPtr);
+            SilkMarshal.Free(fragmentEntryPtr);
+            SilkMarshal.Free(labelPtr);
+        }
+    }
+
+    private TextureView* CreateMipGeneratorTextureView(uint mipLevel, uint arrayLayer)
+    {
+        var viewDesc = new TextureViewDescriptor
+        {
+            Format = Format,
+            Dimension = TextureViewDimension.Dimension2D,
+            BaseMipLevel = mipLevel,
+            MipLevelCount = 1,
+            BaseArrayLayer = arrayLayer,
+            ArrayLayerCount = 1,
+            Aspect = TextureAspect.All
+        };
+
+        var view = _context.Wgpu.TextureCreateView(TexturePtr, &viewDesc);
+        if (view == null)
+        {
+            throw new InvalidOperationException($"Failed to create mip generator texture view for mip {mipLevel}, layer {arrayLayer}.");
+        }
+
+        return view;
+    }
+
+    private BindGroup* CreateMipGeneratorBindGroup(
+        BindGroupLayout* bindGroupLayout,
+        Sampler* sampler,
+        TextureView* sourceView)
+    {
+        var entries = stackalloc BindGroupEntry[2];
+        entries[0] = new BindGroupEntry
+        {
+            Binding = 0,
+            Sampler = sampler
+        };
+        entries[1] = new BindGroupEntry
+        {
+            Binding = 1,
+            TextureView = sourceView
+        };
+        var bindGroupDesc = new BindGroupDescriptor
+        {
+            Layout = bindGroupLayout,
+            EntryCount = 2,
+            Entries = entries
+        };
+
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDesc);
+        if (bindGroup == null)
+        {
+            throw new InvalidOperationException("Failed to create mip generator bind group.");
+        }
+
+        return bindGroup;
+    }
+
+    private void ReleaseMipGeneratorResources(
+        ShaderModule* shader,
+        Sampler* sampler,
+        RenderPipeline* pipeline,
+        BindGroupLayout* bindGroupLayout,
+        PipelineLayout* pipelineLayout)
+    {
+        var wgpu = _context.Wgpu;
+        if (pipeline != null)
+        {
+            wgpu.RenderPipelineRelease(pipeline);
+        }
+
+        if (pipelineLayout != null)
+        {
+            wgpu.PipelineLayoutRelease(pipelineLayout);
+        }
+
+        if (bindGroupLayout != null)
+        {
+            wgpu.BindGroupLayoutRelease(bindGroupLayout);
+        }
+
+        if (sampler != null)
+        {
+            wgpu.SamplerRelease(sampler);
+        }
+
+        if (shader != null)
+        {
+            wgpu.ShaderModuleRelease(shader);
+        }
+    }
+
     public void CopyFrom(GpuTexture source)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
@@ -476,6 +920,69 @@ public unsafe class GpuTexture : IDisposable
         {
             throw new InvalidOperationException($"PBgra32 uploads require a BGRA8 texture format. Actual format: {Format}.");
         }
+    }
+
+    private void ValidateMipGenerationRange(
+        uint baseMipLevel,
+        uint? mipLevelCount,
+        uint baseArrayLayer,
+        uint? arrayLayerCount)
+    {
+        if (Dimension != GpuTextureDimension.Dimension2D)
+        {
+            throw new NotSupportedException("GPU mip generation currently supports only 2D textures.");
+        }
+
+        if (SampleCount != 1)
+        {
+            throw new NotSupportedException("GPU mip generation currently supports only single-sample textures.");
+        }
+
+        if (!Usage.HasFlag(TextureUsage.TextureBinding))
+        {
+            throw new InvalidOperationException("GPU mip generation requires TextureBinding usage.");
+        }
+
+        if (!Usage.HasFlag(TextureUsage.RenderAttachment))
+        {
+            throw new InvalidOperationException("GPU mip generation requires RenderAttachment usage.");
+        }
+
+        if (!IsMipGenerationFormat(Format))
+        {
+            throw new NotSupportedException($"GPU mip generation does not support texture format {Format}.");
+        }
+
+        if (baseMipLevel >= MipLevelCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(baseMipLevel), "Base mip level is outside the texture mip chain.");
+        }
+
+        var levels = mipLevelCount ?? (MipLevelCount - baseMipLevel);
+        if (levels == 0 || levels > MipLevelCount - baseMipLevel)
+        {
+            throw new ArgumentOutOfRangeException(nameof(mipLevelCount), "Mip generation range exceeds the texture mip chain.");
+        }
+
+        if (baseArrayLayer >= DepthOrArrayLayers)
+        {
+            throw new ArgumentOutOfRangeException(nameof(baseArrayLayer), "Base array layer is outside the texture array.");
+        }
+
+        var layers = arrayLayerCount ?? (DepthOrArrayLayers - baseArrayLayer);
+        if (layers == 0 || layers > DepthOrArrayLayers - baseArrayLayer)
+        {
+            throw new ArgumentOutOfRangeException(nameof(arrayLayerCount), "Mip generation array range exceeds the texture array.");
+        }
+    }
+
+    private static bool IsMipGenerationFormat(TextureFormat format)
+    {
+        return format is
+            TextureFormat.Rgba8Unorm or
+            TextureFormat.Rgba8UnormSrgb or
+            TextureFormat.Bgra8Unorm or
+            TextureFormat.Bgra8UnormSrgb;
     }
 
     private static uint GetBytesPerPixel(TextureFormat format)

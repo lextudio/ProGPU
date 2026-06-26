@@ -7907,7 +7907,7 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
-    public void GenerateMipsSynchronizesGpuRenderedSourceMipWhenCopySourceIsAvailable()
+    public void GenerateMipsUsesNativeGpuPathForRenderedSourceMipWithoutCopyDestination()
     {
         using var wgpu = new WgpuContext();
         wgpu.Initialize(null);
@@ -7919,7 +7919,6 @@ float4 PSMain() : SV_Target
             Format = DxResourceFormat.R8G8B8A8Unorm,
             Usage = DxTextureUsage.ShaderResource |
                 DxTextureUsage.RenderTarget |
-                DxTextureUsage.CopyDestination |
                 DxTextureUsage.CopySource,
             MipLevels = 2
         });
@@ -7927,7 +7926,6 @@ float4 PSMain() : SV_Target
         using var shaderResourceView = device.CreateShaderResourceView(texture);
         using var context = device.CreateImmediateContext();
 
-        texture.WritePixels<byte>(CreateGeneratedMipSourcePixels(mipLevels: 2));
         context.ClearRenderTarget(renderTargetView, new DxColor(1f, 0f, 0f, 1f));
         context.Flush();
         context.GenerateMips(shaderResourceView);

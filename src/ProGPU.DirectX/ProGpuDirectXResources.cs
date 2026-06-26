@@ -605,12 +605,24 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             throw new InvalidOperationException("DirectX mip generation cannot run while the texture is mapped.");
         }
 
+        var firstMip = shaderResourceView.MostDetailedMip;
+        if (_backendTexture is not null)
+        {
+            _backendTexture.GenerateMipmaps2DLinear(
+                firstMip,
+                shaderResourceView.MipLevels,
+                shaderResourceView.FirstArraySlice,
+                shaderResourceView.ArraySize);
+            LastWriteSizeInBytes = 0;
+            MarkBackendContentsChanged();
+            return;
+        }
+
         if (_writeShadow.Length == 0)
         {
             throw new InvalidOperationException("DirectX mip generation requires texture shadow storage or a synchronized native source mip.");
         }
 
-        var firstMip = shaderResourceView.MostDetailedMip;
         var lastMipExclusive = checked(firstMip + shaderResourceView.MipLevels);
         var generatedBytes = 0u;
 
@@ -635,18 +647,6 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
                 var destinationSubresource = GetSubresourceIndex(mipLevel, arraySlice);
                 MarkShadowSubresourceCurrent(destinationSubresource);
                 generatedBytes = checked(generatedBytes + destinationInfo.SizeInBytes);
-
-                if (_backendTexture is not null)
-                {
-                    _backendTexture.WritePixelsSubRect(
-                        destination,
-                        x: 0,
-                        y: 0,
-                        subWidth: destinationInfo.Width,
-                        subHeight: destinationInfo.Height,
-                        arrayLayer: arraySlice,
-                        mipLevel: mipLevel);
-                }
 
                 if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
                 {
@@ -1040,12 +1040,6 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         if ((Descriptor.Usage & DxTextureUsage.RenderTarget) == 0)
         {
             throw new InvalidOperationException("DirectX mip generation requires render-target texture usage.");
-        }
-
-        if (_backendTexture is not null &&
-            (Descriptor.Usage & DxTextureUsage.CopyDestination) == 0)
-        {
-            throw new InvalidOperationException("DirectX mip generation upload requires copy-destination usage until the native render-pass mip generator is enabled.");
         }
 
         if (!IsMipGenerationFormat(Descriptor.Format))
