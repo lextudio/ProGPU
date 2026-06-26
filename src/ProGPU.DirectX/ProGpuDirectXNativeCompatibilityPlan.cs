@@ -91,14 +91,22 @@ public static class ProGpuDirectXNativeCompatibilityPlanner
     {
         "advapi32",
         "advapi32.dll",
+        "cabinet",
+        "cabinet.dll",
         "gdi32",
         "gdi32.dll",
         "kernel32",
         "kernel32.dll",
         "mscoree",
         "mscoree.dll",
+        "msvcrt",
+        "msvcrt.dll",
         "ole32",
         "ole32.dll",
+        "rpcrt4",
+        "rpcrt4.dll",
+        "symsrv",
+        "symsrv.dll",
         "user32",
         "user32.dll"
     };
@@ -127,16 +135,17 @@ public static class ProGpuDirectXNativeCompatibilityPlanner
         var normalized = NormalizeModuleName(moduleName);
         var comparisonName = normalized.ToLowerInvariant();
 
-        if (comparisonName.Contains("vxccelengine3d", StringComparison.Ordinal))
+        if (comparisonName.Contains("vxccelengine", StringComparison.Ordinal))
         {
             return new ProGpuDirectXNativeCompatibilityModule(
                 normalized,
                 ProGpuDirectXNativeModuleKind.SciChartVisualXccelerator,
                 ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade,
-                "SciChart Visual Xccelerator/3D engine payload needs a ProGPU-backed ABI facade.");
+                "SciChart Visual Xccelerator native-engine payload needs a ProGPU-backed ABI facade.");
         }
 
-        if (comparisonName == "abtlicensingnative.dll")
+        if (comparisonName.Contains("abtlicensingnative", StringComparison.Ordinal)
+            || comparisonName == "scichartcorenative")
         {
             return new ProGpuDirectXNativeCompatibilityModule(
                 normalized,
@@ -163,7 +172,7 @@ public static class ProGpuDirectXNativeCompatibilityPlanner
                 "DXGI factory/adapter/swap-chain entry points should route to ProGPU windowing and WebGPU surfaces.");
         }
 
-        if (comparisonName.StartsWith("d3dcompiler_", StringComparison.Ordinal) && comparisonName.EndsWith(".dll", StringComparison.Ordinal))
+        if (comparisonName.Contains("d3dcompiler_", StringComparison.Ordinal) && comparisonName.EndsWith(".dll", StringComparison.Ordinal))
         {
             return new ProGpuDirectXNativeCompatibilityModule(
                 normalized,

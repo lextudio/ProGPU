@@ -550,9 +550,33 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartVisualXccelerator, visualXcceleratorModule.Kind);
         Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, visualXcceleratorModule.Action);
 
+        var embeddedVisualXcceleratorModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("SciChart.Data.Resources.x64.VXccelEngine2D.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartVisualXccelerator, embeddedVisualXcceleratorModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, embeddedVisualXcceleratorModule.Action);
+
+        var embeddedLicensingModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("SciChart.Core.Resources.x64.AbtLicensingNative.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartLicensing, embeddedLicensingModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, embeddedLicensingModule.Action);
+
+        var bareLicensingModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("AbtLicensingNative", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartLicensing, bareLicensingModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, bareLicensingModule.Action);
+
+        var coreNativeModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("SciChartCoreNative", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartLicensing, coreNativeModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, coreNativeModule.Action);
+
+        var embeddedCompilerModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("SciChart.Data.Resources.x64.D3DCompiler_47.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.D3DCompiler, embeddedCompilerModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, embeddedCompilerModule.Action);
+
         var win32Module = Assert.Single(plan.Modules, module => module.ModuleName.Equals("user32.dll", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(ProGpuDirectXNativeModuleKind.Win32System, win32Module.Kind);
         Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementHostOsAbstraction, win32Module.Action);
+
+        var rpcModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("RPCRT4.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.Win32System, rpcModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementHostOsAbstraction, rpcModule.Action);
 
         var managedModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("SciChart.Charting3D.dll", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(ProGpuDirectXNativeModuleKind.ManagedAssemblyHint, managedModule.Kind);
@@ -561,6 +585,66 @@ fn fs_main() -> @location(0) vec4<f32> {
         var unknownModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("VendorNativeExtension.dylib", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(ProGpuDirectXNativeModuleKind.Unknown, unknownModule.Kind);
         Assert.Equal(ProGpuDirectXNativeCompatibilityAction.Investigate, unknownModule.Action);
+    }
+
+    [Fact]
+    public void NativeResolverClassifiesRequestsWithoutMaskingMissingFacade()
+    {
+        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var plan = ProGpuDirectXNativeCompatibilityPlanner.Create(report);
+        var registration = ProGpuDirectXNativeResolver.CreateRegistration(
+            typeof(NativeDependencyFixture).Assembly,
+            plan);
+
+        Assert.Equal(ProGpuDirectXNativeResolverRegistrationStatus.Created, registration.Status);
+        Assert.Equal(IntPtr.Zero, registration.Resolve("d3d11.dll", typeof(NativeDependencyFixture).Assembly, null));
+        Assert.Equal(IntPtr.Zero, registration.Resolve("USER32", typeof(NativeDependencyFixture).Assembly, null));
+        Assert.Equal(IntPtr.Zero, registration.Resolve("SciChart.Charting3D.dll", typeof(NativeDependencyFixture).Assembly, null));
+        Assert.Contains("default facade: not configured", registration.Describe(), StringComparison.Ordinal);
+
+        var d3dAttempt = Assert.Single(
+            registration.Attempts,
+            attempt => attempt.ModuleName.Equals("d3d11.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.Direct3D, d3dAttempt.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, d3dAttempt.Action);
+        Assert.Equal(ProGpuDirectXNativeResolverModuleStatus.FacadeNotConfigured, d3dAttempt.Status);
+
+        var user32Attempt = Assert.Single(
+            registration.Attempts,
+            attempt => attempt.ModuleName.Equals("USER32", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.Win32System, user32Attempt.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementHostOsAbstraction, user32Attempt.Action);
+        Assert.Equal(ProGpuDirectXNativeResolverModuleStatus.FacadeNotConfigured, user32Attempt.Status);
+
+        var managedAttempt = Assert.Single(
+            registration.Attempts,
+            attempt => attempt.ModuleName.Equals("SciChart.Charting3D.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.ManagedAssemblyHint, managedAttempt.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ManagedAssemblyReferenceOnly, managedAttempt.Action);
+        Assert.Equal(ProGpuDirectXNativeResolverModuleStatus.Ignored, managedAttempt.Status);
+    }
+
+    [Fact]
+    public void NativeResolverReportsConfiguredFacadeLoadFailure()
+    {
+        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var plan = ProGpuDirectXNativeCompatibilityPlanner.Create(report);
+        var missingFacadePath = Path.Combine(Path.GetTempPath(), "progpu-directx-native-facade-missing.dylib");
+        var registration = ProGpuDirectXNativeResolver.CreateRegistration(
+            typeof(NativeDependencyFixture).Assembly,
+            plan,
+            new ProGpuDirectXNativeResolverOptions(missingFacadePath));
+
+        Assert.Equal(IntPtr.Zero, registration.Resolve("VXccelEngine3D.dll", typeof(NativeDependencyFixture).Assembly, null));
+
+        var attempt = Assert.Single(registration.Attempts);
+        Assert.Equal("VXccelEngine3D.dll", attempt.ModuleName);
+        Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartVisualXccelerator, attempt.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, attempt.Action);
+        Assert.Equal(ProGpuDirectXNativeResolverModuleStatus.FacadeLoadFailed, attempt.Status);
+        Assert.Equal(missingFacadePath, attempt.FacadeLibraryPath);
+        Assert.False(string.IsNullOrWhiteSpace(attempt.Failure));
+        Assert.Contains("attempts: VXccelEngine3D.dll=facadeloadfailed", registration.Describe(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -581,7 +665,15 @@ fn fs_main() -> @location(0) vec4<f32> {
         [DllImport("d3d11.dll", EntryPoint = "D3D11CreateDevice", ExactSpelling = true)]
         internal static extern int D3D11CreateDevice();
 
+        [DllImport("AbtLicensingNative", EntryPoint = "SciChartLicenseCheck", ExactSpelling = true)]
+        internal static extern int SciChartLicenseCheck();
+
+        [DllImport("SciChartCoreNative", EntryPoint = "SciChartCoreInitialize", ExactSpelling = true)]
+        internal static extern int SciChartCoreInitialize();
+
         internal static string GetDynamicModuleName() => "VXccelEngine3D.dll";
+
+        internal static string GetEmbeddedNativeResourceNames() => "SciChart.Data.Resources.x64.VXccelEngine2D.dll SciChart.Core.Resources.x64.AbtLicensingNative.dll SciChart.Data.Resources.x64.D3DCompiler_47.dll RPCRT4.dll";
 
         internal static string GetInvalidPatternModuleNames() => "*.so .So";
 
