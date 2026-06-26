@@ -2186,6 +2186,38 @@ float4 VSMain(float3 position : POSITION) : SV_Position
     }
 
     [Fact]
+    public void HlslTextShaderPreservesPackedConstantBufferFieldOffsets()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+cbuffer Settings : register(b0)
+{
+    float red;
+    float2 greenBlue;
+    float alpha;
+};
+
+float4 PSMain() : SV_Target
+{
+    return float4(red, greenBlue.x, greenBlue.y, alpha);
+}
+""",
+            EntryPoint = "PSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("_r0: vec4<u32>", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("bitcast<f32>(settings._r0.x)", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("vec2<f32>(bitcast<f32>(settings._r0.y), bitcast<f32>(settings._r0.z))", shader.BackendSource, StringComparison.Ordinal);
+        Assert.Contains("bitcast<f32>(settings._r0.w)", shader.BackendSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("settings.greenBlue", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HlslTextShaderAssignsRegistersToUnannotatedResourcesInSourceOrder()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -5462,6 +5494,83 @@ float4 PSMain() : SV_Target
         Assert.True(center.G < 50, $"Expected low green center pixel after HLSL constant-buffer draw, actual: {center}");
         Assert.True(center.B < 50, $"Expected low blue center pixel after HLSL constant-buffer draw, actual: {center}");
         Assert.True(center.A > 200, $"Expected opaque center pixel after HLSL constant-buffer draw, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedHlslPackedConstantBufferDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var constants = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 16,
+            Usage = DxBufferUsage.Constant | DxBufferUsage.CopyDestination,
+            Label = "Packed Settings Constants"
+        });
+        constants.Write<float>([1.0f, 0.0f, 0.0f, 1.0f]);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl,
+            EntryPoint = "vs_main"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+cbuffer Settings : register(b0)
+{
+    float red;
+    float2 greenBlue;
+    float alpha;
+};
+
+float4 PSMain() : SV_Target
+{
+    return float4(red, greenBlue.x, greenBlue.y, alpha);
+}
+""",
+            EntryPoint = "PSMain"
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.SetConstantBuffer(DxShaderStage.Pixel, 0, constants);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.True(pixelShader.HasBackendShaderModule);
+        Assert.Contains("_r0: vec4<u32>", pixelShader.BackendSource!, StringComparison.Ordinal);
+        Assert.True(pipeline.HasBackendPipeline);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel from packed cbuffer, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel from packed cbuffer, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel from packed cbuffer, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel from packed cbuffer, actual: {center}");
     }
 
     [Fact]

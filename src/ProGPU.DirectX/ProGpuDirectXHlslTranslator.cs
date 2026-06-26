@@ -256,14 +256,27 @@ internal static class ProGpuDirectXHlslTranslator
         foreach (var constantBuffer in constantBuffers)
         {
             builder.Append("struct ").Append(constantBuffer.Name).Append(" {\n");
-            foreach (var field in constantBuffer.Fields)
+            if (constantBuffer.UsesPackedRegisterLayout)
             {
-                builder
-                    .Append("    ")
-                    .Append(field.Name)
-                    .Append(": ")
-                    .Append(MapType(field.Type))
-                    .Append(",\n");
+                for (var registerIndex = 0u; registerIndex < constantBuffer.RegisterCount; registerIndex++)
+                {
+                    builder
+                        .Append("    _r")
+                        .Append(registerIndex)
+                        .Append(": vec4<u32>,\n");
+                }
+            }
+            else
+            {
+                foreach (var field in constantBuffer.Fields)
+                {
+                    builder
+                        .Append("    ")
+                        .Append(field.Name)
+                        .Append(": ")
+                        .Append(MapType(field.Type))
+                        .Append(",\n");
+                }
             }
 
             builder
@@ -535,28 +548,100 @@ internal static class ProGpuDirectXHlslTranslator
         {
             var name = match.Groups["name"].Value;
             var register = ResolveRegister(match, usedRegisters, ref nextRegister);
-            var fields = new List<HlslConstantBufferField>();
+            var parsedFields = new List<(string Type, string Name)>();
 
             foreach (Match fieldMatch in s_cbufferFieldRegex.Matches(match.Groups["body"].Value))
             {
-                fields.Add(new HlslConstantBufferField(
+                parsedFields.Add((
                     fieldMatch.Groups["type"].Value,
                     fieldMatch.Groups["name"].Value));
             }
 
-            if (fields.Count == 0)
+            if (parsedFields.Count == 0)
             {
                 throw new NotSupportedException($"HLSL cbuffer '{name}' has no translatable fields.");
             }
 
+            var fields = CreateConstantBufferFields(parsedFields);
             constantBuffers.Add(new HlslConstantBuffer(
                 name,
                 ToVariableName(name),
                 register,
-                fields));
+                fields,
+                RequiresPackedConstantBufferLayout(fields),
+                GetConstantBufferRegisterCount(fields)));
         }
 
         return constantBuffers;
+    }
+
+    private static IReadOnlyList<HlslConstantBufferField> CreateConstantBufferFields(IReadOnlyList<(string Type, string Name)> fields)
+    {
+        var result = new List<HlslConstantBufferField>(fields.Count);
+        uint registerIndex = 0;
+        uint componentIndex = 0;
+        foreach (var (type, name) in fields)
+        {
+            var registerSpan = GetCBufferRegisterSpan(type);
+            if (registerSpan > 1)
+            {
+                if (componentIndex != 0)
+                {
+                    registerIndex++;
+                    componentIndex = 0;
+                }
+
+                result.Add(new HlslConstantBufferField(type, name, registerIndex, componentIndex));
+                registerIndex += registerSpan;
+                componentIndex = 0;
+                continue;
+            }
+
+            var componentCount = GetCBufferComponentCount(type);
+            if (componentIndex + componentCount > 4)
+            {
+                registerIndex++;
+                componentIndex = 0;
+            }
+
+            result.Add(new HlslConstantBufferField(type, name, registerIndex, componentIndex));
+            componentIndex += componentCount;
+            if (componentIndex == 4)
+            {
+                registerIndex++;
+                componentIndex = 0;
+            }
+        }
+
+        return result;
+    }
+
+    private static bool RequiresPackedConstantBufferLayout(IReadOnlyList<HlslConstantBufferField> fields)
+    {
+        uint wgslOffset = 0;
+        foreach (var field in fields)
+        {
+            wgslOffset = AlignTo(wgslOffset, GetWgslUniformAlignment(field.Type));
+            var hlslOffset = field.RegisterIndex * 16 + field.ComponentIndex * 4;
+            if (wgslOffset != hlslOffset)
+            {
+                return true;
+            }
+
+            wgslOffset += GetWgslUniformSize(field.Type);
+        }
+
+        return false;
+    }
+
+    private static uint GetConstantBufferRegisterCount(IReadOnlyList<HlslConstantBufferField> fields)
+    {
+        if (fields.Count == 0)
+        {
+            return 0;
+        }
+
+        return fields.Max(field => field.RegisterIndex + GetCBufferRegisterSpan(field.Type));
     }
 
     private static List<HlslShaderResource> ParseShaderResources(
@@ -864,14 +949,68 @@ internal static class ProGpuDirectXHlslTranslator
                     continue;
                 }
 
+                var fieldAccess = GetConstantBufferFieldAccess(constantBuffer, field);
                 translated = Regex.Replace(
                     translated,
                     $@"(?<!\.)\b{Regex.Escape(field.Name)}\b",
-                    $"{constantBuffer.VariableName}.{field.Name}");
+                    fieldAccess);
             }
         }
 
         return translated;
+    }
+
+    private static string GetConstantBufferFieldAccess(HlslConstantBuffer constantBuffer, HlslConstantBufferField field)
+    {
+        if (!constantBuffer.UsesPackedRegisterLayout)
+        {
+            return $"{constantBuffer.VariableName}.{field.Name}";
+        }
+
+        if (TryGetMatrixDimensions(field.Type, out var columns, out var rows))
+        {
+            var columnValues = new List<string>(columns);
+            for (var column = 0; column < columns; column++)
+            {
+                var components = Enumerable.Range(0, rows)
+                    .Select(row => GetPackedRegisterComponent(constantBuffer.VariableName, field.RegisterIndex + (uint)column, (uint)row, "float"))
+                    .ToArray();
+                columnValues.Add($"vec{rows}<f32>({string.Join(", ", components)})");
+            }
+
+            return $"{MapType(field.Type)}({string.Join(", ", columnValues)})";
+        }
+
+        var componentCount = GetCBufferComponentCount(field.Type);
+        if (componentCount == 1)
+        {
+            return GetPackedRegisterComponent(constantBuffer.VariableName, field.RegisterIndex, field.ComponentIndex, field.Type);
+        }
+
+        var scalarType = GetScalarType(field.Type);
+        var wgslScalarType = MapType(scalarType);
+        var vectorComponents = Enumerable.Range(0, (int)componentCount)
+            .Select(component => GetPackedRegisterComponent(
+                constantBuffer.VariableName,
+                field.RegisterIndex,
+                field.ComponentIndex + (uint)component,
+                scalarType))
+            .ToArray();
+        return $"vec{componentCount}<{wgslScalarType}>({string.Join(", ", vectorComponents)})";
+    }
+
+    private static string GetPackedRegisterComponent(string bufferVariableName, uint registerIndex, uint componentIndex, string scalarType)
+    {
+        var component = "xyzw"[(int)componentIndex];
+        var source = $"{bufferVariableName}._r{registerIndex}.{component}";
+        return scalarType switch
+        {
+            "float" => $"bitcast<f32>({source})",
+            "int" => $"bitcast<i32>({source})",
+            "uint" => source,
+            "bool" => $"({source} != 0u)",
+            _ => throw new NotSupportedException($"Packed cbuffer field type '{scalarType}' is not supported.")
+        };
     }
 
     private static bool TryTranslateConditionalExpression(
@@ -1611,6 +1750,21 @@ internal static class ProGpuDirectXHlslTranslator
             return true;
         }
 
+        if (hlslIdentifier.Success)
+        {
+            var fieldName = hlslIdentifier.Groups["name"].Value;
+            foreach (var constantBuffer in constantBuffers)
+            {
+                var matchingField = constantBuffer.Fields.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Name, fieldName, StringComparison.Ordinal));
+                if (matchingField is not null)
+                {
+                    type = matchingField.Type;
+                    return true;
+                }
+            }
+        }
+
         var cbufferField = Regex.Match(
             wgslValue.Trim(),
             @"^(?<buffer>[A-Za-z_]\w*)\.(?<field>[A-Za-z_]\w*)$",
@@ -2178,6 +2332,114 @@ internal static class ProGpuDirectXHlslTranslator
             "int" or "int2" or "int3" or "int4";
     }
 
+    private static uint GetCBufferComponentCount(string type)
+    {
+        if (TryGetMatrixDimensions(type, out _, out _))
+        {
+            return 4;
+        }
+
+        var match = Regex.Match(type, @"^(?:float|int|uint|bool)(?<width>[234])$");
+        return match.Success ? uint.Parse(match.Groups["width"].Value) : 1u;
+    }
+
+    private static uint GetCBufferRegisterSpan(string type)
+    {
+        if (TryGetMatrixDimensions(type, out var columns, out _))
+        {
+            return (uint)columns;
+        }
+
+        return 1u;
+    }
+
+    private static uint GetWgslUniformAlignment(string type)
+    {
+        if (TryGetMatrixDimensions(type, out _, out var rows))
+        {
+            return GetVectorAlignment((uint)rows);
+        }
+
+        return GetVectorAlignment(GetCBufferComponentCount(type));
+    }
+
+    private static uint GetWgslUniformSize(string type)
+    {
+        if (TryGetMatrixDimensions(type, out var columns, out var rows))
+        {
+            var columnSize = GetVectorSize((uint)rows);
+            var columnStride = AlignTo(columnSize, GetVectorAlignment((uint)rows));
+            return columnStride * (uint)(columns - 1) + columnSize;
+        }
+
+        return GetVectorSize(GetCBufferComponentCount(type));
+    }
+
+    private static uint GetVectorAlignment(uint componentCount)
+    {
+        return componentCount switch
+        {
+            1 => 4,
+            2 => 8,
+            3 or 4 => 16,
+            _ => throw new NotSupportedException($"Unsupported vector component count '{componentCount}'.")
+        };
+    }
+
+    private static uint GetVectorSize(uint componentCount)
+    {
+        return componentCount switch
+        {
+            >= 1 and <= 4 => componentCount * 4,
+            _ => throw new NotSupportedException($"Unsupported vector component count '{componentCount}'.")
+        };
+    }
+
+    private static uint AlignTo(uint value, uint alignment)
+    {
+        return ((value + alignment - 1) / alignment) * alignment;
+    }
+
+    private static string GetScalarType(string type)
+    {
+        if (type.StartsWith("float", StringComparison.Ordinal))
+        {
+            return "float";
+        }
+
+        if (type.StartsWith("int", StringComparison.Ordinal))
+        {
+            return "int";
+        }
+
+        if (type.StartsWith("uint", StringComparison.Ordinal))
+        {
+            return "uint";
+        }
+
+        if (type.StartsWith("bool", StringComparison.Ordinal))
+        {
+            return "bool";
+        }
+
+        throw new NotSupportedException($"Unsupported HLSL scalar type '{type}'.");
+    }
+
+    private static bool TryGetMatrixDimensions(string type, out int columns, out int rows)
+    {
+        var match = Regex.Match(type, @"^float(?<columns>[234])x(?<rows>[234])$");
+        if (match.Success)
+        {
+            columns = int.Parse(match.Groups["columns"].Value);
+            rows = int.Parse(match.Groups["rows"].Value);
+            return true;
+        }
+
+        columns = 0;
+        rows = 0;
+        return false;
+    }
+
     private static string ToVariableName(string name)
     {
         return name.Length == 0
@@ -2193,9 +2455,15 @@ internal static class ProGpuDirectXHlslTranslator
         string Name,
         string VariableName,
         uint Register,
-        IReadOnlyList<HlslConstantBufferField> Fields);
+        IReadOnlyList<HlslConstantBufferField> Fields,
+        bool UsesPackedRegisterLayout,
+        uint RegisterCount);
 
-    private sealed record HlslConstantBufferField(string Type, string Name);
+    private sealed record HlslConstantBufferField(
+        string Type,
+        string Name,
+        uint RegisterIndex,
+        uint ComponentIndex);
 
     private sealed record HlslShaderResource(
         HlslShaderResourceKind Kind,
