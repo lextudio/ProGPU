@@ -843,6 +843,37 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextRecordsGradientPrimitiveBrushes()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        var gradientBrush = renderContext.CreateLinearGradientBrush(0xFFFF0000, 0xFF0000FF, gradientRotationAngle: 90d);
+
+        Assert.True(gradientBrush.IsGradient);
+        Assert.Equal(0xFFFF0000u, gradientBrush.ColorArgb);
+        Assert.Equal(0xFFFF0000u, gradientBrush.StartColorArgb);
+        Assert.Equal(0xFF0000FFu, gradientBrush.EndColorArgb);
+        Assert.Equal(90d, gradientBrush.GradientRotationAngle);
+
+        renderContext.FillRectangle(
+            gradientBrush,
+            new ProGpuDirectXSciChartPoint(0, 0),
+            new ProGpuDirectXSciChartPoint(16, 16),
+            opacity: 0.75d);
+
+        Assert.Single(renderContext.PrimitiveDraws);
+        Assert.Equal(ProGpuDirectXSciChartPrimitiveKind.RectangleFill, renderContext.PrimitiveDraws[0].Kind);
+        Assert.Equal(gradientBrush, renderContext.PrimitiveDraws[0].Brush);
+        Assert.Equal(0.75d, renderContext.PrimitiveDraws[0].Opacity);
+        var draw = renderContext.ImmediateContext.Commands[^1].Draw
+            ?? throw new InvalidOperationException("Expected SciChart gradient primitive draw payload.");
+        Assert.Equal(6u, draw.VertexCount);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.CreateLinearGradientBrush(0xFFFF0000, 0xFF0000FF, double.NaN));
+    }
+
+    [Fact]
     public void SciChartRenderContextRecordsEllipsePrimitivesAndClip()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -2864,6 +2895,43 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
         Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
         Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart primitive clip, actual: {clippedOut}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartGradientPrimitiveFillCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            16,
+            16,
+            DxResourceFormat.R8G8B8A8Unorm);
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.FillRectangle(
+            renderContext.CreateLinearGradientBrush(0xFFFF0000, 0xFF00FF00),
+            new ProGpuDirectXSciChartPoint(0, 0),
+            new ProGpuDirectXSciChartPoint(16, 16));
+        renderContext.Flush();
+
+        Assert.Single(renderContext.PrimitiveDraws);
+        Assert.Equal(ProGpuDirectXSciChartPrimitiveKind.RectangleFill, renderContext.PrimitiveDraws[0].Kind);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var left = ReadRgbaPixel(targetPixels, 16, 2, 8);
+        Assert.True(left.R > 150, $"Expected gradient left red channel, actual: {left}");
+        Assert.True(left.G < 100, $"Expected gradient left low green channel, actual: {left}");
+        Assert.True(left.B < 50, $"Expected gradient left low blue channel, actual: {left}");
+        Assert.True(left.A > 200, $"Expected gradient left opaque alpha, actual: {left}");
+
+        var right = ReadRgbaPixel(targetPixels, 16, 13, 8);
+        Assert.True(right.R < 100, $"Expected gradient right low red channel, actual: {right}");
+        Assert.True(right.G > 150, $"Expected gradient right green channel, actual: {right}");
+        Assert.True(right.B < 50, $"Expected gradient right low blue channel, actual: {right}");
+        Assert.True(right.A > 200, $"Expected gradient right opaque alpha, actual: {right}");
     }
 
     [Fact]

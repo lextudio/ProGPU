@@ -53,9 +53,42 @@ public sealed record ProGpuDirectXSciChartPen2D
     public bool IsAntiAliased { get; init; }
 }
 
-public sealed record ProGpuDirectXSciChartBrush2D(uint ColorArgb)
+public sealed record ProGpuDirectXSciChartBrush2D
 {
     public static ProGpuDirectXSciChartBrush2D Transparent { get; } = new(0);
+
+    public ProGpuDirectXSciChartBrush2D(uint colorArgb)
+    {
+        ColorArgb = colorArgb;
+        StartColorArgb = colorArgb;
+        EndColorArgb = colorArgb;
+    }
+
+    public ProGpuDirectXSciChartBrush2D(
+        uint startColorArgb,
+        uint endColorArgb,
+        double gradientRotationAngle = 0d)
+    {
+        if (!double.IsFinite(gradientRotationAngle))
+        {
+            throw new ArgumentOutOfRangeException(nameof(gradientRotationAngle), "SciChart gradient brush rotation angles must be finite.");
+        }
+
+        ColorArgb = startColorArgb;
+        StartColorArgb = startColorArgb;
+        EndColorArgb = endColorArgb;
+        GradientRotationAngle = gradientRotationAngle;
+    }
+
+    public uint ColorArgb { get; init; }
+
+    public uint StartColorArgb { get; init; }
+
+    public uint EndColorArgb { get; init; }
+
+    public double GradientRotationAngle { get; init; }
+
+    public bool IsGradient => StartColorArgb != EndColorArgb;
 }
 
 public readonly record struct ProGpuDirectXSciChartPoint(float X, float Y);
@@ -467,6 +500,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private DxRect? _clipRect;
     private bool _isDisposed;
 
+    private readonly record struct PrimitiveBounds(float Left, float Top, float Right, float Bottom);
+
     public ProGpuDirectXSciChartRenderContext2D(
         ProGpuDirectXDevice device,
         uint width,
@@ -554,6 +589,15 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     {
         ThrowIfDisposed();
         return new ProGpuDirectXSciChartBrush2D(colorArgb);
+    }
+
+    public ProGpuDirectXSciChartBrush2D CreateLinearGradientBrush(
+        uint startColorArgb,
+        uint endColorArgb,
+        double gradientRotationAngle = 0d)
+    {
+        ThrowIfDisposed();
+        return new ProGpuDirectXSciChartBrush2D(startColorArgb, endColorArgb, gradientRotationAngle);
     }
 
     public void Clear(DxColor color)
@@ -699,8 +743,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             return;
         }
 
-        var colorArgb = ApplyOpacity(brush.ColorArgb, opacity);
-        var vertexBuffer = CreateRectangleFillVertexBuffer(pt1, pt2, colorArgb, out var submittedVertexCount);
+        var vertexBuffer = CreateRectangleFillVertexBuffer(pt1, pt2, brush, opacity, out var submittedVertexCount);
         if (vertexBuffer is null)
         {
             return;
@@ -744,9 +787,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             return;
         }
 
-        var colorArgb = brush.ColorArgb;
         var copiedPoints = points[..count].ToArray();
-        var vertexBuffer = CreatePolygonFillVertexBuffer(copiedPoints, colorArgb, out var submittedVertexCount);
+        var vertexBuffer = CreatePolygonFillVertexBuffer(copiedPoints, brush, out var submittedVertexCount);
         if (vertexBuffer is null)
         {
             return;
@@ -796,7 +838,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
 
         var copiedLines = lines[..count].ToArray();
-        var vertexBuffer = CreateAreaFillVertexBuffer(copiedLines, brush.ColorArgb, out var submittedVertexCount);
+        var vertexBuffer = CreateAreaFillVertexBuffer(copiedLines, brush, gradientRotationAngle, out var submittedVertexCount);
         if (vertexBuffer is null)
         {
             return;
@@ -838,14 +880,14 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         var segmentCount = GetEllipseSegmentCount((float)width, (float)height);
         ProGpuDirectXBuffer? fillBuffer = null;
         uint fillVertexCount = 0;
-        if (HasVisibleColor(fillBrush.ColorArgb))
+        if (HasVisibleBrush(fillBrush))
         {
             fillBuffer = CreateEllipseFillVertexBuffer(
                 center,
                 (float)width,
                 (float)height,
                 segmentCount,
-                fillBrush.ColorArgb,
+                fillBrush,
                 out fillVertexCount);
         }
 
@@ -1780,14 +1822,16 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private ProGpuDirectXBuffer? CreateRectangleFillVertexBuffer(
         ProGpuDirectXSciChartPoint pt1,
         ProGpuDirectXSciChartPoint pt2,
-        uint colorArgb,
+        ProGpuDirectXSciChartBrush2D brush,
+        double opacity,
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(36);
         if (TryGetPrimitiveRect(pt1, pt2, out var left, out var top, out var right, out var bottom)
-            && HasVisibleColor(colorArgb))
+            && HasVisibleBrush(brush, opacity))
         {
-            AppendSolidColorQuad(vertexData, left, top, right, bottom, colorArgb);
+            var bounds = new PrimitiveBounds(left, top, right, bottom);
+            AppendBrushQuad(vertexData, left, top, right, bottom, brush, bounds, opacity);
         }
 
         return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitiveRectangleFillVertices", out submittedVertexCount);
@@ -1795,13 +1839,14 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
     private ProGpuDirectXBuffer? CreatePolygonFillVertexBuffer(
         ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
-        uint colorArgb,
+        ProGpuDirectXSciChartBrush2D brush,
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(Math.Max(points.Length - 2, 0) * 18));
-        if (HasVisibleColor(colorArgb))
+        if (HasVisibleBrush(brush)
+            && TryGetPointBounds(points, out var bounds))
         {
-            AppendTriangulatedPolygon(vertexData, points, colorArgb);
+            AppendTriangulatedPolygon(vertexData, points, brush, bounds);
         }
 
         return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitivePolygonFillVertices", out submittedVertexCount);
@@ -1810,7 +1855,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private void AppendTriangulatedPolygon(
         List<float> vertexData,
         ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
-        uint colorArgb)
+        ProGpuDirectXSciChartBrush2D brush,
+        PrimitiveBounds bounds)
     {
         var polygon = CopyFinitePolygonPoints(points);
         if (polygon.Count < 3)
@@ -1851,7 +1897,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
             if (IsPolygonEar(polygon, indices, previousIndex, currentIndex, nextIndex, isCounterClockwise))
             {
-                AppendSolidColorTriangle(vertexData, previous, current, next, colorArgb);
+                AppendBrushTriangle(vertexData, previous, current, next, brush, bounds);
                 indices.RemoveAt(cursor);
                 continue;
             }
@@ -1861,12 +1907,13 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
         if (indices.Count == 3)
         {
-            AppendSolidColorTriangle(
+            AppendBrushTriangle(
                 vertexData,
                 polygon[indices[0]],
                 polygon[indices[1]],
                 polygon[indices[2]],
-                colorArgb);
+                brush,
+                bounds);
         }
     }
 
@@ -1944,6 +1991,56 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         AppendSolidColorVertex(vertexData, pt2.X, pt2.Y, colorArgb);
     }
 
+    private void AppendBrushTriangle(
+        List<float> vertexData,
+        ProGpuDirectXSciChartPoint pt0,
+        ProGpuDirectXSciChartPoint pt1,
+        ProGpuDirectXSciChartPoint pt2,
+        ProGpuDirectXSciChartBrush2D brush,
+        PrimitiveBounds bounds,
+        double opacity = 1d,
+        double gradientRotationAngle = 0d)
+    {
+        AppendBrushVertex(vertexData, pt0.X, pt0.Y, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, pt1.X, pt1.Y, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, pt2.X, pt2.Y, brush, bounds, opacity, gradientRotationAngle);
+    }
+
+    private void AppendBrushQuad(
+        List<float> vertexData,
+        float left,
+        float top,
+        float right,
+        float bottom,
+        ProGpuDirectXSciChartBrush2D brush,
+        PrimitiveBounds bounds,
+        double opacity = 1d,
+        double gradientRotationAngle = 0d)
+    {
+        AppendBrushVertex(vertexData, left, top, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, right, top, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, right, bottom, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, left, top, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, right, bottom, brush, bounds, opacity, gradientRotationAngle);
+        AppendBrushVertex(vertexData, left, bottom, brush, bounds, opacity, gradientRotationAngle);
+    }
+
+    private void AppendBrushVertex(
+        List<float> vertexData,
+        float x,
+        float y,
+        ProGpuDirectXSciChartBrush2D brush,
+        PrimitiveBounds bounds,
+        double opacity,
+        double gradientRotationAngle)
+    {
+        AppendSolidColorVertex(
+            vertexData,
+            x,
+            y,
+            GetBrushColorArgb(brush, x, y, bounds, opacity, gradientRotationAngle));
+    }
+
     private static float GetSignedArea(IReadOnlyList<ProGpuDirectXSciChartPoint> points)
     {
         var area = 0f;
@@ -1994,20 +2091,26 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         float width,
         float height,
         int segmentCount,
-        uint colorArgb,
+        ProGpuDirectXSciChartBrush2D brush,
         out uint submittedVertexCount)
     {
         var radiusX = width / 2f;
         var radiusY = height / 2f;
+        var bounds = new PrimitiveBounds(
+            center.X - radiusX,
+            center.Y - radiusY,
+            center.X + radiusX,
+            center.Y + radiusY);
         var vertexData = new List<float>(checked(segmentCount * 18));
         for (var i = 0; i < segmentCount; i++)
         {
-            AppendSolidColorTriangle(
+            AppendBrushTriangle(
                 vertexData,
                 center,
                 GetEllipsePoint(center, radiusX, radiusY, i, segmentCount),
                 GetEllipsePoint(center, radiusX, radiusY, i + 1, segmentCount),
-                colorArgb);
+                brush,
+                bounds);
         }
 
         return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitiveEllipseFillVertices", out submittedVertexCount);
@@ -2063,11 +2166,13 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
     private ProGpuDirectXBuffer? CreateAreaFillVertexBuffer(
         ReadOnlySpan<ProGpuDirectXSciChartAreaSegment> lines,
-        uint colorArgb,
+        ProGpuDirectXSciChartBrush2D brush,
+        double gradientRotationAngle,
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(Math.Max(lines.Length - 1, 0) * 36));
-        if (HasVisibleColor(colorArgb))
+        if (HasVisibleBrush(brush)
+            && TryGetAreaBounds(lines, out var bounds))
         {
             for (var i = 0; i < lines.Length - 1; i++)
             {
@@ -2079,12 +2184,12 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                     continue;
                 }
 
-                AppendSolidColorVertex(vertexData, start.Start.X, start.Start.Y, colorArgb);
-                AppendSolidColorVertex(vertexData, end.Start.X, end.Start.Y, colorArgb);
-                AppendSolidColorVertex(vertexData, end.End.X, end.End.Y, colorArgb);
-                AppendSolidColorVertex(vertexData, start.Start.X, start.Start.Y, colorArgb);
-                AppendSolidColorVertex(vertexData, end.End.X, end.End.Y, colorArgb);
-                AppendSolidColorVertex(vertexData, start.End.X, start.End.Y, colorArgb);
+                AppendBrushVertex(vertexData, start.Start.X, start.Start.Y, brush, bounds, 1d, gradientRotationAngle);
+                AppendBrushVertex(vertexData, end.Start.X, end.Start.Y, brush, bounds, 1d, gradientRotationAngle);
+                AppendBrushVertex(vertexData, end.End.X, end.End.Y, brush, bounds, 1d, gradientRotationAngle);
+                AppendBrushVertex(vertexData, start.Start.X, start.Start.Y, brush, bounds, 1d, gradientRotationAngle);
+                AppendBrushVertex(vertexData, end.End.X, end.End.Y, brush, bounds, 1d, gradientRotationAngle);
+                AppendBrushVertex(vertexData, start.End.X, start.End.Y, brush, bounds, 1d, gradientRotationAngle);
             }
         }
 
@@ -3678,6 +3783,64 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         return left != right && top != bottom;
     }
 
+    private static bool TryGetPointBounds(
+        ReadOnlySpan<ProGpuDirectXSciChartPoint> points,
+        out PrimitiveBounds bounds)
+    {
+        var left = float.PositiveInfinity;
+        var top = float.PositiveInfinity;
+        var right = float.NegativeInfinity;
+        var bottom = float.NegativeInfinity;
+        var hasPoint = false;
+        foreach (var point in points)
+        {
+            if (!HasFinitePoint(point))
+            {
+                continue;
+            }
+
+            hasPoint = true;
+            left = MathF.Min(left, point.X);
+            top = MathF.Min(top, point.Y);
+            right = MathF.Max(right, point.X);
+            bottom = MathF.Max(bottom, point.Y);
+        }
+
+        bounds = hasPoint
+            ? new PrimitiveBounds(left, top, right, bottom)
+            : default;
+        return hasPoint;
+    }
+
+    private static bool TryGetAreaBounds(
+        ReadOnlySpan<ProGpuDirectXSciChartAreaSegment> lines,
+        out PrimitiveBounds bounds)
+    {
+        var left = float.PositiveInfinity;
+        var top = float.PositiveInfinity;
+        var right = float.NegativeInfinity;
+        var bottom = float.NegativeInfinity;
+        var hasPoint = false;
+        foreach (var line in lines)
+        {
+            if (!HasFiniteAreaSegment(line))
+            {
+                continue;
+            }
+
+            hasPoint = true;
+            left = MathF.Min(left, MathF.Min(line.Start.X, line.End.X));
+            top = MathF.Min(top, MathF.Min(line.Start.Y, line.End.Y));
+            right = MathF.Max(right, MathF.Max(line.Start.X, line.End.X));
+            bottom = MathF.Max(bottom, MathF.Max(line.Start.Y, line.End.Y));
+        }
+
+        bounds = hasPoint
+            ? new PrimitiveBounds(left, top, right, bottom)
+            : default;
+        return hasPoint;
+    }
+
     private static bool HasFiniteFinancialVertex(ProGpuDirectXSciChartOhlcCandleVertex vertex)
     {
         return float.IsFinite(vertex.X)
@@ -3896,6 +4059,92 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     private static bool HasVisibleColor(uint colorArgb)
     {
         return (colorArgb >> 24) != 0;
+    }
+
+    private static bool HasVisibleBrush(ProGpuDirectXSciChartBrush2D brush, double opacity = 1d)
+    {
+        if (opacity <= 0d)
+        {
+            return false;
+        }
+
+        if (!brush.IsGradient)
+        {
+            return HasVisibleColor(ApplyOpacity(brush.ColorArgb, opacity));
+        }
+
+        return HasVisibleColor(ApplyOpacity(brush.StartColorArgb, opacity))
+            || HasVisibleColor(ApplyOpacity(brush.EndColorArgb, opacity));
+    }
+
+    private static uint GetBrushColorArgb(
+        ProGpuDirectXSciChartBrush2D brush,
+        float x,
+        float y,
+        PrimitiveBounds bounds,
+        double opacity,
+        double gradientRotationAngle)
+    {
+        if (!brush.IsGradient)
+        {
+            return ApplyOpacity(brush.ColorArgb, opacity);
+        }
+
+        var position = GetLinearGradientPosition(x, y, bounds, brush.GradientRotationAngle + gradientRotationAngle);
+        return InterpolateColorArgb(
+            ApplyOpacity(brush.StartColorArgb, opacity),
+            ApplyOpacity(brush.EndColorArgb, opacity),
+            position);
+    }
+
+    private static float GetLinearGradientPosition(
+        float x,
+        float y,
+        PrimitiveBounds bounds,
+        double gradientRotationAngle)
+    {
+        var radians = gradientRotationAngle * (Math.PI / 180d);
+        var axisX = (float)Math.Cos(radians);
+        var axisY = (float)Math.Sin(radians);
+        var p0 = Project(bounds.Left, bounds.Top, axisX, axisY);
+        var p1 = Project(bounds.Right, bounds.Top, axisX, axisY);
+        var p2 = Project(bounds.Right, bounds.Bottom, axisX, axisY);
+        var p3 = Project(bounds.Left, bounds.Bottom, axisX, axisY);
+        var min = MathF.Min(MathF.Min(p0, p1), MathF.Min(p2, p3));
+        var max = MathF.Max(MathF.Max(p0, p1), MathF.Max(p2, p3));
+        if (MathF.Abs(max - min) <= 0.0001f)
+        {
+            return 0f;
+        }
+
+        return Math.Clamp((Project(x, y, axisX, axisY) - min) / (max - min), 0f, 1f);
+    }
+
+    private static float Project(float x, float y, float axisX, float axisY)
+    {
+        return (x * axisX) + (y * axisY);
+    }
+
+    private static uint InterpolateColorArgb(uint startColorArgb, uint endColorArgb, float amount)
+    {
+        var startA = (startColorArgb >> 24) & 0xFF;
+        var startR = (startColorArgb >> 16) & 0xFF;
+        var startG = (startColorArgb >> 8) & 0xFF;
+        var startB = startColorArgb & 0xFF;
+        var endA = (endColorArgb >> 24) & 0xFF;
+        var endR = (endColorArgb >> 16) & 0xFF;
+        var endG = (endColorArgb >> 8) & 0xFF;
+        var endB = endColorArgb & 0xFF;
+
+        return (LerpByte(startA, endA, amount) << 24)
+            | (LerpByte(startR, endR, amount) << 16)
+            | (LerpByte(startG, endG, amount) << 8)
+            | LerpByte(startB, endB, amount);
+    }
+
+    private static uint LerpByte(uint start, uint end, float amount)
+    {
+        return (uint)Math.Clamp((int)MathF.Round(start + (((float)end - start) * amount)), 0, 255);
     }
 
     private void AppendSolidColorVertex(List<float> vertexData, float x, float y, uint colorArgb)
