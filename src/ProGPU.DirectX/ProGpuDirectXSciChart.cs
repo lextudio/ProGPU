@@ -346,6 +346,13 @@ public sealed record ProGpuDirectXSciChartPointCloud3DDraw(
     Vector3 LightDirection,
     DxRect? ClipRect);
 
+public sealed record ProGpuDirectXSciChartLine3DDraw(
+    IReadOnlyList<ProGpuDirectXSciChartVertex3D> Vertices,
+    bool IsStrip,
+    Matrix4x4 WorldViewProjection,
+    Vector3 LightDirection,
+    DxRect? ClipRect);
+
 public sealed record ProGpuDirectXSciChartMesh3DDraw(
     IReadOnlyList<ProGpuDirectXSciChartVertex3D> Vertices,
     IReadOnlyList<uint> Indices,
@@ -4952,6 +4959,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
     private readonly ProGpuDirectXDeviceContext _context;
     private readonly List<IDisposable> _transientResources = new();
     private readonly List<ProGpuDirectXSciChartPointCloud3DDraw> _pointCloudDraws = new();
+    private readonly List<ProGpuDirectXSciChartLine3DDraw> _lineDraws = new();
     private readonly List<ProGpuDirectXSciChartMesh3DDraw> _meshDraws = new();
     private readonly List<ProGpuDirectXSciChartSurfaceMesh3DDraw> _surfaceMeshDraws = new();
     private readonly Dictionary<(DxPrimitiveTopology Topology, DxCullMode CullMode), ProGpuDirectXGraphicsPipeline> _pipelines = new();
@@ -4998,6 +5006,8 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
 
     public IReadOnlyList<ProGpuDirectXSciChartPointCloud3DDraw> PointCloudDraws => _pointCloudDraws;
 
+    public IReadOnlyList<ProGpuDirectXSciChartLine3DDraw> LineDraws => _lineDraws;
+
     public IReadOnlyList<ProGpuDirectXSciChartMesh3DDraw> MeshDraws => _meshDraws;
 
     public IReadOnlyList<ProGpuDirectXSciChartSurfaceMesh3DDraw> SurfaceMeshDraws => _surfaceMeshDraws;
@@ -5006,6 +5016,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
     {
         ThrowIfDisposed();
         _pointCloudDraws.Clear();
+        _lineDraws.Clear();
         _meshDraws.Clear();
         _surfaceMeshDraws.Clear();
         _clipRect = null;
@@ -5072,6 +5083,22 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             _clipRect));
         _transientResources.Add(vertexBuffer);
         _transientResources.Add(cameraBuffer);
+    }
+
+    public void DrawLineList(
+        ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices,
+        Matrix4x4 worldViewProjection,
+        Vector3? lightDirection = null)
+    {
+        DrawLines(vertices, isStrip: false, worldViewProjection, lightDirection);
+    }
+
+    public void DrawLineStrip(
+        ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices,
+        Matrix4x4 worldViewProjection,
+        Vector3? lightDirection = null)
+    {
+        DrawLines(vertices, isStrip: true, worldViewProjection, lightDirection);
     }
 
     public void DrawTriangleMesh(
@@ -5173,6 +5200,43 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             _clipRect));
         _transientResources.Add(vertexBuffer);
         _transientResources.Add(indexBuffer);
+        _transientResources.Add(cameraBuffer);
+    }
+
+    private void DrawLines(
+        ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices,
+        bool isStrip,
+        Matrix4x4 worldViewProjection,
+        Vector3? lightDirection)
+    {
+        ThrowIfDisposed();
+        ValidateVertices(vertices, minCount: 2);
+        if (!isStrip && vertices.Length % 2 != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(vertices), "SciChart 3D line lists require an even vertex count.");
+        }
+
+        ValidateMatrix(worldViewProjection);
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = vertices.ToArray();
+        var light = ResolveLightDirection(lightDirection);
+        var vertexBuffer = CreateVertexBuffer(copiedVertices);
+        var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
+        var pipeline = GetPipeline(isStrip ? DxPrimitiveTopology.LineStrip : DxPrimitiveTopology.LineList, DxCullMode.None);
+
+        SetDrawState(pipeline, vertexBuffer, cameraBuffer);
+        _context.Draw((uint)copiedVertices.Length);
+        _lineDraws.Add(new ProGpuDirectXSciChartLine3DDraw(
+            copiedVertices,
+            isStrip,
+            worldViewProjection,
+            light,
+            _clipRect));
+        _transientResources.Add(vertexBuffer);
         _transientResources.Add(cameraBuffer);
     }
 

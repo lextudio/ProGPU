@@ -569,6 +569,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         [
             new(0f, 0f, 0.5f, 0f, 0f, 1f, 0xFFFFFFFF)
         ];
+        ProGpuDirectXSciChartVertex3D[] lineVertices =
+        [
+            new(-0.75f, -0.50f, 0.5f, 0f, 0f, 1f, 0xFFFFFF00),
+            new( 0.00f,  0.50f, 0.5f, 0f, 0f, 1f, 0xFFFFFF00),
+            new( 0.75f, -0.50f, 0.5f, 0f, 0f, 1f, 0xFFFFFF00)
+        ];
         ProGpuDirectXSciChartVertex3D[] meshVertices =
         [
             new(-0.75f, -0.75f, 0.5f, 0f, 0f, 1f, 0xFFFF0000),
@@ -580,6 +586,7 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         renderContext.SetClipRect(new DxRect(0, 0, 32, 64));
         renderContext.DrawPointCloud(pointVertices, Matrix4x4.Identity);
+        renderContext.DrawLineStrip(lineVertices, Matrix4x4.Identity);
         renderContext.DrawTriangleMesh(
             meshVertices,
             indices,
@@ -599,9 +606,13 @@ fn fs_main() -> @location(0) vec4<f32> {
             cullMode: DxCullMode.None);
 
         Assert.Single(renderContext.PointCloudDraws);
+        Assert.Single(renderContext.LineDraws);
         Assert.Single(renderContext.MeshDraws);
         Assert.Single(renderContext.SurfaceMeshDraws);
         Assert.Equal(new DxRect(0, 0, 32, 64), renderContext.PointCloudDraws[0].ClipRect);
+        Assert.Equal(new DxRect(0, 0, 32, 64), renderContext.LineDraws[0].ClipRect);
+        Assert.True(renderContext.LineDraws[0].IsStrip);
+        Assert.Equal(lineVertices, renderContext.LineDraws[0].Vertices);
         Assert.Equal(new DxRect(0, 0, 32, 64), renderContext.MeshDraws[0].ClipRect);
         Assert.Equal(new DxRect(0, 0, 32, 64), renderContext.SurfaceMeshDraws[0].ClipRect);
         Assert.Equal(4, renderContext.SurfaceMeshDraws[0].Vertices.Count);
@@ -618,6 +629,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             renderContext.DrawTriangleMesh(meshVertices, [0, 1, 3], Matrix4x4.Identity));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             renderContext.DrawPointCloud(pointVertices, Matrix4x4.Identity, Vector3.Zero));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawLineList(lineVertices, Matrix4x4.Identity));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             renderContext.DrawSurfaceMesh([0f, 1f, 2f], columns: 2, rows: 2, worldViewProjection: Matrix4x4.Identity));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -3457,6 +3470,61 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart 3D surface mesh clip, actual: {clippedOut}");
         Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart 3D surface mesh clip, actual: {clippedOut}");
         Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart 3D surface mesh clip, actual: {clippedOut}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChart3DLineCommandsWithClip()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext3D(
+            device,
+            32,
+            32,
+            DxResourceFormat.R8G8B8A8Unorm);
+        ProGpuDirectXSciChartVertex3D[] vertices =
+        [
+            new(-0.8f, 0.0f, 0.25f, 0f, 0f, 1f, 0xFF00FF00),
+            new( 0.8f, 0.0f, 0.25f, 0f, 0f, 1f, 0xFF00FF00)
+        ];
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 16, 32));
+        renderContext.DrawLineStrip(
+            vertices,
+            Matrix4x4.Identity,
+            new Vector3(0f, 0f, 1f));
+        renderContext.Flush();
+
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+        Assert.Single(renderContext.LineDraws);
+        Assert.True(renderContext.LineDraws[0].IsStrip);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        var visibleInsideClip = false;
+        for (var y = 0; y < 32; y++)
+        {
+            for (var x = 0; x < 16; x++)
+            {
+                var pixel = ReadRgbaPixel(targetPixels, 32, x, y);
+                visibleInsideClip |= pixel.R < 50 && pixel.G > 150 && pixel.B < 50 && pixel.A > 200;
+            }
+        }
+
+        Assert.True(visibleInsideClip, "Expected at least one green SciChart 3D line pixel inside the scissor clip.");
+
+        for (var y = 0; y < 32; y++)
+        {
+            for (var x = 16; x < 32; x++)
+            {
+                var pixel = ReadRgbaPixel(targetPixels, 32, x, y);
+                Assert.True(pixel.R < 50, $"Expected low red pixel outside SciChart 3D line clip, actual: {pixel}");
+                Assert.True(pixel.G < 50, $"Expected black pixel outside SciChart 3D line clip, actual: {pixel}");
+                Assert.True(pixel.B < 50, $"Expected low blue pixel outside SciChart 3D line clip, actual: {pixel}");
+                Assert.True(pixel.A > 200, $"Expected opaque clear alpha outside SciChart 3D line clip, actual: {pixel}");
+            }
+        }
     }
 
     [Fact]
