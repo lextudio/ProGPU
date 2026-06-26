@@ -129,9 +129,9 @@ public sealed record DxBlendStateDescriptor
 
 public sealed record DxDepthStencilStateDescriptor
 {
-    public bool DepthEnable { get; init; }
+    public bool DepthEnable { get; init; } = true;
     public DxDepthWriteMask DepthWriteMask { get; init; } = DxDepthWriteMask.All;
-    public DxComparisonFunction DepthFunction { get; init; } = DxComparisonFunction.LessEqual;
+    public DxComparisonFunction DepthFunction { get; init; } = DxComparisonFunction.Less;
     public bool StencilEnable { get; init; }
     public byte StencilReadMask { get; init; } = 0xFF;
     public byte StencilWriteMask { get; init; } = 0xFF;

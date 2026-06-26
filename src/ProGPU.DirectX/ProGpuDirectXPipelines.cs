@@ -726,10 +726,10 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
             throw new ArgumentOutOfRangeException(nameof(descriptor), "Graphics pipelines must use at least one sample.");
         }
 
-        if ((descriptor.DepthStencilState.DepthEnable || descriptor.DepthStencilState.StencilEnable) &&
+        if (descriptor.DepthStencilState.StencilEnable &&
             descriptor.DepthStencilFormat == DxResourceFormat.Unknown)
         {
-            throw new ArgumentException("Depth or stencil enabled pipelines require a depth-stencil format.", nameof(descriptor));
+            throw new ArgumentException("Stencil enabled pipelines require a depth-stencil format.", nameof(descriptor));
         }
 
         if (descriptor.DepthStencilState.StencilEnable &&

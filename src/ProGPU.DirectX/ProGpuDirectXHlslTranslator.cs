@@ -408,6 +408,7 @@ internal static class ProGpuDirectXHlslTranslator
         IReadOnlyList<HlslParameter> parameters,
         IReadOnlyDictionary<string, HlslStruct> structs)
     {
+        var semanticLocations = CreateUserSemanticLocationMap(parameters.Select(parameter => parameter.Semantic));
         return string.Join(
             ", ",
             parameters.Select(parameter =>
@@ -422,7 +423,7 @@ internal static class ProGpuDirectXHlslTranslator
                     return $"{parameter.Name}: {MapType(parameter.Type)}";
                 }
 
-                return $"{GetParameterAttribute(parameter.Semantic)} {parameter.Name}: {MapType(parameter.Type)}";
+                return $"{GetParameterAttribute(parameter.Semantic, semanticLocations)} {parameter.Name}: {MapType(parameter.Type)}";
             }));
     }
 
@@ -1946,12 +1947,18 @@ internal static class ProGpuDirectXHlslTranslator
 
     private static Dictionary<string, uint> CreateUserSemanticLocationMap(IEnumerable<HlslStruct> structs)
     {
+        return CreateUserSemanticLocationMap(
+            structs
+                .SelectMany(hlslStruct => hlslStruct.Fields)
+                .Select(field => field.Semantic));
+    }
+
+    private static Dictionary<string, uint> CreateUserSemanticLocationMap(IEnumerable<string?> semantics)
+    {
         var locations = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         var baseOffsets = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         var nextLocation = 0u;
-        foreach (var semantic in structs
-            .SelectMany(hlslStruct => hlslStruct.Fields)
-            .Select(field => field.Semantic)
+        foreach (var semantic in semantics
             .Where(semantic => !string.IsNullOrWhiteSpace(semantic) && !IsBuiltinSemantic(semantic!)))
         {
             var baseName = GetUserSemanticBaseName(semantic!);
@@ -2034,7 +2041,7 @@ internal static class ProGpuDirectXHlslTranslator
         return $"@location({location})";
     }
 
-    private static string GetParameterAttribute(string semantic)
+    private static string GetParameterAttribute(string semantic, IReadOnlyDictionary<string, uint> semanticLocations)
     {
         if (IsSystemSemantic(semantic, "SV_VertexID"))
         {
@@ -2071,7 +2078,12 @@ internal static class ProGpuDirectXHlslTranslator
             return "@builtin(local_invocation_index)";
         }
 
-        return $"@location({GetSemanticIndex(semantic)})";
+        if (!semanticLocations.TryGetValue(GetUserSemanticKey(semantic), out var location))
+        {
+            throw new NotSupportedException($"HLSL semantic '{semantic}' was not assigned a WGSL location.");
+        }
+
+        return $"@location({location})";
     }
 
     private static bool IsBuiltinSemantic(string semantic)

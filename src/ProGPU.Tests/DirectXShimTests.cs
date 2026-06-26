@@ -1594,6 +1594,9 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.False(pipeline.Descriptor.BlendState.EnableBlend);
         Assert.Equal(DxCullMode.Back, pipeline.Descriptor.RasterizerState.CullMode);
         Assert.Equal(DxFrontFace.Clockwise, pipeline.Descriptor.RasterizerState.FrontFace);
+        Assert.True(pipeline.Descriptor.DepthStencilState.DepthEnable);
+        Assert.Equal(DxDepthWriteMask.All, pipeline.Descriptor.DepthStencilState.DepthWriteMask);
+        Assert.Equal(DxComparisonFunction.Less, pipeline.Descriptor.DepthStencilState.DepthFunction);
     }
 
     [Fact]
@@ -2351,6 +2354,36 @@ VertexOut VSMain(float3 position : POSITION)
         Assert.NotNull(shader.BackendSource);
         Assert.Contains("@location(1) uv1: vec2<f32>", shader.BackendSource, StringComparison.Ordinal);
         Assert.Contains("@location(0) uv0: vec2<f32>", shader.BackendSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HlslTextShaderAssignsUniqueLocationsForParameterSemantics()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var shader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = """
+struct VertexOut
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+VertexOut VSMain(float3 pos : POSITION0, float2 uv : TEXCOORD0)
+{
+    VertexOut output;
+    output.position = float4(pos, 1.0);
+    output.uv = uv;
+    return output;
+}
+""",
+            EntryPoint = "VSMain"
+        });
+
+        Assert.NotNull(shader.BackendSource);
+        Assert.Contains("fn VSMain(@location(0) pos: vec3<f32>, @location(1) uv: vec2<f32>)", shader.BackendSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -6390,13 +6423,7 @@ float4 PSMain() : SV_Target
             PixelShader = null,
             RenderTargetFormat = DxResourceFormat.Unknown,
             DepthStencilFormat = DxResourceFormat.D32Float,
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
-            DepthStencilState = new DxDepthStencilStateDescriptor
-            {
-                DepthEnable = true,
-                DepthWriteMask = DxDepthWriteMask.All,
-                DepthFunction = DxComparisonFunction.LessEqual
-            }
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
         });
         using var colorPipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
         {
@@ -6427,6 +6454,8 @@ float4 PSMain() : SV_Target
         context.Flush();
 
         Assert.True(depthOnlyPipeline.HasBackendPipeline);
+        Assert.True(depthOnlyPipeline.Descriptor.DepthStencilState.DepthEnable);
+        Assert.Equal(DxComparisonFunction.Less, depthOnlyPipeline.Descriptor.DepthStencilState.DepthFunction);
         Assert.Equal(2ul, context.SubmittedDrawCount);
         Assert.Empty(context.Commands);
 
@@ -6786,6 +6815,7 @@ float4 PSMain() : SV_Target
             RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
             DepthStencilState = new DxDepthStencilStateDescriptor
             {
+                DepthEnable = false,
                 StencilEnable = true,
                 StencilReference = 1,
                 StencilWriteMask = 0xFF,
@@ -6811,6 +6841,7 @@ float4 PSMain() : SV_Target
             RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
             DepthStencilState = new DxDepthStencilStateDescriptor
             {
+                DepthEnable = false,
                 StencilEnable = true,
                 StencilReference = 1,
                 StencilReadMask = 0xFF,
