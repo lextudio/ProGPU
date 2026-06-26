@@ -245,6 +245,16 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public void SetRenderTargets(ProGpuDirectXTexture2D? renderTarget, ProGpuDirectXTexture2D? depthStencil = null)
     {
         ThrowIfDisposed();
+        if (renderTarget is not null)
+        {
+            ValidateRenderTargetTexture(renderTarget);
+        }
+
+        if (depthStencil is not null)
+        {
+            ValidateDepthStencilTexture(depthStencil);
+        }
+
         _renderTarget = renderTarget;
         _depthStencil = depthStencil;
         _renderTargetView = null;
@@ -262,6 +272,18 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         ProGpuDirectXDepthStencilView? depthStencilView = null)
     {
         ThrowIfDisposed();
+        if (renderTargetView is not null)
+        {
+            ValidateRenderTargetTexture(
+                renderTargetView.Texture ?? throw new ArgumentException("Render-target view does not reference a texture.", nameof(renderTargetView)));
+        }
+
+        if (depthStencilView is not null)
+        {
+            ValidateDepthStencilTexture(
+                depthStencilView.Texture ?? throw new ArgumentException("Depth-stencil view does not reference a texture.", nameof(depthStencilView)));
+        }
+
         _renderTargetView = renderTargetView;
         _depthStencilView = depthStencilView;
         _renderTarget = renderTargetView?.Texture;
@@ -730,6 +752,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(renderTarget);
+        ValidateRenderTargetTexture(renderTarget);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.ClearRenderTarget,
@@ -742,10 +765,12 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(renderTargetView);
+        var renderTarget = renderTargetView.Texture ?? throw new ArgumentException("Render-target view does not reference a texture.", nameof(renderTargetView));
+        ValidateRenderTargetTexture(renderTarget);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.ClearRenderTarget,
-            Texture = renderTargetView.Texture,
+            Texture = renderTarget,
             RenderTargetView = renderTargetView,
             Color = color
         });
@@ -818,6 +843,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         var draw = new DxDrawCall(_topology, vertexCount, startVertexLocation, instanceCount, startInstanceLocation);
         var bindingValidation = ValidateGraphicsPipelineBindings(_graphicsPipeline);
         ThrowIfBindingValidationFails(bindingValidation);
+        ValidateDrawTargets(_graphicsPipeline);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.Draw,
@@ -870,6 +896,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             effectiveIndexFormat);
         var bindingValidation = ValidateGraphicsPipelineBindings(_graphicsPipeline);
         ThrowIfBindingValidationFails(bindingValidation);
+        ValidateDrawTargets(_graphicsPipeline);
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.DrawIndexed,
@@ -1612,15 +1639,17 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
     private void ExecuteGpuBackedDrawCommand(ProGPU.Backend.WgpuContext context, ProGpuDirectXCommand command)
     {
-        if (command.Texture?.BackendTexture is not { IsDisposed: false, ViewPtr: not null } renderTarget)
-        {
-            throw new InvalidOperationException("GPU-backed DirectX draw requires a render target with a backend texture view.");
-        }
-
         var pipeline = GetOrCreateEffectiveGraphicsPipeline(command);
         if (!pipeline.HasBackendPipeline)
         {
             throw new InvalidOperationException("GPU-backed DirectX draw requires a backend graphics pipeline.");
+        }
+
+        var usesColorTarget = pipeline.Descriptor.PixelShader is not null;
+        var renderTarget = command.Texture?.BackendTexture;
+        if (usesColorTarget && renderTarget is not { IsDisposed: false, ViewPtr: not null })
+        {
+            throw new InvalidOperationException("GPU-backed DirectX draw requires a render target with a backend texture view.");
         }
 
         RenderPassDepthStencilAttachment depthAttachment = default;
@@ -1637,6 +1666,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
         if (usesDepthStencil && hasDepthAttachment)
         {
+            var usesStencil = pipeline.Descriptor.DepthStencilState.StencilEnable &&
+                pipeline.Descriptor.DepthStencilFormat == DxResourceFormat.D24UnormS8UInt;
             depthAttachment = new RenderPassDepthStencilAttachment
             {
                 View = depthTexture!.ViewPtr,
@@ -1644,11 +1675,22 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 DepthStoreOp = StoreOp.Store,
                 DepthClearValue = 1f,
                 DepthReadOnly = false,
-                StencilLoadOp = LoadOp.Load,
-                StencilStoreOp = StoreOp.Store,
+                StencilLoadOp = usesStencil ? LoadOp.Load : LoadOp.Undefined,
+                StencilStoreOp = usesStencil ? StoreOp.Store : StoreOp.Undefined,
                 StencilClearValue = 0,
-                StencilReadOnly = false
+                StencilReadOnly = !usesStencil
             };
+        }
+
+        var targetWidth = usesColorTarget
+            ? renderTarget!.Width
+            : depthTexture?.Width ?? 0;
+        var targetHeight = usesColorTarget
+            ? renderTarget!.Height
+            : depthTexture?.Height ?? 0;
+        if (targetWidth == 0 || targetHeight == 0)
+        {
+            throw new InvalidOperationException("GPU-backed DirectX draw requires a color or depth-stencil render target.");
         }
 
         var labelPtr = SilkMarshal.StringToPtr("ProGPU DirectX Draw Encoder");
@@ -1664,19 +1706,23 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 return;
             }
 
-            var colorAttachment = new RenderPassColorAttachment
+            RenderPassColorAttachment colorAttachment = default;
+            if (usesColorTarget)
             {
-                View = renderTarget.ViewPtr,
-                ResolveTarget = null,
-                LoadOp = LoadOp.Load,
-                StoreOp = StoreOp.Store,
-                ClearValue = new Silk.NET.WebGPU.Color()
-            };
+                colorAttachment = new RenderPassColorAttachment
+                {
+                    View = renderTarget!.ViewPtr,
+                    ResolveTarget = null,
+                    LoadOp = LoadOp.Load,
+                    StoreOp = StoreOp.Store,
+                    ClearValue = new Silk.NET.WebGPU.Color()
+                };
+            }
 
             var passDesc = new RenderPassDescriptor
             {
-                ColorAttachmentCount = 1,
-                ColorAttachments = &colorAttachment,
+                ColorAttachmentCount = usesColorTarget ? 1u : 0u,
+                ColorAttachments = usesColorTarget ? &colorAttachment : null,
                 DepthStencilAttachment = usesDepthStencil && hasDepthAttachment ? &depthAttachment : null
             };
 
@@ -1686,7 +1732,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 return;
             }
 
-            ApplyRenderState(context, pass, command, pipeline, renderTarget.Width, renderTarget.Height);
+            ApplyRenderState(context, pass, command, pipeline, targetWidth, targetHeight);
             if (pipeline.Descriptor.DepthStencilState.StencilEnable)
             {
                 context.Wgpu.RenderPassEncoderSetStencilReference(
@@ -2393,6 +2439,50 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         if (source.Descriptor.Format is DxResourceFormat.D24UnormS8UInt or DxResourceFormat.D32Float)
         {
             throw new ArgumentException("Texture resolve currently supports color render-target formats only.", nameof(source));
+        }
+    }
+
+    private void ValidateDrawTargets(ProGpuDirectXGraphicsPipeline? pipeline)
+    {
+        if (_renderTarget is not null)
+        {
+            ValidateRenderTargetTexture(_renderTarget);
+        }
+
+        if (_depthStencil is not null)
+        {
+            ValidateDepthStencilTexture(_depthStencil);
+        }
+
+        if (!_device.IsGpuBacked || pipeline is null)
+        {
+            return;
+        }
+
+        if (pipeline.Descriptor.PixelShader is not null && _renderTarget is null)
+        {
+            throw new InvalidOperationException("GPU-backed DirectX draw with a pixel shader requires a render target.");
+        }
+
+        var depthStencilState = _depthStencilState ?? pipeline.Descriptor.DepthStencilState;
+        if (pipeline.Descriptor.DepthStencilFormat != DxResourceFormat.Unknown &&
+            (depthStencilState.DepthEnable || depthStencilState.StencilEnable) &&
+            _depthStencil is null)
+        {
+            throw new InvalidOperationException("GPU-backed DirectX draw with depth or stencil enabled requires a depth-stencil target.");
+        }
+    }
+
+    private static void ValidateRenderTargetTexture(ProGpuDirectXTexture2D renderTarget)
+    {
+        if ((renderTarget.Descriptor.Usage & DxTextureUsage.RenderTarget) == 0)
+        {
+            throw new ArgumentException("Render-target operations require a texture created with render-target usage.", nameof(renderTarget));
+        }
+
+        if (renderTarget.Descriptor.Format is DxResourceFormat.D24UnormS8UInt or DxResourceFormat.D32Float)
+        {
+            throw new ArgumentException("Render-target operations require a color resource format.", nameof(renderTarget));
         }
     }
 

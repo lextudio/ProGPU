@@ -453,33 +453,34 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
                 Buffers = inputSlots.Length == 0 ? null : layouts
             };
 
-            var blendComponentColor = new BlendComponent
-            {
-                SrcFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.SourceColor),
-                DstFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.DestinationColor),
-                Operation = ProGpuDirectXFormatConverter.ToBlendOperation(descriptor.BlendState.ColorOperation)
-            };
-            var blendComponentAlpha = new BlendComponent
-            {
-                SrcFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.SourceAlpha),
-                DstFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.DestinationAlpha),
-                Operation = ProGpuDirectXFormatConverter.ToBlendOperation(descriptor.BlendState.AlphaOperation)
-            };
-            var blendState = new BlendState
-            {
-                Color = blendComponentColor,
-                Alpha = blendComponentAlpha
-            };
-            var colorTarget = new ColorTargetState
-            {
-                Format = ProGpuDirectXFormatConverter.ToTextureFormat(descriptor.RenderTargetFormat),
-                Blend = descriptor.BlendState.EnableBlend ? &blendState : null,
-                WriteMask = ProGpuDirectXFormatConverter.ToColorWriteMask(descriptor.BlendState.WriteMask)
-            };
-
             FragmentState fragmentState = default;
+            BlendState blendState = default;
+            ColorTargetState colorTarget = default;
             if (descriptor.PixelShader is not null)
             {
+                var blendComponentColor = new BlendComponent
+                {
+                    SrcFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.SourceColor),
+                    DstFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.DestinationColor),
+                    Operation = ProGpuDirectXFormatConverter.ToBlendOperation(descriptor.BlendState.ColorOperation)
+                };
+                var blendComponentAlpha = new BlendComponent
+                {
+                    SrcFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.SourceAlpha),
+                    DstFactor = ProGpuDirectXFormatConverter.ToBlendFactor(descriptor.BlendState.DestinationAlpha),
+                    Operation = ProGpuDirectXFormatConverter.ToBlendOperation(descriptor.BlendState.AlphaOperation)
+                };
+                blendState = new BlendState
+                {
+                    Color = blendComponentColor,
+                    Alpha = blendComponentAlpha
+                };
+                colorTarget = new ColorTargetState
+                {
+                    Format = ProGpuDirectXFormatConverter.ToTextureFormat(descriptor.RenderTargetFormat),
+                    Blend = descriptor.BlendState.EnableBlend ? &blendState : null,
+                    WriteMask = ProGpuDirectXFormatConverter.ToColorWriteMask(descriptor.BlendState.WriteMask)
+                };
                 fragmentState = new FragmentState
                 {
                     Module = pixelShaderModuleOverride != null
@@ -669,6 +670,12 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
             descriptor.PixelShader.Descriptor.Stage != DxShaderStage.Pixel)
         {
             throw new ArgumentException("Graphics pipeline pixel shader must use the pixel shader stage.", nameof(descriptor));
+        }
+
+        if (descriptor.PixelShader is not null &&
+            descriptor.RenderTargetFormat == DxResourceFormat.Unknown)
+        {
+            throw new ArgumentException("Graphics pipelines with a pixel shader require a render-target format.", nameof(descriptor));
         }
 
         if (descriptor.SampleCount == 0)
