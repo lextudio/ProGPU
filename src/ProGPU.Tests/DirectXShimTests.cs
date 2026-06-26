@@ -4812,6 +4812,148 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void GpuBackedDrawsReusePipelineCompatibleBindGroupsAcrossFlushes()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var sourceTexture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 1,
+            Height = 1,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource | DxTextureUsage.CopyDestination,
+            Label = "Cached Source Texture"
+        });
+        sourceTexture.WritePixels<byte>([255, 255, 255, 255]);
+        using var sourceView = device.CreateShaderResourceView(sourceTexture);
+        using var sourceSampler = device.CreateSamplerState(new DxSamplerDescriptor
+        {
+            Filter = DxFilter.MinMagMipPoint,
+            AddressU = DxTextureAddressMode.Clamp,
+            AddressV = DxTextureAddressMode.Clamp
+        });
+        using var constants = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 64,
+            Usage = DxBufferUsage.Constant | DxBufferUsage.CopyDestination,
+            Label = "Cached Texture Transform Constants"
+        });
+        constants.Write<float>(
+        [
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        ]);
+        using var vertexBuffer = device.CreateBuffer(new DxBufferDescriptor
+        {
+            SizeInBytes = 60,
+            Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
+            StrideInBytes = 20
+        });
+        vertexBuffer.Write<float>(
+        [
+            -0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
+             0.8f, -0.8f, 0.0f, 1.0f, 0.0f,
+             0.0f,  0.8f, 0.0f, 0.5f, 1.0f
+        ]);
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = TexturedTransformVertexHlsl,
+            EntryPoint = "VSMain",
+            Label = "HLSL Cached Textured Vertex"
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.HlslText,
+            Source = TextureSampleLevelTintPixelHlsl,
+            EntryPoint = "PSMain",
+            Label = "HLSL Cached Texture Pixel"
+        });
+        var inputLayout = device.CreateInputLayout(new DxInputLayoutDescriptor
+        {
+            Elements =
+            [
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "POSITION",
+                    Format = DxResourceFormat.R32G32B32Float,
+                    AlignedByteOffset = 0,
+                    ShaderLocation = 0
+                },
+                new DxInputElementDescriptor
+                {
+                    SemanticName = "TEXCOORD",
+                    Format = DxResourceFormat.R32G32Float,
+                    AlignedByteOffset = 12,
+                    ShaderLocation = 1
+                }
+            ]
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            InputLayout = inputLayout,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetGraphicsPipeline(pipeline);
+        context.SetVertexBuffer(vertexBuffer);
+        context.SetConstantBuffer(DxShaderStage.Vertex, 0, constants);
+        context.SetShaderResource(DxShaderStage.Pixel, 0, sourceView);
+        context.SetSampler(DxShaderStage.Pixel, 0, sourceSampler);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Equal(1ul, context.DrawBindGroupCacheMissCount);
+        Assert.Equal(0ul, context.DrawBindGroupCacheHitCount);
+        Assert.Equal(1, context.CachedPipelineBindGroupCount);
+
+        constants.Write<float>(
+        [
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        ]);
+        sourceTexture.WritePixels<byte>([255, 255, 255, 255]);
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.Equal(2ul, context.SubmittedDrawCount);
+        Assert.Equal(1ul, context.DrawBindGroupCacheMissCount);
+        Assert.Equal(1ul, context.DrawBindGroupCacheHitCount);
+        Assert.Equal(1, context.CachedPipelineBindGroupCount);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after cached HLSL texture sample draw, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after cached HLSL texture sample draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after cached HLSL texture sample draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after cached HLSL texture sample draw, actual: {center}");
+    }
+
+    [Fact]
     public void FlushSubmitsGpuBackedHlslStructuredBufferDrawCommands()
     {
         using var wgpu = new WgpuContext();

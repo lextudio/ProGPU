@@ -74,6 +74,7 @@ public sealed unsafe class ProGpuDirectXBindingSnapshot : IDisposable
         Entries = entries;
         Label = label;
         BindingKey = BuildBindingKey(entries);
+        BackendBindingKey = BuildBackendBindingKey(entries);
 
         if (createStandaloneBackendBindGroup &&
             entries.Count > 0 &&
@@ -93,6 +94,8 @@ public sealed unsafe class ProGpuDirectXBindingSnapshot : IDisposable
     public string Label { get; }
 
     public string BindingKey { get; }
+
+    internal string BackendBindingKey { get; }
 
     public bool HasBackendBindGroup => _backendBindGroup != IntPtr.Zero;
 
@@ -168,6 +171,39 @@ public sealed unsafe class ProGpuDirectXBindingSnapshot : IDisposable
                 $"uav-texture:{texture.Label}:{texture.Generation}:{RuntimeHelpers.GetHashCode(entry.UnorderedAccessView)}",
             ProGpuDirectXBindingKind.UnorderedAccessView when entry.UnorderedAccessView is { Buffer: { } buffer } =>
                 $"uav-buffer:{buffer.Label}:{RuntimeHelpers.GetHashCode(entry.UnorderedAccessView)}",
+            _ => "null"
+        };
+    }
+
+    private static string BuildBackendBindingKey(IReadOnlyList<ProGpuDirectXBindingEntry> entries)
+    {
+        if (entries.Count == 0)
+        {
+            return "empty";
+        }
+
+        return string.Join(
+            "|",
+            entries.Select(entry =>
+                $"{entry.Kind}:{entry.Stage}:{entry.Slot}:{entry.NativeBinding}:{GetBackendResourceToken(entry)}"));
+    }
+
+    private static string GetBackendResourceToken(ProGpuDirectXBindingEntry entry)
+    {
+        return entry.Kind switch
+        {
+            ProGpuDirectXBindingKind.ConstantBuffer when entry.ConstantBuffer?.BackendBuffer is { } buffer =>
+                $"buffer:{(IntPtr)buffer.BufferPtr}:{buffer.Size}",
+            ProGpuDirectXBindingKind.ShaderResourceView when entry.ShaderResourceView is { Texture: not null } view =>
+                $"srv-texture:{view.BackendTextureViewHandle}:{view.Dimension}:{view.Format}:{view.Descriptor.MostDetailedMip}:{view.Descriptor.MipLevels}:{view.Descriptor.FirstArraySlice}:{view.Descriptor.ArraySize}",
+            ProGpuDirectXBindingKind.ShaderResourceView when entry.ShaderResourceView is { Buffer.BackendBuffer: { } buffer } view =>
+                $"srv-buffer:{(IntPtr)buffer.BufferPtr}:{view.Dimension}:{view.Format}:{view.Descriptor.FirstElement}:{view.Descriptor.ElementCount}:{view.Descriptor.ElementStrideInBytes}",
+            ProGpuDirectXBindingKind.Sampler when entry.Sampler is { } sampler =>
+                $"sampler:{sampler.BackendSamplerHandle}:{sampler.Descriptor}",
+            ProGpuDirectXBindingKind.UnorderedAccessView when entry.UnorderedAccessView is { Texture: not null } view =>
+                $"uav-texture:{view.BackendTextureViewHandle}:{view.Dimension}:{view.Format}:{view.Descriptor.Access}:{view.Descriptor.MipSlice}:{view.Descriptor.FirstArraySlice}:{view.Descriptor.ArraySize}",
+            ProGpuDirectXBindingKind.UnorderedAccessView when entry.UnorderedAccessView is { Buffer.BackendBuffer: { } buffer } view =>
+                $"uav-buffer:{(IntPtr)buffer.BufferPtr}:{view.Dimension}:{view.Format}:{view.Descriptor.Access}:{view.Descriptor.FirstElement}:{view.Descriptor.ElementCount}:{view.Descriptor.ElementStrideInBytes}",
             _ => "null"
         };
     }
