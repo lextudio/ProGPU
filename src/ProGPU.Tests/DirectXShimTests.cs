@@ -500,6 +500,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Assert.True(report.RequiresModule("USER32.DLL"));
         Assert.True(report.RequiresModule("d3d11.dll"));
         Assert.True(report.RequiresModule("VXccelEngine3D.dll"));
+        Assert.True(report.RequiresModule("SciChart.Charting3D.dll"));
         Assert.False(report.RequiresModule("*.so"));
         Assert.False(report.RequiresModule(".So"));
         Assert.Contains("user32.dll", report.DescribeModules(), StringComparison.OrdinalIgnoreCase);
@@ -529,6 +530,40 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void NativeCompatibilityPlannerClassifiesSciChartAndDirectXModules()
+    {
+        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var plan = ProGpuDirectXNativeCompatibilityPlanner.Create(report);
+
+        Assert.True(plan.RequiresProGpuNativeFacade);
+        Assert.True(plan.RequiresHostOsAbstraction);
+        Assert.Contains("ProGPU native facade:", plan.DescribeRequiredActions(), StringComparison.Ordinal);
+        Assert.Contains("host OS abstraction:", plan.DescribeRequiredActions(), StringComparison.Ordinal);
+        Assert.Contains("managed assembly hints:", plan.DescribeRequiredActions(), StringComparison.Ordinal);
+        Assert.Contains("investigate:", plan.DescribeRequiredActions(), StringComparison.Ordinal);
+
+        var d3dModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("d3d11.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.Direct3D, d3dModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, d3dModule.Action);
+
+        var visualXcceleratorModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("VXccelEngine3D.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.SciChartVisualXccelerator, visualXcceleratorModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementProGpuNativeFacade, visualXcceleratorModule.Action);
+
+        var win32Module = Assert.Single(plan.Modules, module => module.ModuleName.Equals("user32.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.Win32System, win32Module.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ImplementHostOsAbstraction, win32Module.Action);
+
+        var managedModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("SciChart.Charting3D.dll", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.ManagedAssemblyHint, managedModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.ManagedAssemblyReferenceOnly, managedModule.Action);
+
+        var unknownModule = Assert.Single(plan.Modules, module => module.ModuleName.Equals("VendorNativeExtension.dylib", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ProGpuDirectXNativeModuleKind.Unknown, unknownModule.Kind);
+        Assert.Equal(ProGpuDirectXNativeCompatibilityAction.Investigate, unknownModule.Action);
+    }
+
+    [Fact]
     public void RequireGpuBackedResourcesFailsClosedWithoutContext()
     {
         Assert.Throws<InvalidOperationException>(() =>
@@ -549,6 +584,10 @@ fn fs_main() -> @location(0) vec4<f32> {
         internal static string GetDynamicModuleName() => "VXccelEngine3D.dll";
 
         internal static string GetInvalidPatternModuleNames() => "*.so .So";
+
+        internal static string GetManagedAssemblyHintName() => "SciChart.Charting3D.dll";
+
+        internal static string GetUnknownModuleHintName() => "VendorNativeExtension.dylib";
     }
 
     [Fact]
