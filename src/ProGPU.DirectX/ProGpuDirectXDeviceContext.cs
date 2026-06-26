@@ -99,6 +99,9 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     private ProGpuDirectXShader? _computeShader;
     private ProGpuDirectXGraphicsPipeline? _graphicsPipeline;
     private ProGpuDirectXComputePipeline? _computePipeline;
+    private DxBlendStateDescriptor? _blendState;
+    private DxDepthStencilStateDescriptor? _depthStencilState;
+    private DxRasterizerStateDescriptor? _rasterizerState;
     private readonly Dictionary<uint, ProGpuDirectXBuffer> _vertexBuffers = new();
     private readonly Dictionary<uint, DxVertexBufferBinding> _vertexBufferBindings = new();
     private ProGpuDirectXBuffer? _indexBuffer;
@@ -109,9 +112,17 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     private readonly Dictionary<uint, ProGpuDirectXUnorderedAccessView?> _unorderedAccessViews = new();
     private readonly Dictionary<WireframeIndexCacheKey, WireframeIndexCacheEntry> _wireframeIndexBuffers = new();
     private readonly Dictionary<PipelineBindGroupCacheKey, CachedPipelineBindGroup> _pipelineBindGroupCache = new();
+    private readonly Dictionary<DynamicGraphicsPipelineKey, ProGpuDirectXGraphicsPipeline> _dynamicGraphicsPipelines = new();
     private bool _isDisposed;
 
     private readonly record struct PipelineBindGroupCacheKey(bool IsCompute, IntPtr Pipeline, string BindingKey);
+
+    private readonly record struct DynamicGraphicsPipelineKey(
+        ProGpuDirectXGraphicsPipeline BasePipeline,
+        DxPrimitiveTopology Topology,
+        DxBlendStateDescriptor BlendState,
+        DxDepthStencilStateDescriptor DepthStencilState,
+        DxRasterizerStateDescriptor RasterizerState);
 
     private sealed class CachedPipelineBindGroup
     {
@@ -228,6 +239,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public ulong DispatchBindGroupCacheMissCount { get; private set; }
 
     public int CachedPipelineBindGroupCount => _pipelineBindGroupCache.Count;
+
+    public int CachedDynamicGraphicsPipelineCount => _dynamicGraphicsPipelines.Count;
 
     public void SetRenderTargets(ProGpuDirectXTexture2D? renderTarget, ProGpuDirectXTexture2D? depthStencil = null)
     {
@@ -450,6 +463,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public void SetBlendState(DxBlendStateDescriptor blendState)
     {
         ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(blendState);
+        _blendState = blendState;
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.SetBlendState,
@@ -460,6 +475,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public void SetDepthStencilState(DxDepthStencilStateDescriptor depthStencilState)
     {
         ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(depthStencilState);
+        _depthStencilState = depthStencilState;
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.SetDepthStencilState,
@@ -470,6 +487,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     public void SetRasterizerState(DxRasterizerStateDescriptor rasterizerState)
     {
         ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(rasterizerState);
+        _rasterizerState = rasterizerState;
         _commands.Add(new ProGpuDirectXCommand
         {
             Kind = ProGpuDirectXCommandKind.SetRasterizerState,
@@ -809,6 +828,9 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             Rect = ScissorRect,
             Draw = draw,
             GraphicsPipeline = _graphicsPipeline,
+            BlendState = _blendState,
+            DepthStencilState = _depthStencilState,
+            RasterizerState = _rasterizerState,
             VertexBuffers = SnapshotVertexBuffers(),
             VertexBufferBindings = SnapshotVertexBufferBindings(),
             BindingSnapshot = CreateBindingSnapshotCore(
@@ -858,6 +880,9 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             Rect = ScissorRect,
             DrawIndexed = draw,
             GraphicsPipeline = _graphicsPipeline,
+            BlendState = _blendState,
+            DepthStencilState = _depthStencilState,
+            RasterizerState = _rasterizerState,
             VertexBuffers = SnapshotVertexBuffers(),
             VertexBufferBindings = SnapshotVertexBufferBindings(),
             IndexBuffer = _indexBuffer,
@@ -1539,6 +1564,52 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         }
     }
 
+    private ProGpuDirectXGraphicsPipeline GetOrCreateEffectiveGraphicsPipeline(ProGpuDirectXCommand command)
+    {
+        if (command.GraphicsPipeline is not { } basePipeline)
+        {
+            throw new InvalidOperationException("GPU-backed DirectX draw requires a graphics pipeline.");
+        }
+
+        var baseDescriptor = basePipeline.Descriptor;
+        var topology = command.Topology == DxPrimitiveTopology.Undefined
+            ? baseDescriptor.Topology
+            : command.Topology;
+        var blendState = command.BlendState ?? baseDescriptor.BlendState;
+        var depthStencilState = command.DepthStencilState ?? baseDescriptor.DepthStencilState;
+        var rasterizerState = command.RasterizerState ?? baseDescriptor.RasterizerState;
+
+        if (topology == baseDescriptor.Topology &&
+            EqualityComparer<DxBlendStateDescriptor>.Default.Equals(blendState, baseDescriptor.BlendState) &&
+            EqualityComparer<DxDepthStencilStateDescriptor>.Default.Equals(depthStencilState, baseDescriptor.DepthStencilState) &&
+            EqualityComparer<DxRasterizerStateDescriptor>.Default.Equals(rasterizerState, baseDescriptor.RasterizerState))
+        {
+            return basePipeline;
+        }
+
+        var key = new DynamicGraphicsPipelineKey(
+            basePipeline,
+            topology,
+            blendState,
+            depthStencilState,
+            rasterizerState);
+        if (_dynamicGraphicsPipelines.TryGetValue(key, out var cachedPipeline))
+        {
+            return cachedPipeline;
+        }
+
+        var dynamicPipeline = _device.CreateGraphicsPipeline(baseDescriptor with
+        {
+            Topology = topology,
+            BlendState = blendState,
+            DepthStencilState = depthStencilState,
+            RasterizerState = rasterizerState,
+            Label = $"{baseDescriptor.Label} DynamicState"
+        });
+        _dynamicGraphicsPipelines.Add(key, dynamicPipeline);
+        return dynamicPipeline;
+    }
+
     private void ExecuteGpuBackedDrawCommand(ProGPU.Backend.WgpuContext context, ProGpuDirectXCommand command)
     {
         if (command.Texture?.BackendTexture is not { IsDisposed: false, ViewPtr: not null } renderTarget)
@@ -1546,7 +1617,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             throw new InvalidOperationException("GPU-backed DirectX draw requires a render target with a backend texture view.");
         }
 
-        if (command.GraphicsPipeline is not { HasBackendPipeline: true } pipeline)
+        var pipeline = GetOrCreateEffectiveGraphicsPipeline(command);
+        if (!pipeline.HasBackendPipeline)
         {
             throw new InvalidOperationException("GPU-backed DirectX draw requires a backend graphics pipeline.");
         }
@@ -1554,15 +1626,16 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         RenderPassDepthStencilAttachment depthAttachment = default;
         var depthTexture = command.DepthStencilTexture?.BackendTexture;
         var hasDepthAttachment = depthTexture is { IsDisposed: false, ViewPtr: not null };
-        if (command.GraphicsPipeline.Descriptor.DepthStencilFormat != DxResourceFormat.Unknown &&
-            (command.GraphicsPipeline.Descriptor.DepthStencilState.DepthEnable ||
-                command.GraphicsPipeline.Descriptor.DepthStencilState.StencilEnable) &&
+        var usesDepthStencil = pipeline.Descriptor.DepthStencilFormat != DxResourceFormat.Unknown &&
+            (pipeline.Descriptor.DepthStencilState.DepthEnable ||
+                pipeline.Descriptor.DepthStencilState.StencilEnable);
+        if (usesDepthStencil &&
             !hasDepthAttachment)
         {
             throw new InvalidOperationException("GPU-backed DirectX draw requires a backend depth-stencil texture for depth-enabled pipelines.");
         }
 
-        if (hasDepthAttachment)
+        if (usesDepthStencil && hasDepthAttachment)
         {
             depthAttachment = new RenderPassDepthStencilAttachment
             {
@@ -1604,7 +1677,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             {
                 ColorAttachmentCount = 1,
                 ColorAttachments = &colorAttachment,
-                DepthStencilAttachment = hasDepthAttachment ? &depthAttachment : null
+                DepthStencilAttachment = usesDepthStencil && hasDepthAttachment ? &depthAttachment : null
             };
 
             pass = context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
@@ -1613,12 +1686,12 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 return;
             }
 
-            ApplyRenderState(context, pass, command, renderTarget.Width, renderTarget.Height);
-            if (command.GraphicsPipeline.Descriptor.DepthStencilState.StencilEnable)
+            ApplyRenderState(context, pass, command, pipeline, renderTarget.Width, renderTarget.Height);
+            if (pipeline.Descriptor.DepthStencilState.StencilEnable)
             {
                 context.Wgpu.RenderPassEncoderSetStencilReference(
                     pass,
-                    command.GraphicsPipeline.Descriptor.DepthStencilState.StencilReference);
+                    pipeline.Descriptor.DepthStencilState.StencilReference);
             }
 
             if (command.VertexBufferBindings is { Count: > 0 } vertexBufferBindings)
@@ -1665,6 +1738,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                         context,
                         pass,
                         command,
+                        pipeline,
                         pipeline.FrontFacingFrontPipeline);
                 }
 
@@ -1674,6 +1748,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                         context,
                         pass,
                         command,
+                        pipeline,
                         pipeline.FrontFacingBackPipeline);
                 }
             }
@@ -1683,6 +1758,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                     context,
                     pass,
                     command,
+                    pipeline,
                     pipeline.BackendPipeline);
             }
 
@@ -1723,6 +1799,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         ProGPU.Backend.WgpuContext context,
         RenderPassEncoder* pass,
         ProGpuDirectXCommand command,
+        ProGpuDirectXGraphicsPipeline pipeline,
         RenderPipeline* renderPipeline)
     {
         context.Wgpu.RenderPassEncoderSetPipeline(pass, renderPipeline);
@@ -1735,8 +1812,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, pipelineBindGroup, 0, null);
         }
 
-        var isWireframeTriangleDraw = IsWireframeTriangleDraw(command);
-        if (TryGetWireframeIndexBuffer(context, command, out var wireframeIndexBuffer, out var wireframeBaseVertex, out var wireframeInstanceCount, out var wireframeStartInstance))
+        var isWireframeTriangleDraw = IsWireframeTriangleDraw(command, pipeline);
+        if (TryGetWireframeIndexBuffer(context, command, pipeline, out var wireframeIndexBuffer, out var wireframeBaseVertex, out var wireframeInstanceCount, out var wireframeStartInstance))
         {
             context.Wgpu.RenderPassEncoderSetIndexBuffer(
                 pass,
@@ -1840,6 +1917,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         ProGPU.Backend.WgpuContext context,
         RenderPassEncoder* pass,
         ProGpuDirectXCommand command,
+        ProGpuDirectXGraphicsPipeline pipeline,
         uint targetWidth,
         uint targetHeight)
     {
@@ -1856,7 +1934,9 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             viewport.MinDepth,
             viewport.MaxDepth);
 
-        if (command.Rect.Width > 0 && command.Rect.Height > 0)
+        if (pipeline.Descriptor.RasterizerState.ScissorEnable &&
+            command.Rect.Width > 0 &&
+            command.Rect.Height > 0)
         {
             context.Wgpu.RenderPassEncoderSetScissorRect(
                 pass,
@@ -1874,6 +1954,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
     private bool TryGetWireframeIndexBuffer(
         ProGPU.Backend.WgpuContext context,
         ProGpuDirectXCommand command,
+        ProGpuDirectXGraphicsPipeline pipeline,
         out WireframeIndexCacheEntry entry,
         out int baseVertexLocation,
         out uint instanceCount,
@@ -1884,8 +1965,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         instanceCount = 1;
         startInstanceLocation = 0;
 
-        if (command.GraphicsPipeline?.Descriptor is not { } descriptor ||
-            descriptor.RasterizerState.FillMode != DxFillMode.Wireframe ||
+        var descriptor = pipeline.Descriptor;
+        if (descriptor.RasterizerState.FillMode != DxFillMode.Wireframe ||
             descriptor.Topology is not (DxPrimitiveTopology.TriangleList or DxPrimitiveTopology.TriangleStrip))
         {
             return false;
@@ -1968,10 +2049,10 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         return true;
     }
 
-    private static bool IsWireframeTriangleDraw(ProGpuDirectXCommand command)
+    private static bool IsWireframeTriangleDraw(ProGpuDirectXCommand command, ProGpuDirectXGraphicsPipeline pipeline)
     {
-        return command.GraphicsPipeline?.Descriptor is { } descriptor &&
-            descriptor.RasterizerState.FillMode == DxFillMode.Wireframe &&
+        var descriptor = pipeline.Descriptor;
+        return descriptor.RasterizerState.FillMode == DxFillMode.Wireframe &&
             descriptor.Topology is DxPrimitiveTopology.TriangleList or DxPrimitiveTopology.TriangleStrip;
     }
 
@@ -2344,6 +2425,12 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         }
 
         _wireframeIndexBuffers.Clear();
+        foreach (var pipeline in _dynamicGraphicsPipelines.Values)
+        {
+            pipeline.Dispose();
+        }
+
+        _dynamicGraphicsPipelines.Clear();
         _isDisposed = true;
     }
 }

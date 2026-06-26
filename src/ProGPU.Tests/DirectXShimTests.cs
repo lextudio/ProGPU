@@ -5970,6 +5970,146 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void FlushAppliesQueuedDepthStencilStateToGpuBackedDrawCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var depth = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.D32Float,
+            Usage = DxTextureUsage.DepthStencil
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            DepthStencilFormat = DxResourceFormat.D32Float,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            DepthStencilState = new DxDepthStencilStateDescriptor
+            {
+                DepthEnable = true,
+                DepthWriteMask = DxDepthWriteMask.All,
+                DepthFunction = DxComparisonFunction.Less
+            }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.ClearDepthStencil(depth, DxDepthStencilClearFlags.Depth, depth: 0f, stencil: 0);
+        context.SetRenderTargets(target, depth);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.SetGraphicsPipeline(pipeline);
+        context.SetDepthStencilState(new DxDepthStencilStateDescriptor
+        {
+            DepthEnable = false,
+            DepthWriteMask = DxDepthWriteMask.Zero,
+            DepthFunction = DxComparisonFunction.Less
+        });
+        context.Draw(3);
+
+        var drawCommand = context.Commands.Last(command => command.Kind == ProGpuDirectXCommandKind.Draw);
+        Assert.NotNull(drawCommand.DepthStencilState);
+        Assert.False(drawCommand.DepthStencilState!.DepthEnable);
+
+        context.Flush();
+
+        Assert.Equal(2ul, context.SubmittedClearCount);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Equal(1, context.CachedDynamicGraphicsPipelineCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel after depth-state override disabled depth testing, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after depth-state override, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after depth-state override, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after depth-state override, actual: {center}");
+    }
+
+    [Fact]
+    public void FlushIgnoresQueuedScissorWhenRasterizerScissorIsDisabled()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var target = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 32,
+            Height = 32,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.RenderTarget | DxTextureUsage.CopySource
+        });
+        using var vertexShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Vertex,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pixelShader = device.CreateShader(new DxShaderDescriptor
+        {
+            Stage = DxShaderStage.Pixel,
+            SourceKind = DxShaderSourceKind.Wgsl,
+            Source = SolidTriangleWgsl
+        });
+        using var pipeline = device.CreateGraphicsPipeline(new DxGraphicsPipelineDescriptor
+        {
+            VertexShader = vertexShader,
+            PixelShader = pixelShader,
+            RenderTargetFormat = DxResourceFormat.R8G8B8A8Unorm,
+            BlendState = new DxBlendStateDescriptor { EnableBlend = false },
+            RasterizerState = new DxRasterizerStateDescriptor
+            {
+                CullMode = DxCullMode.None,
+                ScissorEnable = false
+            }
+        });
+        using var context = device.CreateImmediateContext();
+
+        context.ClearRenderTarget(target, DxColor.Black);
+        context.SetRenderTargets(target);
+        context.SetViewport(new DxViewport(0, 0, 32, 32));
+        context.SetScissorRect(new DxRect(0, 0, 4, 4));
+        context.SetGraphicsPipeline(pipeline);
+        context.Draw(3);
+        context.Flush();
+
+        Assert.Equal(1ul, context.SubmittedClearCount);
+        Assert.Equal(1ul, context.SubmittedDrawCount);
+        Assert.Empty(context.Commands);
+
+        var pixels = target.BackendTexture!.ReadPixels();
+        var center = ReadRgbaPixel(pixels, 32, 16, 16);
+        Assert.True(center.R > 200, $"Expected red center pixel because disabled scissor ignores queued scissor rect, actual: {center}");
+        Assert.True(center.G < 50, $"Expected low green center pixel after disabled-scissor draw, actual: {center}");
+        Assert.True(center.B < 50, $"Expected low blue center pixel after disabled-scissor draw, actual: {center}");
+        Assert.True(center.A > 200, $"Expected opaque center pixel after disabled-scissor draw, actual: {center}");
+    }
+
+    [Fact]
     public void FlushSubmitsGpuBackedStencilReferenceAndOperations()
     {
         using var wgpu = new WgpuContext();

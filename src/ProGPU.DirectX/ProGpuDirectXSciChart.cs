@@ -3371,7 +3371,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.TriangleList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = false },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Texture Pipeline {renderTargetFormat} {filtering}"
         });
         _texturePipelines[key] = pipeline;
@@ -3397,7 +3397,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.TriangleList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = true },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Column Fill Pipeline {renderTargetFormat}"
         });
         _columnFillPipelines[renderTargetFormat] = pipeline;
@@ -3423,7 +3423,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.LineList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = true },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Line Batch Pipeline {renderTargetFormat}"
         });
         _linePipelines[renderTargetFormat] = pipeline;
@@ -3534,7 +3534,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.TriangleList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = false },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Batched Texture Pipeline {renderTargetFormat} {filtering}"
         });
         _textureVertexPipelines[key] = pipeline;
@@ -3572,7 +3572,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.TriangleList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = true },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Sprite Pipeline {renderTargetFormat} {filtering}"
         });
         _spritePipelines[key] = pipeline;
@@ -3610,7 +3610,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.TriangleList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = false },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Shaped Heatmap Pipeline {renderTargetFormat} {filtering}"
         });
         _shapedHeatmapPipelines[key] = pipeline;
@@ -3673,7 +3673,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             RenderTargetFormat = renderTargetFormat,
             Topology = DxPrimitiveTopology.TriangleList,
             BlendState = new DxBlendStateDescriptor { EnableBlend = true },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = DxCullMode.None, ScissorEnable = true },
             Label = $"SciChart Height Contour Pipeline {renderTargetFormat}"
         });
         _heightContourPipelines[renderTargetFormat] = pipeline;
@@ -5158,7 +5158,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             DepthStencilFormat = DxResourceFormat.D32Float,
             Topology = topology,
             BlendState = new DxBlendStateDescriptor { EnableBlend = true },
-            RasterizerState = new DxRasterizerStateDescriptor { CullMode = cullMode },
+            RasterizerState = new DxRasterizerStateDescriptor { CullMode = cullMode, ScissorEnable = true },
             DepthStencilState = new DxDepthStencilStateDescriptor
             {
                 DepthEnable = true,
