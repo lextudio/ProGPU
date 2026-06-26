@@ -503,6 +503,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
     private GpuTexture? _backendTexture;
     private byte[]? _cpuShadow;
     private byte[] _writeShadow = [];
+    private bool[] _writeShadowSubresourcesCurrent = [];
     private ProGpuDirectXMappedSubresource? _activeMapping;
 
     internal ProGpuDirectXTexture2D(ProGpuDirectXDevice device, DxTexture2DDescriptor descriptor)
@@ -530,6 +531,11 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
     internal void MarkBackendContentsChanged()
     {
+        if (_writeShadowSubresourcesCurrent.Length > 0)
+        {
+            Array.Fill(_writeShadowSubresourcesCurrent, false);
+        }
+
         Generation++;
     }
 
@@ -555,6 +561,8 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             {
                 _writeShadow.CopyTo(_cpuShadow, 0);
             }
+
+            Array.Fill(_writeShadowSubresourcesCurrent, true);
         }
 
         LastWriteSizeInBytes = expectedSize;
@@ -581,6 +589,76 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         }
 
         return _cpuShadow.ToArray();
+    }
+
+    internal void GenerateMips(DxShaderResourceViewDescriptor shaderResourceView)
+    {
+        ThrowIfDisposed();
+        ValidateGenerateMips(shaderResourceView);
+        if (shaderResourceView.MipLevels <= 1)
+        {
+            return;
+        }
+
+        if (_activeMapping is not null)
+        {
+            throw new InvalidOperationException("DirectX mip generation cannot run while the texture is mapped.");
+        }
+
+        if (_writeShadow.Length == 0)
+        {
+            throw new InvalidOperationException("DirectX mip generation requires texture shadow storage or a synchronized native source mip.");
+        }
+
+        var firstMip = shaderResourceView.MostDetailedMip;
+        var lastMipExclusive = checked(firstMip + shaderResourceView.MipLevels);
+        var generatedBytes = 0u;
+
+        for (var arraySlice = shaderResourceView.FirstArraySlice;
+             arraySlice < checked(shaderResourceView.FirstArraySlice + shaderResourceView.ArraySize);
+             arraySlice++)
+        {
+            EnsureShadowSubresourceCurrent(GetSubresourceIndex(firstMip, arraySlice));
+
+            for (var mipLevel = firstMip + 1; mipLevel < lastMipExclusive; mipLevel++)
+            {
+                var sourceInfo = GetSubresourceInfo(Descriptor, GetSubresourceIndex(mipLevel - 1, arraySlice));
+                var destinationInfo = GetSubresourceInfo(Descriptor, GetSubresourceIndex(mipLevel, arraySlice));
+                var source = _writeShadow.AsSpan(
+                    checked((int)sourceInfo.OffsetBytes),
+                    checked((int)sourceInfo.SizeInBytes));
+                var destination = _writeShadow.AsSpan(
+                    checked((int)destinationInfo.OffsetBytes),
+                    checked((int)destinationInfo.SizeInBytes));
+
+                DownsampleColorMip(source, destination, sourceInfo, destinationInfo);
+                var destinationSubresource = GetSubresourceIndex(mipLevel, arraySlice);
+                MarkShadowSubresourceCurrent(destinationSubresource);
+                generatedBytes = checked(generatedBytes + destinationInfo.SizeInBytes);
+
+                if (_backendTexture is not null)
+                {
+                    _backendTexture.WritePixelsSubRect(
+                        destination,
+                        x: 0,
+                        y: 0,
+                        subWidth: destinationInfo.Width,
+                        subHeight: destinationInfo.Height,
+                        arrayLayer: arraySlice,
+                        mipLevel: mipLevel);
+                }
+
+                if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
+                {
+                    destination.CopyTo(_cpuShadow.AsSpan(
+                        checked((int)destinationInfo.OffsetBytes),
+                        checked((int)destinationInfo.SizeInBytes)));
+                }
+            }
+        }
+
+        LastWriteSizeInBytes = generatedBytes;
+        Generation++;
     }
 
     private void UploadAllSubresourcesToBackend(ReadOnlySpan<byte> bytes)
@@ -617,6 +695,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
                 .CopyTo(_writeShadow.AsSpan(
                     checked((int)subresourceInfo.OffsetBytes),
                     checked((int)subresourceInfo.SizeInBytes)));
+            MarkShadowSubresourceCurrent(subresource);
         }
 
         if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
@@ -639,6 +718,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             .CopyTo(_writeShadow.AsSpan(
                 checked((int)subresourceInfo.OffsetBytes),
                 checked((int)subresourceInfo.SizeInBytes)));
+        MarkShadowSubresourceCurrent(subresource);
         if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
         {
             _writeShadow.AsSpan(
@@ -779,6 +859,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             }
 
             LastWriteSizeInBytes = mapping.SizeInBytes;
+            MarkShadowSubresourceCurrent(mapping.Subresource);
             Generation++;
         }
 
@@ -787,10 +868,18 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
     private void AllocateCpuStorage(DxTexture2DDescriptor descriptor)
     {
+        var subresourceCount = checked(descriptor.ArraySize * descriptor.MipLevels);
+        _writeShadowSubresourcesCurrent = new bool[checked((int)subresourceCount)];
+
         if ((descriptor.CpuAccess & (DxCpuAccessFlags.Read | DxCpuAccessFlags.Write)) == 0)
         {
+            var needsMipGenerationShadow = descriptor.MipLevels > 1 &&
+                (descriptor.Usage & DxTextureUsage.ShaderResource) != 0 &&
+                (descriptor.Usage & DxTextureUsage.RenderTarget) != 0;
             _cpuShadow = null;
-            _writeShadow = [];
+            _writeShadow = needsMipGenerationShadow
+                ? new byte[checked((int)GetTextureSizeInBytes(descriptor))]
+                : [];
             LastWriteSizeInBytes = 0;
             return;
         }
@@ -819,6 +908,37 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             ProGpuDirectXFormatConverter.ToTextureAlphaMode(Descriptor.Format),
             depthOrArrayLayers: Descriptor.ArraySize,
             mipLevelCount: Descriptor.MipLevels);
+    }
+
+    private void EnsureShadowSubresourceCurrent(uint subresource)
+    {
+        if (IsShadowSubresourceCurrent(subresource))
+        {
+            return;
+        }
+
+        if (_backendTexture is { IsDisposed: false } &&
+            (Descriptor.Usage & DxTextureUsage.CopySource) != 0)
+        {
+            SynchronizeShadowForRead(subresource);
+            return;
+        }
+
+        throw new InvalidOperationException("DirectX mip generation requires current source mip data. Create the texture with copy-source usage or upload/map the source mip before GenerateMips.");
+    }
+
+    private bool IsShadowSubresourceCurrent(uint subresource)
+    {
+        return subresource < _writeShadowSubresourcesCurrent.Length &&
+            _writeShadowSubresourcesCurrent[checked((int)subresource)];
+    }
+
+    private void MarkShadowSubresourceCurrent(uint subresource)
+    {
+        if (subresource < _writeShadowSubresourcesCurrent.Length)
+        {
+            _writeShadowSubresourcesCurrent[checked((int)subresource)] = true;
+        }
     }
 
     private void ValidateMappableSubresource(uint subresource)
@@ -882,6 +1002,63 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         return mode is DxMapMode.Write or DxMapMode.ReadWrite or DxMapMode.WriteDiscard or DxMapMode.WriteNoOverwrite;
     }
 
+    private void ValidateGenerateMips(DxShaderResourceViewDescriptor shaderResourceView)
+    {
+        if (shaderResourceView.Dimension is not DxResourceViewDimension.Texture2D and not DxResourceViewDimension.Texture2DArray)
+        {
+            throw new NotSupportedException("DirectX mip generation currently supports Texture2D shader-resource views.");
+        }
+
+        if (shaderResourceView.MipLevels == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(shaderResourceView), "Shader-resource views must expose at least one mip level.");
+        }
+
+        if (shaderResourceView.MostDetailedMip >= Descriptor.MipLevels ||
+            shaderResourceView.MipLevels > Descriptor.MipLevels - shaderResourceView.MostDetailedMip)
+        {
+            throw new ArgumentOutOfRangeException(nameof(shaderResourceView), "Shader-resource view mip range exceeds the texture.");
+        }
+
+        if (shaderResourceView.FirstArraySlice >= Descriptor.ArraySize ||
+            shaderResourceView.ArraySize == 0 ||
+            shaderResourceView.ArraySize > Descriptor.ArraySize - shaderResourceView.FirstArraySlice)
+        {
+            throw new ArgumentOutOfRangeException(nameof(shaderResourceView), "Shader-resource view array range exceeds the texture.");
+        }
+
+        if (Descriptor.SampleCount != 1)
+        {
+            throw new NotSupportedException("DirectX mip generation currently supports only single-sample textures.");
+        }
+
+        if ((Descriptor.Usage & DxTextureUsage.ShaderResource) == 0)
+        {
+            throw new InvalidOperationException("DirectX mip generation requires shader-resource texture usage.");
+        }
+
+        if ((Descriptor.Usage & DxTextureUsage.RenderTarget) == 0)
+        {
+            throw new InvalidOperationException("DirectX mip generation requires render-target texture usage.");
+        }
+
+        if (_backendTexture is not null &&
+            (Descriptor.Usage & DxTextureUsage.CopyDestination) == 0)
+        {
+            throw new InvalidOperationException("DirectX mip generation upload requires copy-destination usage until the native render-pass mip generator is enabled.");
+        }
+
+        if (!IsMipGenerationFormat(Descriptor.Format))
+        {
+            throw new NotSupportedException($"DirectX mip generation does not support resource format {Descriptor.Format}.");
+        }
+    }
+
+    private uint GetSubresourceIndex(uint mipLevel, uint arraySlice)
+    {
+        return checked(mipLevel + arraySlice * Descriptor.MipLevels);
+    }
+
     private static SubresourceInfo GetSubresourceInfo(DxTexture2DDescriptor descriptor, uint subresource)
     {
         var mipLevels = descriptor.MipLevels;
@@ -942,6 +1119,64 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         return Math.Max(1u, shifted);
     }
 
+    private static void DownsampleColorMip(
+        ReadOnlySpan<byte> source,
+        Span<byte> destination,
+        SubresourceInfo sourceInfo,
+        SubresourceInfo destinationInfo)
+    {
+        const uint BytesPerPixel = 4;
+        for (uint y = 0; y < destinationInfo.Height; y++)
+        {
+            for (uint x = 0; x < destinationInfo.Width; x++)
+            {
+                var sourceX = x * 2;
+                var sourceY = y * 2;
+                var red = 0u;
+                var green = 0u;
+                var blue = 0u;
+                var alpha = 0u;
+                var count = 0u;
+
+                for (var offsetY = 0u; offsetY < 2; offsetY++)
+                {
+                    var sampleY = sourceY + offsetY;
+                    if (sampleY >= sourceInfo.Height)
+                    {
+                        continue;
+                    }
+
+                    for (var offsetX = 0u; offsetX < 2; offsetX++)
+                    {
+                        var sampleX = sourceX + offsetX;
+                        if (sampleX >= sourceInfo.Width)
+                        {
+                            continue;
+                        }
+
+                        var sourceOffset = checked((int)(sampleY * sourceInfo.RowPitch + sampleX * BytesPerPixel));
+                        red += source[sourceOffset];
+                        green += source[sourceOffset + 1];
+                        blue += source[sourceOffset + 2];
+                        alpha += source[sourceOffset + 3];
+                        count++;
+                    }
+                }
+
+                var destinationOffset = checked((int)(y * destinationInfo.RowPitch + x * BytesPerPixel));
+                destination[destinationOffset] = AverageByte(red, count);
+                destination[destinationOffset + 1] = AverageByte(green, count);
+                destination[destinationOffset + 2] = AverageByte(blue, count);
+                destination[destinationOffset + 3] = AverageByte(alpha, count);
+            }
+        }
+    }
+
+    private static byte AverageByte(uint total, uint count)
+    {
+        return checked((byte)((total + count / 2) / count));
+    }
+
     private static uint GetBytesPerPixel(DxResourceFormat format)
     {
         return format switch
@@ -970,6 +1205,15 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
     private static bool IsDepthStencilFormat(DxResourceFormat format)
     {
         return format is DxResourceFormat.D24UnormS8UInt or DxResourceFormat.D32Float;
+    }
+
+    private static bool IsMipGenerationFormat(DxResourceFormat format)
+    {
+        return format is
+            DxResourceFormat.R8G8B8A8Unorm or
+            DxResourceFormat.R8G8B8A8UnormSrgb or
+            DxResourceFormat.B8G8R8A8Unorm or
+            DxResourceFormat.B8G8R8A8UnormSrgb;
     }
 
     private readonly record struct SubresourceInfo(

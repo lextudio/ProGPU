@@ -113,7 +113,7 @@ public sealed class ProGpuDirectXDevice : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(texture);
-        return new ProGpuDirectXShaderResourceView(this, texture, descriptor ?? new DxShaderResourceViewDescriptor());
+        return new ProGpuDirectXShaderResourceView(this, texture, descriptor ?? CreateDefaultShaderResourceViewDescriptor(texture));
     }
 
     public ProGpuDirectXShaderResourceView CreateShaderResourceView(
@@ -125,7 +125,7 @@ public sealed class ProGpuDirectXDevice : IDisposable
         return new ProGpuDirectXShaderResourceView(
             this,
             texture,
-            descriptor ?? new DxShaderResourceViewDescriptor { Dimension = DxResourceViewDimension.Texture3D });
+            descriptor ?? CreateDefaultShaderResourceViewDescriptor(texture));
     }
 
     public ProGpuDirectXShaderResourceView CreateShaderResourceView(
@@ -136,6 +136,27 @@ public sealed class ProGpuDirectXDevice : IDisposable
         ArgumentNullException.ThrowIfNull(buffer);
         ArgumentNullException.ThrowIfNull(descriptor);
         return new ProGpuDirectXShaderResourceView(this, buffer, descriptor);
+    }
+
+    private static DxShaderResourceViewDescriptor CreateDefaultShaderResourceViewDescriptor(ProGpuDirectXTexture2D texture)
+    {
+        return new DxShaderResourceViewDescriptor
+        {
+            Dimension = texture.Descriptor.ArraySize > 1
+                ? DxResourceViewDimension.Texture2DArray
+                : DxResourceViewDimension.Texture2D,
+            MipLevels = texture.Descriptor.MipLevels,
+            ArraySize = texture.Descriptor.ArraySize
+        };
+    }
+
+    private static DxShaderResourceViewDescriptor CreateDefaultShaderResourceViewDescriptor(ProGpuDirectXTexture3D texture)
+    {
+        return new DxShaderResourceViewDescriptor
+        {
+            Dimension = DxResourceViewDimension.Texture3D,
+            MipLevels = texture.Descriptor.MipLevels
+        };
     }
 
     public ProGpuDirectXUnorderedAccessView CreateUnorderedAccessView(

@@ -30,6 +30,7 @@ public enum ProGpuDirectXCommandKind
     CopyTexture,
     CopyBuffer,
     ResolveTexture,
+    GenerateMips,
     ClearRenderTarget,
     ClearDepthStencil,
     Draw,
@@ -748,6 +749,22 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
         });
     }
 
+    public void GenerateMips(ProGpuDirectXShaderResourceView shaderResourceView)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(shaderResourceView);
+        var texture = shaderResourceView.Texture ??
+            throw new NotSupportedException("DirectX mip generation currently supports Texture2D shader-resource views.");
+
+        texture.GenerateMips(shaderResourceView.Descriptor);
+        _commands.Add(new ProGpuDirectXCommand
+        {
+            Kind = ProGpuDirectXCommandKind.GenerateMips,
+            Texture = texture,
+            ShaderResourceView = shaderResourceView
+        });
+    }
+
     public void ClearRenderTarget(ProGpuDirectXTexture2D renderTarget, DxColor color)
     {
         ThrowIfDisposed();
@@ -849,6 +866,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             Kind = ProGpuDirectXCommandKind.Draw,
             Texture = _renderTarget,
             DepthStencilTexture = _depthStencil,
+            RenderTargetView = _renderTargetView,
+            DepthStencilView = _depthStencilView,
             Topology = _topology,
             Viewport = Viewport,
             Rect = ScissorRect,
@@ -902,6 +921,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             Kind = ProGpuDirectXCommandKind.DrawIndexed,
             Texture = _renderTarget,
             DepthStencilTexture = _depthStencil,
+            RenderTargetView = _renderTargetView,
+            DepthStencilView = _depthStencilView,
             Topology = _topology,
             Viewport = Viewport,
             Rect = ScissorRect,
@@ -1278,6 +1299,8 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 case ProGpuDirectXCommandKind.ResolveTexture:
                     ExecuteGpuBackedResolveTextureCommand(context, command);
                     break;
+                case ProGpuDirectXCommandKind.GenerateMips:
+                    break;
                 case ProGpuDirectXCommandKind.Draw:
                 case ProGpuDirectXCommandKind.DrawIndexed:
                     ExecuteGpuBackedDrawCommand(context, command);
@@ -1291,7 +1314,15 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
     private void ExecuteGpuBackedClearCommand(ProGPU.Backend.WgpuContext context, ProGpuDirectXCommand command)
     {
-        if (command.Texture?.BackendTexture is not { IsDisposed: false, ViewPtr: not null } texture)
+        if (command.Texture?.BackendTexture is not { IsDisposed: false } texture)
+        {
+            return;
+        }
+
+        var renderTargetView = command.RenderTargetView is { HasBackendTextureView: true } renderView
+            ? renderView.BackendTextureView
+            : texture.ViewPtr;
+        if (renderTargetView is null)
         {
             return;
         }
@@ -1312,7 +1343,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             var clearColor = command.Color;
             var colorAttachment = new RenderPassColorAttachment
             {
-                View = texture.ViewPtr,
+                View = renderTargetView,
                 ResolveTarget = null,
                 LoadOp = LoadOp.Clear,
                 StoreOp = StoreOp.Store,
@@ -1344,6 +1375,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             if (commandBuffer != null)
             {
                 context.Wgpu.QueueSubmit(context.Queue, 1, &commandBuffer);
+                command.Texture?.MarkBackendContentsChanged();
                 SubmittedClearCount++;
             }
         }
@@ -1514,7 +1546,15 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
     private void ExecuteGpuBackedClearDepthStencilCommand(ProGPU.Backend.WgpuContext context, ProGpuDirectXCommand command)
     {
-        if (command.Texture?.BackendTexture is not { IsDisposed: false, ViewPtr: not null } texture)
+        if (command.Texture?.BackendTexture is not { IsDisposed: false } texture)
+        {
+            return;
+        }
+
+        var depthStencilView = command.DepthStencilView is { HasBackendTextureView: true } depthView
+            ? depthView.BackendTextureView
+            : texture.ViewPtr;
+        if (depthStencilView is null)
         {
             return;
         }
@@ -1536,7 +1576,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
             var depthAttachment = new RenderPassDepthStencilAttachment
             {
-                View = texture.ViewPtr,
+                View = depthStencilView,
                 DepthLoadOp = clearDepth ? LoadOp.Clear : LoadOp.Load,
                 DepthStoreOp = StoreOp.Store,
                 DepthClearValue = command.Color.R,
@@ -1567,6 +1607,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             if (commandBuffer != null)
             {
                 context.Wgpu.QueueSubmit(context.Queue, 1, &commandBuffer);
+                command.Texture?.MarkBackendContentsChanged();
                 SubmittedClearCount++;
             }
         }
@@ -1647,14 +1688,20 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 
         var usesColorTarget = pipeline.Descriptor.PixelShader is not null;
         var renderTarget = command.Texture?.BackendTexture;
-        if (usesColorTarget && renderTarget is not { IsDisposed: false, ViewPtr: not null })
+        var renderTargetView = command.RenderTargetView is { HasBackendTextureView: true } renderView
+            ? renderView.BackendTextureView
+            : renderTarget?.ViewPtr;
+        if (usesColorTarget && (renderTarget is not { IsDisposed: false } || renderTargetView is null))
         {
             throw new InvalidOperationException("GPU-backed DirectX draw requires a render target with a backend texture view.");
         }
 
         RenderPassDepthStencilAttachment depthAttachment = default;
         var depthTexture = command.DepthStencilTexture?.BackendTexture;
-        var hasDepthAttachment = depthTexture is { IsDisposed: false, ViewPtr: not null };
+        var depthStencilView = command.DepthStencilView is { HasBackendTextureView: true } depthView
+            ? depthView.BackendTextureView
+            : depthTexture?.ViewPtr;
+        var hasDepthAttachment = depthTexture is { IsDisposed: false } && depthStencilView is not null;
         var usesDepthStencil = pipeline.Descriptor.DepthStencilFormat != DxResourceFormat.Unknown &&
             (pipeline.Descriptor.DepthStencilState.DepthEnable ||
                 pipeline.Descriptor.DepthStencilState.StencilEnable);
@@ -1670,7 +1717,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 pipeline.Descriptor.DepthStencilFormat == DxResourceFormat.D24UnormS8UInt;
             depthAttachment = new RenderPassDepthStencilAttachment
             {
-                View = depthTexture!.ViewPtr,
+                View = depthStencilView,
                 DepthLoadOp = LoadOp.Load,
                 DepthStoreOp = StoreOp.Store,
                 DepthClearValue = 1f,
@@ -1711,7 +1758,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             {
                 colorAttachment = new RenderPassColorAttachment
                 {
-                    View = renderTarget!.ViewPtr,
+                    View = renderTargetView,
                     ResolveTarget = null,
                     LoadOp = LoadOp.Load,
                     StoreOp = StoreOp.Store,
@@ -1827,6 +1874,7 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             if (commandBuffer != null)
             {
                 context.Wgpu.QueueSubmit(context.Queue, 1, &commandBuffer);
+                command.Texture?.MarkBackendContentsChanged();
                 SubmittedDrawCount++;
             }
         }

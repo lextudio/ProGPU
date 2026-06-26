@@ -7841,6 +7841,105 @@ float4 PSMain() : SV_Target
     }
 
     [Fact]
+    public void GenerateMipsBuildsTexture2DSubresourcesFromDefaultShaderResourceView()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 4,
+            Height = 4,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource | DxTextureUsage.RenderTarget | DxTextureUsage.CopyDestination,
+            CpuAccess = DxCpuAccessFlags.Read | DxCpuAccessFlags.Write,
+            MipLevels = 3
+        });
+        using var shaderResourceView = device.CreateShaderResourceView(texture);
+        using var context = device.CreateImmediateContext();
+        var pixels = CreateGeneratedMipSourcePixels();
+
+        texture.WritePixels<byte>(pixels);
+        context.GenerateMips(shaderResourceView);
+
+        Assert.Equal(ProGpuDirectXCommandKind.GenerateMips, context.Commands.Single().Kind);
+        Assert.Same(shaderResourceView, context.Commands.Single().ShaderResourceView);
+
+        var generated = texture.ReadPixels();
+        Assert.Equal(24, generated[64]);
+        Assert.Equal(104, generated[68]);
+        Assert.Equal(40, generated[72]);
+        Assert.Equal(120, generated[76]);
+        Assert.Equal(72, generated[80]);
+        Assert.Equal(255, generated[83]);
+        Assert.Equal(20u, texture.LastWriteSizeInBytes);
+    }
+
+    [Fact]
+    public void GenerateMipsUploadsGpuBackedTexture2DSubresources()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 4,
+            Height = 4,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource |
+                DxTextureUsage.RenderTarget |
+                DxTextureUsage.CopyDestination |
+                DxTextureUsage.CopySource,
+            MipLevels = 3
+        });
+        using var shaderResourceView = device.CreateShaderResourceView(texture);
+        using var context = device.CreateImmediateContext();
+
+        texture.WritePixels<byte>(CreateGeneratedMipSourcePixels());
+        context.GenerateMips(shaderResourceView);
+
+        var mip1 = texture.BackendTexture!.ReadPixels(mipLevel: 1);
+        var mip2 = texture.BackendTexture!.ReadPixels(mipLevel: 2);
+        Assert.Equal(24, mip1[0]);
+        Assert.Equal(104, mip1[4]);
+        Assert.Equal(40, mip1[8]);
+        Assert.Equal(120, mip1[12]);
+        Assert.Equal(72, mip2[0]);
+        Assert.Equal(255, mip2[3]);
+    }
+
+    [Fact]
+    public void GenerateMipsSynchronizesGpuRenderedSourceMipWhenCopySourceIsAvailable()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var texture = device.CreateTexture2D(new DxTexture2DDescriptor
+        {
+            Width = 4,
+            Height = 4,
+            Format = DxResourceFormat.R8G8B8A8Unorm,
+            Usage = DxTextureUsage.ShaderResource |
+                DxTextureUsage.RenderTarget |
+                DxTextureUsage.CopyDestination |
+                DxTextureUsage.CopySource,
+            MipLevels = 2
+        });
+        using var renderTargetView = device.CreateRenderTargetView(texture);
+        using var shaderResourceView = device.CreateShaderResourceView(texture);
+        using var context = device.CreateImmediateContext();
+
+        texture.WritePixels<byte>(CreateGeneratedMipSourcePixels(mipLevels: 2));
+        context.ClearRenderTarget(renderTargetView, new DxColor(1f, 0f, 0f, 1f));
+        context.Flush();
+        context.GenerateMips(shaderResourceView);
+
+        var mip1 = texture.BackendTexture!.ReadPixels(mipLevel: 1);
+        Assert.True(mip1[0] > 200, $"Expected rendered red source mip to generate red mip1, actual R={mip1[0]}.");
+        Assert.True(mip1[1] < 50, $"Expected low green from rendered source mip, actual G={mip1[1]}.");
+        Assert.True(mip1[2] < 50, $"Expected low blue from rendered source mip, actual B={mip1[2]}.");
+        Assert.True(mip1[3] > 200, $"Expected opaque generated mip1, actual A={mip1[3]}.");
+    }
+
+    [Fact]
     public void TextureMapSupportsMipSubresourcePitchesForNonPowerOfTwoTextures()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -9500,6 +9599,34 @@ float4 PSMain() : SV_Target
         {
             bytes.Add(0);
         }
+    }
+
+    private static byte[] CreateGeneratedMipSourcePixels(int width = 4, int height = 4, int mipLevels = 3)
+    {
+        var size = 0;
+        var mipWidth = width;
+        var mipHeight = height;
+        for (var mip = 0; mip < mipLevels; mip++)
+        {
+            size += mipWidth * mipHeight * 4;
+            mipWidth = Math.Max(1, mipWidth / 2);
+            mipHeight = Math.Max(1, mipHeight / 2);
+        }
+
+        var pixels = new byte[size];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var offset = ((y * width) + x) * 4;
+                pixels[offset] = checked((byte)(x * 40 + y * 8));
+                pixels[offset + 1] = checked((byte)(x * 10));
+                pixels[offset + 2] = checked((byte)(y * 10));
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        return pixels;
     }
 
     private static void AssertGreenPixel(byte[] pixels, int width, int x, int y, string region)
