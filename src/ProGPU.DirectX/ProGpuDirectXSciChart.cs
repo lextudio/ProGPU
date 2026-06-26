@@ -463,6 +463,8 @@ public sealed class ProGpuDirectXSciChartSprite2D : IDisposable
 
 public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 {
+    private const float LineAntialiasFeatherPixels = 1f;
+
     private readonly ProGpuDirectXDevice _device;
     private readonly ProGpuDirectXDeviceContext _context;
     private readonly List<IDisposable> _transientResources = new();
@@ -2616,7 +2618,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out bool usesTriangleTopology)
     {
         usesTriangleTopology = pen.StrokeThickness > 1f;
-        var vertexData = new List<float>(checked(vertices.Length * (usesTriangleTopology ? 36 : 12)));
+        var floatsPerVertex = usesTriangleTopology && pen.IsAntiAliased ? 108 : usesTriangleTopology ? 36 : 12;
+        var vertexData = new List<float>(checked(vertices.Length * floatsPerVertex));
         if (isStrips)
         {
             AppendStripLineSegments(
@@ -2680,6 +2683,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                     y,
                     color,
                     pen.StrokeThickness,
+                    pen.IsAntiAliased,
                     isDigital,
                     usesTriangleTopology);
             }
@@ -2716,6 +2720,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                 y1,
                 color1,
                 pen.StrokeThickness,
+                pen.IsAntiAliased,
                 isDigital,
                 usesTriangleTopology);
         }
@@ -2730,6 +2735,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         float y1,
         uint color1,
         float strokeThickness,
+        bool isAntiAliased,
         bool isDigital,
         bool usesTriangleTopology)
     {
@@ -2746,6 +2752,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                 y0,
                 color0,
                 strokeThickness,
+                isAntiAliased,
                 usesTriangleTopology);
             AppendStraightLineSegment(
                 vertexData,
@@ -2756,6 +2763,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
                 y1,
                 color1,
                 strokeThickness,
+                isAntiAliased,
                 usesTriangleTopology);
             return;
         }
@@ -2769,6 +2777,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             y1,
             color1,
             strokeThickness,
+            isAntiAliased,
             usesTriangleTopology);
     }
 
@@ -2781,11 +2790,12 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         float y1,
         uint color1,
         float strokeThickness,
+        bool isAntiAliased,
         bool usesTriangleTopology)
     {
         if (usesTriangleTopology)
         {
-            AppendThickLineQuad(vertexData, x0, y0, color0, x1, y1, color1, strokeThickness);
+            AppendThickLineQuad(vertexData, x0, y0, color0, x1, y1, color1, strokeThickness, isAntiAliased);
             return;
         }
 
@@ -2801,7 +2811,8 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         float x1,
         float y1,
         uint color1,
-        float strokeThickness)
+        float strokeThickness,
+        bool isAntiAliased)
     {
         var dx = x1 - x0;
         var dy = y1 - y0;
@@ -2812,23 +2823,106 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
 
         var halfThickness = strokeThickness / 2f;
-        var nx = -dy / length * halfThickness;
-        var ny = dx / length * halfThickness;
-        var x0a = x0 + nx;
-        var y0a = y0 + ny;
-        var x0b = x0 - nx;
-        var y0b = y0 - ny;
-        var x1a = x1 + nx;
-        var y1a = y1 + ny;
-        var x1b = x1 - nx;
-        var y1b = y1 - ny;
+        var unitNx = -dy / length;
+        var unitNy = dx / length;
+        if (!isAntiAliased)
+        {
+            AppendLineQuad(
+                vertexData,
+                x0 + (unitNx * halfThickness),
+                y0 + (unitNy * halfThickness),
+                color0,
+                x1 + (unitNx * halfThickness),
+                y1 + (unitNy * halfThickness),
+                color1,
+                x1 - (unitNx * halfThickness),
+                y1 - (unitNy * halfThickness),
+                color1,
+                x0 - (unitNx * halfThickness),
+                y0 - (unitNy * halfThickness),
+                color0);
+            return;
+        }
 
-        AppendSolidColorVertex(vertexData, x0a, y0a, color0);
-        AppendSolidColorVertex(vertexData, x1a, y1a, color1);
-        AppendSolidColorVertex(vertexData, x1b, y1b, color1);
-        AppendSolidColorVertex(vertexData, x0a, y0a, color0);
-        AppendSolidColorVertex(vertexData, x1b, y1b, color1);
-        AppendSolidColorVertex(vertexData, x0b, y0b, color0);
+        var feather = MathF.Min(LineAntialiasFeatherPixels, halfThickness);
+        var coreHalfThickness = MathF.Max(halfThickness - feather, 0f);
+        var transparentColor0 = WithAlpha(color0, 0);
+        var transparentColor1 = WithAlpha(color1, 0);
+
+        var coreNx = unitNx * coreHalfThickness;
+        var coreNy = unitNy * coreHalfThickness;
+        var outerNx = unitNx * halfThickness;
+        var outerNy = unitNy * halfThickness;
+
+        if (coreHalfThickness > 0.0001f)
+        {
+            AppendLineQuad(
+                vertexData,
+                x0 + coreNx,
+                y0 + coreNy,
+                color0,
+                x1 + coreNx,
+                y1 + coreNy,
+                color1,
+                x1 - coreNx,
+                y1 - coreNy,
+                color1,
+                x0 - coreNx,
+                y0 - coreNy,
+                color0);
+        }
+
+        AppendLineQuad(
+            vertexData,
+            x0 + outerNx,
+            y0 + outerNy,
+            transparentColor0,
+            x1 + outerNx,
+            y1 + outerNy,
+            transparentColor1,
+            x1 + coreNx,
+            y1 + coreNy,
+            color1,
+            x0 + coreNx,
+            y0 + coreNy,
+            color0);
+        AppendLineQuad(
+            vertexData,
+            x0 - coreNx,
+            y0 - coreNy,
+            color0,
+            x1 - coreNx,
+            y1 - coreNy,
+            color1,
+            x1 - outerNx,
+            y1 - outerNy,
+            transparentColor1,
+            x0 - outerNx,
+            y0 - outerNy,
+            transparentColor0);
+    }
+
+    private void AppendLineQuad(
+        List<float> vertexData,
+        float x0a,
+        float y0a,
+        uint color0a,
+        float x1a,
+        float y1a,
+        uint color1a,
+        float x1b,
+        float y1b,
+        uint color1b,
+        float x0b,
+        float y0b,
+        uint color0b)
+    {
+        AppendSolidColorVertex(vertexData, x0a, y0a, color0a);
+        AppendSolidColorVertex(vertexData, x1a, y1a, color1a);
+        AppendSolidColorVertex(vertexData, x1b, y1b, color1b);
+        AppendSolidColorVertex(vertexData, x0a, y0a, color0a);
+        AppendSolidColorVertex(vertexData, x1b, y1b, color1b);
+        AppendSolidColorVertex(vertexData, x0b, y0b, color0b);
     }
 
     private void AppendFinancialLine(
@@ -3556,6 +3650,11 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         var alpha = (int)((colorArgb >> 24) & 0xFF);
         var adjustedAlpha = (uint)Math.Clamp((int)Math.Round(alpha * opacity, MidpointRounding.AwayFromZero), 0, 255);
         return (colorArgb & 0x00FFFFFFu) | (adjustedAlpha << 24);
+    }
+
+    private static uint WithAlpha(uint colorArgb, byte alpha)
+    {
+        return (colorArgb & 0x00FFFFFFu) | ((uint)alpha << 24);
     }
 
     private static void ValidateColumnVertexRange(int vertexLength, int count)

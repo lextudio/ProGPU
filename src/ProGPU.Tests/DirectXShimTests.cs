@@ -769,6 +769,52 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextExpandsAntialiasedThickLines()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        var antialiasedPen = renderContext.CreatePen(0xFF00FF00, strokeThickness: 3f);
+        var hardEdgePen = renderContext.CreatePen(0xFF00FF00, strokeThickness: 3f, isAntiAliased: false);
+        ProGpuDirectXSciChartColorVertex[] vertices =
+        [
+            new(0, 8, 0, 0xFF00FF00),
+            new(16, 8, 0, 0xFF00FF00)
+        ];
+
+        renderContext.DrawLinesBatch(
+            vertices,
+            count: vertices.Length,
+            antialiasedPen,
+            isStrips: true,
+            isDigital: false,
+            isDrawNanAsGaps: true,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+
+        Assert.Single(renderContext.LineBatchDraws);
+        Assert.True(renderContext.LineBatchDraws[0].Pen.IsAntiAliased);
+        Assert.Equal(DxPrimitiveTopology.TriangleList, renderContext.ImmediateContext.GraphicsPipeline?.Descriptor.Topology);
+        var antialiasedDraw = renderContext.ImmediateContext.Commands[^1].Draw
+            ?? throw new InvalidOperationException("Expected SciChart antialiased line draw command payload.");
+        Assert.Equal(18u, antialiasedDraw.VertexCount);
+
+        renderContext.BeginFrame();
+        renderContext.DrawLinesBatch(
+            vertices,
+            count: vertices.Length,
+            hardEdgePen,
+            isStrips: true,
+            isDigital: false,
+            isDrawNanAsGaps: true,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+
+        Assert.Single(renderContext.LineBatchDraws);
+        Assert.False(renderContext.LineBatchDraws[0].Pen.IsAntiAliased);
+        var hardEdgeDraw = renderContext.ImmediateContext.Commands[^1].Draw
+            ?? throw new InvalidOperationException("Expected SciChart hard-edge line draw command payload.");
+        Assert.Equal(6u, hardEdgeDraw.VertexCount);
+    }
+
+    [Fact]
     public void SciChartRenderContextRecordsBasePrimitivesAndClip()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -824,7 +870,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
             .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart primitive draw payload.")).VertexCount)
             .ToArray();
-        Assert.Equal([2u, 4u, 24u, 6u, 6u, 6u], drawVertexCounts);
+        Assert.Equal([2u, 4u, 48u, 6u, 6u, 6u], drawVertexCounts);
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             renderContext.DrawLines(pen, points, count: 1));
@@ -899,7 +945,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
             .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart ellipse draw payload.")).VertexCount)
             .ToArray();
-        Assert.Equal([84u, 168u], drawVertexCounts);
+        Assert.Equal([84u, 336u], drawVertexCounts);
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             renderContext.DrawEllipse(strokePen, fillBrush, center, width: 0d, height: 12d));
