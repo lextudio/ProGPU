@@ -843,6 +843,47 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextRecordsEllipsePrimitivesAndClip()
+    {
+        using var device = ProGpuDirectXDevice.CreateMetadataDevice();
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(device, 64, 32);
+        var strokePen = renderContext.CreatePen(0xFFFF0000, strokeThickness: 2f);
+        var fillBrush = renderContext.CreateBrush(0xFF00FF00);
+        var center = new ProGpuDirectXSciChartPoint(16, 16);
+
+        renderContext.SetClipRect(new DxRect(0, 0, 32, 32));
+        renderContext.DrawEllipse(strokePen, fillBrush, center, width: 16d, height: 12d);
+
+        Assert.Single(renderContext.PrimitiveDraws);
+        var primitive = renderContext.PrimitiveDraws[0];
+        Assert.Equal(ProGpuDirectXSciChartPrimitiveKind.Ellipse, primitive.Kind);
+        Assert.Equal(center, primitive.Points[0]);
+        Assert.Equal(strokePen, primitive.Pen);
+        Assert.Equal(fillBrush, primitive.Brush);
+        Assert.Equal(16d, primitive.Width);
+        Assert.Equal(12d, primitive.Height);
+        Assert.Equal(new DxRect(0, 0, 32, 32), primitive.ClipRect);
+
+        var drawVertexCounts = renderContext.ImmediateContext.Commands
+            .Where(command => command.Kind == ProGpuDirectXCommandKind.Draw)
+            .Select(command => (command.Draw ?? throw new InvalidOperationException("Expected SciChart ellipse draw payload.")).VertexCount)
+            .ToArray();
+        Assert.Equal([84u, 168u], drawVertexCounts);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawEllipse(strokePen, fillBrush, center, width: 0d, height: 12d));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawEllipse(strokePen, fillBrush, center, width: 16d, height: double.NaN));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawEllipse(strokePen, fillBrush, new ProGpuDirectXSciChartPoint(float.NaN, 16), width: 16d, height: 12d));
+
+        renderContext.BeginFrame();
+        renderContext.SetClipRect(new DxRect(100, 100, 8, 8));
+        renderContext.DrawEllipse(strokePen, fillBrush, center, width: 16d, height: 12d);
+        Assert.Empty(renderContext.PrimitiveDraws);
+    }
+
+    [Fact]
     public void SciChartRenderContextRecordsMountainBatches()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
@@ -2823,6 +2864,38 @@ VertexOutput VSMain(VertexInput input)
         Assert.True(clippedOut.G < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
         Assert.True(clippedOut.B < 50, $"Expected black pixel outside SciChart primitive clip, actual: {clippedOut}");
         Assert.True(clippedOut.A > 200, $"Expected opaque clear alpha outside SciChart primitive clip, actual: {clippedOut}");
+    }
+
+    [Fact]
+    public void FlushSubmitsGpuBackedSciChartEllipsePrimitiveCommands()
+    {
+        using var wgpu = new WgpuContext();
+        wgpu.Initialize(null);
+        using var device = ProGpuDirectXDevice.FromContext(wgpu);
+        using var renderContext = new ProGpuDirectXSciChartRenderContext2D(
+            device,
+            32,
+            32,
+            DxResourceFormat.R8G8B8A8Unorm);
+
+        renderContext.Clear(DxColor.Black);
+        renderContext.SetClipRect(new DxRect(0, 0, 16, 32));
+        renderContext.DrawEllipse(
+            strokePen: null,
+            fillBrush: renderContext.CreateBrush(0xFF00FF00),
+            center: new ProGpuDirectXSciChartPoint(16, 16),
+            width: 20d,
+            height: 12d);
+        renderContext.Flush();
+
+        Assert.Single(renderContext.PrimitiveDraws);
+        Assert.Equal(ProGpuDirectXSciChartPrimitiveKind.Ellipse, renderContext.PrimitiveDraws[0].Kind);
+        Assert.Equal(1ul, renderContext.ImmediateContext.SubmittedDrawCount);
+
+        var targetPixels = renderContext.ReadTargetPixels();
+        AssertGreenPixel(targetPixels, 32, 10, 16, "clipped ellipse fill");
+        AssertBlackPixel(targetPixels, 32, 22, 16, "ellipse clipped side");
+        AssertBlackPixel(targetPixels, 32, 10, 7, "outside ellipse vertical radius");
     }
 
     [Fact]

@@ -139,7 +139,8 @@ public enum ProGpuDirectXSciChartPrimitiveKind
     Quad,
     RectangleFill,
     PolygonFill,
-    AreaFill
+    AreaFill,
+    Ellipse
 }
 
 public sealed record ProGpuDirectXSciChartPrimitiveDraw(
@@ -150,7 +151,9 @@ public sealed record ProGpuDirectXSciChartPrimitiveDraw(
     double Opacity,
     bool IsVerticalChart,
     double GradientRotationAngle,
-    DxRect? ClipRect);
+    DxRect? ClipRect,
+    double Width = 0d,
+    double Height = 0d);
 
 public sealed record ProGpuDirectXSciChartLineBatchDraw(
     IReadOnlyList<ProGpuDirectXSciChartColorVertex> Vertices,
@@ -814,6 +817,88 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             isVerticalChart,
             gradientRotationAngle,
             _clipRect));
+    }
+
+    public void DrawEllipse(
+        ProGpuDirectXSciChartPen2D? strokePen,
+        ProGpuDirectXSciChartBrush2D? fillBrush,
+        ProGpuDirectXSciChartPoint center,
+        double width,
+        double height)
+    {
+        ThrowIfDisposed();
+        ValidateEllipse(center, width, height);
+        fillBrush ??= ProGpuDirectXSciChartBrush2D.Transparent;
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var segmentCount = GetEllipseSegmentCount((float)width, (float)height);
+        ProGpuDirectXBuffer? fillBuffer = null;
+        uint fillVertexCount = 0;
+        if (HasVisibleColor(fillBrush.ColorArgb))
+        {
+            fillBuffer = CreateEllipseFillVertexBuffer(
+                center,
+                (float)width,
+                (float)height,
+                segmentCount,
+                fillBrush.ColorArgb,
+                out fillVertexCount);
+        }
+
+        ProGpuDirectXBuffer? strokeBuffer = null;
+        uint strokeVertexCount = 0;
+        var strokeUsesTriangleTopology = false;
+        if (strokePen is not null && HasVisibleColor(strokePen.ColorArgb))
+        {
+            strokeBuffer = CreateEllipseStrokeVertexBuffer(
+                center,
+                (float)width,
+                (float)height,
+                segmentCount,
+                strokePen,
+                out strokeVertexCount,
+                out strokeUsesTriangleTopology);
+        }
+
+        if (fillBuffer is null && strokeBuffer is null)
+        {
+            return;
+        }
+
+        SetSolidColorDrawState();
+        if (fillBuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                fillBuffer,
+                GetColumnFillPipeline(RenderTarget.Descriptor.Format),
+                fillVertexCount);
+        }
+
+        if (strokeBuffer is not null)
+        {
+            DrawSolidColorBuffer(
+                strokeBuffer,
+                strokeUsesTriangleTopology
+                    ? GetColumnFillPipeline(RenderTarget.Descriptor.Format)
+                    : GetLinePipeline(RenderTarget.Descriptor.Format),
+                strokeVertexCount);
+        }
+
+        _primitiveDraws.Add(new ProGpuDirectXSciChartPrimitiveDraw(
+            ProGpuDirectXSciChartPrimitiveKind.Ellipse,
+            new[] { center },
+            strokePen,
+            fillBrush,
+            1d,
+            false,
+            0d,
+            _clipRect,
+            width,
+            height));
     }
 
     public void DrawLinesBatch(
@@ -1902,6 +1987,78 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     {
         return Math.Abs(pt0.X - pt1.X) <= 0.0001f
             && Math.Abs(pt0.Y - pt1.Y) <= 0.0001f;
+    }
+
+    private ProGpuDirectXBuffer? CreateEllipseFillVertexBuffer(
+        ProGpuDirectXSciChartPoint center,
+        float width,
+        float height,
+        int segmentCount,
+        uint colorArgb,
+        out uint submittedVertexCount)
+    {
+        var radiusX = width / 2f;
+        var radiusY = height / 2f;
+        var vertexData = new List<float>(checked(segmentCount * 18));
+        for (var i = 0; i < segmentCount; i++)
+        {
+            AppendSolidColorTriangle(
+                vertexData,
+                center,
+                GetEllipsePoint(center, radiusX, radiusY, i, segmentCount),
+                GetEllipsePoint(center, radiusX, radiusY, i + 1, segmentCount),
+                colorArgb);
+        }
+
+        return CreateSolidColorVertexBuffer(vertexData, "SciChartPrimitiveEllipseFillVertices", out submittedVertexCount);
+    }
+
+    private ProGpuDirectXBuffer? CreateEllipseStrokeVertexBuffer(
+        ProGpuDirectXSciChartPoint center,
+        float width,
+        float height,
+        int segmentCount,
+        ProGpuDirectXSciChartPen2D pen,
+        out uint submittedVertexCount,
+        out bool usesTriangleTopology)
+    {
+        var radiusX = width / 2f;
+        var radiusY = height / 2f;
+        var lineVertices = new ProGpuDirectXSciChartColorVertex[segmentCount + 1];
+        for (var i = 0; i <= segmentCount; i++)
+        {
+            var point = GetEllipsePoint(center, radiusX, radiusY, i, segmentCount);
+            lineVertices[i] = new ProGpuDirectXSciChartColorVertex(point.X, point.Y, 0f, pen.ColorArgb);
+        }
+
+        return CreateLineBatchVertexBuffer(
+            lineVertices,
+            default,
+            pen,
+            isStrips: true,
+            isDigital: false,
+            isDrawNanAsGaps: true,
+            out submittedVertexCount,
+            out usesTriangleTopology);
+    }
+
+    private static int GetEllipseSegmentCount(float width, float height)
+    {
+        var maxRadius = MathF.Max(width, height) / 2f;
+        return Math.Clamp(checked((int)MathF.Ceiling(maxRadius * MathF.PI / 4f) * 4), 24, 128);
+    }
+
+    private static ProGpuDirectXSciChartPoint GetEllipsePoint(
+        ProGpuDirectXSciChartPoint center,
+        float radiusX,
+        float radiusY,
+        int index,
+        int segmentCount)
+    {
+        var angle = ((MathF.PI * 2f) * index) / segmentCount;
+        return new ProGpuDirectXSciChartPoint(
+            center.X + (MathF.Cos(angle) * radiusX),
+            center.Y + (MathF.Sin(angle) * radiusY));
     }
 
     private ProGpuDirectXBuffer? CreateAreaFillVertexBuffer(
@@ -3263,6 +3420,24 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         if (!double.IsFinite(gradientRotationAngle))
         {
             throw new ArgumentOutOfRangeException(nameof(gradientRotationAngle), "SciChart area-fill gradient rotation angle must be finite.");
+        }
+    }
+
+    private static void ValidateEllipse(ProGpuDirectXSciChartPoint center, double width, double height)
+    {
+        if (!HasFinitePoint(center))
+        {
+            throw new ArgumentOutOfRangeException(nameof(center), "SciChart ellipse centers must be finite.");
+        }
+
+        if (!double.IsFinite(width) || width <= 0d)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), "SciChart ellipses require a finite positive width.");
+        }
+
+        if (!double.IsFinite(height) || height <= 0d)
+        {
+            throw new ArgumentOutOfRangeException(nameof(height), "SciChart ellipses require a finite positive height.");
         }
     }
 
