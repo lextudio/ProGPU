@@ -942,6 +942,31 @@ fn fs_main() -> @location(0) vec4<f32> {
             count: vertices.Length,
             transform: new ProGpuDirectXSciChartVertexTransform());
         Assert.Empty(renderContext.LineBatchDraws);
+
+        renderContext.BeginFrame();
+        var publicLinePen = renderContext.CreatePen(0xFFFF0000, strokeThickness: 2f, isAntiAliased: false);
+        ProGpuDirectXSciChartColoredVertex[] publicVertices =
+        [
+            new(0, 0, 0, 0xFFFFFFFF),
+            new(4, 12, 2, 0xFFFF0000),
+            new(20, 12, 2, 0xFFFF0000)
+        ];
+
+        renderContext.DrawLineStrip(
+            publicLinePen,
+            publicVertices,
+            startIndex: 1,
+            count: 2,
+            transform: new ProGpuDirectXSciChartVertexTransform());
+
+        Assert.Single(renderContext.LineBatchDraws);
+        Assert.Equal(publicLinePen, renderContext.LineBatchDraws[0].Pen);
+        Assert.True(renderContext.LineBatchDraws[0].IsStrips);
+        Assert.Equal(2, renderContext.LineBatchDraws[0].Vertices.Count);
+        Assert.Equal(2, renderContext.LineBatchDraws[0].Vertices[0].Offset);
+        Assert.Equal(0xFFFF0000u, renderContext.LineBatchDraws[0].Vertices[0].ColorArgb);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            renderContext.DrawLineStrip(publicLinePen, publicVertices, startIndex: 1, count: 1, transform: default));
     }
 
     [Fact]
@@ -1483,6 +1508,31 @@ fn fs_main() -> @location(0) vec4<f32> {
             renderContext.DrawColoredSprites(sprite, vertices, startIndex: vertices.Length, count: 1, transform: default, centeredAmount: 0.5f));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             renderContext.DrawColoredSprites(sprite, vertices, startIndex: 0, count: 1, transform: default, centeredAmount: float.NaN));
+
+        renderContext.BeginFrame();
+        ProGpuDirectXSciChartColoredVertex[] publicVertices =
+        [
+            new(1, 1, 0, 0xFFFFFFFF),
+            new(4, 4, 7, 0xFF00FF00),
+            new(12, 8, 9, 0xFFFF0000)
+        ];
+
+        renderContext.DrawColoredSprites(
+            sprite,
+            publicVertices,
+            startIndex: 1,
+            count: 2,
+            transform: new ProGpuDirectXSciChartVertexTransform(),
+            centeredAmount: 0.5f,
+            filtering: ProGpuDirectXSciChartTextureFiltering.Point);
+
+        Assert.Single(renderContext.ColoredSpriteDraws);
+        var publicVertexDraw = renderContext.ColoredSpriteDraws[0];
+        Assert.Equal(1, publicVertexDraw.StartIndex);
+        Assert.Equal(2, publicVertexDraw.Count);
+        Assert.Equal(2, publicVertexDraw.Vertices.Count);
+        Assert.Equal(4, publicVertexDraw.Vertices[0].X);
+        Assert.Equal(0xFF00FF00u, publicVertexDraw.Vertices[0].ColorArgb);
 
         renderContext.BeginFrame();
         renderContext.SetClipRect(new DxRect(100, 100, 8, 8));

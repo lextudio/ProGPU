@@ -216,6 +216,12 @@ public readonly record struct ProGpuDirectXSciChartColoredSpriteVertex(
     float Y,
     uint ColorArgb);
 
+public readonly record struct ProGpuDirectXSciChartColoredVertex(
+    float X,
+    float Y,
+    float U,
+    uint ColorArgb);
+
 public readonly record struct ProGpuDirectXSciChartOhlcCandleVertex(
     float X,
     float O,
@@ -1250,6 +1256,42 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         _transientResources.Add(vertexBuffer);
     }
 
+    public void DrawLineStrip(
+        ProGpuDirectXSciChartPen2D? pen,
+        ReadOnlySpan<ProGpuDirectXSciChartColoredVertex> vertices,
+        int startIndex,
+        int count,
+        ProGpuDirectXSciChartVertexTransform transform)
+    {
+        ThrowIfDisposed();
+        ValidateVertexRange(vertices.Length, startIndex, count);
+        ValidateLineVertexRange(count, count);
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var lineVertices = new ProGpuDirectXSciChartColorVertex[count];
+        for (var i = 0; i < count; i++)
+        {
+            var vertex = vertices[startIndex + i];
+            lineVertices[i] = new ProGpuDirectXSciChartColorVertex(
+                vertex.X,
+                vertex.Y,
+                vertex.U,
+                vertex.ColorArgb);
+        }
+
+        DrawLinesBatch(
+            lineVertices,
+            count,
+            pen,
+            isStrips: true,
+            isDigital: false,
+            isDrawNanAsGaps: true,
+            transform);
+    }
+
     public void DrawMountainBatch(
         ReadOnlySpan<ProGpuDirectXSciChartBandVertex> vertices,
         int count,
@@ -1626,6 +1668,68 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         }
 
         var copiedVertices = vertices.Slice(startIndex, count).ToArray();
+        DrawColoredSpritesCore(
+            sprite,
+            copiedVertices,
+            startIndex,
+            count,
+            transform,
+            centeredAmount,
+            filtering);
+    }
+
+    public void DrawColoredSprites(
+        ProGpuDirectXSciChartSprite2D sprite,
+        ReadOnlySpan<ProGpuDirectXSciChartColoredVertex> vertices,
+        int startIndex,
+        int count,
+        ProGpuDirectXSciChartVertexTransform transform,
+        float centeredAmount,
+        ProGpuDirectXSciChartTextureFiltering filtering = ProGpuDirectXSciChartTextureFiltering.Linear)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(sprite);
+        ValidateVertexRange(vertices.Length, startIndex, count);
+        ValidateDrawableSprite(sprite);
+        if (!float.IsFinite(centeredAmount))
+        {
+            throw new ArgumentOutOfRangeException(nameof(centeredAmount), "SciChart colored sprites require a finite centered amount.");
+        }
+
+        if (HasEmptyClip)
+        {
+            return;
+        }
+
+        var copiedVertices = new ProGpuDirectXSciChartColoredSpriteVertex[count];
+        for (var i = 0; i < count; i++)
+        {
+            var vertex = vertices[startIndex + i];
+            copiedVertices[i] = new ProGpuDirectXSciChartColoredSpriteVertex(
+                vertex.X,
+                vertex.Y,
+                vertex.ColorArgb);
+        }
+
+        DrawColoredSpritesCore(
+            sprite,
+            copiedVertices,
+            startIndex,
+            count,
+            transform,
+            centeredAmount,
+            filtering);
+    }
+
+    private void DrawColoredSpritesCore(
+        ProGpuDirectXSciChartSprite2D sprite,
+        ProGpuDirectXSciChartColoredSpriteVertex[] copiedVertices,
+        int startIndex,
+        int count,
+        ProGpuDirectXSciChartVertexTransform transform,
+        float centeredAmount,
+        ProGpuDirectXSciChartTextureFiltering filtering)
+    {
         var instanceBuffer = CreateColoredSpriteInstanceBuffer(
             copiedVertices,
             sprite,
