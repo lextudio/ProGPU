@@ -57,7 +57,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
             return;
         }
 
-        int primitiveId = id ?? _nextId++;
+        int primitiveId = id ?? (command.HitTestId != 0 ? command.HitTestId : _nextId++);
         float zIndex = _primitives.Count;
         switch (command.Type)
         {

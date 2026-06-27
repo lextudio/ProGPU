@@ -153,6 +153,7 @@ public interface IRenderDataProvider
 public struct RenderCommand
 {
     public RenderCommandType Type;
+    public int HitTestId;
     public Rect Rect;
     public Brush? Brush;
     public Pen? Pen;

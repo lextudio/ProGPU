@@ -83,6 +83,24 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void RenderCommandCacheUsesCommandHitTestId()
+    {
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawRect,
+            HitTestId = 1234,
+            Rect = new Rect(0f, 0f, 10f, 10f),
+            Brush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f))
+        }, Matrix4x4.Identity);
+
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        var primitive = Assert.Single(index.Primitives);
+        Assert.Equal(1234, primitive.Id);
+    }
+
+    [Fact]
     public void RenderCommandCacheFeedsGpuHitTesting()
     {
         using var context = new WgpuContext();
