@@ -1347,6 +1347,50 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void RenderCommandCacheFeedsGpuNestedGeometryClipPointHitTesting()
+    {
+        using var gpu = new WgpuContext();
+        gpu.Initialize(null);
+
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.PushGeometryClip,
+            Path = CreateTrianglePath()
+        }, Matrix4x4.Identity);
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.PushGeometryClip,
+            Path = CreateTranslatedTrianglePath(2f, 2f)
+        }, Matrix4x4.Identity);
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawRect,
+            Brush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)),
+            Rect = new Rect(0f, 0f, 12f, 12f)
+        }, Matrix4x4.Identity, id: 110);
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.PopGeometryClip
+        }, Matrix4x4.Identity);
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.PopGeometryClip
+        }, Matrix4x4.Identity);
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        bool clippedHit = GpuHitTestEngine.TryHitTestPoint(gpu, index, new Vector2(4f, 4f), out GpuHitTestResult hitResult);
+        bool clippedMiss = GpuHitTestEngine.TryHitTestPoint(gpu, index, new Vector2(8f, 4f), out GpuHitTestResult missResult);
+
+        Assert.True(clippedHit);
+        Assert.Equal(110, hitResult.Id);
+        Assert.False(clippedMiss);
+        Assert.False(missResult.HasHit);
+        Assert.Equal(1u, missResult.CandidateCount);
+        Assert.Equal(1u, missResult.PreciseTests);
+    }
+
+    [Fact]
     public void RenderCommandCacheFeedsGpuGeometryClipBoundsHitTesting()
     {
         using var gpu = new WgpuContext();
@@ -2699,6 +2743,11 @@ public sealed class GpuHitTestingTests
         figure.Segments.Add(new LineSegment(new Vector2(0f, 10f)));
         path.Figures.Add(figure);
         return path;
+    }
+
+    private static PathGeometry CreateTranslatedTrianglePath(float x, float y)
+    {
+        return CreateTrianglePath().CreateTransformed(Matrix4x4.CreateTranslation(x, y, 0f));
     }
 
     private static PathGeometry CreateDiagonalLinePath()

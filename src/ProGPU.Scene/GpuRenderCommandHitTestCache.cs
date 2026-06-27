@@ -9,6 +9,7 @@ namespace ProGPU.Scene;
 public sealed class GpuRenderCommandHitTestCacheBuilder
 {
     private const int MaxLineSeriesSegmentsPerPathPrimitive = 128;
+    private const int IntersectPathOperation = 1;
     private const float OpacityEpsilon = 0.0001f;
 
     private readonly IPathHitTestCompilationCache? _pathHitTestCompilationCache;
@@ -936,14 +937,30 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
             clipMax = Vector2.Min(clipMax, activeClip.Max);
         }
 
-        if (TryCompileHitTestPath(command.Path.CreateTransformed(activeTransform), out var compiledClip))
+        PathGeometry clipPath = command.Path.CreateTransformed(activeTransform);
+        if (_clipStack.TryPeek(out ClipState inheritedClip) &&
+            inheritedClip.HasPath &&
+            inheritedClip.Path != null)
+        {
+            clipPath = new PathGeometry
+            {
+                IsCombined = true,
+                PathA = inheritedClip.Path,
+                PathB = clipPath,
+                Op = IntersectPathOperation,
+                FillRule = FillRule.Nonzero
+            };
+        }
+
+        if (TryCompileHitTestPath(clipPath, out var compiledClip))
         {
             _clipStack.Push(new ClipState(
                 clipMin,
                 clipMax,
                 compiledClip.StartSegment,
                 compiledClip.SegmentCount,
-                command.Path.FillRule,
+                clipPath.FillRule,
+                clipPath,
                 HasPath: true));
             return;
         }
@@ -1038,6 +1055,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
         uint StartSegment = 0,
         uint SegmentCount = 0,
         FillRule FillRule = FillRule.Nonzero,
+        PathGeometry? Path = null,
         bool HasPath = false)
     {
         public static ClipState Unbounded { get; } = new(
@@ -1052,7 +1070,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
 
         public ClipState WithBounds(Vector2 min, Vector2 max)
         {
-            return new ClipState(min, max, StartSegment, SegmentCount, FillRule, HasPath);
+            return new ClipState(min, max, StartSegment, SegmentCount, FillRule, Path, HasPath);
         }
     }
 }
