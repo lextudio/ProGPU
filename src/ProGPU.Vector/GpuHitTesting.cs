@@ -865,6 +865,7 @@ public sealed class GpuHitTestDeviceIndex : IDisposable
 public static unsafe class GpuHitTestEngine
 {
     private const uint QueryModeBoundsFlag = 0x8000_0000u;
+    private const uint QueryModeEllipseRegionFlag = 0x4000_0000u;
     private const uint ResultBufferSize = 32;
 
     public static bool TryHitTestPoint(GpuHitTestIndex index, Vector2 point, out GpuHitTestResult result)
@@ -1147,6 +1148,64 @@ public static unsafe class GpuHitTestEngine
         return TryQueryAll(context, cache, deviceIndex, query, results, out hitCount, out summary);
     }
 
+    public static bool TryQueryEllipseAll(
+        WgpuContext context,
+        GpuHitTestIndex index,
+        Vector2 min,
+        Vector2 max,
+        Span<GpuHitTestResult> results,
+        out int hitCount,
+        out GpuHitTestResult summary)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(index);
+
+        if (!GpuHitTestDeviceIndex.TryCreate(context, index, out GpuHitTestDeviceIndex? deviceIndex) || deviceIndex == null)
+        {
+            hitCount = 0;
+            summary = default;
+            return false;
+        }
+
+        using (deviceIndex)
+        using (var cache = new RenderPipelineCache(context))
+        {
+            return TryQueryEllipseAll(context, cache, deviceIndex, min, max, results, out hitCount, out summary);
+        }
+    }
+
+    public static bool TryQueryEllipseAll(
+        WgpuContext context,
+        RenderPipelineCache cache,
+        GpuHitTestDeviceIndex deviceIndex,
+        Vector2 min,
+        Vector2 max,
+        Span<GpuHitTestResult> results,
+        out int hitCount,
+        out GpuHitTestResult summary)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(cache);
+        ArgumentNullException.ThrowIfNull(deviceIndex);
+        if (!ReferenceEquals(context, deviceIndex.Context))
+        {
+            throw new ArgumentException("The GPU hit-test device index belongs to a different WebGPU context.", nameof(deviceIndex));
+        }
+
+        if (results.IsEmpty)
+        {
+            hitCount = 0;
+            summary = default;
+            return false;
+        }
+
+        int requestedCount = Math.Min(results.Length, GpuHitTestDeviceIndex.MaxHitResultCount);
+        uint requestedCountU = checked((uint)requestedCount);
+        var query = CreateQuery(deviceIndex, min, max, QueryModeBoundsFlag | QueryModeEllipseRegionFlag | requestedCountU);
+
+        return TryQueryAll(context, cache, deviceIndex, query, results, out hitCount, out summary);
+    }
+
     private static GpuHitTestQuery CreateQuery(
         GpuHitTestDeviceIndex deviceIndex,
         Vector2 point,
@@ -1375,6 +1434,7 @@ const PATH_QUADRATIC_STEPS: u32 = 16u;
 const PATH_CUBIC_STEPS: u32 = 24u;
 const PATH_ARC_STEPS: u32 = 24u;
 const QUERY_MODE_BOUNDS: u32 = 2147483648u;
+const QUERY_MODE_ELLIPSE_REGION: u32 = 1073741824u;
 const QUERY_RESULT_CAPACITY_MASK: u32 = 65535u;
 const INTERSECTION_DETAIL_NOT_CALCULATED: u32 = 0u;
 const INTERSECTION_DETAIL_EMPTY: u32 = 1u;
@@ -1402,6 +1462,10 @@ fn query_uses_bounds() -> bool {
     return (query.flags & QUERY_MODE_BOUNDS) != 0u;
 }
 
+fn query_uses_ellipse_region() -> bool {
+    return (query.flags & QUERY_MODE_ELLIPSE_REGION) != 0u;
+}
+
 fn query_result_capacity() -> u32 {
     return query.flags & QUERY_RESULT_CAPACITY_MASK;
 }
@@ -1415,6 +1479,10 @@ fn query_region_max() -> vec2<f32> {
 }
 
 fn query_intersects_bounds(min_value: vec2<f32>, max_value: vec2<f32>) -> bool {
+    if (query_uses_ellipse_region()) {
+        return rect_intersects_ellipse(min_value, max_value, query_region_min(), query_region_max());
+    }
+
     if (query_uses_bounds()) {
         return intersects_bounds(query_region_min(), query_region_max(), min_value, max_value);
     }
@@ -2365,7 +2433,47 @@ fn primitive_uses_precise_bounds_region_test(primitive: HitTestPrimitive) -> boo
             primitive.kind == KIND_PATH_STROKE);
 }
 
+fn primitive_uses_precise_ellipse_region_test(primitive: HitTestPrimitive) -> bool {
+    return primitive_is_axis_aligned(primitive) &&
+        (primitive.kind == KIND_BOUNDS ||
+            (primitive.kind == KIND_RECT_FILL &&
+            abs(primitive.data1.x) <= 0.00001 &&
+            abs(primitive.data1.y) <= 0.00001));
+}
+
+fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u32 {
+    let region_min = query_region_min();
+    let region_max = query_region_max();
+    if (!rect_intersects_ellipse(primitive.bounds_min, primitive.bounds_max, region_min, region_max)) {
+        return INTERSECTION_DETAIL_EMPTY;
+    }
+
+    if (primitive_uses_precise_ellipse_region_test(primitive)) {
+        let local_region_min = transform_bounds_to_local_min(region_min, region_max, primitive);
+        let local_region_max = transform_bounds_to_local_max(region_min, region_max, primitive);
+        let primitive_min = primitive.data0.xy;
+        let primitive_max = primitive.data0.zw;
+        if (!rect_intersects_ellipse(primitive_min, primitive_max, local_region_min, local_region_max)) {
+            return INTERSECTION_DETAIL_EMPTY;
+        }
+
+        if (contains_rect_bounds(primitive_min, primitive_max, local_region_min, local_region_max)) {
+            return INTERSECTION_DETAIL_FULLY_CONTAINS;
+        }
+
+        if (ellipse_contains_rect(primitive_min, primitive_max, local_region_min, local_region_max)) {
+            return INTERSECTION_DETAIL_FULLY_INSIDE;
+        }
+    }
+
+    return INTERSECTION_DETAIL_INTERSECTS;
+}
+
 fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
+    if (query_uses_ellipse_region()) {
+        return classify_ellipse_region_intersection_detail(primitive);
+    }
+
     let region_min = query_region_min();
     let region_max = query_region_max();
     if (!intersects_bounds(region_min, region_max, primitive.bounds_min, primitive.bounds_max)) {

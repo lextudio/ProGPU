@@ -663,6 +663,83 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void TryQueryEllipseAllRejectsQueryBoundsCornerFalsePositiveOnGpu()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+
+        GpuHitTestPrimitive[] primitives =
+        [
+            GpuHitTestPrimitive.RectangleFill(41, new Vector2(9f, 9f), new Vector2(10f, 10f), Vector2.Zero)
+        ];
+        var index = GpuHitTestIndex.Build(primitives, maxDepth: 2, maxPrimitivesPerNode: 1);
+        var results = new GpuHitTestResult[4];
+
+        bool hit = GpuHitTestEngine.TryQueryEllipseAll(
+            context,
+            index,
+            new Vector2(0f, 0f),
+            new Vector2(10f, 10f),
+            results,
+            out int hitCount,
+            out GpuHitTestResult summary);
+
+        Assert.False(hit);
+        Assert.Equal(0, hitCount);
+        Assert.Equal(0u, summary.CandidateCount);
+    }
+
+    [Fact]
+    public void TryQueryEllipseAllClassifiesRectangleFillIntersectionDetailOnGpu()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+
+        GpuHitTestPrimitive[] primitives =
+        [
+            GpuHitTestPrimitive.RectangleFill(42, new Vector2(4f, 4f), new Vector2(6f, 6f), Vector2.Zero, zIndex: 1f),
+            GpuHitTestPrimitive.RectangleFill(43, new Vector2(0f, 0f), new Vector2(10f, 10f), Vector2.Zero, zIndex: 0f)
+        ];
+        var index = GpuHitTestIndex.Build(primitives, maxDepth: 2, maxPrimitivesPerNode: 1);
+        var results = new GpuHitTestResult[4];
+
+        bool hit = GpuHitTestEngine.TryQueryEllipseAll(
+            context,
+            index,
+            new Vector2(0f, 0f),
+            new Vector2(10f, 10f),
+            results,
+            out int hitCount,
+            out GpuHitTestResult summary);
+
+        Assert.True(hit);
+        Assert.Equal(2, hitCount);
+        Assert.Equal([42, 43], results.Take(hitCount).Select(result => result.Id).ToArray());
+        Assert.Equal(
+            [(uint)GpuHitTestIntersectionDetail.FullyInside, (uint)GpuHitTestIntersectionDetail.FullyContains],
+            results.Take(hitCount).Select(result => result.IntersectionDetail).ToArray());
+        Assert.Equal(2u, summary.CandidateCount);
+
+        Array.Clear(results);
+        hit = GpuHitTestEngine.TryQueryEllipseAll(
+            context,
+            index,
+            new Vector2(3f, 3f),
+            new Vector2(7f, 7f),
+            results,
+            out hitCount,
+            out summary);
+
+        Assert.True(hit);
+        Assert.Equal(2, hitCount);
+        Assert.Equal([42, 43], results.Take(hitCount).Select(result => result.Id).ToArray());
+        Assert.Equal(
+            [(uint)GpuHitTestIntersectionDetail.FullyInside, (uint)GpuHitTestIntersectionDetail.FullyContains],
+            results.Take(hitCount).Select(result => result.IntersectionDetail).ToArray());
+        Assert.Equal(2u, summary.CandidateCount);
+    }
+
+    [Fact]
     public void TryQueryBoundsAllRejectsEllipseCornerFalsePositiveOnGpu()
     {
         using var context = new WgpuContext();

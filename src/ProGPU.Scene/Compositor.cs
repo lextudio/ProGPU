@@ -291,6 +291,31 @@ public unsafe class Compositor : IDisposable
             out summary);
     }
 
+    public bool TryQueryHitTestEllipseAll(
+        Vector2 min,
+        Vector2 max,
+        Span<GpuHitTestResult> results,
+        out int hitCount,
+        out GpuHitTestResult summary)
+    {
+        if (_lastHitTestDeviceIndex == null)
+        {
+            hitCount = 0;
+            summary = default;
+            return false;
+        }
+
+        return GpuHitTestEngine.TryQueryEllipseAll(
+            _context,
+            _pipelineCache,
+            _lastHitTestDeviceIndex,
+            min,
+            max,
+            results,
+            out hitCount,
+            out summary);
+    }
+
     private void SetLastHitTestIndex(GpuHitTestIndex index)
     {
         _lastHitTestDeviceIndex?.Dispose();
