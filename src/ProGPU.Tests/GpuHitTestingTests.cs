@@ -532,7 +532,7 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
-    public void TryHitTestPointAllHonorsCallerCapacity()
+    public void TryHitTestPointAllReportsTotalHitCountWhenCallerCapacityTruncates()
     {
         using var context = new WgpuContext();
         context.Initialize(null);
@@ -556,7 +556,7 @@ public sealed class GpuHitTestingTests
 
         Assert.True(hit);
         Assert.Equal(2, hitCount);
-        Assert.Equal(2u, summary.Hit);
+        Assert.Equal(3u, summary.Hit);
         Assert.Equal([30, 20], results.Take(hitCount).Select(result => result.Id).ToArray());
     }
 

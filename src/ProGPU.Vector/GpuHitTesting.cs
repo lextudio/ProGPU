@@ -3129,17 +3129,20 @@ fn record_hit(primitive_index: u32, primitive: HitTestPrimitive, intersection_de
         return;
     }
 
-    var count = results[0].hit;
-    if (count >= capacity && primitive.z_index <= results[capacity].z_index) {
+    let total_count = results[0].hit + 1u;
+    let stored_count = min(results[0].hit, capacity);
+    results[0].hit = total_count;
+
+    if (stored_count >= capacity && primitive.z_index <= results[capacity].z_index) {
         return;
     }
 
-    if (count < capacity) {
-        count = count + 1u;
-        results[0].hit = count;
+    var result_count = stored_count;
+    if (result_count < capacity) {
+        result_count = result_count + 1u;
     }
 
-    var slot = count;
+    var slot = result_count;
     loop {
         if (slot <= 1u) {
             break;
