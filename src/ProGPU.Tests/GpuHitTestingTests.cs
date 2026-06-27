@@ -274,6 +274,29 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void RenderCommandCacheUsesSharedPathCompilationForGpuHitTesting()
+    {
+        var compiler = new CountingPathHitTestCompilationCache();
+        var builder = new GpuRenderCommandHitTestCacheBuilder(compiler);
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPath,
+            HitTestId = 78,
+            Path = CreateTrianglePath(),
+            Brush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f))
+        }, Matrix4x4.Identity);
+
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        Assert.Equal(1, compiler.CallCount);
+        var primitive = Assert.Single(index.Primitives);
+        Assert.Equal(GpuHitTestPrimitiveKind.PathFill, primitive.Kind);
+        Assert.Equal(78, primitive.Id);
+        Assert.Equal(3f, primitive.Data1.Y);
+        Assert.Equal(3, index.PathSegments.Count);
+    }
+
+    [Fact]
     public void RenderCommandCacheSkipsUncompiledPathsInsteadOfAddingBoundsHit()
     {
         var combined = new PathGeometry
@@ -1758,5 +1781,29 @@ public sealed class GpuHitTestingTests
         figure.Segments.Add(new LineSegment(new Vector2(10f, 10f)));
         path.Figures.Add(figure);
         return path;
+    }
+
+    private sealed class CountingPathHitTestCompilationCache : IPathHitTestCompilationCache
+    {
+        public int CallCount { get; private set; }
+
+        public bool TryGetCompiledHitTestPath(
+            PathGeometry path,
+            out GpuPathRecord[] records,
+            out GpuPathSegment[] segments,
+            out float localMinX,
+            out float localMinY,
+            out float localMaxX,
+            out float localMaxY)
+        {
+            CallCount++;
+            (records, segments) = PathAtlas.CompilePath(
+                path,
+                out localMinX,
+                out localMinY,
+                out localMaxX,
+                out localMaxY);
+            return segments.Length != 0;
+        }
     }
 }

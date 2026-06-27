@@ -223,7 +223,7 @@ public unsafe class Compositor : IDisposable
     }
 
     private readonly List<StaticTextRecord> _compiledTextRecords = new();
-    private readonly GpuRenderCommandHitTestCacheBuilder _hitTestCacheBuilder = new();
+    private readonly GpuRenderCommandHitTestCacheBuilder _hitTestCacheBuilder;
     private GpuHitTestDeviceIndex? _lastHitTestDeviceIndex;
     private bool _suspendHitTestCacheWrites;
 
@@ -794,6 +794,7 @@ public unsafe class Compositor : IDisposable
         // 1. Initialize Glyph Atlas (4096x4096)
         _atlas = new GlyphAtlas(_context, 4096);
         _pathAtlas = new PathAtlas(_context, 4096);
+        _hitTestCacheBuilder = new GpuRenderCommandHitTestCacheBuilder(_pathAtlas);
 
         // 2. Uniform Buffer allocation (Projection Matrix + MVP - 128 bytes)
         _uniformBuffer = new GpuBuffer(

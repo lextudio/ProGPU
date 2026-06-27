@@ -9,12 +9,22 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
 {
     private const float OpacityEpsilon = 0.0001f;
 
+    private readonly IPathHitTestCompilationCache? _pathHitTestCompilationCache;
     private readonly List<GpuHitTestPrimitive> _primitives = new();
     private readonly List<GpuPathSegment> _pathSegments = new();
     private readonly Stack<ClipState> _clipStack = new();
     private readonly Stack<float> _opacityStack = new();
     private float _activeOpacity = 1f;
     private int _nextId;
+
+    public GpuRenderCommandHitTestCacheBuilder()
+    {
+    }
+
+    public GpuRenderCommandHitTestCacheBuilder(IPathHitTestCompilationCache pathHitTestCompilationCache)
+    {
+        _pathHitTestCompilationCache = pathHitTestCompilationCache ?? throw new ArgumentNullException(nameof(pathHitTestCompilationCache));
+    }
 
     public int PrimitiveCount => _primitives.Count;
 
@@ -231,12 +241,29 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
         float maxY;
         try
         {
-            (records, segments) = PathAtlas.CompilePath(
-                path,
-                out minX,
-                out minY,
-                out maxX,
-                out maxY);
+            if (_pathHitTestCompilationCache != null)
+            {
+                if (!_pathHitTestCompilationCache.TryGetCompiledHitTestPath(
+                        path,
+                        out records,
+                        out segments,
+                        out minX,
+                        out minY,
+                        out maxX,
+                        out maxY))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                (records, segments) = PathAtlas.CompilePath(
+                    path,
+                    out minX,
+                    out minY,
+                    out maxX,
+                    out maxY);
+            }
         }
         catch (InvalidOperationException)
         {

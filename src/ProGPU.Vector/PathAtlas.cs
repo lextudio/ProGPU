@@ -102,8 +102,23 @@ public readonly struct PathCacheKey : IEquatable<PathCacheKey>
     public static bool operator !=(PathCacheKey left, PathCacheKey right) => !left.Equals(right);
 }
 
-public unsafe class PathAtlas : IDisposable
+public interface IPathHitTestCompilationCache
 {
+    bool TryGetCompiledHitTestPath(
+        PathGeometry path,
+        out GpuPathRecord[] records,
+        out GpuPathSegment[] segments,
+        out float localMinX,
+        out float localMinY,
+        out float localMaxX,
+        out float localMaxY);
+}
+
+public unsafe class PathAtlas : IDisposable
+    , IPathHitTestCompilationCache
+{
+    private const int MaxCompiledHitTestPathCount = 4096;
+
     private readonly WgpuContext _context;
     private readonly GpuTexture _atlasTexture;
     private readonly uint _atlasSize;
@@ -134,6 +149,7 @@ public unsafe class PathAtlas : IDisposable
     }
 
     private readonly Dictionary<PathCacheKey, PathInfo> _paths = new();
+    private readonly Dictionary<int, CompiledPathData> _compiledHitTestPaths = new();
     private readonly List<GpuBuffer> _tempBuffers = new();
     private readonly List<PathInfo> _pendingPaths = new();
 
@@ -145,6 +161,7 @@ public unsafe class PathAtlas : IDisposable
 
     public GpuTexture AtlasTexture => _atlasTexture;
     public int CachedPathCount => _paths.Count;
+    public int CachedHitTestPathCount => _compiledHitTestPaths.Count;
 
     public PathAtlas(WgpuContext context, uint atlasSize = 2048)
     {
@@ -404,6 +421,67 @@ public unsafe class PathAtlas : IDisposable
         return (records, segments.ToArray());
     }
 
+    public bool TryGetCompiledHitTestPath(
+        PathGeometry path,
+        out GpuPathRecord[] records,
+        out GpuPathSegment[] segments,
+        out float localMinX,
+        out float localMinY,
+        out float localMaxX,
+        out float localMaxY)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(PathAtlas));
+        ArgumentNullException.ThrowIfNull(path);
+
+        int contentHash = ComputeHash(path);
+        if (_compiledHitTestPaths.TryGetValue(contentHash, out var cached))
+        {
+            records = cached.Records;
+            segments = cached.Segments;
+            localMinX = cached.LocalMinX;
+            localMinY = cached.LocalMinY;
+            localMaxX = cached.LocalMaxX;
+            localMaxY = cached.LocalMaxY;
+            return segments.Length != 0;
+        }
+
+        try
+        {
+            (records, segments) = CompilePath(path, out localMinX, out localMinY, out localMaxX, out localMaxY);
+        }
+        catch (InvalidOperationException)
+        {
+            records = Array.Empty<GpuPathRecord>();
+            segments = Array.Empty<GpuPathSegment>();
+            localMinX = 0f;
+            localMinY = 0f;
+            localMaxX = 0f;
+            localMaxY = 0f;
+        }
+
+        if (_compiledHitTestPaths.Count >= MaxCompiledHitTestPathCount)
+        {
+            _compiledHitTestPaths.Clear();
+        }
+
+        _compiledHitTestPaths[contentHash] = new CompiledPathData(
+            records,
+            segments,
+            localMinX,
+            localMinY,
+            localMaxX,
+            localMaxY);
+        return segments.Length != 0;
+    }
+
+    private readonly record struct CompiledPathData(
+        GpuPathRecord[] Records,
+        GpuPathSegment[] Segments,
+        float LocalMinX,
+        float LocalMinY,
+        float LocalMaxX,
+        float LocalMaxY);
+
     private void RepackActivePaths()
     {
         var activePaths = new List<PathInfo>();
@@ -491,95 +569,51 @@ public unsafe class PathAtlas : IDisposable
         float unscaledMinX, unscaledMinY, unscaledMaxX, unscaledMaxY;
         int xStart, yStart, width, height;
 
-        if (path.IsCombined)
+        if (!TryGetCompiledHitTestPath(
+                path,
+                out _,
+                out var segments,
+                out unscaledMinX,
+                out unscaledMinY,
+                out unscaledMaxX,
+                out unscaledMaxY) ||
+            segments.Length == 0)
         {
-            if (path.PathA == null ||
-                path.PathB == null ||
-                !path.TryGetBounds(out var combinedMin, out var combinedMax))
+            info = new PathInfo
             {
-                info = new PathInfo
-                {
-                    Key = key,
-                    Geometry = path,
-                    UnscaledMinX = 0f,
-                    UnscaledMinY = 0f,
-                    UnscaledMaxX = 0f,
-                    UnscaledMaxY = 0f,
-                    X = 0,
-                    Y = 0,
-                    Width = 0,
-                    Height = 0,
-                    TexCoordMin = Vector2.Zero,
-                    TexCoordMax = Vector2.Zero,
-                    MinX = 0f,
-                    MinY = 0f,
-                    LastUsedFrame = _frameNumber
-                };
-                _paths[key] = info;
-                return info;
-            }
-
-            unscaledMinX = combinedMin.X;
-            unscaledMinY = combinedMin.Y;
-            unscaledMaxX = combinedMax.X;
-            unscaledMaxY = combinedMax.Y;
-
-            float minX = unscaledMinX * scale;
-            float minY = unscaledMinY * scale;
-            float maxX = unscaledMaxX * scale;
-            float maxY = unscaledMaxY * scale;
-
-            int padding = 4;
-            xStart = (int)Math.Floor(minX) - padding;
-            int xEnd = (int)Math.Ceiling(maxX) + padding;
-            yStart = (int)Math.Floor(minY) - padding;
-            int yEnd = (int)Math.Ceiling(maxY) + padding;
-
-            width = xEnd - xStart;
-            height = yEnd - yStart;
+                Key = key,
+                Geometry = path,
+                UnscaledMinX = 0f,
+                UnscaledMinY = 0f,
+                UnscaledMaxX = 0f,
+                UnscaledMaxY = 0f,
+                X = 0,
+                Y = 0,
+                Width = 0,
+                Height = 0,
+                TexCoordMin = Vector2.Zero,
+                TexCoordMax = Vector2.Zero,
+                MinX = 0f,
+                MinY = 0f,
+                LastUsedFrame = _frameNumber
+            };
+            _paths[key] = info;
+            return info;
         }
-        else
-        {
-            var (records, segments) = CompilePath(path, out unscaledMinX, out unscaledMinY, out unscaledMaxX, out unscaledMaxY);
 
-            if (records.Length == 0 || segments.Length == 0)
-            {
-                info = new PathInfo
-                {
-                    Key = key,
-                    Geometry = path,
-                    UnscaledMinX = 0f,
-                    UnscaledMinY = 0f,
-                    UnscaledMaxX = 0f,
-                    UnscaledMaxY = 0f,
-                    X = 0,
-                    Y = 0,
-                    Width = 0,
-                    Height = 0,
-                    TexCoordMin = Vector2.Zero,
-                    TexCoordMax = Vector2.Zero,
-                    MinX = 0f,
-                    MinY = 0f,
-                    LastUsedFrame = _frameNumber
-                };
-                _paths[key] = info;
-                return info;
-            }
+        float minX = unscaledMinX * scale;
+        float minY = unscaledMinY * scale;
+        float maxX = unscaledMaxX * scale;
+        float maxY = unscaledMaxY * scale;
 
-            float minX = unscaledMinX * scale;
-            float minY = unscaledMinY * scale;
-            float maxX = unscaledMaxX * scale;
-            float maxY = unscaledMaxY * scale;
+        int padding = 4;
+        xStart = (int)Math.Floor(minX) - padding;
+        int xEnd = (int)Math.Ceiling(maxX) + padding;
+        yStart = (int)Math.Floor(minY) - padding;
+        int yEnd = (int)Math.Ceiling(maxY) + padding;
 
-            int padding = 4;
-            xStart = (int)Math.Floor(minX) - padding;
-            int xEnd = (int)Math.Ceiling(maxX) + padding;
-            yStart = (int)Math.Floor(minY) - padding;
-            int yEnd = (int)Math.Ceiling(maxY) + padding;
-
-            width = xEnd - xStart;
-            height = yEnd - yStart;
-        }
+        width = xEnd - xStart;
+        height = yEnd - yStart;
 
         if (width <= 0 || height <= 0)
         {
@@ -709,8 +743,19 @@ public unsafe class PathAtlas : IDisposable
         {
             if (info.Width == 0 || info.Height == 0) continue;
 
-            var (records, segments) = CompilePath(info.Geometry, out _, out _, out _, out _);
-            if (records.Length == 0 || segments.Length == 0) continue;
+            if (!TryGetCompiledHitTestPath(
+                    info.Geometry,
+                    out var records,
+                    out var segments,
+                    out _,
+                    out _,
+                    out _,
+                    out _) ||
+                records.Length == 0 ||
+                segments.Length == 0)
+            {
+                continue;
+            }
 
             int padding = 4;
             float scale = info.Key.Scale;
@@ -828,6 +873,7 @@ public unsafe class PathAtlas : IDisposable
         _pipelineCache.Dispose();
         _atlasTexture.Dispose();
         _paths.Clear();
+        _compiledHitTestPaths.Clear();
         _pendingPaths.Clear();
 
         _isDisposed = true;
