@@ -186,7 +186,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(min, max, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             Vector4.Zero,
-            Vector4.Zero,
+            CreateEllipseHitTestData(min, max),
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -222,7 +222,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(paddedMin, paddedMax, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             new Vector4(strokeThickness, tolerance, 0f, 0f),
-            Vector4.Zero,
+            CreateEllipseHitTestData(min, max),
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -328,6 +328,15 @@ public readonly struct GpuHitTestPrimitive
     {
         GetTransformedBounds(min, max, transform, out Vector2 transformedMin, out _);
         return transformedMin;
+    }
+
+    private static Vector4 CreateEllipseHitTestData(Vector2 min, Vector2 max)
+    {
+        Vector2 radii = (max - min) * 0.5f;
+        Vector2 center = (min + max) * 0.5f;
+        float inverseRadiusX = float.IsFinite(radii.X) && MathF.Abs(radii.X) > 0.0001f ? 1f / radii.X : 0f;
+        float inverseRadiusY = float.IsFinite(radii.Y) && MathF.Abs(radii.Y) > 0.0001f ? 1f / radii.Y : 0f;
+        return new Vector4(center.X, center.Y, inverseRadiusX, inverseRadiusY);
     }
 
     private static Vector2 TransformBoundsMax(Vector2 min, Vector2 max, Matrix4x4 transform)
@@ -1637,6 +1646,20 @@ fn contains_ellipse(point: vec2<f32>, min_value: vec2<f32>, max_value: vec2<f32>
     return dot(normalized, normalized) <= 1.0;
 }
 
+fn contains_ellipse_from_inverse_radii(point: vec2<f32>, center: vec2<f32>, inverse_radii: vec2<f32>) -> bool {
+    if (inverse_radii.x <= 0.0 || inverse_radii.y <= 0.0) {
+        return false;
+    }
+
+    let normalized = (point - center) * inverse_radii;
+    return dot(normalized, normalized) <= 1.0;
+}
+
+fn contains_cached_ellipse(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    return contains_bounds(point, primitive.data0.xy, primitive.data0.zw) &&
+        contains_ellipse_from_inverse_radii(point, primitive.data2.xy, primitive.data2.zw);
+}
+
 fn rect_intersects_ellipse(rect_min: vec2<f32>, rect_max: vec2<f32>, ellipse_min: vec2<f32>, ellipse_max: vec2<f32>) -> bool {
     let radii = (ellipse_max - ellipse_min) * 0.5;
     if (radii.x <= 0.0 || radii.y <= 0.0) {
@@ -1649,11 +1672,36 @@ fn rect_intersects_ellipse(rect_min: vec2<f32>, rect_max: vec2<f32>, ellipse_min
     return dot(normalized, normalized) <= 1.0;
 }
 
+fn rect_intersects_ellipse_from_inverse_radii(rect_min: vec2<f32>, rect_max: vec2<f32>, center: vec2<f32>, inverse_radii: vec2<f32>) -> bool {
+    if (inverse_radii.x <= 0.0 || inverse_radii.y <= 0.0) {
+        return false;
+    }
+
+    let closest = clamp(center, rect_min, rect_max);
+    let normalized = (closest - center) * inverse_radii;
+    return dot(normalized, normalized) <= 1.0;
+}
+
+fn rect_intersects_cached_ellipse(rect_min: vec2<f32>, rect_max: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    return rect_intersects_ellipse_from_inverse_radii(rect_min, rect_max, primitive.data2.xy, primitive.data2.zw);
+}
+
 fn ellipse_contains_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, ellipse_min: vec2<f32>, ellipse_max: vec2<f32>) -> bool {
     return contains_ellipse(rect_min, ellipse_min, ellipse_max) &&
         contains_ellipse(vec2<f32>(rect_max.x, rect_min.y), ellipse_min, ellipse_max) &&
         contains_ellipse(rect_max, ellipse_min, ellipse_max) &&
         contains_ellipse(vec2<f32>(rect_min.x, rect_max.y), ellipse_min, ellipse_max);
+}
+
+fn ellipse_contains_rect_from_inverse_radii(rect_min: vec2<f32>, rect_max: vec2<f32>, center: vec2<f32>, inverse_radii: vec2<f32>) -> bool {
+    return contains_ellipse_from_inverse_radii(rect_min, center, inverse_radii) &&
+        contains_ellipse_from_inverse_radii(vec2<f32>(rect_max.x, rect_min.y), center, inverse_radii) &&
+        contains_ellipse_from_inverse_radii(rect_max, center, inverse_radii) &&
+        contains_ellipse_from_inverse_radii(vec2<f32>(rect_min.x, rect_max.y), center, inverse_radii);
+}
+
+fn cached_ellipse_contains_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    return ellipse_contains_rect_from_inverse_radii(rect_min, rect_max, primitive.data2.xy, primitive.data2.zw);
 }
 
 fn rect_intersects_ellipse_stroke(rect_min: vec2<f32>, rect_max: vec2<f32>, primitive: HitTestPrimitive) -> bool {
@@ -1664,21 +1712,25 @@ fn rect_intersects_ellipse_stroke(rect_min: vec2<f32>, rect_max: vec2<f32>, prim
 
     let tolerance = max(0.0, primitive.data1.y);
     let half_stroke = stroke * 0.5 + tolerance;
-    let original_min = primitive.data0.xy;
-    let original_max = primitive.data0.zw;
-    let outer_min = original_min - vec2<f32>(half_stroke, half_stroke);
-    let outer_max = original_max + vec2<f32>(half_stroke, half_stroke);
-    if (!rect_intersects_ellipse(rect_min, rect_max, outer_min, outer_max)) {
+    let center = primitive.data2.xy;
+    let inverse_radii = primitive.data2.zw;
+    if (inverse_radii.x <= 0.0 || inverse_radii.y <= 0.0) {
         return false;
     }
 
-    let inner_min = original_min + vec2<f32>(half_stroke, half_stroke);
-    let inner_max = original_max - vec2<f32>(half_stroke, half_stroke);
-    if (inner_max.x <= inner_min.x || inner_max.y <= inner_min.y) {
+    let radii = vec2<f32>(1.0 / inverse_radii.x, 1.0 / inverse_radii.y);
+    let outer_inverse_radii = vec2<f32>(1.0, 1.0) / (radii + vec2<f32>(half_stroke, half_stroke));
+    if (!rect_intersects_ellipse_from_inverse_radii(rect_min, rect_max, center, outer_inverse_radii)) {
+        return false;
+    }
+
+    let inner_radii = radii - vec2<f32>(half_stroke, half_stroke);
+    if (inner_radii.x <= 0.0 || inner_radii.y <= 0.0) {
         return true;
     }
 
-    return !ellipse_contains_rect(rect_min, rect_max, inner_min, inner_max);
+    let inner_inverse_radii = vec2<f32>(1.0, 1.0) / inner_radii;
+    return !ellipse_contains_rect_from_inverse_radii(rect_min, rect_max, center, inner_inverse_radii);
 }
 
 fn contains_ellipse_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
@@ -1689,21 +1741,25 @@ fn contains_ellipse_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> boo
 
     let tolerance = max(0.0, primitive.data1.y);
     let half_stroke = stroke * 0.5 + tolerance;
-    let original_min = primitive.data0.xy;
-    let original_max = primitive.data0.zw;
-    let outer_min = original_min - vec2<f32>(half_stroke, half_stroke);
-    let outer_max = original_max + vec2<f32>(half_stroke, half_stroke);
-    if (!contains_ellipse(point, outer_min, outer_max)) {
+    let center = primitive.data2.xy;
+    let inverse_radii = primitive.data2.zw;
+    if (inverse_radii.x <= 0.0 || inverse_radii.y <= 0.0) {
         return false;
     }
 
-    let inner_min = original_min + vec2<f32>(half_stroke, half_stroke);
-    let inner_max = original_max - vec2<f32>(half_stroke, half_stroke);
-    if (inner_max.x <= inner_min.x || inner_max.y <= inner_min.y) {
+    let radii = vec2<f32>(1.0 / inverse_radii.x, 1.0 / inverse_radii.y);
+    let outer_inverse_radii = vec2<f32>(1.0, 1.0) / (radii + vec2<f32>(half_stroke, half_stroke));
+    if (!contains_ellipse_from_inverse_radii(point, center, outer_inverse_radii)) {
+        return false;
+    }
+
+    let inner_radii = radii - vec2<f32>(half_stroke, half_stroke);
+    if (inner_radii.x <= 0.0 || inner_radii.y <= 0.0) {
         return true;
     }
 
-    return !contains_ellipse(point, inner_min, inner_max);
+    let inner_inverse_radii = vec2<f32>(1.0, 1.0) / inner_radii;
+    return !contains_ellipse_from_inverse_radii(point, center, inner_inverse_radii);
 }
 
 fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 {
@@ -2500,11 +2556,11 @@ fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
                 return INTERSECTION_DETAIL_EMPTY;
             }
         } else if (primitive.kind == KIND_ELLIPSE_FILL) {
-            if (!rect_intersects_ellipse(local_region_min, local_region_max, primitive.data0.xy, primitive.data0.zw)) {
+            if (!rect_intersects_cached_ellipse(local_region_min, local_region_max, primitive)) {
                 return INTERSECTION_DETAIL_EMPTY;
             }
 
-            if (ellipse_contains_rect(local_region_min, local_region_max, primitive.data0.xy, primitive.data0.zw)) {
+            if (cached_ellipse_contains_rect(local_region_min, local_region_max, primitive)) {
                 return INTERSECTION_DETAIL_FULLY_CONTAINS;
             }
         } else if (primitive.kind == KIND_ELLIPSE_STROKE) {
@@ -2555,7 +2611,7 @@ fn precise_hit(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
     }
 
     if (primitive.kind == KIND_ELLIPSE_FILL) {
-        return contains_ellipse(local_point, primitive.data0.xy, primitive.data0.zw);
+        return contains_cached_ellipse(local_point, primitive);
     }
 
     if (primitive.kind == KIND_ELLIPSE_STROKE) {

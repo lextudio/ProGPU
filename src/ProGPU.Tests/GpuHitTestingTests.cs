@@ -37,6 +37,20 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void EllipseCachesCenterAndInverseRadiiForGpuHitTesting()
+    {
+        var primitive = GpuHitTestPrimitive.EllipseFill(
+            11,
+            new Vector2(2f, 4f),
+            new Vector2(10f, 20f));
+
+        Assert.Equal(6f, primitive.Data2.X);
+        Assert.Equal(12f, primitive.Data2.Y);
+        Assert.Equal(0.25f, primitive.Data2.Z, 6);
+        Assert.Equal(0.125f, primitive.Data2.W, 6);
+    }
+
+    [Fact]
     public void BuildCreatesQuadtreeBroadPhaseNodes()
     {
         GpuHitTestPrimitive[] primitives =
