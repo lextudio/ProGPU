@@ -37,13 +37,14 @@ public enum GpuHitTestPrimitiveFlags : uint
     HitTestVisible = 1 << 1
 }
 
-[StructLayout(LayoutKind.Sequential, Size = 96)]
+[StructLayout(LayoutKind.Sequential, Size = 112)]
 public readonly struct GpuHitTestPrimitive
 {
     public readonly Vector2 BoundsMin;
     public readonly Vector2 BoundsMax;
     public readonly Vector4 Data0;
     public readonly Vector4 Data1;
+    public readonly Vector4 Data2;
     public readonly Vector4 InverseTransform0;
     public readonly Vector4 InverseTransform1;
     public readonly GpuHitTestPrimitiveKind Kind;
@@ -58,6 +59,7 @@ public readonly struct GpuHitTestPrimitive
         Vector2 boundsMax,
         Vector4 data0,
         Vector4 data1,
+        Vector4 data2,
         Vector4 inverseTransform0,
         Vector4 inverseTransform1,
         float zIndex,
@@ -69,6 +71,7 @@ public readonly struct GpuHitTestPrimitive
         BoundsMax = boundsMax;
         Data0 = data0;
         Data1 = data1;
+        Data2 = data2;
         InverseTransform0 = inverseTransform0;
         InverseTransform1 = inverseTransform1;
         ZIndex = zIndex;
@@ -84,6 +87,7 @@ public readonly struct GpuHitTestPrimitive
             boundsMax,
             Data0,
             Data1,
+            Data2,
             InverseTransform0,
             InverseTransform1,
             ZIndex,
@@ -104,6 +108,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(min, max, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             Vector4.Zero,
+            Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -123,6 +128,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(min, max, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             new Vector4(radius.X, radius.Y, 0f, 0f),
+            Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -160,6 +166,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(paddedMin, paddedMax, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             new Vector4(radius.X, radius.Y, strokeThickness, tolerance),
+            Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -178,6 +185,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMin(min, max, transform),
             TransformBoundsMax(min, max, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
+            Vector4.Zero,
             Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
@@ -214,6 +222,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(paddedMin, paddedMax, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             new Vector4(strokeThickness, tolerance, 0f, 0f),
+            Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -246,6 +255,12 @@ public readonly struct GpuHitTestPrimitive
         float padding = MathF.Max(0f, (MathF.Abs(strokeThickness) * 0.5f) + MathF.Max(0f, tolerance));
         Vector2 min = Vector2.Min(start, end) - new Vector2(padding);
         Vector2 max = Vector2.Max(start, end) + new Vector2(padding);
+        Vector2 segment = end - start;
+        float length = segment.Length();
+        Vector2 direction = float.IsFinite(length) && length > 0.0001f
+            ? segment / length
+            : Vector2.Zero;
+        float cachedLength = float.IsFinite(length) ? length : 0f;
         return new GpuHitTestPrimitive(
             GpuHitTestPrimitiveKind.LineStroke,
             id,
@@ -253,6 +268,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(min, max, transform),
             new Vector4(start.X, start.Y, end.X, end.Y),
             new Vector4(strokeThickness, tolerance, (uint)startCap, (uint)endCap),
+            new Vector4(direction.X, direction.Y, cachedLength, 0f),
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -275,6 +291,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(min, max, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             new Vector4(startSegment, segmentCount, (uint)fillRule, 0f),
+            Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -301,6 +318,7 @@ public readonly struct GpuHitTestPrimitive
             TransformBoundsMax(paddedMin, paddedMax, transform),
             new Vector4(min.X, min.Y, max.X, max.Y),
             new Vector4(startSegment, segmentCount, strokeThickness, tolerance),
+            Vector4.Zero,
             CreateInverseTransformRow0(transform),
             CreateInverseTransformRow1(transform),
             zIndex);
@@ -1296,6 +1314,7 @@ struct HitTestPrimitive {
     bounds_max: vec2<f32>,
     data0: vec4<f32>,
     data1: vec4<f32>,
+    data2: vec4<f32>,
     inverse_transform0: vec4<f32>,
     inverse_transform1: vec4<f32>,
     kind: u32,
@@ -1610,11 +1629,11 @@ fn contains_line_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
 
     let tolerance = max(0.0, primitive.data1.y);
     let half_stroke = stroke * 0.5 + tolerance;
-    let segment = end - start;
-    let length = length(segment);
+    let direction = primitive.data2.xy;
+    let segment_length = primitive.data2.z;
     let start_cap = u32(primitive.data1.z);
     let end_cap = u32(primitive.data1.w);
-    if (length <= 0.0001) {
+    if (segment_length <= 0.0001) {
         if (start_cap == CAP_FLAT && end_cap == CAP_FLAT) {
             return false;
         }
@@ -1623,11 +1642,10 @@ fn contains_line_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
         return dot(delta, delta) <= half_stroke * half_stroke;
     }
 
-    let direction = segment / length;
     let offset = point - start;
     let along = dot(offset, direction);
     let signed_distance = cross2(offset, direction);
-    if (along >= 0.0 && along <= length && abs(signed_distance) <= half_stroke) {
+    if (along >= 0.0 && along <= segment_length && abs(signed_distance) <= half_stroke) {
         return true;
     }
 
@@ -1635,7 +1653,7 @@ fn contains_line_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
         return contains_line_cap(point, start, direction, signed_distance, along, half_stroke, start_cap, true);
     }
 
-    return contains_line_cap(point, end, direction, signed_distance, along - length, half_stroke, end_cap, false);
+    return contains_line_cap(point, end, direction, signed_distance, along - segment_length, half_stroke, end_cap, false);
 }
 
 fn distance_squared_to_segment(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>) -> f32 {
@@ -1695,6 +1713,35 @@ fn segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: vec2<f32>
         segments_intersect(start, end, bottom_left, top_left);
 }
 
+fn point_in_quad(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
+    return point_in_triangle(point, a, b, c) || point_in_triangle(point, a, c, d);
+}
+
+fn quad_intersects_rect(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>, rect_min: vec2<f32>, rect_max: vec2<f32>) -> bool {
+    if (contains_bounds(a, rect_min, rect_max) ||
+        contains_bounds(b, rect_min, rect_max) ||
+        contains_bounds(c, rect_min, rect_max) ||
+        contains_bounds(d, rect_min, rect_max)) {
+        return true;
+    }
+
+    let top_left = rect_min;
+    let top_right = vec2<f32>(rect_max.x, rect_min.y);
+    let bottom_right = rect_max;
+    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
+    if (point_in_quad(top_left, a, b, c, d) ||
+        point_in_quad(top_right, a, b, c, d) ||
+        point_in_quad(bottom_right, a, b, c, d) ||
+        point_in_quad(bottom_left, a, b, c, d)) {
+        return true;
+    }
+
+    return segment_intersects_rect(a, b, rect_min, rect_max) ||
+        segment_intersects_rect(b, c, rect_min, rect_max) ||
+        segment_intersects_rect(c, d, rect_min, rect_max) ||
+        segment_intersects_rect(d, a, rect_min, rect_max);
+}
+
 fn stroked_segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: vec2<f32>, rect_max: vec2<f32>, half_stroke: f32) -> bool {
     if (half_stroke <= 0.0) {
         return false;
@@ -1718,6 +1765,90 @@ fn stroked_segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: v
         distance_squared_to_segment(top_right, start, end) <= stroke_squared ||
         distance_squared_to_segment(bottom_right, start, end) <= stroke_squared ||
         distance_squared_to_segment(bottom_left, start, end) <= stroke_squared;
+}
+
+fn triangle_cap_intersects_rect(center: vec2<f32>, direction: vec2<f32>, half_stroke: f32, rect_min: vec2<f32>, rect_max: vec2<f32>) -> bool {
+    let normal = vec2<f32>(-direction.y, direction.x);
+    let a = center - normal * half_stroke;
+    let b = center + normal * half_stroke;
+    let c = center + direction * half_stroke;
+    if (contains_bounds(a, rect_min, rect_max) ||
+        contains_bounds(b, rect_min, rect_max) ||
+        contains_bounds(c, rect_min, rect_max)) {
+        return true;
+    }
+
+    let top_left = rect_min;
+    let top_right = vec2<f32>(rect_max.x, rect_min.y);
+    let bottom_right = rect_max;
+    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
+    if (point_in_triangle(top_left, a, b, c) ||
+        point_in_triangle(top_right, a, b, c) ||
+        point_in_triangle(bottom_right, a, b, c) ||
+        point_in_triangle(bottom_left, a, b, c)) {
+        return true;
+    }
+
+    return segment_intersects_rect(a, b, rect_min, rect_max) ||
+        segment_intersects_rect(b, c, rect_min, rect_max) ||
+        segment_intersects_rect(c, a, rect_min, rect_max);
+}
+
+fn line_stroke_intersects_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    let start = primitive.data0.xy;
+    let end = primitive.data0.zw;
+    let stroke = abs(primitive.data1.x);
+    if (stroke <= 0.0) {
+        return false;
+    }
+
+    let half_stroke = (stroke * 0.5) + max(0.0, primitive.data1.y);
+    if (half_stroke <= 0.0) {
+        return false;
+    }
+
+    let start_cap = u32(primitive.data1.z);
+    let end_cap = u32(primitive.data1.w);
+    let direction = primitive.data2.xy;
+    let segment_length = primitive.data2.z;
+    if (segment_length <= 0.0001) {
+        if (start_cap == CAP_FLAT && end_cap == CAP_FLAT) {
+            return false;
+        }
+
+        return distance_squared_to_rect(start, rect_min, rect_max) <= half_stroke * half_stroke;
+    }
+
+    let normal = vec2<f32>(-direction.y, direction.x);
+    let start_extension = select(0.0, half_stroke, start_cap == CAP_SQUARE);
+    let end_extension = select(0.0, half_stroke, end_cap == CAP_SQUARE);
+    let body_start = start - direction * start_extension;
+    let body_end = end + direction * end_extension;
+    let a = body_start + normal * half_stroke;
+    let b = body_end + normal * half_stroke;
+    let c = body_end - normal * half_stroke;
+    let d = body_start - normal * half_stroke;
+    if (quad_intersects_rect(a, b, c, d, rect_min, rect_max)) {
+        return true;
+    }
+
+    if (start_cap == CAP_ROUND && distance_squared_to_rect(start, rect_min, rect_max) <= half_stroke * half_stroke) {
+        return true;
+    }
+
+    if (end_cap == CAP_ROUND && distance_squared_to_rect(end, rect_min, rect_max) <= half_stroke * half_stroke) {
+        return true;
+    }
+
+    if (start_cap == CAP_TRIANGLE && triangle_cap_intersects_rect(start, -direction, half_stroke, rect_min, rect_max)) {
+        return true;
+    }
+
+    if (end_cap == CAP_TRIANGLE && triangle_cap_intersects_rect(end, direction, half_stroke, rect_min, rect_max)) {
+        return true;
+    }
+
+    return false;
 }
 
 fn evaluate_quadratic(start: vec2<f32>, control: vec2<f32>, end: vec2<f32>, t: f32) -> vec2<f32> {
@@ -2169,6 +2300,7 @@ fn primitive_uses_precise_bounds_region_test(primitive: HitTestPrimitive) -> boo
     return primitive_is_axis_aligned(primitive) &&
         (primitive.kind == KIND_ELLIPSE_FILL ||
             primitive.kind == KIND_ELLIPSE_STROKE ||
+            primitive.kind == KIND_LINE_STROKE ||
             primitive.kind == KIND_PATH_FILL ||
             primitive.kind == KIND_PATH_STROKE);
 }
@@ -2197,6 +2329,10 @@ fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
             }
         } else if (primitive.kind == KIND_ELLIPSE_STROKE) {
             if (!rect_intersects_ellipse_stroke(local_region_min, local_region_max, primitive)) {
+                return INTERSECTION_DETAIL_EMPTY;
+            }
+        } else if (primitive.kind == KIND_LINE_STROKE) {
+            if (!line_stroke_intersects_rect(local_region_min, local_region_max, primitive)) {
                 return INTERSECTION_DETAIL_EMPTY;
             }
         } else if (primitive.kind == KIND_PATH_FILL) {
