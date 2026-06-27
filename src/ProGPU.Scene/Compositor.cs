@@ -223,8 +223,43 @@ public unsafe class Compositor : IDisposable
     }
 
     private readonly List<StaticTextRecord> _compiledTextRecords = new();
+    private readonly GpuRenderCommandHitTestCacheBuilder _hitTestCacheBuilder = new();
+    private GpuHitTestDeviceIndex? _lastHitTestDeviceIndex;
 
     public CompositorMetrics Metrics { get; private set; }
+
+    public GpuHitTestIndex? LastHitTestIndex { get; private set; }
+    public GpuHitTestDeviceIndex? LastHitTestDeviceIndex => _lastHitTestDeviceIndex;
+
+    public bool TryHitTestPoint(Vector2 point, out GpuHitTestResult result)
+    {
+        if (_lastHitTestDeviceIndex == null)
+        {
+            result = default;
+            return false;
+        }
+
+        return GpuHitTestEngine.TryHitTestPoint(_context, _pipelineCache, _lastHitTestDeviceIndex, point, out result);
+    }
+
+    private void SetLastHitTestIndex(GpuHitTestIndex index)
+    {
+        _lastHitTestDeviceIndex?.Dispose();
+        _lastHitTestDeviceIndex = null;
+        LastHitTestIndex = index;
+
+        if (GpuHitTestDeviceIndex.TryCreate(_context, index, out GpuHitTestDeviceIndex? deviceIndex))
+        {
+            _lastHitTestDeviceIndex = deviceIndex;
+        }
+    }
+
+    private void ClearLastHitTestIndex()
+    {
+        _lastHitTestDeviceIndex?.Dispose();
+        _lastHitTestDeviceIndex = null;
+        LastHitTestIndex = null;
+    }
 
     private readonly List<ICompositorExtension> _registeredExtensions = new();
     private readonly Dictionary<int, ICompositorExtension> _extensionsById = new();
@@ -1301,6 +1336,8 @@ public unsafe class Compositor : IDisposable
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
         _drawCalls.Clear();
+        _hitTestCacheBuilder.Clear();
+        ClearLastHitTestIndex();
 
 
         if (_layoutCache.Count > 1000)
@@ -1414,6 +1451,8 @@ public unsafe class Compositor : IDisposable
                 _opacityStack.Push(savedOpacityStack[j]);
             }
         }
+
+        SetLastHitTestIndex(_hitTestCacheBuilder.BuildIndex());
 
         // 6. Compile Layer 3: Adorner / DevTools bounds highlights
         if (RenderDiagnostics != null)
@@ -2304,6 +2343,8 @@ public unsafe class Compositor : IDisposable
                     _hasGpuTransformsInFrame = true;
                     _gpuTransformsCameraView = cmd.CameraView * globalTransform;
                 }
+
+                _hitTestCacheBuilder.AddCommand(cmd, activeTransform);
 
                 switch (cmd.Type)
                 {
@@ -5493,6 +5534,9 @@ public unsafe class Compositor : IDisposable
             _textVertexBuffer.Dispose();
             _textureVertexBuffer.Dispose();
             _textureIndexBuffer.Dispose();
+            _lastHitTestDeviceIndex?.Dispose();
+            _lastHitTestDeviceIndex = null;
+            LastHitTestIndex = null;
 
             _atlas.Dispose();
             _pathAtlas.Dispose();
