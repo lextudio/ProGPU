@@ -20,6 +20,15 @@ public enum GpuHitTestPrimitiveKind : uint
     PathStroke = 7
 }
 
+public enum GpuHitTestIntersectionDetail : uint
+{
+    NotCalculated = 0,
+    Empty = 1,
+    FullyInside = 2,
+    FullyContains = 3,
+    Intersects = 4
+}
+
 [Flags]
 public enum GpuHitTestPrimitiveFlags : uint
 {
@@ -390,7 +399,7 @@ public struct GpuHitTestResult
     public uint CandidateCount;
     public uint NodesVisited;
     public uint PreciseTests;
-    public uint Pad0;
+    public uint IntersectionDetail;
 
     public readonly bool HasHit => Hit != 0;
 }
@@ -1314,7 +1323,7 @@ struct HitTestResult {
     candidate_count: u32,
     nodes_visited: u32,
     precise_tests: u32,
-    pad0: u32,
+    intersection_detail: u32,
 };
 
 @group(0) @binding(0) var<storage, read> query: HitTestQuery;
@@ -1348,6 +1357,11 @@ const PATH_CUBIC_STEPS: u32 = 24u;
 const PATH_ARC_STEPS: u32 = 24u;
 const QUERY_MODE_BOUNDS: u32 = 2147483648u;
 const QUERY_RESULT_CAPACITY_MASK: u32 = 65535u;
+const INTERSECTION_DETAIL_NOT_CALCULATED: u32 = 0u;
+const INTERSECTION_DETAIL_EMPTY: u32 = 1u;
+const INTERSECTION_DETAIL_FULLY_INSIDE: u32 = 2u;
+const INTERSECTION_DETAIL_FULLY_CONTAINS: u32 = 3u;
+const INTERSECTION_DETAIL_INTERSECTS: u32 = 4u;
 
 fn finite2(value: vec2<f32>) -> bool {
     return all(abs(value) < vec2<f32>(3.402823e38, 3.402823e38));
@@ -1359,6 +1373,10 @@ fn contains_bounds(point: vec2<f32>, min_value: vec2<f32>, max_value: vec2<f32>)
 
 fn intersects_bounds(a_min: vec2<f32>, a_max: vec2<f32>, b_min: vec2<f32>, b_max: vec2<f32>) -> bool {
     return a_max.x >= b_min.x && a_min.x <= b_max.x && a_max.y >= b_min.y && a_min.y <= b_max.y;
+}
+
+fn contains_rect_bounds(outer_min: vec2<f32>, outer_max: vec2<f32>, inner_min: vec2<f32>, inner_max: vec2<f32>) -> bool {
+    return inner_min.x >= outer_min.x && inner_max.x <= outer_max.x && inner_min.y >= outer_min.y && inner_max.y <= outer_max.y;
 }
 
 fn query_uses_bounds() -> bool {
@@ -1825,6 +1843,40 @@ fn primitive_is_hit_test_visible(primitive: HitTestPrimitive) -> bool {
     return (primitive.flags & FLAG_VISIBLE) != 0u && (primitive.flags & FLAG_HIT_TEST_VISIBLE) != 0u;
 }
 
+fn primitive_is_axis_aligned(primitive: HitTestPrimitive) -> bool {
+    return abs(primitive.inverse_transform0.y) <= 0.00001 && abs(primitive.inverse_transform1.x) <= 0.00001;
+}
+
+fn primitive_can_fully_contain_query_bounds(primitive: HitTestPrimitive) -> bool {
+    if (primitive.kind == KIND_BOUNDS) {
+        return primitive_is_axis_aligned(primitive);
+    }
+
+    if (primitive.kind == KIND_RECT_FILL) {
+        return primitive_is_axis_aligned(primitive) && abs(primitive.data1.x) <= 0.00001 && abs(primitive.data1.y) <= 0.00001;
+    }
+
+    return false;
+}
+
+fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
+    let region_min = query_region_min();
+    let region_max = query_region_max();
+    if (!intersects_bounds(region_min, region_max, primitive.bounds_min, primitive.bounds_max)) {
+        return INTERSECTION_DETAIL_EMPTY;
+    }
+
+    if (contains_rect_bounds(region_min, region_max, primitive.bounds_min, primitive.bounds_max)) {
+        return INTERSECTION_DETAIL_FULLY_INSIDE;
+    }
+
+    if (primitive_can_fully_contain_query_bounds(primitive) && contains_rect_bounds(primitive.bounds_min, primitive.bounds_max, region_min, region_max)) {
+        return INTERSECTION_DETAIL_FULLY_CONTAINS;
+    }
+
+    return INTERSECTION_DETAIL_INTERSECTS;
+}
+
 fn precise_hit(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
     if (!primitive_is_hit_test_visible(primitive)) {
         return false;
@@ -1871,18 +1923,19 @@ fn precise_hit(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
     return false;
 }
 
-fn write_hit_result(slot: u32, primitive_index: u32, primitive: HitTestPrimitive) {
+fn write_hit_result(slot: u32, primitive_index: u32, primitive: HitTestPrimitive, intersection_detail: u32) {
     results[slot].hit = 1u;
     results[slot].id = primitive.id;
     results[slot].primitive_index = primitive_index;
     results[slot].z_index = primitive.z_index;
+    results[slot].intersection_detail = intersection_detail;
 }
 
-fn record_hit(primitive_index: u32, primitive: HitTestPrimitive) {
+fn record_hit(primitive_index: u32, primitive: HitTestPrimitive, intersection_detail: u32) {
     let capacity = query_result_capacity();
     if (capacity == 0u) {
         if (results[0].hit == 0u || primitive.z_index >= results[0].z_index) {
-            write_hit_result(0u, primitive_index, primitive);
+            write_hit_result(0u, primitive_index, primitive, intersection_detail);
         }
 
         return;
@@ -1913,7 +1966,7 @@ fn record_hit(primitive_index: u32, primitive: HitTestPrimitive) {
         slot = slot - 1u;
     }
 
-    write_hit_result(slot, primitive_index, primitive);
+    write_hit_result(slot, primitive_index, primitive, intersection_detail);
 }
 
 @compute @workgroup_size(1)
@@ -1957,13 +2010,13 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     if (query_uses_bounds()) {
                         if (primitive_is_hit_test_visible(primitive) && query_intersects_bounds(primitive.bounds_min, primitive.bounds_max)) {
                             results[0].candidate_count = results[0].candidate_count + 1u;
-                            record_hit(primitive_index, primitive);
+                            record_hit(primitive_index, primitive, classify_bounds_intersection_detail(primitive));
                         }
                     } else if (contains_bounds(query.point, primitive.bounds_min, primitive.bounds_max)) {
                         results[0].candidate_count = results[0].candidate_count + 1u;
                         results[0].precise_tests = results[0].precise_tests + 1u;
                         if (precise_hit(query.point, primitive)) {
-                            record_hit(primitive_index, primitive);
+                            record_hit(primitive_index, primitive, INTERSECTION_DETAIL_NOT_CALCULATED);
                         }
                     }
                 }
