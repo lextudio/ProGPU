@@ -1933,6 +1933,28 @@ fn distance_squared_to_segment(point: vec2<f32>, start: vec2<f32>, end: vec2<f32
     return dot(delta, delta);
 }
 
+fn segment_intersects_ellipse_region(start: vec2<f32>, end: vec2<f32>, query_center: vec2<f32>, query_inverse_radii: vec2<f32>) -> bool {
+    if (query_inverse_radii.x <= 0.0 || query_inverse_radii.y <= 0.0) {
+        return false;
+    }
+
+    let normalized_start = (start - query_center) * query_inverse_radii;
+    let normalized_end = (end - query_center) * query_inverse_radii;
+    return distance_squared_to_segment(vec2<f32>(0.0, 0.0), normalized_start, normalized_end) <= 1.0;
+}
+
+fn stroked_segment_intersects_ellipse_region(start: vec2<f32>, end: vec2<f32>, half_stroke: f32, query_center: vec2<f32>, query_inverse_radii: vec2<f32>) -> bool {
+    if (half_stroke <= 0.0 || query_inverse_radii.x <= 0.0 || query_inverse_radii.y <= 0.0) {
+        return false;
+    }
+
+    let normalized_start = (start - query_center) * query_inverse_radii;
+    let normalized_end = (end - query_center) * query_inverse_radii;
+    let normalized_stroke_radius = half_stroke * max(query_inverse_radii.x, query_inverse_radii.y);
+    let hit_radius = 1.0 + normalized_stroke_radius;
+    return distance_squared_to_segment(vec2<f32>(0.0, 0.0), normalized_start, normalized_end) <= hit_radius * hit_radius;
+}
+
 fn line_stroke_intersects_ellipse_region(query_center: vec2<f32>, query_inverse_radii: vec2<f32>, primitive: HitTestPrimitive) -> bool {
     let stroke = abs(primitive.data1.x);
     if (stroke <= 0.0 || query_inverse_radii.x <= 0.0 || query_inverse_radii.y <= 0.0) {
@@ -2384,6 +2406,81 @@ fn path_fill_segments_intersect_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, p
     return false;
 }
 
+fn path_fill_segments_intersect_ellipse_region(query_center: vec2<f32>, query_inverse_radii: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    let start_segment = u32(primitive.data1.x + 0.5);
+    let segment_count = u32(primitive.data1.y + 0.5);
+    if (segment_count == 0u || start_segment >= query.path_segment_count) {
+        return false;
+    }
+
+    let end_segment = min(start_segment + segment_count, query.path_segment_count);
+    var segment_index = start_segment;
+    loop {
+        if (segment_index >= end_segment) {
+            break;
+        }
+
+        let segment = path_segments[segment_index];
+        if (segment.segment_type == SEGMENT_LINE) {
+            if (segment_intersects_ellipse_region(segment.p0, segment.p1, query_center, query_inverse_radii)) {
+                return true;
+            }
+        } else if (segment.segment_type == SEGMENT_QUADRATIC) {
+            var previous = segment.p0;
+            var step = 1u;
+            loop {
+                if (step > PATH_QUADRATIC_STEPS) {
+                    break;
+                }
+
+                let next_point = evaluate_quadratic(segment.p0, segment.p1, segment.p2, f32(step) / f32(PATH_QUADRATIC_STEPS));
+                if (segment_intersects_ellipse_region(previous, next_point, query_center, query_inverse_radii)) {
+                    return true;
+                }
+
+                previous = next_point;
+                step = step + 1u;
+            }
+        } else if (segment.segment_type == SEGMENT_CUBIC) {
+            var previous = segment.p0;
+            var step = 1u;
+            loop {
+                if (step > PATH_CUBIC_STEPS) {
+                    break;
+                }
+
+                let next_point = evaluate_cubic(segment.p0, segment.p1, segment.p2, segment.p3, f32(step) / f32(PATH_CUBIC_STEPS));
+                if (segment_intersects_ellipse_region(previous, next_point, query_center, query_inverse_radii)) {
+                    return true;
+                }
+
+                previous = next_point;
+                step = step + 1u;
+            }
+        } else if (segment.segment_type == SEGMENT_ARC) {
+            var previous = segment.p0;
+            var step = 1u;
+            loop {
+                if (step > PATH_ARC_STEPS) {
+                    break;
+                }
+
+                let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
+                if (segment_intersects_ellipse_region(previous, next_point, query_center, query_inverse_radii)) {
+                    return true;
+                }
+
+                previous = next_point;
+                step = step + 1u;
+            }
+        }
+
+        segment_index = segment_index + 1u;
+    }
+
+    return false;
+}
+
 fn classify_path_fill_rect_intersection_detail(rect_min: vec2<f32>, rect_max: vec2<f32>, primitive: HitTestPrimitive) -> u32 {
     let top_left = rect_min;
     let top_right = vec2<f32>(rect_max.x, rect_min.y);
@@ -2404,6 +2501,25 @@ fn classify_path_fill_rect_intersection_detail(rect_min: vec2<f32>, rect_max: ve
 
     if (top_left_inside || top_right_inside || bottom_right_inside || bottom_left_inside ||
         path_boundary_intersects_region) {
+        return INTERSECTION_DETAIL_INTERSECTS;
+    }
+
+    return INTERSECTION_DETAIL_EMPTY;
+}
+
+fn classify_path_fill_ellipse_region_intersection_detail(query_center: vec2<f32>, query_inverse_radii: vec2<f32>, primitive: HitTestPrimitive) -> u32 {
+    let radii = ellipse_radii_from_inverse(query_inverse_radii);
+    if (radii.x <= 0.0 || radii.y <= 0.0) {
+        return INTERSECTION_DETAIL_EMPTY;
+    }
+
+    let boundary_intersects_region = path_fill_segments_intersect_ellipse_region(query_center, query_inverse_radii, primitive);
+    if (boundary_intersects_region ||
+        contains_path_fill(query_center, primitive) ||
+        contains_path_fill(query_center + vec2<f32>(radii.x, 0.0), primitive) ||
+        contains_path_fill(query_center - vec2<f32>(radii.x, 0.0), primitive) ||
+        contains_path_fill(query_center + vec2<f32>(0.0, radii.y), primitive) ||
+        contains_path_fill(query_center - vec2<f32>(0.0, radii.y), primitive)) {
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
@@ -2568,6 +2684,83 @@ fn path_stroke_intersects_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, primiti
     return false;
 }
 
+fn path_stroke_intersects_ellipse_region(query_center: vec2<f32>, query_inverse_radii: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    let start_segment = u32(primitive.data1.x + 0.5);
+    let segment_count = u32(primitive.data1.y + 0.5);
+    let stroke = abs(primitive.data1.z);
+    if (stroke <= 0.0 || segment_count == 0u || start_segment >= query.path_segment_count) {
+        return false;
+    }
+
+    let half_stroke = (stroke * 0.5) + max(0.0, primitive.data1.w);
+    let end_segment = min(start_segment + segment_count, query.path_segment_count);
+    var segment_index = start_segment;
+    loop {
+        if (segment_index >= end_segment) {
+            break;
+        }
+
+        let segment = path_segments[segment_index];
+        if (segment.segment_type == SEGMENT_LINE) {
+            if (stroked_segment_intersects_ellipse_region(segment.p0, segment.p1, half_stroke, query_center, query_inverse_radii)) {
+                return true;
+            }
+        } else if (segment.segment_type == SEGMENT_QUADRATIC) {
+            var previous = segment.p0;
+            var step = 1u;
+            loop {
+                if (step > PATH_QUADRATIC_STEPS) {
+                    break;
+                }
+
+                let next_point = evaluate_quadratic(segment.p0, segment.p1, segment.p2, f32(step) / f32(PATH_QUADRATIC_STEPS));
+                if (stroked_segment_intersects_ellipse_region(previous, next_point, half_stroke, query_center, query_inverse_radii)) {
+                    return true;
+                }
+
+                previous = next_point;
+                step = step + 1u;
+            }
+        } else if (segment.segment_type == SEGMENT_CUBIC) {
+            var previous = segment.p0;
+            var step = 1u;
+            loop {
+                if (step > PATH_CUBIC_STEPS) {
+                    break;
+                }
+
+                let next_point = evaluate_cubic(segment.p0, segment.p1, segment.p2, segment.p3, f32(step) / f32(PATH_CUBIC_STEPS));
+                if (stroked_segment_intersects_ellipse_region(previous, next_point, half_stroke, query_center, query_inverse_radii)) {
+                    return true;
+                }
+
+                previous = next_point;
+                step = step + 1u;
+            }
+        } else if (segment.segment_type == SEGMENT_ARC) {
+            var previous = segment.p0;
+            var step = 1u;
+            loop {
+                if (step > PATH_ARC_STEPS) {
+                    break;
+                }
+
+                let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
+                if (stroked_segment_intersects_ellipse_region(previous, next_point, half_stroke, query_center, query_inverse_radii)) {
+                    return true;
+                }
+
+                previous = next_point;
+                step = step + 1u;
+            }
+        }
+
+        segment_index = segment_index + 1u;
+    }
+
+    return false;
+}
+
 fn primitive_is_hit_test_visible(primitive: HitTestPrimitive) -> bool {
     return (primitive.flags & FLAG_VISIBLE) != 0u && (primitive.flags & FLAG_HIT_TEST_VISIBLE) != 0u;
 }
@@ -2607,7 +2800,9 @@ fn primitive_uses_precise_ellipse_region_test(primitive: HitTestPrimitive) -> bo
             abs(primitive.data1.y) <= 0.00001) ||
             primitive.kind == KIND_ELLIPSE_FILL ||
             primitive.kind == KIND_ELLIPSE_STROKE ||
-            primitive.kind == KIND_LINE_STROKE);
+            primitive.kind == KIND_LINE_STROKE ||
+            primitive.kind == KIND_PATH_FILL ||
+            primitive.kind == KIND_PATH_STROKE);
 }
 
 fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u32 {
@@ -2648,6 +2843,16 @@ fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u
             let query_center = (local_region_min + local_region_max) * 0.5;
             let query_inverse_radii = ellipse_inverse_radii_from_bounds(local_region_min, local_region_max);
             if (!line_stroke_intersects_ellipse_region(query_center, query_inverse_radii, primitive)) {
+                return INTERSECTION_DETAIL_EMPTY;
+            }
+        } else if (primitive.kind == KIND_PATH_FILL) {
+            let query_center = (local_region_min + local_region_max) * 0.5;
+            let query_inverse_radii = ellipse_inverse_radii_from_bounds(local_region_min, local_region_max);
+            return classify_path_fill_ellipse_region_intersection_detail(query_center, query_inverse_radii, primitive);
+        } else if (primitive.kind == KIND_PATH_STROKE) {
+            let query_center = (local_region_min + local_region_max) * 0.5;
+            let query_inverse_radii = ellipse_inverse_radii_from_bounds(local_region_min, local_region_max);
+            if (!path_stroke_intersects_ellipse_region(query_center, query_inverse_radii, primitive)) {
                 return INTERSECTION_DETAIL_EMPTY;
             }
         } else {
