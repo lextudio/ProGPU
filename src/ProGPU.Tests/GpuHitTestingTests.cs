@@ -516,7 +516,7 @@ public sealed class GpuHitTestingTests
             [(uint)GpuHitTestIntersectionDetail.Intersects, (uint)GpuHitTestIntersectionDetail.Intersects],
             results.Take(hitCount).Select(result => result.IntersectionDetail).ToArray());
         Assert.Equal(2u, summary.CandidateCount);
-        Assert.Equal(0u, summary.PreciseTests);
+        Assert.Equal(2u, summary.PreciseTests);
         Assert.True(summary.NodesVisited > 0);
     }
 
@@ -565,6 +565,101 @@ public sealed class GpuHitTestingTests
         Assert.Equal(1, hitCount);
         Assert.Equal(10, results[0].Id);
         Assert.Equal((uint)GpuHitTestIntersectionDetail.FullyContains, results[0].IntersectionDetail);
+    }
+
+    [Fact]
+    public void TryQueryBoundsAllRejectsRoundedRectangleCornerFalsePositiveOnGpu()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+
+        GpuHitTestPrimitive[] primitives =
+        [
+            GpuHitTestPrimitive.RectangleFill(39, new Vector2(0f, 0f), new Vector2(10f, 10f), new Vector2(4f, 4f))
+        ];
+        var index = GpuHitTestIndex.Build(primitives, maxDepth: 2, maxPrimitivesPerNode: 1);
+        var results = new GpuHitTestResult[4];
+
+        bool hit = GpuHitTestEngine.TryQueryBoundsAll(
+            context,
+            index,
+            new Vector2(0f, 0f),
+            new Vector2(1f, 1f),
+            results,
+            out int hitCount,
+            out GpuHitTestResult summary);
+
+        Assert.False(hit);
+        Assert.Equal(0, hitCount);
+        Assert.Equal(1u, summary.CandidateCount);
+        Assert.Equal(1u, summary.PreciseTests);
+
+        Array.Clear(results);
+        hit = GpuHitTestEngine.TryQueryBoundsAll(
+            context,
+            index,
+            new Vector2(0f, 4f),
+            new Vector2(1f, 5f),
+            results,
+            out hitCount,
+            out summary);
+
+        Assert.True(hit);
+        Assert.Equal(1, hitCount);
+        Assert.Equal(39, results[0].Id);
+        Assert.Equal((uint)GpuHitTestIntersectionDetail.FullyContains, results[0].IntersectionDetail);
+        Assert.Equal(1u, summary.CandidateCount);
+        Assert.Equal(1u, summary.PreciseTests);
+    }
+
+    [Fact]
+    public void TryQueryBoundsAllRejectsRectangleStrokeHoleOnGpu()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+
+        GpuHitTestPrimitive[] primitives =
+        [
+            GpuHitTestPrimitive.RectangleStroke(
+                40,
+                new Vector2(0f, 0f),
+                new Vector2(10f, 10f),
+                Vector2.Zero,
+                2f)
+        ];
+        var index = GpuHitTestIndex.Build(primitives, maxDepth: 2, maxPrimitivesPerNode: 1);
+        var results = new GpuHitTestResult[4];
+
+        bool hit = GpuHitTestEngine.TryQueryBoundsAll(
+            context,
+            index,
+            new Vector2(4f, 4f),
+            new Vector2(6f, 6f),
+            results,
+            out int hitCount,
+            out GpuHitTestResult summary);
+
+        Assert.False(hit);
+        Assert.Equal(0, hitCount);
+        Assert.Equal(1u, summary.CandidateCount);
+        Assert.Equal(1u, summary.PreciseTests);
+
+        Array.Clear(results);
+        hit = GpuHitTestEngine.TryQueryBoundsAll(
+            context,
+            index,
+            new Vector2(0f, -0.5f),
+            new Vector2(1f, 0.5f),
+            results,
+            out hitCount,
+            out summary);
+
+        Assert.True(hit);
+        Assert.Equal(1, hitCount);
+        Assert.Equal(40, results[0].Id);
+        Assert.Equal((uint)GpuHitTestIntersectionDetail.Intersects, results[0].IntersectionDetail);
+        Assert.Equal(1u, summary.CandidateCount);
+        Assert.Equal(1u, summary.PreciseTests);
     }
 
     [Fact]

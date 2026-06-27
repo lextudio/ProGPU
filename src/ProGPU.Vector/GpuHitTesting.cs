@@ -1469,6 +1469,64 @@ fn contains_rounded_rect(point: vec2<f32>, min_value: vec2<f32>, max_value: vec2
     return dot(normalized, normalized) <= 1.0;
 }
 
+fn rect_intersects_rounded_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, min_value: vec2<f32>, max_value: vec2<f32>, radius: vec2<f32>) -> bool {
+    if (!intersects_bounds(rect_min, rect_max, min_value, max_value)) {
+        return false;
+    }
+
+    let size = max_value - min_value;
+    let rx = min(abs(radius.x), size.x * 0.5);
+    let ry = min(abs(radius.y), size.y * 0.5);
+    if (rx <= 0.0 || ry <= 0.0) {
+        return true;
+    }
+
+    if (intersects_bounds(rect_min, rect_max, vec2<f32>(min_value.x + rx, min_value.y), vec2<f32>(max_value.x - rx, max_value.y)) ||
+        intersects_bounds(rect_min, rect_max, vec2<f32>(min_value.x, min_value.y + ry), vec2<f32>(max_value.x, max_value.y - ry))) {
+        return true;
+    }
+
+    let corner_radius = vec2<f32>(rx, ry);
+    return rect_intersects_ellipse(rect_min, rect_max, min_value, min_value + corner_radius * 2.0) ||
+        rect_intersects_ellipse(rect_min, rect_max, vec2<f32>(max_value.x - 2.0 * rx, min_value.y), vec2<f32>(max_value.x, min_value.y + 2.0 * ry)) ||
+        rect_intersects_ellipse(rect_min, rect_max, vec2<f32>(max_value.x - 2.0 * rx, max_value.y - 2.0 * ry), max_value) ||
+        rect_intersects_ellipse(rect_min, rect_max, vec2<f32>(min_value.x, max_value.y - 2.0 * ry), vec2<f32>(min_value.x + 2.0 * rx, max_value.y));
+}
+
+fn rounded_rect_contains_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, min_value: vec2<f32>, max_value: vec2<f32>, radius: vec2<f32>) -> bool {
+    return contains_rounded_rect(rect_min, min_value, max_value, radius) &&
+        contains_rounded_rect(vec2<f32>(rect_max.x, rect_min.y), min_value, max_value, radius) &&
+        contains_rounded_rect(rect_max, min_value, max_value, radius) &&
+        contains_rounded_rect(vec2<f32>(rect_min.x, rect_max.y), min_value, max_value, radius);
+}
+
+fn rect_intersects_rect_stroke(rect_min: vec2<f32>, rect_max: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+    let stroke = abs(primitive.data1.z);
+    if (stroke <= 0.0) {
+        return false;
+    }
+
+    let tolerance = max(0.0, primitive.data1.w);
+    let half_stroke = stroke * 0.5 + tolerance;
+    let original_min = primitive.data0.xy;
+    let original_max = primitive.data0.zw;
+    let outer_min = original_min - vec2<f32>(half_stroke, half_stroke);
+    let outer_max = original_max + vec2<f32>(half_stroke, half_stroke);
+    let outer_radius = abs(primitive.data1.xy) + vec2<f32>(half_stroke, half_stroke);
+    if (!rect_intersects_rounded_rect(rect_min, rect_max, outer_min, outer_max, outer_radius)) {
+        return false;
+    }
+
+    let inner_min = original_min + vec2<f32>(half_stroke, half_stroke);
+    let inner_max = original_max - vec2<f32>(half_stroke, half_stroke);
+    if (inner_max.x <= inner_min.x || inner_max.y <= inner_min.y) {
+        return true;
+    }
+
+    let inner_radius = max(vec2<f32>(0.0, 0.0), abs(primitive.data1.xy) - vec2<f32>(half_stroke, half_stroke));
+    return !rounded_rect_contains_rect(rect_min, rect_max, inner_min, inner_max, inner_radius);
+}
+
 fn contains_rect_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
     let stroke = abs(primitive.data1.z);
     if (stroke <= 0.0) {
@@ -2298,7 +2356,9 @@ fn primitive_can_fully_contain_query_bounds(primitive: HitTestPrimitive) -> bool
 
 fn primitive_uses_precise_bounds_region_test(primitive: HitTestPrimitive) -> bool {
     return primitive_is_axis_aligned(primitive) &&
-        (primitive.kind == KIND_ELLIPSE_FILL ||
+        (primitive.kind == KIND_RECT_FILL ||
+            primitive.kind == KIND_RECT_STROKE ||
+            primitive.kind == KIND_ELLIPSE_FILL ||
             primitive.kind == KIND_ELLIPSE_STROKE ||
             primitive.kind == KIND_LINE_STROKE ||
             primitive.kind == KIND_PATH_FILL ||
@@ -2319,7 +2379,19 @@ fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
     if (primitive_uses_precise_bounds_region_test(primitive)) {
         let local_region_min = transform_bounds_to_local_min(region_min, region_max, primitive);
         let local_region_max = transform_bounds_to_local_max(region_min, region_max, primitive);
-        if (primitive.kind == KIND_ELLIPSE_FILL) {
+        if (primitive.kind == KIND_RECT_FILL) {
+            if (!rect_intersects_rounded_rect(local_region_min, local_region_max, primitive.data0.xy, primitive.data0.zw, primitive.data1.xy)) {
+                return INTERSECTION_DETAIL_EMPTY;
+            }
+
+            if (rounded_rect_contains_rect(local_region_min, local_region_max, primitive.data0.xy, primitive.data0.zw, primitive.data1.xy)) {
+                return INTERSECTION_DETAIL_FULLY_CONTAINS;
+            }
+        } else if (primitive.kind == KIND_RECT_STROKE) {
+            if (!rect_intersects_rect_stroke(local_region_min, local_region_max, primitive)) {
+                return INTERSECTION_DETAIL_EMPTY;
+            }
+        } else if (primitive.kind == KIND_ELLIPSE_FILL) {
             if (!rect_intersects_ellipse(local_region_min, local_region_max, primitive.data0.xy, primitive.data0.zw)) {
                 return INTERSECTION_DETAIL_EMPTY;
             }
