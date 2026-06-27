@@ -40,6 +40,15 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
 
     public void AddCommand(in RenderCommand command, Matrix4x4 activeTransform, int? id = null)
     {
+        AddCommand(command, activeTransform, provider: null, id);
+    }
+
+    public void AddCommand(
+        in RenderCommand command,
+        Matrix4x4 activeTransform,
+        IRenderDataProvider? provider,
+        int? id = null)
+    {
         activeTransform = NormalizeTransform(activeTransform);
 
         switch (command.Type)
@@ -105,7 +114,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
                 AddQuadBounds(command, activeTransform, primitiveId, zIndex);
                 break;
             case RenderCommandType.DrawPolyline:
-                AddPolylineBounds(command, activeTransform, primitiveId, zIndex);
+                AddPolyline(command, activeTransform, primitiveId, zIndex, provider);
                 break;
         }
     }
@@ -415,29 +424,56 @@ public sealed class GpuRenderCommandHitTestCacheBuilder
         AddPrimitive(GpuHitTestPrimitive.Bounds(id, min, max, transform, zIndex));
     }
 
-    private void AddPolylineBounds(RenderCommand command, Matrix4x4 transform, int id, float zIndex)
+    private void AddPolyline(
+        RenderCommand command,
+        Matrix4x4 transform,
+        int id,
+        float zIndex,
+        IRenderDataProvider? provider)
     {
-        if (command.PolylinePoints is not { Length: > 0 } points)
+        ReadOnlySpan<Vector2> points = GetPolylinePoints(command, provider);
+        if (points.Length < 2 || command.Pen is not { Thickness: > 0f } pen)
         {
             return;
         }
 
-        Vector2 min = points[0];
-        Vector2 max = points[0];
+        var path = CreatePolylinePath(points, command.IsClosed);
+        if (pen.HasDashPattern)
+        {
+            if (Compositor.TryCreateDashedStrokePath(path, pen, out var strokePath))
+            {
+                TryAddPathStrokePrimitive(strokePath, transform, id, zIndex, Compositor.CreateUndashedPen(pen));
+            }
+
+            return;
+        }
+
+        TryAddPathStrokePrimitive(path, transform, id, zIndex, pen);
+    }
+
+    private static ReadOnlySpan<Vector2> GetPolylinePoints(RenderCommand command, IRenderDataProvider? provider)
+    {
+        if (provider != null && command.PointBufferCount > 0)
+        {
+            return provider.GetPoints(command.PointBufferOffset, command.PointBufferCount);
+        }
+
+        return command.PolylinePoints is { Length: > 0 } points
+            ? points
+            : ReadOnlySpan<Vector2>.Empty;
+    }
+
+    private static PathGeometry CreatePolylinePath(ReadOnlySpan<Vector2> points, bool isClosed)
+    {
+        var path = new PathGeometry();
+        var figure = new PathFigure(points[0], isClosed);
         for (int i = 1; i < points.Length; i++)
         {
-            min = Vector2.Min(min, points[i]);
-            max = Vector2.Max(max, points[i]);
+            figure.Segments.Add(new LineSegment(points[i]));
         }
 
-        if (command.Pen is { Thickness: > 0f } pen)
-        {
-            var padding = new Vector2(pen.Thickness * 0.5f);
-            min -= padding;
-            max += padding;
-        }
-
-        AddPrimitive(GpuHitTestPrimitive.Bounds(id, min, max, transform, zIndex));
+        path.Figures.Add(figure);
+        return path;
     }
 
     private void AddPrimitive(GpuHitTestPrimitive primitive)

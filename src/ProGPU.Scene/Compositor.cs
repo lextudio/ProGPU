@@ -343,6 +343,14 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform, IRenderDataProvider provider)
+    {
+        if (!_suspendHitTestCacheWrites)
+        {
+            _hitTestCacheBuilder.AddCommand(command, transform, provider);
+        }
+    }
+
     private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform, int id)
     {
         if (!_suspendHitTestCacheWrites)
@@ -385,6 +393,16 @@ public unsafe class Compositor : IDisposable
         }
 
         AddHitTestCommand(command, transform);
+    }
+
+    private void AddHitTestDrawCommand(RenderCommand command, Matrix4x4 transform, IRenderDataProvider provider)
+    {
+        if (IsHitTestStateCommand(command.Type))
+        {
+            return;
+        }
+
+        AddHitTestCommand(command, transform, provider);
     }
 
     private static bool IsHitTestStateCommand(RenderCommandType type)
@@ -2662,7 +2680,7 @@ public unsafe class Compositor : IDisposable
                         break;
                 }
 
-                AddHitTestDrawCommand(cmd, activeTransform);
+                AddHitTestDrawCommand(cmd, activeTransform, ctx);
 
                 if (cmd.UseGpuTransforms)
                 {

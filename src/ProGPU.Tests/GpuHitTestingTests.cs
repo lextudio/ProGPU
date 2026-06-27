@@ -348,6 +348,54 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void RenderCommandCacheBuildsPolylineAsGpuPathStroke()
+    {
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPolyline,
+            HitTestId = 81,
+            PolylinePoints =
+            [
+                new Vector2(0f, 0f),
+                new Vector2(10f, 0f),
+                new Vector2(10f, 10f)
+            ],
+            Pen = new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)), 2f)
+        }, Matrix4x4.Identity);
+
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        var primitive = Assert.Single(index.Primitives);
+        Assert.Equal(GpuHitTestPrimitiveKind.PathStroke, primitive.Kind);
+        Assert.Equal(81, primitive.Id);
+        Assert.Equal(2, index.PathSegments.Count);
+    }
+
+    [Fact]
+    public void RenderCommandCacheBuildsProviderPolylineAsGpuPathStroke()
+    {
+        var context = new DrawingContext();
+        context.DrawPolyline(
+            new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)), 2f),
+            [
+                new Vector2(0f, 0f),
+                new Vector2(10f, 0f),
+                new Vector2(10f, 10f)
+            ]);
+
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(context.Commands[0], Matrix4x4.Identity, context, id: 82);
+
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        var primitive = Assert.Single(index.Primitives);
+        Assert.Equal(GpuHitTestPrimitiveKind.PathStroke, primitive.Kind);
+        Assert.Equal(82, primitive.Id);
+        Assert.Equal(2, index.PathSegments.Count);
+    }
+
+    [Fact]
     public void RenderCommandCacheSkipsUncompiledPathsInsteadOfAddingBoundsHit()
     {
         var combined = new PathGeometry
@@ -523,6 +571,35 @@ public sealed class GpuHitTestingTests
         Assert.Equal(91, dashResult.Id);
         Assert.False(gapHit);
         Assert.False(gapResult.HasHit);
+    }
+
+    [Fact]
+    public void RenderCommandCacheFeedsGpuProviderPolylineStrokeHitTesting()
+    {
+        using var gpu = new WgpuContext();
+        gpu.Initialize(null);
+
+        var context = new DrawingContext();
+        context.DrawPolyline(
+            new Pen(new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)), 2f),
+            [
+                new Vector2(0f, 0f),
+                new Vector2(10f, 0f),
+                new Vector2(10f, 10f)
+            ]);
+
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(context.Commands[0], Matrix4x4.Identity, context, id: 93);
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        bool strokeHit = GpuHitTestEngine.TryHitTestPoint(gpu, index, new Vector2(5f, 0.5f), out GpuHitTestResult result);
+        bool boundsOnlyMiss = GpuHitTestEngine.TryHitTestPoint(gpu, index, new Vector2(5f, 5f), out GpuHitTestResult missResult);
+
+        Assert.True(strokeHit);
+        Assert.Equal(93, result.Id);
+        Assert.False(boundsOnlyMiss);
+        Assert.False(missResult.HasHit);
+        Assert.True(missResult.CandidateCount > 0);
     }
 
     [Fact]
