@@ -110,6 +110,55 @@ public sealed class PortableWindowActivationCallbacks
     public Func<object, IntPtr>? GetHandle { get; }
 }
 
+public sealed class PortableWindowInputEvent
+{
+    public PortableWindowInputEvent(
+        int kind,
+        string? key = null,
+        int scanCode = 0,
+        char? character = null,
+        double x = 0,
+        double y = 0,
+        double deltaX = 0,
+        double deltaY = 0,
+        int button = 0,
+        int modifiers = 0)
+    {
+        Kind = kind;
+        Key = key;
+        ScanCode = scanCode;
+        Character = character;
+        X = x;
+        Y = y;
+        DeltaX = deltaX;
+        DeltaY = deltaY;
+        Button = button;
+        Modifiers = modifiers;
+    }
+
+    public int Kind { get; }
+
+    public string? Key { get; }
+
+    public int ScanCode { get; }
+
+    public char? Character { get; }
+
+    public double X { get; }
+
+    public double Y { get; }
+
+    public double DeltaX { get; }
+
+    public double DeltaY { get; }
+
+    public int Button { get; }
+
+    public int Modifiers { get; }
+
+    public bool Handled { get; set; }
+}
+
 public interface IPortableWindowActivationServiceRegistrar
 {
     Assembly SourceAssembly { get; }
@@ -117,6 +166,8 @@ public interface IPortableWindowActivationServiceRegistrar
     void Register(PortableWindowActivationCallbacks callbacks);
 
     bool TrySetActivationState(object window, bool isActive);
+
+    bool TryProcessInputEvent(object window, PortableWindowInputEvent input);
 
     bool TryFlushDispatcherOperations(object window, string markerPriorityName, TimeSpan? timeout);
 
