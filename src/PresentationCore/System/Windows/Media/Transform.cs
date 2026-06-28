@@ -1,10 +1,56 @@
+using System;
 using System.Numerics;
+using ProGPU.Wpf.Interop;
 
 namespace System.Windows.Media;
 
-public abstract class Transform
+public abstract class Transform : IPortableTransformMatrixSource
 {
     public abstract Matrix4x4 Value { get; }
+
+    bool IPortableTransformMatrixSource.TryGetPortableTransformMatrix(out PortableMatrix3x2 matrix)
+    {
+        var value = Value;
+        if (!IsAffine2D(value)
+            || !float.IsFinite(value.M11)
+            || !float.IsFinite(value.M12)
+            || !float.IsFinite(value.M21)
+            || !float.IsFinite(value.M22)
+            || !float.IsFinite(value.M41)
+            || !float.IsFinite(value.M42))
+        {
+            matrix = default;
+            return false;
+        }
+
+        matrix = new PortableMatrix3x2(
+            value.M11,
+            value.M12,
+            value.M21,
+            value.M22,
+            value.M41,
+            value.M42);
+        return true;
+    }
+
+    private static bool IsAffine2D(Matrix4x4 value)
+    {
+        return NearlyEqual(value.M13, 0)
+            && NearlyEqual(value.M14, 0)
+            && NearlyEqual(value.M23, 0)
+            && NearlyEqual(value.M24, 0)
+            && NearlyEqual(value.M31, 0)
+            && NearlyEqual(value.M32, 0)
+            && NearlyEqual(value.M33, 1)
+            && NearlyEqual(value.M34, 0)
+            && NearlyEqual(value.M43, 0)
+            && NearlyEqual(value.M44, 1);
+    }
+
+    private static bool NearlyEqual(float left, float right)
+    {
+        return Math.Abs(left - right) <= 0.00001f;
+    }
 }
 
 public struct Matrix
