@@ -11,10 +11,40 @@ public interface IPortableClipboardServiceRegistrar
     void Clear();
 }
 
+public interface IPortableLauncherServiceRegistrar
+{
+    Assembly SourceAssembly { get; }
+
+    IDisposable Register(Func<object, bool> launch);
+
+    void Clear();
+}
+
+public interface IPortableMessageBoxServiceRegistrar
+{
+    Assembly SourceAssembly { get; }
+
+    IDisposable Register(Func<object, object?> show);
+
+    void Clear();
+}
+
+public interface IPortableFileDialogServiceRegistrar
+{
+    Assembly SourceAssembly { get; }
+
+    IDisposable Register(Func<object, string?> showDialog);
+
+    void Clear();
+}
+
 public static class PortableWpfServiceRegistry
 {
     private static readonly object SyncRoot = new();
     private static readonly Dictionary<Assembly, IPortableClipboardServiceRegistrar> ClipboardServices = new();
+    private static readonly Dictionary<Assembly, IPortableLauncherServiceRegistrar> LauncherServices = new();
+    private static readonly Dictionary<Assembly, IPortableMessageBoxServiceRegistrar> MessageBoxServices = new();
+    private static readonly Dictionary<Assembly, IPortableFileDialogServiceRegistrar> FileDialogServices = new();
 
     public static IDisposable RegisterClipboardService(IPortableClipboardServiceRegistrar service)
     {
@@ -25,7 +55,7 @@ public static class PortableWpfServiceRegistry
             ClipboardServices[service.SourceAssembly] = service;
         }
 
-        return new Registration(service);
+        return new Registration<IPortableClipboardServiceRegistrar>(service, ClipboardServices);
     }
 
     public static bool TryGetClipboardService(
@@ -40,13 +70,88 @@ public static class PortableWpfServiceRegistry
         }
     }
 
-    private sealed class Registration : IDisposable
+    public static IDisposable RegisterLauncherService(IPortableLauncherServiceRegistrar service)
     {
-        private IPortableClipboardServiceRegistrar? _service;
+        ArgumentNullException.ThrowIfNull(service);
 
-        public Registration(IPortableClipboardServiceRegistrar service)
+        lock (SyncRoot)
+        {
+            LauncherServices[service.SourceAssembly] = service;
+        }
+
+        return new Registration<IPortableLauncherServiceRegistrar>(service, LauncherServices);
+    }
+
+    public static bool TryGetLauncherService(
+        Assembly sourceAssembly,
+        out IPortableLauncherServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(sourceAssembly);
+
+        lock (SyncRoot)
+        {
+            return LauncherServices.TryGetValue(sourceAssembly, out service!);
+        }
+    }
+
+    public static IDisposable RegisterMessageBoxService(IPortableMessageBoxServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+
+        lock (SyncRoot)
+        {
+            MessageBoxServices[service.SourceAssembly] = service;
+        }
+
+        return new Registration<IPortableMessageBoxServiceRegistrar>(service, MessageBoxServices);
+    }
+
+    public static bool TryGetMessageBoxService(
+        Assembly sourceAssembly,
+        out IPortableMessageBoxServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(sourceAssembly);
+
+        lock (SyncRoot)
+        {
+            return MessageBoxServices.TryGetValue(sourceAssembly, out service!);
+        }
+    }
+
+    public static IDisposable RegisterFileDialogService(IPortableFileDialogServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+
+        lock (SyncRoot)
+        {
+            FileDialogServices[service.SourceAssembly] = service;
+        }
+
+        return new Registration<IPortableFileDialogServiceRegistrar>(service, FileDialogServices);
+    }
+
+    public static bool TryGetFileDialogService(
+        Assembly sourceAssembly,
+        out IPortableFileDialogServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(sourceAssembly);
+
+        lock (SyncRoot)
+        {
+            return FileDialogServices.TryGetValue(sourceAssembly, out service!);
+        }
+    }
+
+    private sealed class Registration<TService> : IDisposable
+        where TService : class
+    {
+        private readonly Dictionary<Assembly, TService> _services;
+        private TService? _service;
+
+        public Registration(TService service, Dictionary<Assembly, TService> services)
         {
             _service = service;
+            _services = services;
         }
 
         public void Dispose()
@@ -61,12 +166,25 @@ public static class PortableWpfServiceRegistry
 
             lock (SyncRoot)
             {
-                if (ClipboardServices.TryGetValue(service.SourceAssembly, out var current) &&
+                var sourceAssembly = GetSourceAssembly(service);
+                if (_services.TryGetValue(sourceAssembly, out var current) &&
                     ReferenceEquals(current, service))
                 {
-                    ClipboardServices.Remove(service.SourceAssembly);
+                    _services.Remove(sourceAssembly);
                 }
             }
+        }
+
+        private static Assembly GetSourceAssembly(TService service)
+        {
+            return service switch
+            {
+                IPortableClipboardServiceRegistrar clipboardService => clipboardService.SourceAssembly,
+                IPortableLauncherServiceRegistrar launcherService => launcherService.SourceAssembly,
+                IPortableMessageBoxServiceRegistrar messageBoxService => messageBoxService.SourceAssembly,
+                IPortableFileDialogServiceRegistrar fileDialogService => fileDialogService.SourceAssembly,
+                _ => throw new InvalidOperationException("Unsupported portable WPF service registrar.")
+            };
         }
     }
 }
