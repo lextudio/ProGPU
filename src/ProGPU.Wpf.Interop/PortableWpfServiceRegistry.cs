@@ -120,6 +120,17 @@ public interface IPortableWindowActivationServiceRegistrar
 
     bool TryFlushDispatcherOperations(object window, string markerPriorityName, TimeSpan? timeout);
 
+    bool TryProcessDragDropEvent(
+        object window,
+        int dragDropEventKind,
+        string[] files,
+        string? text,
+        double x,
+        double y,
+        int allowedEffects,
+        int acceptedEffect,
+        out int result);
+
     void Clear();
 }
 
