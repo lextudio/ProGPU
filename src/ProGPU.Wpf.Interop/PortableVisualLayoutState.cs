@@ -14,4 +14,8 @@ public sealed class PortableVisualLayoutState
     public bool HasClipToBounds { get; set; }
 
     public bool ClipToBounds { get; set; }
+
+    public bool HasLayoutClip { get; set; }
+
+    public object? LayoutClip { get; set; }
 }
