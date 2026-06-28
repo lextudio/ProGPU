@@ -1,0 +1,76 @@
+namespace ProGPU.Wpf.Interop;
+
+public interface IPortableEffectSource
+{
+    bool TryGetPortableEffect(out PortableEffect effect);
+}
+
+public enum PortableEffectKind
+{
+    Blur = 0,
+    DropShadow = 1
+}
+
+public sealed class PortableEffect
+{
+    private PortableEffect(
+        PortableEffectKind kind,
+        double radius,
+        double blurRadius,
+        double shadowDepth,
+        double direction,
+        double opacity,
+        PortableColor color)
+    {
+        Kind = kind;
+        Radius = double.IsFinite(radius) ? radius : 0.0;
+        BlurRadius = double.IsFinite(blurRadius) ? blurRadius : 0.0;
+        ShadowDepth = double.IsFinite(shadowDepth) ? shadowDepth : 0.0;
+        Direction = double.IsFinite(direction) ? direction : 0.0;
+        Opacity = double.IsFinite(opacity) ? opacity : 1.0;
+        Color = color;
+    }
+
+    public PortableEffectKind Kind { get; }
+
+    public double Radius { get; }
+
+    public double BlurRadius { get; }
+
+    public double ShadowDepth { get; }
+
+    public double Direction { get; }
+
+    public double Opacity { get; }
+
+    public PortableColor Color { get; }
+
+    public static PortableEffect Blur(double radius)
+    {
+        return new PortableEffect(
+            PortableEffectKind.Blur,
+            radius,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            new PortableColor(255, 0, 0, 0));
+    }
+
+    public static PortableEffect DropShadow(
+        double blurRadius,
+        double shadowDepth,
+        double direction,
+        double opacity,
+        PortableColor color)
+    {
+        return new PortableEffect(
+            PortableEffectKind.DropShadow,
+            0.0,
+            blurRadius,
+            shadowDepth,
+            direction,
+            opacity,
+            color);
+    }
+}
