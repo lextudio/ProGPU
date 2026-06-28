@@ -167,6 +167,8 @@ public interface IPortableWindowActivationServiceRegistrar
 
     bool TrySetActivationState(object window, bool isActive);
 
+    bool TryBeginInvokeInput(object window, Action callback);
+
     bool TryProcessInputEvent(object window, PortableWindowInputEvent input);
 
     bool TryFlushDispatcherOperations(object window, string markerPriorityName, TimeSpan? timeout);
