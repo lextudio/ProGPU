@@ -29,7 +29,7 @@ public class Button : ContentControl
     {
         if (IsEnabled && IsPointerPressed && IsPointerOver)
         {
-            Click?.Invoke(this, EventArgs.Empty);
+            OnClick();
         }
         base.OnPointerReleased(e);
     }
@@ -53,10 +53,15 @@ public class Button : ContentControl
     {
         if (IsEnabled && (e.Key == Silk.NET.Input.Key.Space || e.Key == Silk.NET.Input.Key.Enter))
         {
-            Click?.Invoke(this, EventArgs.Empty);
+            OnClick();
             e.Handled = true;
             return;
         }
         base.OnKeyDown(e);
+    }
+
+    protected virtual void OnClick()
+    {
+        Click?.Invoke(this, EventArgs.Empty);
     }
 }

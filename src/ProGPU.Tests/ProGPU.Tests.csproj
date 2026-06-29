@@ -24,6 +24,7 @@
     <ProjectReference Include="..\ProGPU.Avalonia\ProGPU.Avalonia.csproj" />
     <ProjectReference Include="..\ProGPU.DirectX\ProGPU.DirectX.csproj" />
     <ProjectReference Include="..\ProGPU.Tests.Headless\ProGPU.Tests.Headless.csproj" />
+    <ProjectReference Include="..\ProGPU.Wpf.Interop\ProGPU.Wpf.Interop.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
   </ItemGroup>
 </Project>

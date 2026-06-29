@@ -159,6 +159,26 @@ public class ControlRenderTests
     }
 
     [Fact]
+    public void RepeatButton_RaisesClickThroughTypedButtonHook()
+    {
+        var button = new RepeatButton
+        {
+            Width = 120f,
+            Height = 32f,
+            Delay = 10_000,
+            Interval = 10_000
+        };
+        var clicks = 0;
+        button.Click += (_, _) => clicks++;
+
+        button.OnPointerEntered(new PointerRoutedEventArgs { Position = new Vector2(10f, 10f) });
+        button.OnPointerPressed(new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = true });
+        button.OnPointerReleased(new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = false });
+
+        Assert.Equal(1, clicks);
+    }
+
+    [Fact]
     public void Slider_AllStates_RenderCorrectly()
     {
         var slider = new Slider
@@ -697,4 +717,3 @@ public class ControlRenderTests
         Assert.Contains(new TestEdge(2, 3), uniqueEdges);
     }
 }
-
