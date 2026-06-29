@@ -17,6 +17,13 @@ public enum PortableShaderSamplingMode
     Auto = 2
 }
 
+public enum PortableShaderSamplerKind
+{
+    Brush = 0,
+    ImplicitInput = 1,
+    ImageSource = 2
+}
+
 public sealed class PortablePixelShader
 {
     public PortablePixelShader(
@@ -50,15 +57,61 @@ public sealed class PortableShaderSampler
         int registerIndex,
         object brush,
         PortableShaderSamplingMode samplingMode)
+        : this(
+            registerIndex,
+            PortableShaderSamplerKind.Brush,
+            brush ?? throw new ArgumentNullException(nameof(brush)),
+            imageSource: null,
+            samplingMode)
+    {
+    }
+
+    private PortableShaderSampler(
+        int registerIndex,
+        PortableShaderSamplerKind kind,
+        object? brush,
+        object? imageSource,
+        PortableShaderSamplingMode samplingMode)
     {
         RegisterIndex = registerIndex;
-        Brush = brush ?? throw new ArgumentNullException(nameof(brush));
+        Kind = kind;
+        Brush = brush;
+        ImageSource = imageSource;
         SamplingMode = samplingMode;
+    }
+
+    public static PortableShaderSampler ImplicitInput(
+        int registerIndex,
+        PortableShaderSamplingMode samplingMode)
+    {
+        return new PortableShaderSampler(
+            registerIndex,
+            PortableShaderSamplerKind.ImplicitInput,
+            brush: null,
+            imageSource: null,
+            samplingMode);
+    }
+
+    public static PortableShaderSampler Image(
+        int registerIndex,
+        object? imageSource,
+        PortableShaderSamplingMode samplingMode)
+    {
+        return new PortableShaderSampler(
+            registerIndex,
+            PortableShaderSamplerKind.ImageSource,
+            brush: null,
+            imageSource,
+            samplingMode);
     }
 
     public int RegisterIndex { get; }
 
-    public object Brush { get; }
+    public PortableShaderSamplerKind Kind { get; }
+
+    public object? Brush { get; }
+
+    public object? ImageSource { get; }
 
     public PortableShaderSamplingMode SamplingMode { get; }
 }
