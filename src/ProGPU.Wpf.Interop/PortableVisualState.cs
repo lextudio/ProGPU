@@ -49,6 +49,26 @@ public sealed class PortableVisualState
 
     public object? CacheMode { get; set; }
 
+    public bool HasBitmapScalingMode { get; set; }
+
+    public object? BitmapScalingMode { get; set; }
+
+    public bool HasEdgeMode { get; set; }
+
+    public object? EdgeMode { get; set; }
+
+    public bool HasClearTypeHint { get; set; }
+
+    public object? ClearTypeHint { get; set; }
+
+    public bool HasTextRenderingMode { get; set; }
+
+    public object? TextRenderingMode { get; set; }
+
+    public bool HasTextHintingMode { get; set; }
+
+    public object? TextHintingMode { get; set; }
+
     public bool HasSnappingGuidelinesX { get; set; }
 
     public double[] SnappingGuidelinesX { get; set; } = s_emptyGuidelines;
