@@ -7,6 +7,8 @@ public interface IPortableVisualStateSource
 
 public sealed class PortableVisualState
 {
+    private static readonly double[] s_emptyGuidelines = System.Array.Empty<double>();
+
     public bool HasOffset { get; set; }
 
     public PortablePoint Offset { get; set; }
@@ -30,4 +32,28 @@ public sealed class PortableVisualState
     public bool HasOpacityMask { get; set; }
 
     public object? OpacityMask { get; set; }
+
+    public bool HasEffect { get; set; }
+
+    public object? Effect { get; set; }
+
+    public bool HasBitmapEffect { get; set; }
+
+    public object? BitmapEffect { get; set; }
+
+    public bool HasBitmapEffectInput { get; set; }
+
+    public object? BitmapEffectInput { get; set; }
+
+    public bool HasCacheMode { get; set; }
+
+    public object? CacheMode { get; set; }
+
+    public bool HasSnappingGuidelinesX { get; set; }
+
+    public double[] SnappingGuidelinesX { get; set; } = s_emptyGuidelines;
+
+    public bool HasSnappingGuidelinesY { get; set; }
+
+    public double[] SnappingGuidelinesY { get; set; } = s_emptyGuidelines;
 }
