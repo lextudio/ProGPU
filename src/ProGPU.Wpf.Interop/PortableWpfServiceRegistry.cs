@@ -15,7 +15,7 @@ public interface IPortableLauncherServiceRegistrar
 {
     Assembly SourceAssembly { get; }
 
-    IDisposable Register(Func<object, bool> launch);
+    IDisposable Register(Func<PortableLaunchRequest, bool> launch);
 
     void Clear();
 }
@@ -24,7 +24,7 @@ public interface IPortableMessageBoxServiceRegistrar
 {
     Assembly SourceAssembly { get; }
 
-    IDisposable Register(Func<object, object?> show);
+    IDisposable Register(Func<PortableMessageBoxRequest, string?> show);
 
     void Clear();
 }
@@ -33,9 +33,99 @@ public interface IPortableFileDialogServiceRegistrar
 {
     Assembly SourceAssembly { get; }
 
-    IDisposable Register(Func<object, string?> showDialog);
+    IDisposable Register(Func<PortableFileDialogRequest, string?> showDialog);
 
     void Clear();
+}
+
+public sealed class PortableLaunchRequest
+{
+    public PortableLaunchRequest(Uri uri, string targetFrame, bool isTopLevel)
+    {
+        Uri = uri ?? throw new ArgumentNullException(nameof(uri));
+        TargetFrame = targetFrame;
+        IsTopLevel = isTopLevel;
+    }
+
+    public Uri Uri { get; }
+
+    public string TargetFrame { get; }
+
+    public bool IsTopLevel { get; }
+}
+
+public sealed class PortableMessageBoxRequest
+{
+    public PortableMessageBoxRequest(
+        string? messageBoxText,
+        string? caption,
+        string? button,
+        string? icon,
+        string? defaultResult,
+        string? options,
+        string? fallbackResult)
+    {
+        MessageBoxText = messageBoxText ?? string.Empty;
+        Caption = caption ?? string.Empty;
+        Button = button ?? "OK";
+        Icon = icon ?? "None";
+        DefaultResult = defaultResult ?? "None";
+        Options = options ?? "None";
+        FallbackResult = fallbackResult ?? "OK";
+    }
+
+    public string MessageBoxText { get; }
+
+    public string Caption { get; }
+
+    public string Button { get; }
+
+    public string Icon { get; }
+
+    public string DefaultResult { get; }
+
+    public string Options { get; }
+
+    public string FallbackResult { get; }
+}
+
+public sealed class PortableFileDialogRequest
+{
+    public PortableFileDialogRequest(
+        string? kind,
+        string? title,
+        string? initialDirectory,
+        string? defaultDirectory,
+        string? suggestedItemName,
+        string? defaultExtension,
+        string? filter,
+        int filterIndex)
+    {
+        Kind = kind ?? "OpenFile";
+        Title = title ?? string.Empty;
+        InitialDirectory = initialDirectory ?? string.Empty;
+        DefaultDirectory = defaultDirectory ?? string.Empty;
+        SuggestedItemName = suggestedItemName ?? string.Empty;
+        DefaultExtension = defaultExtension ?? string.Empty;
+        Filter = filter ?? string.Empty;
+        FilterIndex = filterIndex;
+    }
+
+    public string Kind { get; }
+
+    public string Title { get; }
+
+    public string InitialDirectory { get; }
+
+    public string DefaultDirectory { get; }
+
+    public string SuggestedItemName { get; }
+
+    public string DefaultExtension { get; }
+
+    public string Filter { get; }
+
+    public int FilterIndex { get; }
 }
 
 public interface IPortableMediaContextRenderServiceRegistrar
