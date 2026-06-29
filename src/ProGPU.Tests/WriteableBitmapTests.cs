@@ -16,6 +16,13 @@ public class WriteableBitmapTests
         Assert.Equal("Pbgra32", PixelFormats.Pbgra32.ToString());
     }
 
+    [Fact]
+    public void BitmapSourceExposesTypedGpuTextureSourceContract()
+    {
+        Assert.True(typeof(IProGpuTextureSource).IsAssignableFrom(typeof(BitmapSource)));
+        Assert.True(typeof(IProGpuTextureSource).IsAssignableFrom(typeof(WriteableBitmap)));
+    }
+
     [Theory]
     [InlineData(0, 1, "pixelWidth")]
     [InlineData(-1, 1, "pixelWidth")]
