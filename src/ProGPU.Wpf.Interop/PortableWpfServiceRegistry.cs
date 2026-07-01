@@ -1,10 +1,15 @@
-using System.Reflection;
-
 namespace ProGPU.Wpf.Interop;
+
+public readonly record struct PortableWpfServiceKey(string Name)
+{
+    public static PortableWpfServiceKey PresentationCore { get; } = new(nameof(PresentationCore));
+
+    public static PortableWpfServiceKey PresentationFramework { get; } = new(nameof(PresentationFramework));
+}
 
 public interface IPortableClipboardServiceRegistrar
 {
-    Assembly SourceAssembly { get; }
+    PortableWpfServiceKey ServiceKey { get; }
 
     IDisposable Register(Func<string?> getText, Action<string?> setText);
 
@@ -13,7 +18,7 @@ public interface IPortableClipboardServiceRegistrar
 
 public interface IPortableLauncherServiceRegistrar
 {
-    Assembly SourceAssembly { get; }
+    PortableWpfServiceKey ServiceKey { get; }
 
     IDisposable Register(Func<PortableLaunchRequest, bool> launch);
 
@@ -22,7 +27,7 @@ public interface IPortableLauncherServiceRegistrar
 
 public interface IPortableMessageBoxServiceRegistrar
 {
-    Assembly SourceAssembly { get; }
+    PortableWpfServiceKey ServiceKey { get; }
 
     IDisposable Register(Func<PortableMessageBoxRequest, string?> show);
 
@@ -31,7 +36,7 @@ public interface IPortableMessageBoxServiceRegistrar
 
 public interface IPortableFileDialogServiceRegistrar
 {
-    Assembly SourceAssembly { get; }
+    PortableWpfServiceKey ServiceKey { get; }
 
     IDisposable Register(Func<PortableFileDialogRequest, string?> showDialog);
 
@@ -130,7 +135,7 @@ public sealed class PortableFileDialogRequest
 
 public interface IPortableMediaContextRenderServiceRegistrar
 {
-    Assembly SourceAssembly { get; }
+    PortableWpfServiceKey ServiceKey { get; }
 
     IDisposable Register(Action<object?, TimeSpan> requestRender);
 
@@ -258,7 +263,7 @@ public enum PortableWindowCloseResult
 
 public interface IPortableWindowActivationServiceRegistrar
 {
-    Assembly SourceAssembly { get; }
+    PortableWpfServiceKey ServiceKey { get; }
 
     void Register(PortableWindowActivationCallbacks callbacks);
 
@@ -300,164 +305,178 @@ public interface IPortableWindowActivationServiceRegistrar
 public static class PortableWpfServiceRegistry
 {
     private static readonly object SyncRoot = new();
-    private static readonly Dictionary<Assembly, IPortableWindowActivationServiceRegistrar> WindowActivationServices = new();
-    private static readonly Dictionary<Assembly, IPortableClipboardServiceRegistrar> ClipboardServices = new();
-    private static readonly Dictionary<Assembly, IPortableLauncherServiceRegistrar> LauncherServices = new();
-    private static readonly Dictionary<Assembly, IPortableMessageBoxServiceRegistrar> MessageBoxServices = new();
-    private static readonly Dictionary<Assembly, IPortableFileDialogServiceRegistrar> FileDialogServices = new();
-    private static readonly Dictionary<Assembly, IPortableMediaContextRenderServiceRegistrar> MediaContextRenderServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableWindowActivationServiceRegistrar> WindowActivationServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableClipboardServiceRegistrar> ClipboardServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableLauncherServiceRegistrar> LauncherServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableMessageBoxServiceRegistrar> MessageBoxServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableFileDialogServiceRegistrar> FileDialogServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableMediaContextRenderServiceRegistrar> MediaContextRenderServices = new();
 
     public static IDisposable RegisterWindowActivationService(IPortableWindowActivationServiceRegistrar service)
     {
         ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
 
         lock (SyncRoot)
         {
-            WindowActivationServices[service.SourceAssembly] = service;
+            WindowActivationServices[service.ServiceKey] = service;
         }
 
         return new Registration<IPortableWindowActivationServiceRegistrar>(service, WindowActivationServices);
     }
 
     public static bool TryGetWindowActivationService(
-        Assembly sourceAssembly,
+        PortableWpfServiceKey serviceKey,
         out IPortableWindowActivationServiceRegistrar service)
     {
-        ArgumentNullException.ThrowIfNull(sourceAssembly);
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
 
         lock (SyncRoot)
         {
-            return WindowActivationServices.TryGetValue(sourceAssembly, out service!);
+            return WindowActivationServices.TryGetValue(serviceKey, out service!);
         }
     }
 
     public static IDisposable RegisterClipboardService(IPortableClipboardServiceRegistrar service)
     {
         ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
 
         lock (SyncRoot)
         {
-            ClipboardServices[service.SourceAssembly] = service;
+            ClipboardServices[service.ServiceKey] = service;
         }
 
         return new Registration<IPortableClipboardServiceRegistrar>(service, ClipboardServices);
     }
 
     public static bool TryGetClipboardService(
-        Assembly sourceAssembly,
+        PortableWpfServiceKey serviceKey,
         out IPortableClipboardServiceRegistrar service)
     {
-        ArgumentNullException.ThrowIfNull(sourceAssembly);
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
 
         lock (SyncRoot)
         {
-            return ClipboardServices.TryGetValue(sourceAssembly, out service!);
+            return ClipboardServices.TryGetValue(serviceKey, out service!);
         }
     }
 
     public static IDisposable RegisterLauncherService(IPortableLauncherServiceRegistrar service)
     {
         ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
 
         lock (SyncRoot)
         {
-            LauncherServices[service.SourceAssembly] = service;
+            LauncherServices[service.ServiceKey] = service;
         }
 
         return new Registration<IPortableLauncherServiceRegistrar>(service, LauncherServices);
     }
 
     public static bool TryGetLauncherService(
-        Assembly sourceAssembly,
+        PortableWpfServiceKey serviceKey,
         out IPortableLauncherServiceRegistrar service)
     {
-        ArgumentNullException.ThrowIfNull(sourceAssembly);
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
 
         lock (SyncRoot)
         {
-            return LauncherServices.TryGetValue(sourceAssembly, out service!);
+            return LauncherServices.TryGetValue(serviceKey, out service!);
         }
     }
 
     public static IDisposable RegisterMessageBoxService(IPortableMessageBoxServiceRegistrar service)
     {
         ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
 
         lock (SyncRoot)
         {
-            MessageBoxServices[service.SourceAssembly] = service;
+            MessageBoxServices[service.ServiceKey] = service;
         }
 
         return new Registration<IPortableMessageBoxServiceRegistrar>(service, MessageBoxServices);
     }
 
     public static bool TryGetMessageBoxService(
-        Assembly sourceAssembly,
+        PortableWpfServiceKey serviceKey,
         out IPortableMessageBoxServiceRegistrar service)
     {
-        ArgumentNullException.ThrowIfNull(sourceAssembly);
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
 
         lock (SyncRoot)
         {
-            return MessageBoxServices.TryGetValue(sourceAssembly, out service!);
+            return MessageBoxServices.TryGetValue(serviceKey, out service!);
         }
     }
 
     public static IDisposable RegisterFileDialogService(IPortableFileDialogServiceRegistrar service)
     {
         ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
 
         lock (SyncRoot)
         {
-            FileDialogServices[service.SourceAssembly] = service;
+            FileDialogServices[service.ServiceKey] = service;
         }
 
         return new Registration<IPortableFileDialogServiceRegistrar>(service, FileDialogServices);
     }
 
     public static bool TryGetFileDialogService(
-        Assembly sourceAssembly,
+        PortableWpfServiceKey serviceKey,
         out IPortableFileDialogServiceRegistrar service)
     {
-        ArgumentNullException.ThrowIfNull(sourceAssembly);
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
 
         lock (SyncRoot)
         {
-            return FileDialogServices.TryGetValue(sourceAssembly, out service!);
+            return FileDialogServices.TryGetValue(serviceKey, out service!);
         }
     }
 
     public static IDisposable RegisterMediaContextRenderService(IPortableMediaContextRenderServiceRegistrar service)
     {
         ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
 
         lock (SyncRoot)
         {
-            MediaContextRenderServices[service.SourceAssembly] = service;
+            MediaContextRenderServices[service.ServiceKey] = service;
         }
 
         return new Registration<IPortableMediaContextRenderServiceRegistrar>(service, MediaContextRenderServices);
     }
 
     public static bool TryGetMediaContextRenderService(
-        Assembly sourceAssembly,
+        PortableWpfServiceKey serviceKey,
         out IPortableMediaContextRenderServiceRegistrar service)
     {
-        ArgumentNullException.ThrowIfNull(sourceAssembly);
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
 
         lock (SyncRoot)
         {
-            return MediaContextRenderServices.TryGetValue(sourceAssembly, out service!);
+            return MediaContextRenderServices.TryGetValue(serviceKey, out service!);
+        }
+    }
+
+    private static void ValidateServiceKey(PortableWpfServiceKey serviceKey, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(serviceKey.Name))
+        {
+            throw new ArgumentException("Portable WPF service keys must have a non-empty name.", parameterName);
         }
     }
 
     private sealed class Registration<TService> : IDisposable
         where TService : class
     {
-        private readonly Dictionary<Assembly, TService> _services;
+        private readonly Dictionary<PortableWpfServiceKey, TService> _services;
         private TService? _service;
 
-        public Registration(TService service, Dictionary<Assembly, TService> services)
+        public Registration(TService service, Dictionary<PortableWpfServiceKey, TService> services)
         {
             _service = service;
             _services = services;
@@ -475,25 +494,25 @@ public static class PortableWpfServiceRegistry
 
             lock (SyncRoot)
             {
-                var sourceAssembly = GetSourceAssembly(service);
-                if (_services.TryGetValue(sourceAssembly, out var current) &&
+                var serviceKey = GetServiceKey(service);
+                if (_services.TryGetValue(serviceKey, out var current) &&
                     ReferenceEquals(current, service))
                 {
-                    _services.Remove(sourceAssembly);
+                    _services.Remove(serviceKey);
                 }
             }
         }
 
-        private static Assembly GetSourceAssembly(TService service)
+        private static PortableWpfServiceKey GetServiceKey(TService service)
         {
             return service switch
             {
-                IPortableWindowActivationServiceRegistrar windowActivationService => windowActivationService.SourceAssembly,
-                IPortableClipboardServiceRegistrar clipboardService => clipboardService.SourceAssembly,
-                IPortableLauncherServiceRegistrar launcherService => launcherService.SourceAssembly,
-                IPortableMessageBoxServiceRegistrar messageBoxService => messageBoxService.SourceAssembly,
-                IPortableFileDialogServiceRegistrar fileDialogService => fileDialogService.SourceAssembly,
-                IPortableMediaContextRenderServiceRegistrar renderService => renderService.SourceAssembly,
+                IPortableWindowActivationServiceRegistrar windowActivationService => windowActivationService.ServiceKey,
+                IPortableClipboardServiceRegistrar clipboardService => clipboardService.ServiceKey,
+                IPortableLauncherServiceRegistrar launcherService => launcherService.ServiceKey,
+                IPortableMessageBoxServiceRegistrar messageBoxService => messageBoxService.ServiceKey,
+                IPortableFileDialogServiceRegistrar fileDialogService => fileDialogService.ServiceKey,
+                IPortableMediaContextRenderServiceRegistrar renderService => renderService.ServiceKey,
                 _ => throw new InvalidOperationException("Unsupported portable WPF service registrar.")
             };
         }
