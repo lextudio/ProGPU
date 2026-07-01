@@ -7,7 +7,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Numerics;
-using System.Reflection;
 using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Vector;
@@ -16,11 +15,11 @@ namespace Microsoft.UI.Xaml.Controls;
 
 public class PropertyItem
 {
-    private readonly PropertyInfo _propInfo;
-    private readonly Visual _element;
+    private readonly DependencyProperty _property;
+    private readonly DependencyObject _element;
 
-    public string Name => _propInfo.Name;
-    public string Type => _propInfo.PropertyType.Name;
+    public string Name => _property.Name;
+    public string Type => _property.PropertyType.Name;
 
     public string Value
     {
@@ -28,10 +27,10 @@ public class PropertyItem
         {
             try
             {
-                var v = _propInfo.GetValue(_element);
+                var v = _element.GetValue(_property);
                 if (v is SolidColorBrush scb)
                 {
-                    return $"#{(scb.Color.W * 255):X2}{(scb.Color.X * 255):X2}{(scb.Color.Y * 255):X2}{(scb.Color.Z * 255):X2}";
+                    return FormatSolidColorBrush(scb);
                 }
                 if (v is Thickness th)
                 {
@@ -46,7 +45,7 @@ public class PropertyItem
             try
             {
                 object converted = value;
-                var t = _propInfo.PropertyType;
+                var t = _property.PropertyType;
                 if (t == typeof(float)) converted = float.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
                 else if (t == typeof(int)) converted = int.Parse(value);
                 else if (t == typeof(double)) converted = double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
@@ -70,12 +69,10 @@ public class PropertyItem
                 }
                 else if (t == typeof(Brush) || t == typeof(SolidColorBrush))
                 {
-                    string hex = value.Trim().Replace("#", "").Replace("0x", "");
-                    uint argb = uint.Parse(hex, System.Globalization.NumberStyles.HexNumber);
-                    converted = new SolidColorBrush(argb);
+                    converted = ParseSolidColorBrush(value);
                 }
 
-                _propInfo.SetValue(_element, converted);
+                _element.SetValue(_property, converted);
                 _element.Invalidate();
                 DevToolsService.InvalidateAllMainWindows();
             }
@@ -83,10 +80,41 @@ public class PropertyItem
         }
     }
 
-    public PropertyItem(PropertyInfo propInfo, Visual element)
+    public PropertyItem(DependencyProperty property, DependencyObject element)
     {
-        _propInfo = propInfo;
+        _property = property;
         _element = element;
+    }
+
+    private static string FormatSolidColorBrush(SolidColorBrush brush)
+    {
+        return $"#{ToByte(brush.Color.W):X2}{ToByte(brush.Color.X):X2}{ToByte(brush.Color.Y):X2}{ToByte(brush.Color.Z):X2}";
+    }
+
+    private static SolidColorBrush ParseSolidColorBrush(string value)
+    {
+        string hex = value.Trim().Replace("#", "").Replace("0x", "", StringComparison.OrdinalIgnoreCase);
+        if (hex.Length != 6 && hex.Length != 8)
+        {
+            throw new FormatException("Expected RRGGBB or AARRGGBB color text.");
+        }
+
+        int offset = hex.Length == 8 ? 2 : 0;
+        int a = hex.Length == 8 ? ParseByte(hex, 0) : 255;
+        int r = ParseByte(hex, offset);
+        int g = ParseByte(hex, offset + 2);
+        int b = ParseByte(hex, offset + 4);
+        return new SolidColorBrush(new Vector4(r / 255f, g / 255f, b / 255f, a / 255f));
+    }
+
+    private static int ParseByte(string hex, int start)
+    {
+        return int.Parse(hex.Substring(start, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static int ToByte(float value)
+    {
+        return Math.Clamp((int)MathF.Round(value * 255f), 0, 255);
     }
 }
 
@@ -500,24 +528,27 @@ public class DevTools : Border
     private void LoadProperties(Visual fe)
     {
         _propertyGrid.ItemsSource.Clear();
-        var props = fe.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-        
-        var list = new List<PropertyInfo>(props);
+        if (fe is not DependencyObject dependencyObject)
+        {
+            _propertyGrid.Invalidate();
+            return;
+        }
+
+        var list = new List<DependencyProperty>(DependencyProperty.GetRegisteredProperties(fe.GetType()));
         list.Sort((a, b) => a.Name.CompareTo(b.Name));
 
         foreach (var prop in list)
         {
-            if (prop.CanRead && prop.CanWrite && 
-                (prop.PropertyType == typeof(string) || 
-                 prop.PropertyType == typeof(float) || 
-                 prop.PropertyType == typeof(double) || 
-                 prop.PropertyType == typeof(int) || 
-                 prop.PropertyType == typeof(bool) || 
-                 prop.PropertyType == typeof(Thickness) || 
-                 prop.PropertyType == typeof(Brush) || 
-                 prop.PropertyType == typeof(SolidColorBrush)))
+            if (prop.PropertyType == typeof(string) ||
+                 prop.PropertyType == typeof(float) ||
+                 prop.PropertyType == typeof(double) ||
+                 prop.PropertyType == typeof(int) ||
+                 prop.PropertyType == typeof(bool) ||
+                 prop.PropertyType == typeof(Thickness) ||
+                 prop.PropertyType == typeof(Brush) ||
+                 prop.PropertyType == typeof(SolidColorBrush))
             {
-                _propertyGrid.ItemsSource.Add(new PropertyItem(prop, fe));
+                _propertyGrid.ItemsSource.Add(new PropertyItem(prop, dependencyObject));
             }
         }
         _propertyGrid.Invalidate();

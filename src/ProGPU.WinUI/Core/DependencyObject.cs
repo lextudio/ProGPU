@@ -122,6 +122,37 @@ public class DependencyProperty
         return null;
     }
 
+    public static IReadOnlyList<DependencyProperty> GetRegisteredProperties(Type ownerType)
+    {
+        ArgumentNullException.ThrowIfNull(ownerType);
+
+        var type = ownerType;
+        while (type != null)
+        {
+            try
+            {
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(type.TypeHandle);
+            }
+            catch {}
+
+            type = type.BaseType;
+        }
+
+        lock (RegisteredProperties)
+        {
+            var properties = new List<DependencyProperty>();
+            foreach (var property in RegisteredProperties)
+            {
+                if (!property.IsAttached && property.OwnerType.IsAssignableFrom(ownerType))
+                {
+                    properties.Add(property);
+                }
+            }
+
+            return properties;
+        }
+    }
+
     public static DependencyProperty? GetPropertyByIndex(int index)
     {
         lock (RegisteredProperties)
