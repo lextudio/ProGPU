@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -62,66 +61,59 @@ public sealed record ProGpuDirectXNativeDependencyReport(
 
 public static class ProGpuDirectXNativeDependencyInspector
 {
-    public static ProGpuDirectXNativeDependencyReport Inspect(params Assembly[] assemblies)
+    public static ProGpuDirectXNativeDependencyReport Inspect(
+        IEnumerable<ProGpuDirectXNativeImport> imports,
+        IEnumerable<ProGpuDirectXNativeModuleHint>? moduleHints = null)
     {
-        return Inspect((IEnumerable<Assembly>)assemblies);
+        return CreateReport(imports, moduleHints);
     }
 
-    public static ProGpuDirectXNativeDependencyReport Inspect(IEnumerable<Assembly> assemblies)
+    public static ProGpuDirectXNativeDependencyReport CreateReport(
+        IEnumerable<ProGpuDirectXNativeImport> imports,
+        IEnumerable<ProGpuDirectXNativeModuleHint>? moduleHints = null)
     {
-        ArgumentNullException.ThrowIfNull(assemblies);
+        ArgumentNullException.ThrowIfNull(imports);
 
-        var imports = new List<ProGpuDirectXNativeImport>();
-        var moduleHints = new List<ProGpuDirectXNativeModuleHint>();
-        foreach (var assembly in assemblies)
+        var importList = new List<ProGpuDirectXNativeImport>();
+        foreach (var import in imports)
         {
-            if (assembly is null)
+            if (import is null)
             {
-                throw new ArgumentException("Native dependency inspection cannot inspect a null assembly.", nameof(assemblies));
+                throw new ArgumentException("Native dependency reports cannot include a null import.", nameof(imports));
             }
 
-            moduleHints.AddRange(InspectModuleHints(assembly));
-
-            foreach (var type in GetLoadableTypes(assembly))
+            var moduleName = NormalizeModuleName(import.ModuleName);
+            if (moduleName.Length == 0)
             {
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance))
-                {
-                    var import = method.GetCustomAttribute<DllImportAttribute>();
-                    if (import is null)
-                    {
-                        continue;
-                    }
+                continue;
+            }
 
-                    var moduleName = NormalizeModuleName(import.Value);
-                    if (moduleName.Length == 0)
-                    {
-                        continue;
-                    }
+            importList.Add(import with { ModuleName = moduleName });
+        }
 
-                    imports.Add(new ProGpuDirectXNativeImport(
-                        assembly.GetName().Name ?? assembly.FullName ?? string.Empty,
-                        type.FullName ?? type.Name,
-                        method.Name,
-                        moduleName,
-                        import.EntryPoint ?? method.Name,
-                        FormatTypeName(method.ReturnType),
-                        method.GetParameters().Select(CreateParameter).ToArray(),
-                        import.CallingConvention,
-                        import.CharSet,
-                        import.SetLastError,
-                        import.ExactSpelling));
-                }
+        var hintList = new List<ProGpuDirectXNativeModuleHint>();
+        foreach (var hint in moduleHints ?? Array.Empty<ProGpuDirectXNativeModuleHint>())
+        {
+            if (hint is null)
+            {
+                throw new ArgumentException("Native dependency reports cannot include a null module hint.", nameof(moduleHints));
+            }
+
+            var moduleName = NormalizeModuleHint(hint.ModuleName);
+            if (moduleName.Length != 0)
+            {
+                hintList.Add(hint with { ModuleName = moduleName });
             }
         }
 
-        var orderedImports = imports
+        var orderedImports = importList
             .OrderBy(static import => import.ModuleName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static import => import.EntryPoint, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static import => import.TypeName, StringComparer.Ordinal)
             .ThenBy(static import => import.MethodName, StringComparer.Ordinal)
             .ToArray();
 
-        var orderedModuleHints = moduleHints
+        var orderedModuleHints = hintList
             .DistinctBy(static hint => (hint.AssemblyName, hint.ModuleName, hint.Source))
             .OrderBy(static hint => hint.ModuleName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static hint => hint.AssemblyName, StringComparer.Ordinal)
@@ -138,81 +130,28 @@ public static class ProGpuDirectXNativeDependencyInspector
         return new ProGpuDirectXNativeDependencyReport(orderedImports, orderedModuleHints, nativeModules);
     }
 
-    private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)
+    public static IReadOnlyList<ProGpuDirectXNativeModuleHint> CreateModuleHintsFromText(
+        string assemblyName,
+        string text,
+        string source = "Text")
     {
-        try
-        {
-            return assembly.GetTypes();
-        }
-        catch (ReflectionTypeLoadException ex)
-        {
-            return ex.Types.Where(static type => type is not null).Cast<Type>();
-        }
-    }
-
-    private static ProGpuDirectXNativeImportParameter CreateParameter(ParameterInfo parameter)
-    {
-        var type = parameter.ParameterType;
-        return new ProGpuDirectXNativeImportParameter(
-            parameter.Name ?? string.Empty,
-            FormatTypeName(type),
-            parameter.IsIn,
-            parameter.IsOut,
-            type.IsByRef,
-            parameter.IsOptional);
-    }
-
-    private static string FormatTypeName(Type type)
-    {
-        if (type.IsByRef)
-        {
-            return FormatTypeName(type.GetElementType()!) + "&";
-        }
-
-        if (type.IsPointer)
-        {
-            return FormatTypeName(type.GetElementType()!) + "*";
-        }
-
-        if (type.IsArray)
-        {
-            return FormatTypeName(type.GetElementType()!) + "[]";
-        }
-
-        return type.FullName ?? type.Name;
-    }
-
-    private static IEnumerable<ProGpuDirectXNativeModuleHint> InspectModuleHints(Assembly assembly)
-    {
-        var assemblyName = assembly.GetName().Name ?? assembly.FullName ?? string.Empty;
-        if (assembly.IsDynamic || string.IsNullOrWhiteSpace(assembly.Location) || !File.Exists(assembly.Location))
-        {
-            return [];
-        }
+        ArgumentNullException.ThrowIfNull(text);
 
         var modules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            var bytes = File.ReadAllBytes(assembly.Location);
-            ExtractAsciiModuleNames(bytes, modules);
-            ExtractUtf16LeModuleNames(bytes, modules, startOffset: 0);
-            ExtractUtf16LeModuleNames(bytes, modules, startOffset: 1);
-        }
-        catch (IOException)
-        {
-            return [];
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return [];
-        }
+        ExtractModuleNamesFromText(text, modules);
+        return CreateModuleHints(assemblyName, source, modules);
+    }
 
-        return modules
-            .OrderBy(static moduleName => moduleName, StringComparer.OrdinalIgnoreCase)
-            .Select(moduleName => new ProGpuDirectXNativeModuleHint(
-                assemblyName,
-                moduleName,
-                "AssemblyString"));
+    public static IReadOnlyList<ProGpuDirectXNativeModuleHint> CreateModuleHintsFromBytes(
+        string assemblyName,
+        ReadOnlySpan<byte> bytes,
+        string source = "Bytes")
+    {
+        var modules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        ExtractAsciiModuleNames(bytes, modules);
+        ExtractUtf16LeModuleNames(bytes, modules, startOffset: 0);
+        ExtractUtf16LeModuleNames(bytes, modules, startOffset: 1);
+        return CreateModuleHints(assemblyName, source, modules);
     }
 
     private static void ExtractAsciiModuleNames(ReadOnlySpan<byte> bytes, HashSet<string> modules)
@@ -223,6 +162,24 @@ public static class ProGpuDirectXNativeDependencyInspector
             if (value >= 32 && value <= 126)
             {
                 AppendModuleHintChar(builder, (char)value, modules);
+            }
+            else
+            {
+                FlushModuleHint(builder, modules);
+            }
+        }
+
+        FlushModuleHint(builder, modules);
+    }
+
+    private static void ExtractModuleNamesFromText(string text, HashSet<string> modules)
+    {
+        var builder = new StringBuilder();
+        foreach (var value in text)
+        {
+            if (value >= 32 && value <= 126)
+            {
+                AppendModuleHintChar(builder, value, modules);
             }
             else
             {
@@ -322,5 +279,22 @@ public static class ProGpuDirectXNativeDependencyInspector
     private static string NormalizeModuleName(string? moduleName)
     {
         return string.IsNullOrWhiteSpace(moduleName) ? string.Empty : moduleName.Trim();
+    }
+
+    private static IReadOnlyList<ProGpuDirectXNativeModuleHint> CreateModuleHints(
+        string assemblyName,
+        string source,
+        IEnumerable<string> modules)
+    {
+        return modules
+            .Select(NormalizeModuleHint)
+            .Where(static moduleName => moduleName.Length != 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static moduleName => moduleName, StringComparer.OrdinalIgnoreCase)
+            .Select(moduleName => new ProGpuDirectXNativeModuleHint(
+                string.IsNullOrWhiteSpace(assemblyName) ? string.Empty : assemblyName.Trim(),
+                moduleName,
+                string.IsNullOrWhiteSpace(source) ? "Explicit" : source.Trim()))
+            .ToArray();
     }
 }

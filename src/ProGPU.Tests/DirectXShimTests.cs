@@ -515,7 +515,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     [Fact]
     public void NativeDependencyInspectorReportsPInvokeModulesAndEntries()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
 
         Assert.True(report.RequiresNativeRuntime);
         Assert.True(report.RequiresModule("USER32.DLL"));
@@ -578,9 +578,24 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void NativeDependencyInspectorUsesExplicitMetadataWithoutReflectionScanning()
+    {
+        var source = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXNativeDependencyInspector.cs"));
+
+        Assert.Contains("CreateReport(", source, StringComparison.Ordinal);
+        Assert.Contains("CreateModuleHintsFromText", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Reflection", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BindingFlags", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetTypes(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetMethods(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetCustomAttribute", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DllImportAttribute", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NativeCompatibilityPlannerClassifiesSciChartAndDirectXModules()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
         var plan = ProGpuDirectXNativeCompatibilityPlanner.Create(report);
 
         Assert.True(plan.RequiresProGpuNativeFacade);
@@ -638,7 +653,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     [Fact]
     public void NativeAbiPlannerReportsExportsAndDynamicModuleHints()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
         var plan = ProGpuDirectXNativeAbiPlanner.Create(report);
 
         Assert.Contains("d3d11.dll: D3D11CreateDevice", plan.DescribeActionableExports(), StringComparison.Ordinal);
@@ -690,7 +705,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     [Fact]
     public void NativeFacadeSourceEmitterGeneratesNativeAotExportScaffold()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
         var plan = ProGpuDirectXNativeAbiPlanner.Create(report);
         var source = ProGpuDirectXNativeFacadeSourceEmitter.Emit(
             plan,
@@ -732,7 +747,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     [Fact]
     public void NativeFacadeProjectEmitterGeneratesBuildableNativeAotProjectScaffold()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
         var plan = ProGpuDirectXNativeAbiPlanner.Create(report);
         var project = ProGpuDirectXNativeFacadeProjectEmitter.Emit(
             plan,
@@ -779,7 +794,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     [Fact]
     public void NativeResolverClassifiesRequestsWithoutMaskingMissingFacade()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
         var plan = ProGpuDirectXNativeCompatibilityPlanner.Create(report);
         var registration = ProGpuDirectXNativeResolver.CreateRegistration(
             typeof(NativeDependencyFixture).Assembly,
@@ -816,7 +831,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     [Fact]
     public void NativeResolverReportsConfiguredFacadeLoadFailure()
     {
-        var report = ProGpuDirectXNativeDependencyInspector.Inspect(typeof(NativeDependencyFixture).Assembly);
+        var report = CreateNativeDependencyFixtureReport();
         var plan = ProGpuDirectXNativeCompatibilityPlanner.Create(report);
         var missingFacadePath = Path.Combine(Path.GetTempPath(), "progpu-directx-native-facade-missing.dylib");
         var registration = ProGpuDirectXNativeResolver.CreateRegistration(
@@ -844,6 +859,96 @@ fn fs_main() -> @location(0) vec4<f32> {
             {
                 RequireGpuBackedResources = true
             }));
+    }
+
+    private static ProGpuDirectXNativeDependencyReport CreateNativeDependencyFixtureReport()
+    {
+        var assemblyName = typeof(NativeDependencyFixture).Assembly.GetName().Name ?? string.Empty;
+        var typeName = typeof(NativeDependencyFixture).FullName ?? nameof(NativeDependencyFixture);
+        var moduleHints = ProGpuDirectXNativeDependencyInspector.CreateModuleHintsFromText(
+            assemblyName,
+            string.Join(
+                ' ',
+                NativeDependencyFixture.GetDynamicModuleName(),
+                NativeDependencyFixture.GetEmbeddedNativeResourceNames(),
+                NativeDependencyFixture.GetInvalidPatternModuleNames(),
+                NativeDependencyFixture.GetManagedAssemblyHintName(),
+                NativeDependencyFixture.GetUnknownModuleHintName()),
+            "AssemblyString");
+
+        return ProGpuDirectXNativeDependencyInspector.CreateReport(
+            [
+                new ProGpuDirectXNativeImport(
+                    assemblyName,
+                    typeName,
+                    nameof(NativeDependencyFixture.MessageBoxW),
+                    "user32.dll",
+                    "MessageBoxW",
+                    "System.Int32",
+                    [
+                        new ProGpuDirectXNativeImportParameter("hwnd", "System.IntPtr", IsIn: false, IsOut: false, IsByRef: false, IsOptional: false),
+                        new ProGpuDirectXNativeImportParameter("text", "System.String", IsIn: false, IsOut: false, IsByRef: false, IsOptional: false),
+                        new ProGpuDirectXNativeImportParameter("caption", "System.String", IsIn: false, IsOut: false, IsByRef: false, IsOptional: false),
+                        new ProGpuDirectXNativeImportParameter("type", "System.UInt32", IsIn: false, IsOut: false, IsByRef: false, IsOptional: false)
+                    ],
+                    CallingConvention.StdCall,
+                    CharSet.Unicode,
+                    SetLastError: true,
+                    ExactSpelling: false),
+                new ProGpuDirectXNativeImport(
+                    assemblyName,
+                    typeName,
+                    nameof(NativeDependencyFixture.D3D11CreateDevice),
+                    "d3d11.dll",
+                    "D3D11CreateDevice",
+                    "System.Int32",
+                    [],
+                    CallingConvention.Winapi,
+                    CharSet.None,
+                    SetLastError: false,
+                    ExactSpelling: true),
+                new ProGpuDirectXNativeImport(
+                    assemblyName,
+                    typeName,
+                    nameof(NativeDependencyFixture.SciChartLicenseCheck),
+                    "AbtLicensingNative",
+                    "SciChartLicenseCheck",
+                    "System.Int32",
+                    [],
+                    CallingConvention.Winapi,
+                    CharSet.None,
+                    SetLastError: false,
+                    ExactSpelling: true),
+                new ProGpuDirectXNativeImport(
+                    assemblyName,
+                    typeName,
+                    nameof(NativeDependencyFixture.SciChartCoreInitialize),
+                    "SciChartCoreNative",
+                    "SciChartCoreInitialize",
+                    "System.Int32",
+                    [],
+                    CallingConvention.Winapi,
+                    CharSet.None,
+                    SetLastError: false,
+                    ExactSpelling: true)
+            ],
+            moduleHints);
+    }
+
+    private static string FindRepoFile(params string[] pathParts)
+    {
+        for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
+             directory != null;
+             directory = directory.Parent)
+        {
+            string candidate = Path.Combine(new[] { directory.FullName }.Concat(pathParts).ToArray());
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"Could not locate {Path.Combine(pathParts)}.");
     }
 
     private static class NativeDependencyFixture
