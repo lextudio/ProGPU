@@ -3,7 +3,6 @@ namespace ProGPU.WinUI.Designer;
 using System;
 using System.Text;
 using System.Collections.Generic;
-using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -170,23 +169,14 @@ public static class DesignerSerializer
             sb.AppendLine($"{indent}    Padding = new Microsoft.UI.Xaml.Thickness({FormatFloat(padding.Left)}f, {FormatFloat(padding.Top)}f, {FormatFloat(padding.Right)}f, {FormatFloat(padding.Bottom)}f),");
         }
 
-        // Background / BorderBrush / CornerRadius etc. via Reflection
-        var type = element.GetType();
-
-        var cornerRadiusProp = type.GetProperty("CornerRadius");
-        if (cornerRadiusProp != null)
+        // Background / BorderBrush / CornerRadius etc.
+        if (TryGetDependencyValue<float>(element, "CornerRadius", out var fcr) && fcr != 0f)
         {
-            var cr = cornerRadiusProp.GetValue(element);
-            if (cr is float fcr && fcr != 0f)
-            {
-                sb.AppendLine($"{indent}    CornerRadius = {FormatFloat(fcr)}f,");
-            }
+            sb.AppendLine($"{indent}    CornerRadius = {FormatFloat(fcr)}f,");
         }
 
-        var backgroundProp = type.GetProperty("Background");
-        if (backgroundProp != null)
+        if (TryGetDependencyValue<Brush>(element, "Background", out var bg))
         {
-            var bg = backgroundProp.GetValue(element);
             if (bg is ThemeResourceBrush trb)
             {
                 sb.AppendLine($"{indent}    Background = new ThemeResourceBrush(\"{trb.ResourceKey}\"),");
@@ -198,10 +188,8 @@ public static class DesignerSerializer
             }
         }
 
-        var borderBrushProp = type.GetProperty("BorderBrush");
-        if (borderBrushProp != null)
+        if (TryGetDependencyValue<Brush>(element, "BorderBrush", out var bb))
         {
-            var bb = borderBrushProp.GetValue(element);
             if (bb is ThemeResourceBrush trb)
             {
                 sb.AppendLine($"{indent}    BorderBrush = new ThemeResourceBrush(\"{trb.ResourceKey}\"),");
@@ -213,110 +201,70 @@ public static class DesignerSerializer
             }
         }
 
-        var borderThicknessProp = type.GetProperty("BorderThickness");
-        if (borderThicknessProp != null)
+        if (TryGetDependencyValue<Thickness>(element, "BorderThickness", out var t) &&
+            (t.Left != 0 || t.Top != 0 || t.Right != 0 || t.Bottom != 0))
         {
-            var bt = borderThicknessProp.GetValue(element);
-            if (bt is Thickness t && (t.Left != 0 || t.Top != 0 || t.Right != 0 || t.Bottom != 0))
-            {
-                sb.AppendLine($"{indent}    BorderThickness = new Microsoft.UI.Xaml.Thickness({FormatFloat(t.Left)}f, {FormatFloat(t.Top)}f, {FormatFloat(t.Right)}f, {FormatFloat(t.Bottom)}f),");
-            }
+            sb.AppendLine($"{indent}    BorderThickness = new Microsoft.UI.Xaml.Thickness({FormatFloat(t.Left)}f, {FormatFloat(t.Top)}f, {FormatFloat(t.Right)}f, {FormatFloat(t.Bottom)}f),");
         }
 
         // Horizontal and Vertical Alignment
-        var horizAlignProp = type.GetProperty("HorizontalAlignment");
-        if (horizAlignProp != null)
-        {
-            var ha = horizAlignProp.GetValue(element);
-            if (ha != null)
-            {
-                sb.AppendLine($"{indent}    HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.{ha},");
-            }
-        }
-        
-        var vertAlignProp = type.GetProperty("VerticalAlignment");
-        if (vertAlignProp != null)
-        {
-            var va = vertAlignProp.GetValue(element);
-            if (va != null)
-            {
-                sb.AppendLine($"{indent}    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.{va},");
-            }
-        }
+        sb.AppendLine($"{indent}    HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.{element.HorizontalAlignment},");
+        sb.AppendLine($"{indent}    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.{element.VerticalAlignment},");
 
         // Slider / Progress specific properties
-        var valProp = type.GetProperty("Value");
-        if (valProp != null && valProp.PropertyType == typeof(float))
+        if (TryGetFloatValue(element, "Value", out var value))
         {
-            sb.AppendLine($"{indent}    Value = {FormatFloat((float)valProp.GetValue(element))}f,");
+            sb.AppendLine($"{indent}    Value = {FormatFloat(value)}f,");
         }
 
-        var minProp = type.GetProperty("Minimum");
-        if (minProp != null && minProp.PropertyType == typeof(float))
+        if (TryGetFloatValue(element, "Minimum", out var minimum))
         {
-            sb.AppendLine($"{indent}    Minimum = {FormatFloat((float)minProp.GetValue(element))}f,");
+            sb.AppendLine($"{indent}    Minimum = {FormatFloat(minimum)}f,");
         }
 
-        var maxProp = type.GetProperty("Maximum");
-        if (maxProp != null && maxProp.PropertyType == typeof(float))
+        if (TryGetFloatValue(element, "Maximum", out var maximum))
         {
-            sb.AppendLine($"{indent}    Maximum = {FormatFloat((float)maxProp.GetValue(element))}f,");
+            sb.AppendLine($"{indent}    Maximum = {FormatFloat(maximum)}f,");
         }
 
-        var checkedProp = type.GetProperty("IsChecked");
-        if (checkedProp != null && checkedProp.PropertyType == typeof(bool))
+        if (TryGetDependencyValue<bool>(element, "IsChecked", out var isChecked))
         {
-            sb.AppendLine($"{indent}    IsChecked = {((bool)checkedProp.GetValue(element) ? "true" : "false")},");
+            sb.AppendLine($"{indent}    IsChecked = {(isChecked ? "true" : "false")},");
         }
 
-        var isOnProp = type.GetProperty("IsOn");
-        if (isOnProp != null && isOnProp.PropertyType == typeof(bool))
+        if (TryGetDependencyValue<bool>(element, "IsOn", out var isOn))
         {
-            sb.AppendLine($"{indent}    IsOn = {((bool)isOnProp.GetValue(element) ? "true" : "false")},");
+            sb.AppendLine($"{indent}    IsOn = {(isOn ? "true" : "false")},");
         }
 
-        var textProp = type.GetProperty("Text");
-        if (textProp != null && textProp.PropertyType == typeof(string))
+        if (TryGetText(element, out var txt) && !string.IsNullOrEmpty(txt))
         {
-            var txt = textProp.GetValue(element) as string;
-            if (!string.IsNullOrEmpty(txt))
-            {
-                sb.AppendLine($"{indent}    Text = \"{EscapeStringLiteral(txt)}\",");
-            }
+            sb.AppendLine($"{indent}    Text = \"{EscapeStringLiteral(txt)}\",");
         }
 
-        var placeholderProp = type.GetProperty("PlaceholderText");
-        if (placeholderProp != null && placeholderProp.PropertyType == typeof(string))
+        if (TryGetPlaceholderText(element, out var placeholder) && !string.IsNullOrEmpty(placeholder))
         {
-            var txt = placeholderProp.GetValue(element) as string;
-            if (!string.IsNullOrEmpty(txt))
-            {
-                sb.AppendLine($"{indent}    PlaceholderText = \"{EscapeStringLiteral(txt)}\",");
-            }
+            sb.AppendLine($"{indent}    PlaceholderText = \"{EscapeStringLiteral(placeholder)}\",");
         }
 
-        var passwordProp = type.GetProperty("Password");
-        if (passwordProp != null && passwordProp.PropertyType == typeof(string))
+        if (element is PasswordBox passwordBox && !string.IsNullOrEmpty(passwordBox.Password))
         {
-            var txt = passwordProp.GetValue(element) as string;
-            if (!string.IsNullOrEmpty(txt))
-            {
-                sb.AppendLine($"{indent}    Password = \"{EscapeStringLiteral(txt)}\",");
-            }
+            sb.AppendLine($"{indent}    Password = \"{EscapeStringLiteral(passwordBox.Password)}\",");
         }
 
-        var fontSizeProp = type.GetProperty("FontSize");
-        if (fontSizeProp != null && fontSizeProp.PropertyType == typeof(float))
+        if (TryGetFontSize(element, out var fontSize))
         {
-            sb.AppendLine($"{indent}    FontSize = {FormatFloat((float)fontSizeProp.GetValue(element))}f,");
+            sb.AppendLine($"{indent}    FontSize = {FormatFloat(fontSize)}f,");
         }
 
         // Panel orientation
-        var orientProp = type.GetProperty("Orientation");
-        if (orientProp != null)
+        if (element is Microsoft.UI.Xaml.Controls.StackPanel stackPanel)
         {
-            var o = orientProp.GetValue(element);
-            sb.AppendLine($"{indent}    Orientation = Orientation.{o},");
+            sb.AppendLine($"{indent}    Orientation = Orientation.{stackPanel.Orientation},");
+        }
+        else if (element is WrapPanel wrapPanel)
+        {
+            sb.AppendLine($"{indent}    Orientation = Orientation.{wrapPanel.Orientation},");
         }
 
         // WrapPanel specific properties
@@ -413,80 +361,61 @@ public static class DesignerSerializer
         }
 
         // Content/Children recursion and association
-        if (typeName == "SplitView")
+        if (element is SplitView splitView)
         {
-            var paneProp = type.GetProperty("Pane");
-            if (paneProp != null)
+            if (splitView.Pane is FrameworkElement paneFe)
             {
-                var paneVal = paneProp.GetValue(element);
-                if (paneVal is FrameworkElement paneFe)
-                {
-                    var paneVar = SerializeElement(paneFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
-                    sb.AppendLine($"{indent}{varName}.Pane = {paneVar};");
-                }
+                var paneVar = SerializeElement(paneFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
+                sb.AppendLine($"{indent}{varName}.Pane = {paneVar};");
             }
-            
-            var splitContentProp = type.GetProperty("Content");
-            if (splitContentProp != null)
+
+            if (splitView.Content is FrameworkElement contentFe)
             {
-                var contentVal = splitContentProp.GetValue(element);
-                if (contentVal is FrameworkElement contentFe)
-                {
-                    var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
-                    sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
-                }
+                var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
+                sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
             }
         }
-        else
+        else if (element is ContentControl contentControl)
         {
-            var contentProp = type.GetProperty("Content");
-            if (contentProp != null)
+            var contentVal = contentControl.Content;
+            if (contentVal is RichTextBlock rtb)
             {
-                var contentVal = contentProp.GetValue(element);
-                if (contentVal is RichTextBlock rtb)
+                string rtbBase = $"{varName}_content_text";
+                string rtbName = rtbBase;
+                int rtbSuffix = 1;
+                while (declaredNames.Contains(rtbName))
                 {
-                    string rtbBase = $"{varName}_content_text";
-                    string rtbName = rtbBase;
-                    int rtbSuffix = 1;
-                    while (declaredNames.Contains(rtbName))
-                    {
-                        rtbName = $"{rtbBase}_{rtbSuffix++}";
-                    }
-                    declaredNames.Add(rtbName);
+                    rtbName = $"{rtbBase}_{rtbSuffix++}";
+                }
+                declaredNames.Add(rtbName);
 
-                    sb.AppendLine($"{indent}var {rtbName} = new RichTextBlock();");
-                    foreach (var inline in rtb.Inlines)
+                sb.AppendLine($"{indent}var {rtbName} = new RichTextBlock();");
+                foreach (var inline in rtb.Inlines)
+                {
+                    if (inline is Run run)
                     {
-                        if (inline is Run run)
-                        {
-                            sb.AppendLine($"{indent}{rtbName}.Inlines.Add(new Run(\"{EscapeStringLiteral(run.Text)}\"));");
-                        }
+                        sb.AppendLine($"{indent}{rtbName}.Inlines.Add(new Run(\"{EscapeStringLiteral(run.Text)}\"));");
                     }
-                    sb.AppendLine($"{indent}{varName}.Content = {rtbName};");
                 }
-                else if (contentVal is FrameworkElement contentFe)
-                {
-                    var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
-                    sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
-                }
-                else if (contentVal != null)
-                {
-                    string s = contentVal.ToString() ?? "";
-                    sb.AppendLine($"{indent}{varName}.Content = \"{EscapeStringLiteral(s)}\";");
-                }
+                sb.AppendLine($"{indent}{varName}.Content = {rtbName};");
+            }
+            else if (contentVal is FrameworkElement contentFe)
+            {
+                var contentVar = SerializeElement(contentFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
+                sb.AppendLine($"{indent}{varName}.Content = {contentVar};");
+            }
+            else if (contentVal != null)
+            {
+                string s = contentVal.ToString() ?? "";
+                sb.AppendLine($"{indent}{varName}.Content = \"{EscapeStringLiteral(s)}\";");
             }
         }
 
         // Border Child
-        var childProp = type.GetProperty("Child");
-        if (childProp != null)
+        if (element is Border { Child: FrameworkElement childFe })
         {
-            var childVal = childProp.GetValue(element);
-            if (childVal is FrameworkElement childFe)
-            {
-                var childVar = SerializeElement(childFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
-                sb.AppendLine($"{indent}{varName}.Child = {childVar};");
-            }
+            var childVar = SerializeElement(childFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
+            sb.AppendLine($"{indent}{varName}.Child = {childVar};");
         }
 
         // Panel Children
@@ -494,15 +423,172 @@ public static class DesignerSerializer
         {
             foreach (var childNode in panel.Children)
             {
-                if (childNode is FrameworkElement childFe)
+                if (childNode is FrameworkElement panelChildFe)
                 {
-                    var childVar = SerializeElement(childFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
+                    var childVar = SerializeElement(panelChildFe, ref varCounter, declaredNames, sb, indentLevel, isResponsiveMode);
                     sb.AppendLine($"{indent}{varName}.Children.Add({childVar});");
                 }
             }
         }
 
         return varName;
+    }
+
+    private static bool TryGetDependencyValue<T>(FrameworkElement element, string name, out T value)
+    {
+        value = default!;
+        var dependencyProperty = DependencyProperty.Lookup(element.GetType(), name);
+        if (dependencyProperty == null ||
+            (!typeof(T).IsAssignableFrom(dependencyProperty.PropertyType) && dependencyProperty.PropertyType != typeof(T)))
+        {
+            return false;
+        }
+
+        var currentValue = element.GetValue(dependencyProperty);
+        if (currentValue is T typedValue)
+        {
+            value = typedValue;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetFloatValue(FrameworkElement element, string name, out float value)
+    {
+        if (TryGetDependencyValue<float>(element, name, out value))
+        {
+            return true;
+        }
+
+        switch (name)
+        {
+            case "Value" when element is ProgressBar progressBar:
+                value = progressBar.Value;
+                return true;
+            case "Minimum" when element is ProgressBar progressBar:
+                value = progressBar.Minimum;
+                return true;
+            case "Maximum" when element is ProgressBar progressBar:
+                value = progressBar.Maximum;
+                return true;
+            default:
+                value = default;
+                return false;
+        }
+    }
+
+    private static bool TryGetText(FrameworkElement element, out string? text)
+    {
+        switch (element)
+        {
+            case TextBox textBox:
+                text = textBox.Text;
+                return true;
+            case TextBlock textBlock:
+                text = textBlock.Text;
+                return true;
+            case RichTextBlock richTextBlock:
+                text = GetInlineText(richTextBlock.Inlines);
+                return true;
+            default:
+                if (TryGetDependencyValue<string>(element, "Text", out var dependencyText))
+                {
+                    text = dependencyText;
+                    return true;
+                }
+
+                text = null;
+                return false;
+        }
+    }
+
+    private static string GetInlineText(IEnumerable<Inline> inlines)
+    {
+        var sb = new StringBuilder();
+        foreach (var inline in inlines)
+        {
+            AppendInlineText(sb, inline);
+        }
+
+        return sb.ToString();
+    }
+
+    private static void AppendInlineText(StringBuilder sb, Inline inline)
+    {
+        switch (inline)
+        {
+            case Run run:
+                sb.Append(run.Text);
+                break;
+            case LineBreak:
+                sb.AppendLine();
+                break;
+            case Span span:
+                foreach (var child in span.Inlines)
+                {
+                    AppendInlineText(sb, child);
+                }
+                break;
+        }
+    }
+
+    private static bool TryGetPlaceholderText(FrameworkElement element, out string? placeholderText)
+    {
+        switch (element)
+        {
+            case TextBox textBox:
+                placeholderText = textBox.PlaceholderText;
+                return true;
+            case ComboBox comboBox:
+                placeholderText = comboBox.PlaceholderText;
+                return true;
+            case PasswordBox passwordBox:
+                placeholderText = passwordBox.PlaceholderText;
+                return true;
+            default:
+                if (TryGetDependencyValue<string>(element, "PlaceholderText", out var dependencyPlaceholder))
+                {
+                    placeholderText = dependencyPlaceholder;
+                    return true;
+                }
+
+                placeholderText = null;
+                return false;
+        }
+    }
+
+    private static bool TryGetFontSize(FrameworkElement element, out float fontSize)
+    {
+        switch (element)
+        {
+            case TextBox textBox:
+                fontSize = textBox.FontSize;
+                return true;
+            case PasswordBox passwordBox:
+                fontSize = passwordBox.FontSize;
+                return true;
+            case ComboBox comboBox:
+                fontSize = comboBox.FontSize;
+                return true;
+            case DataGrid dataGrid:
+                fontSize = dataGrid.FontSize;
+                return true;
+            case RichTextBlock richTextBlock:
+                fontSize = richTextBlock.FontSize;
+                return true;
+            case FontIcon fontIcon:
+                fontSize = fontIcon.FontSize;
+                return true;
+            case FlowDocument flowDocument:
+                fontSize = flowDocument.FontSize;
+                return true;
+            case MarkdownTextBlock markdownTextBlock:
+                fontSize = markdownTextBlock.FontSize;
+                return true;
+            default:
+                return TryGetDependencyValue<float>(element, "FontSize", out fontSize);
+        }
     }
 
     private static string EscapeStringLiteral(string? s)
@@ -520,4 +606,3 @@ public static class DesignerSerializer
         return value.ToString("G", System.Globalization.CultureInfo.InvariantCulture);
     }
 }
-

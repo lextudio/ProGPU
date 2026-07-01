@@ -6,7 +6,6 @@ using Microsoft.UI.Xaml.Markup;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using System.Reflection;
 using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Vector;
@@ -1010,166 +1009,89 @@ public class DesignerCanvas : Panel
             string? toolName = toolData as string;
             if (string.IsNullOrEmpty(toolName)) return;
 
-            Type? controlType = null;
-
-            string[] searchNamespaces = {
-                "Microsoft.UI.Xaml.Controls",
-                "Microsoft.UI.Xaml",
-                "ProGPU.WinUI.Designer"
-            };
-
-            foreach (var ns in searchNamespaces)
-            {
-                var typeName = $"{ns}.{toolName}";
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    controlType = assembly.GetType(typeName);
-                    if (controlType != null) break;
-                }
-                if (controlType != null) break;
-            }
-
-            if (controlType == null)
-            {
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    foreach (var type in assembly.GetTypes())
-                    {
-                        if (type.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            controlType = type;
-                            break;
-                        }
-                    }
-                    if (controlType != null) break;
-                }
-            }
-
-            if (controlType != null && typeof(FrameworkElement).IsAssignableFrom(controlType))
+            if (DesignerElementRegistry.TryCreate(toolName, ThemeResourceFont(), out var newInstance))
             {
                 try
                 {
-                    var newInstance = Activator.CreateInstance(controlType) as FrameworkElement;
-                    if (newInstance != null)
+                    // Determine unique name
+                    int suffix = 1;
+                    string baseName = $"{toolName}";
+                    string candidateName = $"{baseName}_{suffix}";
+                    var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    FindNamesInVisualTree(DesignSurface, existingNames);
+                    while (existingNames.Contains(candidateName))
                     {
-                        newInstance.IsHitTestVisible = false;
+                        candidateName = $"{baseName}_{++suffix}";
+                    }
+                    newInstance.Name = candidateName;
 
-                        if (float.IsNaN(newInstance.Width) || newInstance.Width <= 0) newInstance.Width = 120f;
-                        if (float.IsNaN(newInstance.Height) || newInstance.Height <= 0) newInstance.Height = 36f;
+                    // Find drop container under logicalPos
+                    FrameworkElement dropTarget = DesignSurface;
+                    var hitContainer = FindContainerAtPosition(DesignSurface, args.Position, null);
+                    if (hitContainer != null)
+                    {
+                        dropTarget = hitContainer;
+                    }
 
-                        if (newInstance is Button button)
+                    if (IsResponsiveMode)
+                    {
+                        // Reject Canvas containers in Webflow Mode
+                        if (newInstance is Canvas)
                         {
-                            var richText = new RichTextBlock { Font = ThemeResourceFont() };
-                            richText.Inlines.Add(new Run(toolName));
-                            button.Content = richText;
-                        }
-                        else if (newInstance is TextBlock textBlock)
-                        {
-                            textBlock.Text = toolName;
-                        }
-                        else if (newInstance is CheckBox checkBox)
-                        {
-                            var richText = new RichTextBlock { Font = ThemeResourceFont() };
-                            richText.Inlines.Add(new Run(toolName));
-                            checkBox.Content = richText;
-                        }
-                        else if (newInstance is RadioButton radioButton)
-                        {
-                            var richText = new RichTextBlock { Font = ThemeResourceFont() };
-                            richText.Inlines.Add(new Run(toolName));
-                            radioButton.Content = richText;
-                        }
-                        else if (newInstance is ToggleSwitch toggleSwitch)
-                        {
-                            var richText = new RichTextBlock { Font = ThemeResourceFont() };
-                            richText.Inlines.Add(new Run(toolName));
-                            toggleSwitch.Content = richText;
-                        }
-                        else if (newInstance is ComboBox comboBox)
-                        {
-                            comboBox.PlaceholderText = toolName;
+                            Console.WriteLine("[DesignerCanvas] Canvas container is not allowed in responsive Webflow mode.");
+                            return;
                         }
 
-                        // Determine unique name
-                        int suffix = 1;
-                        string baseName = $"{toolName}";
-                        string candidateName = $"{baseName}_{suffix}";
-                        var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        FindNamesInVisualTree(DesignSurface, existingNames);
-                        while (existingNames.Contains(candidateName))
+                        // If dropping on root, it must be a responsive container, not a leaf control
+                        if (dropTarget == DesignSurface)
                         {
-                            candidateName = $"{baseName}_{++suffix}";
-                        }
-                        newInstance.Name = candidateName;
-
-                        // Find drop container under logicalPos
-                        FrameworkElement dropTarget = DesignSurface;
-                        var hitContainer = FindContainerAtPosition(DesignSurface, args.Position, null);
-                        if (hitContainer != null)
-                        {
-                            dropTarget = hitContainer;
-                        }
-
-                        if (IsResponsiveMode)
-                        {
-                            // Reject Canvas containers in Webflow Mode
-                            if (newInstance is Canvas)
+                            if (!IsResponsiveContainer(newInstance))
                             {
-                                Console.WriteLine("[DesignerCanvas] Canvas container is not allowed in responsive Webflow mode.");
+                                Console.WriteLine($"[DesignerCanvas] Cannot drop leaf control '{newInstance.GetType().Name}' directly on canvas root in Webflow mode. Place a responsive panel first.");
                                 return;
                             }
-
-                            // If dropping on root, it must be a responsive container, not a leaf control
-                            if (dropTarget == DesignSurface)
-                            {
-                                if (!IsResponsiveContainer(newInstance))
-                                {
-                                    Console.WriteLine($"[DesignerCanvas] Cannot drop leaf control '{newInstance.GetType().Name}' directly on canvas root in Webflow mode. Place a responsive panel first.");
-                                    return;
-                                }
-                            }
-
-                            // Auto-stretch responsive containers and give default placeholder height
-                            if (IsResponsiveContainer(newInstance))
-                            {
-                                newInstance.HorizontalAlignment = HorizontalAlignment.Stretch;
-                                newInstance.Width = float.NaN;
-                                newInstance.Height = 100f; // placeholder height so empty panels are visible
-                            }
                         }
 
-                        if (dropTarget is Canvas canvasTarget)
+                        // Auto-stretch responsive containers and give default placeholder height
+                        if (IsResponsiveContainer(newInstance))
                         {
-                            if (IsResponsiveMode && canvasTarget == DesignSurface)
-                            {
-                                // In responsive mode, append directly without coordinate attachment
-                                canvasTarget.Children.Add(newInstance);
-                            }
-                            else
-                            {
-                                // Snap to grid relative to the canvas target
-                                Vector2 snappedPos = SnapPositionToGrid(args.Position - canvasTarget.Offset, GridSize);
-                                Canvas.SetLeft(newInstance, snappedPos.X);
-                                Canvas.SetTop(newInstance, snappedPos.Y);
-                                canvasTarget.Children.Add(newInstance);
-                            }
+                            newInstance.HorizontalAlignment = HorizontalAlignment.Stretch;
+                            newInstance.Width = float.NaN;
+                            newInstance.Height = 100f; // placeholder height so empty panels are visible
+                        }
+                    }
+
+                    if (dropTarget is Canvas canvasTarget)
+                    {
+                        if (IsResponsiveMode && canvasTarget == DesignSurface)
+                        {
+                            // In responsive mode, append directly without coordinate attachment
+                            canvasTarget.Children.Add(newInstance);
                         }
                         else
                         {
-                            // Add child to the non-canvas container (Panel, Border, ContentControl)
-                            AddChildToTarget(dropTarget, newInstance);
+                            // Snap to grid relative to the canvas target
+                            Vector2 snappedPos = SnapPositionToGrid(args.Position - canvasTarget.Offset, GridSize);
+                            Canvas.SetLeft(newInstance, snappedPos.X);
+                            Canvas.SetTop(newInstance, snappedPos.Y);
+                            canvasTarget.Children.Add(newInstance);
                         }
-
-                        SelectElement(newInstance);
-
-                        CanvasModified?.Invoke();
-
-                        InvalidateMeasure();
-                        InvalidateArrange();
-                        Invalidate();
-                        DesignSurface.InvalidateArrange();
-                        DesignSurface.Invalidate();
                     }
+                    else
+                    {
+                        // Add child to the non-canvas container (Panel, Border, ContentControl)
+                        AddChildToTarget(dropTarget, newInstance);
+                    }
+
+                    SelectElement(newInstance);
+
+                    CanvasModified?.Invoke();
+
+                    InvalidateMeasure();
+                    InvalidateArrange();
+                    Invalidate();
+                    DesignSurface.InvalidateArrange();
+                    DesignSurface.Invalidate();
                 }
                 catch (Exception ex)
                 {
@@ -1468,21 +1390,6 @@ public class DesignerCanvas : Panel
         return hit;
     }
 
-    private static PropertyInfo? GetPropertySafe(Type type, string name)
-    {
-        Type? currentType = type;
-        while (currentType != null)
-        {
-            var prop = currentType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            if (prop != null)
-            {
-                return prop;
-            }
-            currentType = currentType.BaseType;
-        }
-        return null;
-    }
-
     public bool IsResponsiveContainer(FrameworkElement fe)
     {
         if (fe is Canvas) return false;
@@ -1549,28 +1456,7 @@ public class DesignerCanvas : Panel
 
     private bool IsValidDropContainer(FrameworkElement fe)
     {
-        if (fe is Button || fe is CheckBox || fe is RadioButton || fe is ToggleSwitch || fe is ComboBox)
-        {
-            return false;
-        }
-
-        if (fe is Panel) return true;
-        if (fe is Border) return true;
-        if (fe is ContentControl) return true;
-        
-        var type = fe.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            return true;
-        }
-
-        if (GetPropertySafe(type, "Child") != null || GetPropertySafe(type, "Content") != null)
-        {
-            return true;
-        }
-
-        return false;
+        return DesignerElementRegistry.IsDropContainer(fe);
     }
 
     private void FindAllContainers(FrameworkElement parent, List<FrameworkElement> results, FrameworkElement? excludeElement)
@@ -1607,44 +1493,7 @@ public class DesignerCanvas : Panel
 
     private void AddChildToTarget(FrameworkElement target, FrameworkElement newChild)
     {
-        if (target == null || newChild == null) return;
-
-        if (target is Panel panel)
-        {
-            panel.Children.Add(newChild);
-            return;
-        }
-
-        var type = target.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            var prop = GetPropertySafe(type, contentPropertyAttr.Name);
-            if (prop != null && prop.CanWrite)
-            {
-                prop.SetValue(target, newChild);
-                return;
-            }
-        }
-
-        var childProp = GetPropertySafe(type, "Child");
-        if (childProp != null && childProp.CanWrite && typeof(FrameworkElement).IsAssignableFrom(childProp.PropertyType))
-        {
-            childProp.SetValue(target, newChild);
-            return;
-        }
-
-        var contentProp = GetPropertySafe(type, "Content");
-        if (contentProp != null && contentProp.CanWrite)
-        {
-            contentProp.SetValue(target, newChild);
-            return;
-        }
-
-        if (target is ContainerVisual container)
-        {
-            container.AddChild(newChild);
-        }
+        DesignerElementRegistry.TryAddChild(target, newChild);
     }
 
     private void AddChildToContainer(FrameworkElement target, FrameworkElement newChild)
@@ -1654,60 +1503,7 @@ public class DesignerCanvas : Panel
 
     private void RemoveChildFromParent(FrameworkElement child)
     {
-        if (child == null) return;
-        var parent = child.Parent as FrameworkElement;
-        if (parent == null)
-        {
-            var containerParent = child.Parent as ContainerVisual;
-            containerParent?.RemoveChild(child);
-            return;
-        }
-
-        var type = parent.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            var prop = GetPropertySafe(type, contentPropertyAttr.Name);
-            if (prop != null)
-            {
-                if (prop.CanWrite && prop.GetValue(parent) == child)
-                {
-                    prop.SetValue(parent, null);
-                    return;
-                }
-                else if (typeof(System.Collections.IList).IsAssignableFrom(prop.PropertyType))
-                {
-                    var list = prop.GetValue(parent) as System.Collections.IList;
-                    if (list != null && list.Contains(child))
-                    {
-                        list.Remove(child);
-                        return;
-                    }
-                }
-            }
-        }
-
-        var childProp = GetPropertySafe(type, "Child");
-        if (childProp != null && childProp.CanWrite && childProp.GetValue(parent) == child)
-        {
-            childProp.SetValue(parent, null);
-            return;
-        }
-
-        var contentProp = GetPropertySafe(type, "Content");
-        if (contentProp != null && contentProp.CanWrite && contentProp.GetValue(parent) == child)
-        {
-            contentProp.SetValue(parent, null);
-            return;
-        }
-
-        if (parent is Panel panel)
-        {
-            panel.Children.Remove(child);
-            return;
-        }
-
-        parent.RemoveChild(child);
+        DesignerElementRegistry.RemoveFromParent(child);
     }
 
     private static bool IsAncestorOf(FrameworkElement possibleAncestor, FrameworkElement child)

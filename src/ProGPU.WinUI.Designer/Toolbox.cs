@@ -83,73 +83,13 @@ public class ToolboxItem : Border
             
             FrameworkElement? dragVisual = null;
             
-            // Try to instantiate actual control for visual preview
-            try
+            if (DesignerElementRegistry.TryCreate(_controlName, _font ?? PopupService.DefaultFont, out var createdPreview))
             {
-                Type? controlType = null;
-                string[] searchNamespaces = {
-                    "Microsoft.UI.Xaml.Controls",
-                    "Microsoft.UI.Xaml",
-                    "ProGPU.WinUI.Designer"
-                };
-
-                foreach (var ns in searchNamespaces)
-                {
-                    var typeName = $"{ns}.{_controlName}";
-                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        controlType = assembly.GetType(typeName);
-                        if (controlType != null) break;
-                    }
-                    if (controlType != null) break;
-                }
-
-                if (controlType != null && typeof(FrameworkElement).IsAssignableFrom(controlType))
-                {
-                    dragVisual = Activator.CreateInstance(controlType) as FrameworkElement;
-                }
-            }
-            catch {}
-
-            if (dragVisual != null)
-            {
+                dragVisual = createdPreview;
                 dragVisual.Width = 120f;
                 dragVisual.Height = 36f;
                 dragVisual.Opacity = 0.7f;
                 dragVisual.IsHitTestVisible = false;
-
-                if (dragVisual is Button button)
-                {
-                    var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                    richText.Inlines.Add(new Run(_controlName));
-                    button.Content = richText;
-                }
-                else if (dragVisual is TextBlock textBlock)
-                {
-                    textBlock.Text = _controlName;
-                }
-                else if (dragVisual is CheckBox checkBox)
-                {
-                    var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                    richText.Inlines.Add(new Run(_controlName));
-                    checkBox.Content = richText;
-                }
-                else if (dragVisual is RadioButton radioButton)
-                {
-                    var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                    richText.Inlines.Add(new Run(_controlName));
-                    radioButton.Content = richText;
-                }
-                else if (dragVisual is ToggleSwitch toggleSwitch)
-                {
-                    var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                    richText.Inlines.Add(new Run(_controlName));
-                    toggleSwitch.Content = richText;
-                }
-                else if (dragVisual is ComboBox comboBox)
-                {
-                    comboBox.PlaceholderText = _controlName;
-                }
             }
             else
             {

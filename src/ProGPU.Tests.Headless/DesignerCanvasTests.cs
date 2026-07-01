@@ -18,7 +18,7 @@ namespace ProGPU.Tests.Headless;
 public class DesignerCanvasTests
 {
     [Fact]
-    public void Test_DesignerCanvas_Drop_Reflection_Instantiation_And_GridSnap()
+    public void Test_DesignerCanvas_Drop_TypedRegistryInstantiation_And_GridSnap()
     {
         var canvas = new DesignerCanvas
         {
@@ -750,6 +750,42 @@ public class DesignerCanvasTests
     }
 
     [Fact]
+    public void Test_DesignerElementRegistry_TypedFactories_And_ContentHosts()
+    {
+        var font = Microsoft.UI.Xaml.Controls.PopupService.DefaultFont;
+
+        Assert.True(DesignerElementRegistry.TryCreate("Button", font, out var buttonFe));
+        var button = Assert.IsType<Button>(buttonFe);
+        Assert.IsType<RichTextBlock>(button.Content);
+        Assert.False(DesignerElementRegistry.IsDropContainer(button));
+
+        Assert.True(DesignerElementRegistry.TryCreate("StackPanel", font, out var panelFe));
+        Assert.IsType<Microsoft.UI.Xaml.Controls.StackPanel>(panelFe);
+        Assert.True(DesignerElementRegistry.IsDropContainer(panelFe));
+
+        Assert.True(DesignerElementRegistry.TryCreateLike(button, out var clonedButton));
+        Assert.IsType<Button>(clonedButton);
+
+        var border = new Border();
+        var textBlock = new TextBlock { Text = "Child" };
+        Assert.True(DesignerElementRegistry.TryAddChild(border, textBlock));
+        Assert.Same(textBlock, border.Child);
+        Assert.True(DesignerElementRegistry.IsLogicalChild(border, textBlock));
+        Assert.Collection(DesignerElementRegistry.GetLogicalChildren(border), child => Assert.Same(textBlock, child));
+        Assert.True(DesignerElementRegistry.RemoveFromParent(textBlock));
+        Assert.Null(border.Child);
+
+        var splitView = new SplitView { Pane = new Border() };
+        var splitContent = new TextBox();
+        Assert.True(DesignerElementRegistry.TryAddChild(splitView, splitContent));
+        Assert.Same(splitContent, splitView.Content);
+        Assert.Collection(
+            DesignerElementRegistry.GetLogicalChildren(splitView),
+            child => Assert.Same(splitView.Pane, child),
+            child => Assert.Same(splitContent, child));
+    }
+
+    [Fact]
     public void Test_Designer_PropertyEditors_Do_Not_Use_Clr_PropertyReflection()
     {
         string propertyGrid = File.ReadAllText(FindRepoFile("src/ProGPU.WinUI.Designer/PropertyGrid.cs"));
@@ -764,6 +800,46 @@ public class DesignerCanvasTests
         Assert.DoesNotContain("PropertyInfo", stylePanel);
         Assert.DoesNotContain("BindingFlags", stylePanel);
         Assert.DoesNotContain("GetProperty(", stylePanel);
+    }
+
+    [Fact]
+    public void Test_Designer_Factory_Content_And_Serializer_Do_Not_Use_Clr_Reflection()
+    {
+        string[] files =
+        [
+            "src/ProGPU.WinUI.Designer/DesignerElementRegistry.cs",
+            "src/ProGPU.WinUI.Designer/DesignerCanvas.cs",
+            "src/ProGPU.WinUI.Designer/VisualTreeOutline.cs",
+            "src/ProGPU.WinUI.Designer/DesignerHost.cs",
+            "src/ProGPU.WinUI.Designer/Toolbox.cs",
+            "src/ProGPU.WinUI.Designer/DesignerSerializer.cs"
+        ];
+
+        string[] forbiddenTokens =
+        [
+            "System.Reflection",
+            "BindingFlags",
+            "GetProperty(",
+            "GetProperties(",
+            "GetField(",
+            "GetMethod(",
+            "GetEvent(",
+            "Activator.CreateInstance",
+            "MethodInfo",
+            "PropertyInfo",
+            "FieldInfo",
+            "GetCustomAttribute",
+            "AppDomain.CurrentDomain"
+        ];
+
+        foreach (var file in files)
+        {
+            string source = File.ReadAllText(FindRepoFile(file));
+            foreach (var token in forbiddenTokens)
+            {
+                Assert.DoesNotContain(token, source);
+            }
+        }
     }
 
     private static string FindRepoFile(string relativePath)
