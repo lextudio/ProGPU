@@ -1,7 +1,6 @@
 namespace ProGPU.WinUI.Designer;
 
 using System;
-using System.Reflection;
 using System.Text;
 using System.Collections.Generic;
 using Microsoft.UI.Xaml;
@@ -246,42 +245,34 @@ public class StylePanel : Border
 
         _txtBgColor.TextChanged += (s, e) => {
             if (_isUpdatingFields || _selectedElement == null) return;
-            var prop = _selectedElement.GetType().GetProperty("Background");
-            if (prop != null)
+            if (TrySetDependencyValue("Background", ConvertValueToBrush(_txtBgColor.Text)))
             {
-                var brush = ConvertValueToBrush(_txtBgColor.Text);
-                prop.SetValue(_selectedElement, brush);
                 NotifyChanged();
             }
         };
 
         _txtBorderRadius.TextChanged += (s, e) => {
             if (_isUpdatingFields || _selectedElement == null) return;
-            var prop = _selectedElement.GetType().GetProperty("CornerRadius");
-            if (prop != null && float.TryParse(_txtBorderRadius.Text, out float r))
+            if (float.TryParse(_txtBorderRadius.Text, out float r) &&
+                TrySetDependencyValue("CornerRadius", r, typeof(float)))
             {
-                prop.SetValue(_selectedElement, r);
                 NotifyChanged();
             }
         };
 
         _txtBorderWidth.TextChanged += (s, e) => {
             if (_isUpdatingFields || _selectedElement == null) return;
-            var prop = _selectedElement.GetType().GetProperty("BorderThickness");
-            if (prop != null && float.TryParse(_txtBorderWidth.Text, out float w))
+            if (float.TryParse(_txtBorderWidth.Text, out float w) &&
+                TrySetDependencyValue("BorderThickness", new Thickness(w), typeof(Thickness)))
             {
-                prop.SetValue(_selectedElement, new Thickness(w));
                 NotifyChanged();
             }
         };
 
         _txtBorderColor.TextChanged += (s, e) => {
             if (_isUpdatingFields || _selectedElement == null) return;
-            var prop = _selectedElement.GetType().GetProperty("BorderBrush");
-            if (prop != null)
+            if (TrySetDependencyValue("BorderBrush", ConvertValueToBrush(_txtBorderColor.Text)))
             {
-                var brush = ConvertValueToBrush(_txtBorderColor.Text);
-                prop.SetValue(_selectedElement, brush);
                 NotifyChanged();
             }
         };
@@ -573,34 +564,23 @@ public class StylePanel : Border
             _txtOpacity.Text = ((int)(_selectedElement.Opacity * 100f)).ToString();
             _cmbVisibility.SelectedItem = FindComboBoxItem(_cmbVisibility, _selectedElement.Visibility.ToString());
 
-            // Background Brush reflectively
-            var bgProp = _selectedElement.GetType().GetProperty("Background");
-            if (bgProp != null)
+            if (TryGetDependencyValue("Background", out Brush? bgBrush))
             {
-                var bgBrush = bgProp.GetValue(_selectedElement) as Brush;
                 _txtBgColor.Text = GetBrushString(bgBrush);
             }
 
-            // Radius reflectively
-            var crProp = _selectedElement.GetType().GetProperty("CornerRadius");
-            if (crProp != null)
+            if (TryGetDependencyValue("CornerRadius", out float crVal))
             {
-                float crVal = crProp.GetValue(_selectedElement) is float f ? f : 0f;
                 _txtBorderRadius.Text = crVal.ToString("F0");
             }
 
-            // Border W & Col reflectively
-            var borderThickProp = _selectedElement.GetType().GetProperty("BorderThickness");
-            if (borderThickProp != null)
+            if (TryGetDependencyValue("BorderThickness", out Thickness thick))
             {
-                var thick = (Thickness)(borderThickProp.GetValue(_selectedElement) ?? default(Thickness));
                 _txtBorderWidth.Text = thick.Left.ToString("F0");
             }
 
-            var borderBrushProp = _selectedElement.GetType().GetProperty("BorderBrush");
-            if (borderBrushProp != null)
+            if (TryGetDependencyValue("BorderBrush", out Brush? brush))
             {
-                var brush = borderBrushProp.GetValue(_selectedElement) as Brush;
                 _txtBorderColor.Text = GetBrushString(brush);
             }
         }
@@ -705,6 +685,54 @@ public class StylePanel : Border
         _selectedElement?.InvalidateArrange();
         _selectedElement?.Invalidate();
         PropertyChanged?.Invoke();
+    }
+
+    private bool TrySetDependencyValue(string name, object? value, Type? propertyType = null)
+    {
+        if (_selectedElement == null)
+        {
+            return false;
+        }
+
+        var dependencyProperty = DependencyProperty.Lookup(_selectedElement.GetType(), name);
+        if (dependencyProperty == null ||
+            (propertyType != null && dependencyProperty.PropertyType != propertyType))
+        {
+            return false;
+        }
+
+        _selectedElement.SetValue(dependencyProperty, value);
+        return true;
+    }
+
+    private bool TryGetDependencyValue<T>(string name, out T? value)
+    {
+        value = default;
+        if (_selectedElement == null)
+        {
+            return false;
+        }
+
+        var dependencyProperty = DependencyProperty.Lookup(_selectedElement.GetType(), name);
+        if (dependencyProperty == null ||
+            (!typeof(T).IsAssignableFrom(dependencyProperty.PropertyType) && dependencyProperty.PropertyType != typeof(T)))
+        {
+            return false;
+        }
+
+        var currentValue = _selectedElement.GetValue(dependencyProperty);
+        if (currentValue is T typedValue)
+        {
+            value = typedValue;
+            return true;
+        }
+
+        if (currentValue == null)
+        {
+            return !typeof(T).IsValueType || Nullable.GetUnderlyingType(typeof(T)) != null;
+        }
+
+        return false;
     }
 
     private string GetBrushString(Brush? brush)

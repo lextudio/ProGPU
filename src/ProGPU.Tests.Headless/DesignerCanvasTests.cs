@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Numerics;
 using Xunit;
 using Microsoft.UI.Xaml;
@@ -730,6 +731,55 @@ public class DesignerCanvasTests
         Assert.Equal("70", txtOpacity.Text);
         Assert.Equal(0.7f, button.Opacity);
     }
+
+    [Fact]
+    public void Test_PropertyGrid_PropertyItem_Uses_DataGrid_ValueProvider()
+    {
+        bool changed = false;
+        var item = new ProGPU.WinUI.Designer.PropertyItem("Width", "100", value => changed = value == "125");
+
+        Assert.True(item.TryGetDataGridValue("Name", out var name));
+        Assert.Equal("Width", name);
+        Assert.True(item.TryGetDataGridValue("Value", out var value));
+        Assert.Equal("100", value);
+        Assert.Equal(typeof(string), item.GetDataGridValueType("Value"));
+
+        Assert.True(item.TrySetDataGridValue("Value", "125"));
+        Assert.True(changed);
+        Assert.Equal("125", item.Value);
+    }
+
+    [Fact]
+    public void Test_Designer_PropertyEditors_Do_Not_Use_Clr_PropertyReflection()
+    {
+        string propertyGrid = File.ReadAllText(FindRepoFile("src/ProGPU.WinUI.Designer/PropertyGrid.cs"));
+        string stylePanel = File.ReadAllText(FindRepoFile("src/ProGPU.WinUI.Designer/StylePanel.cs"));
+
+        Assert.DoesNotContain("System.Reflection", propertyGrid);
+        Assert.DoesNotContain("PropertyInfo", propertyGrid);
+        Assert.DoesNotContain("BindingFlags", propertyGrid);
+        Assert.DoesNotContain("GetProperty(", propertyGrid);
+
+        Assert.DoesNotContain("System.Reflection", stylePanel);
+        Assert.DoesNotContain("PropertyInfo", stylePanel);
+        Assert.DoesNotContain("BindingFlags", stylePanel);
+        Assert.DoesNotContain("GetProperty(", stylePanel);
+    }
+
+    private static string FindRepoFile(string relativePath)
+    {
+        DirectoryInfo? current = new(Directory.GetCurrentDirectory());
+        while (current != null)
+        {
+            string candidate = Path.Combine(current.FullName, relativePath);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not find {relativePath} from {Directory.GetCurrentDirectory()}.");
+    }
 }
-
-
