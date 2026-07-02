@@ -415,11 +415,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                         try
                         {
                             userSource = ShaderToyTranspiler.Translate(userSource);
-                            Console.WriteLine("[ShaderToy Transpiler] Auto-transpiled GLSL code to WGSL successfully.");
+                            ProGpuSceneDiagnostics.WriteLine("[ShaderToy Transpiler] Auto-transpiled GLSL code to WGSL successfully.");
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[ShaderToy Transpiler] Transpilation failed: {ex.Message}");
+                            ProGpuSceneDiagnostics.WriteLine($"[ShaderToy Transpiler] Transpilation failed: {ex.Message}");
                         }
                     }
                     string fullShaderCode = VertexAndHeaderShader + "\n" + userSource + "\n" + GetFragmentWrapperShader(pipelineSourceAlphaMode);
@@ -431,7 +431,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                         : compositor.Context.GetShaderModuleVerificationStatus(shaderModule, out errors);
                     if (verification == ShaderModuleVerificationStatus.Invalid)
                     {
-                        Console.WriteLine($"[ShaderToy Render] Shader module creation failed:\n{errors}");
+                        ProGpuSceneDiagnostics.WriteLine($"[ShaderToy Render] Shader module creation failed:\n{errors}");
                         p.IsFailed = true;
                         if (!string.IsNullOrEmpty(errors))
                         {
@@ -494,7 +494,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
                     if (pipelineFailed || activePipeline == null)
                     {
-                        Console.WriteLine("[ShaderToy Render] Pipeline creation failed, aborting.");
+                        ProGpuSceneDiagnostics.WriteLine("[ShaderToy Render] Pipeline creation failed, aborting.");
                         p.IsFailed = true;
                         compositor.PipelineCache.ReleaseRenderPipeline(pipelineKey);
                         compositor.PipelineCache.ReleaseShader(shaderKey);
@@ -504,7 +504,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ShaderToy Render] Error compiling shader or pipeline: {ex.Message}");
+                    ProGpuSceneDiagnostics.WriteLine($"[ShaderToy Render] Error compiling shader or pipeline: {ex.Message}");
                     p.IsFailed = true;
                     return;
                 }
