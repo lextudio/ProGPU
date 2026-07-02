@@ -3,6 +3,8 @@
     <ProGPUStrongNameKeyFile>$(MSBuildThisFileDirectory)eng/ProGPU.snk</ProGPUStrongNameKeyFile>
     <Version Condition="'$(Version)' == ''">11.0.0-dev</Version>
     <PackageVersion Condition="'$(PackageVersion)' == ''">$(Version)</PackageVersion>
+    <Description Condition="'$(Description)' == ''">ProGPU runtime package for GPU-accelerated .NET composition, rendering, vector graphics, text, and WebGPU platform integration.</Description>
+    <PackageDescription Condition="'$(PackageDescription)' == ''">$(Description)</PackageDescription>
     <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">11.0.0.0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">11.0.0.0</FileVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
@@ -14,5 +16,9 @@
     <TreatWarningsAsErrors Condition="'$(TreatWarningsAsErrors)' == ''">false</TreatWarningsAsErrors>
     <WarningsAsErrors Condition="'$(WarningsAsErrors)' == ''"></WarningsAsErrors>
     <NoWarn>$(NoWarn);SYSLIB1045</NoWarn>
+    <PackageReadmeFile Condition="'$(PackageReadmeFile)' == '' And Exists('$(MSBuildThisFileDirectory)README.md')">README.md</PackageReadmeFile>
   </PropertyGroup>
+  <ItemGroup Condition="'$(IsPackable)' != 'false' And Exists('$(MSBuildThisFileDirectory)README.md')">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 </Project>
