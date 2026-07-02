@@ -146,11 +146,29 @@ public sealed class EllipseGeometry : Geometry
     {
     }
 
+    public EllipseGeometry(Rect rect)
+    {
+        if (rect.IsEmpty)
+        {
+            throw new ArgumentException("Rectangle must not be empty.", nameof(rect));
+        }
+
+        RadiusX = rect.Width * 0.5;
+        RadiusY = rect.Height * 0.5;
+        Center = new Point(rect.X + RadiusX, rect.Y + RadiusY);
+    }
+
     public EllipseGeometry(Point center, double radiusX, double radiusY)
     {
         Center = center;
         RadiusX = radiusX;
         RadiusY = radiusY;
+    }
+
+    public EllipseGeometry(Point center, double radiusX, double radiusY, Transform transform)
+        : this(center, radiusX, radiusY)
+    {
+        Transform = transform;
     }
 
     public Point Center { get; set; }

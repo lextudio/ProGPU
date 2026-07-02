@@ -215,6 +215,31 @@ public sealed class WpfDrawingContextClipTests
     }
 
     [Fact]
+    public void PushClipEllipseGeometryRectConstructorRecordsNativeArcPathClip()
+    {
+        var nativeContext = new DrawingContext();
+        using var drawingContext = new WpfDrawingContext(nativeContext);
+        var geometry = new WpfEllipseGeometry(new WpfRect(20, 40, 40, 20));
+
+        drawingContext.PushClip(geometry);
+        drawingContext.Pop();
+
+        var command = Assert.Single(nativeContext.Commands, c => c.Type == RenderCommandType.PushGeometryClip);
+        var figure = Assert.Single(command.Path!.Figures);
+        Assert.Equal(new Vector2(60f, 50f), figure.StartPoint);
+        Assert.True(figure.IsClosed);
+        Assert.Equal(4, figure.Segments.Count);
+        var arcs = figure.Segments.OfType<VectorArcSegment>().ToArray();
+        Assert.Equal(4, arcs.Length);
+        Assert.All(arcs, arc =>
+        {
+            Assert.Equal(new Vector2(20f, 10f), arc.Size);
+            Assert.False(arc.IsLargeArc);
+            Assert.Equal(ProGPU.Vector.SweepDirection.Clockwise, arc.SweepDirection);
+        });
+    }
+
+    [Fact]
     public void PushClipGeometryGroupFlattensPrimitiveChildren()
     {
         var nativeContext = new DrawingContext();
