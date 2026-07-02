@@ -560,7 +560,7 @@ public unsafe class WgpuContext : IDisposable
             : ReadOnlySpan<PresentMode>.Empty;
         PresentMode presentMode = ChoosePresentMode(_vsync, presentModes);
 
-        Console.WriteLine($"[WebGPU Context] Configuring SwapChain: {width}x{height}, VSync: {_vsync}, Selected Mode: {presentMode}");
+        ProGpuBackendDiagnostics.WriteLine($"[WebGPU Context] Configuring SwapChain: {width}x{height}, VSync: {_vsync}, Selected Mode: {presentMode}");
 
         Wgpu.SurfaceCapabilitiesFreeMembers(capabilities);
 
