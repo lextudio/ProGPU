@@ -70,7 +70,24 @@ public sealed class RectangleGeometry : Geometry
         Rect = rect;
     }
 
+    public RectangleGeometry(Rect rect, double radiusX, double radiusY)
+        : this(rect)
+    {
+        RadiusX = radiusX;
+        RadiusY = radiusY;
+    }
+
+    public RectangleGeometry(Rect rect, double radiusX, double radiusY, Transform transform)
+        : this(rect, radiusX, radiusY)
+    {
+        Transform = transform;
+    }
+
     public Rect Rect { get; set; }
+
+    public double RadiusX { get; set; }
+
+    public double RadiusY { get; set; }
 
     public override void Draw(ProGPU.Scene.DrawingContext context, ProGPU.Vector.Brush? fill, ProGPU.Vector.Pen? pen)
     {
@@ -95,9 +112,31 @@ public sealed class RectangleGeometry : Geometry
     {
         path = Rect.IsEmpty
             ? new VectorPathGeometry()
-            : VectorPrimitivePathGeometry.CreateRectangle((float)Rect.X, (float)Rect.Y, (float)Rect.Width, (float)Rect.Height);
+            : CreatePathGeometry();
         transform = Transform != null ? Transform.Value : Matrix4x4.Identity;
         return true;
+    }
+
+    private VectorPathGeometry CreatePathGeometry()
+    {
+        if (double.IsFinite(RadiusX)
+            && double.IsFinite(RadiusY)
+            && (Math.Abs(RadiusX) > 0.0001 || Math.Abs(RadiusY) > 0.0001))
+        {
+            return VectorPrimitivePathGeometry.CreateRoundedRectangle(
+                (float)Rect.X,
+                (float)Rect.Y,
+                (float)Rect.Width,
+                (float)Rect.Height,
+                (float)RadiusX,
+                (float)RadiusY);
+        }
+
+        return VectorPrimitivePathGeometry.CreateRectangle(
+            (float)Rect.X,
+            (float)Rect.Y,
+            (float)Rect.Width,
+            (float)Rect.Height);
     }
 }
 
