@@ -516,8 +516,8 @@ public static class InputSystem
         if (button == MouseButton.Right) Current.IsRightButtonPressed = true;
 
         var hit = HitTest(_lastMousePos);
-        Console.WriteLine($"[InputSystem] MouseDown at {_lastMousePos}. Hit: {hit?.GetType().Name} (Name: {hit?.Name}, Size: {hit?.Size}, Offset: {hit?.Offset}, IsFocused: {(hit is Control ctrl ? ctrl.IsFocused.ToString() : "N/A")})");
-        if (hit != null)
+        ProGpuWinUiDiagnostics.WriteLine($"[InputSystem] MouseDown at {_lastMousePos}. Hit: {hit?.GetType().Name} (Name: {hit?.Name}, Size: {hit?.Size}, Offset: {hit?.Offset}, IsFocused: {(hit is Control ctrl ? ctrl.IsFocused.ToString() : "N/A")})");
+        if (hit != null && ProGpuWinUiDiagnostics.IsEnabled)
         {
             var path = new List<string>();
             var current = hit;
@@ -526,7 +526,7 @@ public static class InputSystem
                 path.Add($"{current.GetType().Name} (Name: {current.Name}, Size: {current.Size}, Offset: {current.Offset})");
                 current = current.Parent as FrameworkElement;
             }
-            Console.WriteLine($"[InputSystem] Hit Path: {string.Join(" -> ", path)}");
+            ProGpuWinUiDiagnostics.WriteLine($"[InputSystem] Hit Path: {string.Join(" -> ", path)}");
         }
 
         if (DevToolsService.IsInspectModeActive || (IsControlPressedDynamic() && IsShiftPressedDynamic()))

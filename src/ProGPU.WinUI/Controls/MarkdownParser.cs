@@ -377,7 +377,7 @@ namespace Microsoft.UI.Xaml.Controls
 
                     hyperlink.Click += (s, e) =>
                     {
-                        Console.WriteLine($"[MarkdownParser] Clicked hyperlink Uri: {hyperlink.Uri}");
+                        ProGpuWinUiDiagnostics.WriteLine($"[MarkdownParser] Clicked hyperlink Uri: {hyperlink.Uri}");
                     };
 
                     return hyperlink;
