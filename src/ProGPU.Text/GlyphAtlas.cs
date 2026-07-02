@@ -98,7 +98,7 @@ public unsafe class GlyphAtlas : IDisposable
     {
         if (_isDisposed) return;
         
-        Console.WriteLine("[GlyphAtlas] Proactive Clear: Resetting packer and clearing cache.");
+        ProGpuTextDiagnostics.WriteLine("[GlyphAtlas] Proactive Clear: Resetting packer and clearing cache.");
         _glyphs.Clear();
         _currentX = 2;
         _currentY = 2;
@@ -269,7 +269,7 @@ public unsafe class GlyphAtlas : IDisposable
                             if (_currentY + gH + 2 > _atlasSize)
                             {
                                 // Atlas is entirely out of space, reset packer
-                                Console.WriteLine("[GlyphAtlas] Warning: Texture Atlas is full! Clearing cache.");
+                                ProGpuTextDiagnostics.WriteLine("[GlyphAtlas] Warning: Texture Atlas is full! Clearing cache.");
                                 _glyphs.Clear();
                                 _currentX = 2;
                                 _currentY = 2;

@@ -517,7 +517,7 @@ public unsafe class PathAtlas : IDisposable
 
             if (_currentY + gH + 2 > _atlasSize)
             {
-                Console.WriteLine("[PathAtlas] Warning: Even active paths in the current frame exceed the atlas size during repack!");
+                ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Warning: Even active paths in the current frame exceed the atlas size during repack!");
                 break;
             }
 
@@ -651,7 +651,7 @@ public unsafe class PathAtlas : IDisposable
 
         if (_currentY + gH + 2 > _atlasSize)
         {
-            Console.WriteLine("[PathAtlas] Texture Atlas is full! Repacking active paths...");
+            ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Texture Atlas is full! Repacking active paths...");
             RepackActivePaths();
 
             if (_currentX + gW + 2 > _atlasSize)
@@ -663,7 +663,7 @@ public unsafe class PathAtlas : IDisposable
 
             if (_currentY + gH + 2 > _atlasSize)
             {
-                Console.WriteLine("[PathAtlas] Warning: Even active paths exceed atlas size after repack!");
+                ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Warning: Even active paths exceed atlas size after repack!");
                 info = new PathInfo
                 {
                     Key = key,

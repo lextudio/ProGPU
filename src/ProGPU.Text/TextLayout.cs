@@ -46,11 +46,11 @@ public class TextLayout
                 try
                 {
                     _fallbackFonts.Add(new TtfFont(path));
-                    Console.WriteLine($"[TextLayout] Loaded system fallback font: {path}");
+                    ProGpuTextDiagnostics.WriteLine($"[TextLayout] Loaded system fallback font: {path}");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[TextLayout] Warning: Failed to load fallback font '{path}': {ex.Message}");
+                    ProGpuTextDiagnostics.WriteLine($"[TextLayout] Warning: Failed to load fallback font '{path}': {ex.Message}");
                 }
             }
         }
