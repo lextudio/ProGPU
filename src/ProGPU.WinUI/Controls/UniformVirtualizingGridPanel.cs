@@ -15,10 +15,10 @@ public class UniformVirtualizingGridPanel : VirtualizingPanel
 
     public UniformVirtualizingGridPanel()
     {
-        ThemeManager.ThemeChanged += OnThemeChanged;
+        ThemeManager.ThemeChanged += OnThemeManagerChanged;
     }
 
-    private void OnThemeChanged()
+    private void OnThemeManagerChanged()
     {
         _recycledVisuals.Clear();
         Invalidate();

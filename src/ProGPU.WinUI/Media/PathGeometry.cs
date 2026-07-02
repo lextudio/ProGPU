@@ -109,7 +109,7 @@ public class ArcSegment : PathSegment
     public static readonly DependencyProperty SizeProperty =
         DependencyProperty.Register("Size", typeof(Vector2), typeof(ArcSegment), new PropertyMetadata(Vector2.Zero));
 
-    public Vector2 Size
+    public new Vector2 Size
     {
         get => (Vector2)(GetValue(SizeProperty) ?? Vector2.Zero);
         set => SetValue(SizeProperty, value);

@@ -1094,21 +1094,21 @@ public class CheckboxChrome : FrameworkElement
         set => SetValue(IsCheckedProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerOverProperty =
+    public static readonly new DependencyProperty IsPointerOverProperty =
         DependencyProperty.Register("IsPointerOver", typeof(bool), typeof(CheckboxChrome),
             new PropertyMetadata(false, (d, e) => ((CheckboxChrome)d).Invalidate()));
 
-    public bool IsPointerOver
+    public new bool IsPointerOver
     {
         get => (bool)(GetValue(IsPointerOverProperty) ?? false);
         set => SetValue(IsPointerOverProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerPressedProperty =
+    public static readonly new DependencyProperty IsPointerPressedProperty =
         DependencyProperty.Register("IsPointerPressed", typeof(bool), typeof(CheckboxChrome),
             new PropertyMetadata(false, (d, e) => ((CheckboxChrome)d).Invalidate()));
 
-    public bool IsPointerPressed
+    public new bool IsPointerPressed
     {
         get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
         set => SetValue(IsPointerPressedProperty, value);
@@ -1245,21 +1245,21 @@ public class RadioButtonChrome : FrameworkElement
         set => SetValue(IsCheckedProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerOverProperty =
+    public static readonly new DependencyProperty IsPointerOverProperty =
         DependencyProperty.Register("IsPointerOver", typeof(bool), typeof(RadioButtonChrome),
             new PropertyMetadata(false, (d, e) => ((RadioButtonChrome)d).Invalidate()));
 
-    public bool IsPointerOver
+    public new bool IsPointerOver
     {
         get => (bool)(GetValue(IsPointerOverProperty) ?? false);
         set => SetValue(IsPointerOverProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerPressedProperty =
+    public static readonly new DependencyProperty IsPointerPressedProperty =
         DependencyProperty.Register("IsPointerPressed", typeof(bool), typeof(RadioButtonChrome),
             new PropertyMetadata(false, (d, e) => ((RadioButtonChrome)d).Invalidate()));
 
-    public bool IsPointerPressed
+    public new bool IsPointerPressed
     {
         get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
         set => SetValue(IsPointerPressedProperty, value);
@@ -1390,21 +1390,21 @@ public class ToggleSwitchChrome : FrameworkElement
         set => SetValue(IsOnProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerOverProperty =
+    public static readonly new DependencyProperty IsPointerOverProperty =
         DependencyProperty.Register("IsPointerOver", typeof(bool), typeof(ToggleSwitchChrome),
             new PropertyMetadata(false, (d, e) => ((ToggleSwitchChrome)d).Invalidate()));
 
-    public bool IsPointerOver
+    public new bool IsPointerOver
     {
         get => (bool)(GetValue(IsPointerOverProperty) ?? false);
         set => SetValue(IsPointerOverProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerPressedProperty =
+    public static readonly new DependencyProperty IsPointerPressedProperty =
         DependencyProperty.Register("IsPointerPressed", typeof(bool), typeof(ToggleSwitchChrome),
             new PropertyMetadata(false, (d, e) => ((ToggleSwitchChrome)d).Invalidate()));
 
-    public bool IsPointerPressed
+    public new bool IsPointerPressed
     {
         get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
         set => SetValue(IsPointerPressedProperty, value);
@@ -1540,21 +1540,21 @@ public class ToggleButtonChrome : FrameworkElement
         set => SetValue(IsCheckedProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerOverProperty =
+    public static readonly new DependencyProperty IsPointerOverProperty =
         DependencyProperty.Register("IsPointerOver", typeof(bool), typeof(ToggleButtonChrome),
             new PropertyMetadata(false, (d, e) => ((ToggleButtonChrome)d).Invalidate()));
 
-    public bool IsPointerOver
+    public new bool IsPointerOver
     {
         get => (bool)(GetValue(IsPointerOverProperty) ?? false);
         set => SetValue(IsPointerOverProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerPressedProperty =
+    public static readonly new DependencyProperty IsPointerPressedProperty =
         DependencyProperty.Register("IsPointerPressed", typeof(bool), typeof(ToggleButtonChrome),
             new PropertyMetadata(false, (d, e) => ((ToggleButtonChrome)d).Invalidate()));
 
-    public bool IsPointerPressed
+    public new bool IsPointerPressed
     {
         get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
         set => SetValue(IsPointerPressedProperty, value);
@@ -1710,21 +1710,21 @@ public class SliderChrome : FrameworkElement
         set => SetValue(MaximumProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerOverProperty =
+    public static readonly new DependencyProperty IsPointerOverProperty =
         DependencyProperty.Register("IsPointerOver", typeof(bool), typeof(SliderChrome),
             new PropertyMetadata(false, (d, e) => ((SliderChrome)d).Invalidate()));
 
-    public bool IsPointerOver
+    public new bool IsPointerOver
     {
         get => (bool)(GetValue(IsPointerOverProperty) ?? false);
         set => SetValue(IsPointerOverProperty, value);
     }
 
-    public static readonly DependencyProperty IsPointerPressedProperty =
+    public static readonly new DependencyProperty IsPointerPressedProperty =
         DependencyProperty.Register("IsPointerPressed", typeof(bool), typeof(SliderChrome),
             new PropertyMetadata(false, (d, e) => ((SliderChrome)d).Invalidate()));
 
-    public bool IsPointerPressed
+    public new bool IsPointerPressed
     {
         get => (bool)(GetValue(IsPointerPressedProperty) ?? false);
         set => SetValue(IsPointerPressedProperty, value);
@@ -1865,5 +1865,4 @@ public class SliderChrome : FrameworkElement
         }
     }
 }
-
 

@@ -277,6 +277,12 @@ namespace Microsoft.UI.Xaml.Controls
             {
                 _blocks.Clear();
                 var activeFont = GetActiveFont();
+                if (activeFont == null)
+                {
+                    _lastParsedMarkdown = _markdown;
+                    _isLayoutDirty = true;
+                    return;
+                }
                 var resolvedCodeFont = CodeFont ?? activeFont;
                 var parsedBlocks = MarkdownParser.Parse(_markdown, Foreground ?? ThemeManager.GetBrush("TextPrimary", this.ActualTheme), FontSize, activeFont, resolvedCodeFont, this.ActualTheme);
                 _blocks.AddRange(parsedBlocks);

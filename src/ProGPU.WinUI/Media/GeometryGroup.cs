@@ -31,11 +31,11 @@ public class GeometryGroup : Geometry
             typeof(GeometryGroup),
             new PropertyMetadata(null) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
-    public List<Geometry> Children
+    public new List<Geometry> Children
     {
         get
         {
-            var list = (List<Geometry>)GetValue(ChildrenProperty);
+            var list = GetValue(ChildrenProperty) as List<Geometry>;
             if (list == null)
             {
                 list = new List<Geometry>();

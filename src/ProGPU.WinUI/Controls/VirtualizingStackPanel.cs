@@ -16,10 +16,10 @@ public class VirtualizingStackPanel : VirtualizingPanel
 
     public VirtualizingStackPanel()
     {
-        ThemeManager.ThemeChanged += OnThemeChanged;
+        ThemeManager.ThemeChanged += OnThemeManagerChanged;
     }
 
-    private void OnThemeChanged()
+    private void OnThemeManagerChanged()
     {
         _recycledVisuals.Clear();
         Invalidate();

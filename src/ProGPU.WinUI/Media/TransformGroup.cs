@@ -28,11 +28,11 @@ public class TransformGroup : Transform
             typeof(TransformGroup),
             new PropertyMetadata(null) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
-    public List<Transform> Children
+    public new List<Transform> Children
     {
         get
         {
-            var list = (List<Transform>)GetValue(ChildrenProperty);
+            var list = GetValue(ChildrenProperty) as List<Transform>;
             if (list == null)
             {
                 list = new List<Transform>();

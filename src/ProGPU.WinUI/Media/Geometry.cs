@@ -14,7 +14,7 @@ public abstract class Geometry : DependencyObject
             typeof(Geometry),
             new PropertyMetadata(null, OnTransformChanged) { AffectsMeasure = true, AffectsArrange = true, AffectsRender = true });
 
-    public Transform? Transform
+    public new Transform? Transform
     {
         get => GetValue(TransformProperty) as Transform;
         set => SetValue(TransformProperty, value);

@@ -18,7 +18,7 @@ public class Polygon : Shape
     {
         get
         {
-            var pts = (List<Vector2>)GetValue(PointsProperty);
+            var pts = GetValue(PointsProperty) as List<Vector2>;
             if (pts == null)
             {
                 pts = new List<Vector2>();
