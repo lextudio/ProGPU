@@ -2,12 +2,10 @@ namespace ProGPU.WinUI.Designer;
 
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
-using Microsoft.UI.Xaml.Markup;
 using ProGPU.Vector;
 using ProGPU.Scene;
 
@@ -246,68 +244,13 @@ public class VisualTreeOutlineItem : Border
 
     private bool IsValidDropContainer(FrameworkElement fe)
     {
-        if (fe is Button || fe is CheckBox || fe is RadioButton || fe is ToggleSwitch || fe is ComboBox)
-        {
-            return false;
-        }
-
-        if (fe is Panel) return true;
-        
-        var type = fe.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            return true;
-        }
-
-        if (VisualTreeOutline.GetPropertySafe(type, "Child") != null || VisualTreeOutline.GetPropertySafe(type, "Content") != null)
-        {
-            return true;
-        }
-
-        return false;
+        return DesignerElementRegistry.IsDropContainer(fe);
     }
 
-    public static void AddChildToTarget(FrameworkElement target, FrameworkElement newChild)
+    public static void AddChildToTarget(FrameworkElement? target, FrameworkElement? newChild)
     {
         if (target == null || newChild == null) return;
-
-        if (target is Panel panel)
-        {
-            panel.Children.Add(newChild);
-            return;
-        }
-
-        var type = target.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            var prop = VisualTreeOutline.GetPropertySafe(type, contentPropertyAttr.Name);
-            if (prop != null && prop.CanWrite)
-            {
-                prop.SetValue(target, newChild);
-                return;
-            }
-        }
-
-        var childProp = VisualTreeOutline.GetPropertySafe(type, "Child");
-        if (childProp != null && childProp.CanWrite && typeof(FrameworkElement).IsAssignableFrom(childProp.PropertyType))
-        {
-            childProp.SetValue(target, newChild);
-            return;
-        }
-
-        var contentProp = VisualTreeOutline.GetPropertySafe(type, "Content");
-        if (contentProp != null && contentProp.CanWrite)
-        {
-            contentProp.SetValue(target, newChild);
-            return;
-        }
-
-        if (target is ContainerVisual container)
-        {
-            container.AddChild(newChild);
-        }
+        DesignerElementRegistry.TryAddChild(target, newChild);
     }
 
     private void MoveElement(FrameworkElement source, FrameworkElement target)
@@ -352,127 +295,51 @@ public class VisualTreeOutlineItem : Border
     private void CreateAndAddTool(string toolName, FrameworkElement target)
     {
         _parentOutline.NotifyCanvasModifying();
-        Type? controlType = null;
-        string[] searchNamespaces = {
-            "Microsoft.UI.Xaml.Controls",
-            "Microsoft.UI.Xaml",
-            "ProGPU.WinUI.Designer"
-        };
-
-        foreach (var ns in searchNamespaces)
-        {
-            var typeName = $"{ns}.{toolName}";
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                controlType = assembly.GetType(typeName);
-                if (controlType != null) break;
-            }
-            if (controlType != null) break;
-        }
-
-        if (controlType == null)
-        {
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                foreach (var type in assembly.GetTypes())
-                {
-                    if (type.Name.Equals(toolName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        controlType = type;
-                        break;
-                    }
-                }
-                if (controlType != null) break;
-            }
-        }
-
-        if (controlType != null && typeof(FrameworkElement).IsAssignableFrom(controlType))
+        if (DesignerElementRegistry.TryCreate(toolName, _font ?? PopupService.DefaultFont, out var newInstance))
         {
             try
             {
-                var newInstance = Activator.CreateInstance(controlType) as FrameworkElement;
-                if (newInstance != null)
+                int suffix = 1;
+                string baseName = $"{toolName}";
+                string candidateName = $"{baseName}_{suffix}";
+
+                var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                FindNamesInVisualTree(_parentOutline.RootElement, existingNames);
+                while (existingNames.Contains(candidateName))
                 {
-                    newInstance.IsHitTestVisible = false;
-
-                    if (float.IsNaN(newInstance.Width) || newInstance.Width <= 0) newInstance.Width = 120f;
-                    if (float.IsNaN(newInstance.Height) || newInstance.Height <= 0) newInstance.Height = 36f;
-
-                    if (newInstance is Button button)
-                    {
-                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(toolName));
-                        button.Content = richText;
-                    }
-                    else if (newInstance is TextBlock textBlock)
-                    {
-                        textBlock.Text = toolName;
-                    }
-                    else if (newInstance is CheckBox checkBox)
-                    {
-                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(toolName));
-                        checkBox.Content = richText;
-                    }
-                    else if (newInstance is RadioButton radioButton)
-                    {
-                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(toolName));
-                        radioButton.Content = richText;
-                    }
-                    else if (newInstance is ToggleSwitch toggleSwitch)
-                    {
-                        var richText = new RichTextBlock { Font = _font ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(toolName));
-                        toggleSwitch.Content = richText;
-                    }
-                    else if (newInstance is ComboBox comboBox)
-                    {
-                        comboBox.PlaceholderText = toolName;
-                    }
-
-                    int suffix = 1;
-                    string baseName = $"{toolName}";
-                    string candidateName = $"{baseName}_{suffix}";
-                    
-                    var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    FindNamesInVisualTree(_parentOutline.RootElement, existingNames);
-                    while (existingNames.Contains(candidateName))
-                    {
-                        candidateName = $"{baseName}_{++suffix}";
-                    }
-                    newInstance.Name = candidateName;
-
-                    if (IsValidDropContainer(target))
-                    {
-                        if (target is Canvas canvasTarget)
-                        {
-                            Canvas.SetLeft(newInstance, 50f);
-                            Canvas.SetTop(newInstance, 50f);
-                            canvasTarget.Children.Add(newInstance);
-                        }
-                        else
-                        {
-                            AddChildToTarget(target, newInstance);
-                        }
-                    }
-                    else if (target.Parent is ContainerVisual targetParent)
-                    {
-                        if (targetParent is Canvas canvasParent)
-                        {
-                            Canvas.SetLeft(newInstance, Canvas.GetLeft(target) + 20f);
-                            Canvas.SetTop(newInstance, Canvas.GetTop(target) + 20f);
-                            canvasParent.Children.Add(newInstance);
-                        }
-                        else
-                        {
-                            AddChildToTarget(targetParent as FrameworkElement, newInstance);
-                        }
-                    }
-
-                    _parentOutline.SelectElement(newInstance);
-                    _parentOutline.NotifyCanvasModified();
+                    candidateName = $"{baseName}_{++suffix}";
                 }
+                newInstance.Name = candidateName;
+
+                if (IsValidDropContainer(target))
+                {
+                    if (target is Canvas canvasTarget)
+                    {
+                        Canvas.SetLeft(newInstance, 50f);
+                        Canvas.SetTop(newInstance, 50f);
+                        canvasTarget.Children.Add(newInstance);
+                    }
+                    else
+                    {
+                        AddChildToTarget(target, newInstance);
+                    }
+                }
+                else if (target.Parent is ContainerVisual targetParent)
+                {
+                    if (targetParent is Canvas canvasParent)
+                    {
+                        Canvas.SetLeft(newInstance, Canvas.GetLeft(target) + 20f);
+                        Canvas.SetTop(newInstance, Canvas.GetTop(target) + 20f);
+                        canvasParent.Children.Add(newInstance);
+                    }
+                    else if (targetParent is FrameworkElement parentElement)
+                    {
+                        AddChildToTarget(parentElement, newInstance);
+                    }
+                }
+
+                _parentOutline.SelectElement(newInstance);
+                _parentOutline.NotifyCanvasModified();
             }
             catch (Exception ex)
             {
@@ -526,57 +393,9 @@ public class VisualTreeOutline : Border
     {
         if (parent == null) yield break;
 
-        if (parent is Panel panel)
+        foreach (var child in DesignerElementRegistry.GetLogicalChildren(parent))
         {
-            foreach (var child in panel.Children)
-            {
-                if (child is FrameworkElement fe)
-                {
-                    yield return fe;
-                }
-            }
-        }
-        else if (parent is Border border)
-        {
-            if (border.Child is FrameworkElement childFe)
-            {
-                yield return childFe;
-            }
-        }
-        else if (parent is ContentControl contentControl)
-        {
-            if (parent is Button || parent is CheckBox || parent is RadioButton || parent is ToggleSwitch || parent is ComboBox)
-            {
-                yield break;
-            }
-
-            if (contentControl.Content is FrameworkElement contentFe)
-            {
-                yield return contentFe;
-            }
-        }
-        else
-        {
-            var type = parent.GetType();
-            var contentProp = GetPropertySafe(type, "Content");
-            if (contentProp != null && typeof(FrameworkElement).IsAssignableFrom(contentProp.PropertyType))
-            {
-                if (contentProp.GetValue(parent) is FrameworkElement fe)
-                {
-                    yield return fe;
-                }
-            }
-            else
-            {
-                var childProp = GetPropertySafe(type, "Child");
-                if (childProp != null && typeof(FrameworkElement).IsAssignableFrom(childProp.PropertyType))
-                {
-                    if (childProp.GetValue(parent) is FrameworkElement fe)
-                    {
-                        yield return fe;
-                    }
-                }
-            }
+            yield return child;
         }
     }
 
@@ -605,36 +424,7 @@ public class VisualTreeOutline : Border
         var parent = element.Parent as FrameworkElement;
         if (parent == null) return false;
 
-        bool isLogicalChild = false;
-        if (parent is Panel panel)
-        {
-            isLogicalChild = panel.Children.Contains(element);
-        }
-        else if (parent is Border border)
-        {
-            isLogicalChild = border.Child == element;
-        }
-        else if (parent is ContentControl contentControl)
-        {
-            isLogicalChild = contentControl.Content == element;
-        }
-        else
-        {
-            var type = parent.GetType();
-            var contentProp = GetPropertySafe(type, "Content");
-            if (contentProp != null && typeof(FrameworkElement).IsAssignableFrom(contentProp.PropertyType))
-            {
-                isLogicalChild = contentProp.GetValue(parent) == element;
-            }
-            if (!isLogicalChild)
-            {
-                var childProp = GetPropertySafe(type, "Child");
-                if (childProp != null && typeof(FrameworkElement).IsAssignableFrom(childProp.PropertyType))
-                {
-                    isLogicalChild = childProp.GetValue(parent) == element;
-                }
-            }
-        }
+        bool isLogicalChild = DesignerElementRegistry.IsLogicalChild(parent, element);
 
         if (!isLogicalChild) return false;
 
@@ -650,77 +440,9 @@ public class VisualTreeOutline : Border
         CanvasModifying?.Invoke();
     }
 
-    public static PropertyInfo? GetPropertySafe(Type type, string name)
-    {
-        Type? currentType = type;
-        while (currentType != null)
-        {
-            var prop = currentType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            if (prop != null)
-            {
-                return prop;
-            }
-            currentType = currentType.BaseType;
-        }
-        return null;
-    }
-
     public static void RemoveChildFromParent(FrameworkElement child)
     {
-        if (child == null) return;
-        var parent = child.Parent as FrameworkElement;
-        if (parent == null)
-        {
-            var containerParent = child.Parent as ContainerVisual;
-            containerParent?.RemoveChild(child);
-            return;
-        }
-
-        var type = parent.GetType();
-        var contentPropertyAttr = type.GetCustomAttribute<ContentPropertyAttribute>(true);
-        if (contentPropertyAttr != null && !string.IsNullOrEmpty(contentPropertyAttr.Name))
-        {
-            var prop = GetPropertySafe(type, contentPropertyAttr.Name);
-            if (prop != null)
-            {
-                if (prop.CanWrite && prop.GetValue(parent) == child)
-                {
-                    prop.SetValue(parent, null);
-                    return;
-                }
-                else if (typeof(System.Collections.IList).IsAssignableFrom(prop.PropertyType))
-                {
-                    var list = prop.GetValue(parent) as System.Collections.IList;
-                    if (list != null && list.Contains(child))
-                    {
-                        list.Remove(child);
-                        return;
-                    }
-                }
-            }
-        }
-
-        var childProp = GetPropertySafe(type, "Child");
-        if (childProp != null && childProp.CanWrite && childProp.GetValue(parent) == child)
-        {
-            childProp.SetValue(parent, null);
-            return;
-        }
-
-        var contentProp = GetPropertySafe(type, "Content");
-        if (contentProp != null && contentProp.CanWrite && contentProp.GetValue(parent) == child)
-        {
-            contentProp.SetValue(parent, null);
-            return;
-        }
-
-        if (parent is Panel panel)
-        {
-            panel.Children.Remove(child);
-            return;
-        }
-
-        parent.RemoveChild(child);
+        DesignerElementRegistry.RemoveFromParent(child);
     }
 
     public new ProGPU.Text.TtfFont? Font

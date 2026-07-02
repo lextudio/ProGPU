@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);PROGPU_TEXT_PUBLIC</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\ProGPU.Backend\ProGPU.Backend.csproj" />

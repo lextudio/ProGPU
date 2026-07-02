@@ -26,6 +26,46 @@ public class ControlRenderTests
         }
     }
 
+    [Fact]
+    public void NavigationViewItem_PageFactory_IsLazyAndCached()
+    {
+        var nav = new NavigationView();
+        var firstCreated = 0;
+        var secondCreated = 0;
+
+        var firstItem = new NavigationViewItem("First", "", () =>
+        {
+            firstCreated++;
+            return new Border();
+        });
+        var secondItem = new NavigationViewItem("Second", "", () =>
+        {
+            secondCreated++;
+            return new Border();
+        });
+
+        nav.MenuItems.Add(firstItem);
+        nav.MenuItems.Add(secondItem);
+
+        Assert.Equal(0, firstCreated);
+        Assert.Equal(0, secondCreated);
+        Assert.Null(firstItem.Page);
+
+        nav.SelectedItem = firstItem;
+        var firstPage = firstItem.Page;
+
+        Assert.Equal(1, firstCreated);
+        Assert.Equal(0, secondCreated);
+        Assert.Same(firstPage, nav.Content);
+
+        nav.SelectedItem = secondItem;
+        nav.SelectedItem = firstItem;
+
+        Assert.Equal(1, firstCreated);
+        Assert.Equal(1, secondCreated);
+        Assert.Same(firstPage, nav.Content);
+    }
+
     private void VerifyControlStates<T>(T control, string namePrefix) where T : Control
     {
         PopupService.Clear();
@@ -116,6 +156,61 @@ public class ControlRenderTests
         Assert.NotNull(style);
         button.Style = style;
         VerifyControlStates(button, "button_accent");
+    }
+
+    [Fact]
+    public void StyleSettersApplyThroughDependencyProperties()
+    {
+        var button = new Button();
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(nameof(FrameworkElement.Width), 200f));
+        style.Setters.Add(new Setter(nameof(FrameworkElement.Height), 44f));
+        style.Setters.Add(new Setter(nameof(Control.CornerRadius), 10f));
+        style.Setters.Add(new Setter(nameof(FrameworkElement.Padding), new Thickness(1f, 2f, 3f, 4f)));
+
+        button.Style = style;
+
+        Assert.Equal(200f, button.Width);
+        Assert.Equal(44f, button.Height);
+        Assert.Equal(10f, button.CornerRadius);
+        Assert.Equal(new Thickness(1f, 2f, 3f, 4f), button.Padding);
+    }
+
+    [Fact]
+    public void FrameworkElementStyleApplicationDoesNotUseClrPropertyReflection()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.WinUI", "Core", "FrameworkElement.cs"));
+        int applyStyleIndex = source.IndexOf("private void ApplyStyle()", StringComparison.Ordinal);
+        int marginPropertyIndex = source.IndexOf("public static readonly Microsoft.UI.Xaml.DependencyProperty MarginProperty", StringComparison.Ordinal);
+
+        Assert.True(applyStyleIndex >= 0, "ApplyStyle was not found.");
+        Assert.True(marginPropertyIndex > applyStyleIndex, "Could not isolate ApplyStyle body.");
+
+        string applyStyleSource = source[applyStyleIndex..marginPropertyIndex];
+        Assert.DoesNotContain("GetProperty(", applyStyleSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetValue(this", applyStyleSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Reflection", applyStyleSource, StringComparison.Ordinal);
+        Assert.Contains("DependencyProperty.Lookup", applyStyleSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RepeatButton_RaisesClickThroughTypedButtonHook()
+    {
+        var button = new RepeatButton
+        {
+            Width = 120f,
+            Height = 32f,
+            Delay = 10_000,
+            Interval = 10_000
+        };
+        var clicks = 0;
+        button.Click += (_, _) => clicks++;
+
+        button.OnPointerEntered(new PointerRoutedEventArgs { Position = new Vector2(10f, 10f) });
+        button.OnPointerPressed(new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = true });
+        button.OnPointerReleased(new PointerRoutedEventArgs { Position = new Vector2(10f, 10f), IsLeftButtonPressed = false });
+
+        Assert.Equal(1, clicks);
     }
 
     [Fact]
@@ -656,5 +751,20 @@ public class ControlRenderTests
         Assert.Contains(new TestEdge(1, 3), uniqueEdges);
         Assert.Contains(new TestEdge(2, 3), uniqueEdges);
     }
-}
 
+    private static string FindRepoFile(params string[] pathParts)
+    {
+        for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
+             directory != null;
+             directory = directory.Parent)
+        {
+            string candidate = Path.Combine(new[] { directory.FullName }.Concat(pathParts).ToArray());
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"Could not locate {Path.Combine(pathParts)}.");
+    }
+}

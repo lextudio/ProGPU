@@ -21,12 +21,13 @@ public unsafe class GpuBuffer : IDisposable
         _context = context;
         Size = size;
         Usage = usage;
+        var allocatedSize = AlignToQueueWriteSize(size);
 
         var labelPtr = SilkMarshal.StringToPtr(label);
         var desc = new BufferDescriptor
         {
             Label = (byte*)labelPtr,
-            Size = size,
+            Size = allocatedSize,
             Usage = usage,
             MappedAtCreation = false
         };
@@ -70,20 +71,197 @@ public unsafe class GpuBuffer : IDisposable
         }
     }
 
+    private static uint AlignToQueueWriteSize(uint size)
+    {
+        return (size + 3) & ~3u;
+    }
+
     public void WriteSingle<T>(T value, uint offsetBytes = 0) where T : unmanaged
     {
         Write(new ReadOnlySpan<T>(&value, 1), offsetBytes);
     }
 
+    public byte[] ReadBytes(uint offsetBytes = 0, uint? sizeBytes = null)
+    {
+        if (_isDisposed || BufferPtr == null) throw new ObjectDisposedException(nameof(GpuBuffer));
+
+        var readSize = sizeBytes ?? (Size - offsetBytes);
+        ValidateReadRange(offsetBytes, readSize);
+        if (readSize == 0)
+        {
+            return [];
+        }
+
+        if (Usage.HasFlag(BufferUsage.MapRead))
+        {
+            var mappedRange = CreateAlignedReadbackRange(offsetBytes, readSize, offsetAlignment: 8);
+            var mappedBytes = MapReadBuffer(BufferPtr, mappedRange.OffsetBytes, mappedRange.SizeBytes, destroyAfterRead: false);
+            return mappedBytes.AsSpan(checked((int)mappedRange.LeadingBytes), checked((int)readSize)).ToArray();
+        }
+
+        if (!Usage.HasFlag(BufferUsage.CopySrc))
+        {
+            throw new InvalidOperationException("Buffer was not created with CopySrc or MapRead usage.");
+        }
+
+        var copyRange = CreateAlignedReadbackRange(offsetBytes, readSize, offsetAlignment: 4);
+        var readbackDesc = new BufferDescriptor
+        {
+            Usage = BufferUsage.CopyDst | BufferUsage.MapRead,
+            Size = copyRange.SizeBytes,
+            MappedAtCreation = false
+        };
+        var readbackBuffer = _context.Wgpu.DeviceCreateBuffer(_context.Device, &readbackDesc);
+        if (readbackBuffer == null)
+        {
+            throw new InvalidOperationException("Failed to create readback buffer.");
+        }
+
+        var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Buffer Readback Encoder") };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        SilkMarshal.Free((nint)encoderDesc.Label);
+        if (encoder == null)
+        {
+            _context.Wgpu.BufferDestroy(readbackBuffer);
+            _context.Wgpu.BufferRelease(readbackBuffer);
+            throw new InvalidOperationException("Failed to create command encoder for buffer readback.");
+        }
+
+        _context.Wgpu.CommandEncoderCopyBufferToBuffer(
+            encoder,
+            BufferPtr,
+            copyRange.OffsetBytes,
+            readbackBuffer,
+            0,
+            copyRange.SizeBytes);
+
+        var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Buffer Readback Command Buffer") };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
+        SilkMarshal.Free((nint)cmdDesc.Label);
+        if (commandBuffer == null)
+        {
+            _context.Wgpu.CommandEncoderRelease(encoder);
+            _context.Wgpu.BufferDestroy(readbackBuffer);
+            _context.Wgpu.BufferRelease(readbackBuffer);
+            throw new InvalidOperationException("Failed to finish buffer readback command encoder.");
+        }
+
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+
+        var readbackBytes = MapReadBuffer(readbackBuffer, 0, copyRange.SizeBytes, destroyAfterRead: true);
+        return readbackBytes.AsSpan(checked((int)copyRange.LeadingBytes), checked((int)readSize)).ToArray();
+    }
+
+    private byte[] MapReadBuffer(Buffer* buffer, uint offsetBytes, uint sizeBytes, bool destroyAfterRead)
+    {
+        var mapSignal = new System.Threading.ManualResetEventSlim(false);
+        var mapStatus = BufferMapAsyncStatus.ValidationError;
+        var onMapped = PfnBufferMapCallback.From((status, userData) =>
+        {
+            mapStatus = status;
+            mapSignal.Set();
+        });
+
+        _context.Wgpu.BufferMapAsync(buffer, MapMode.Read, offsetBytes, (nuint)sizeBytes, onMapped, null);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        while (!mapSignal.IsSet)
+        {
+            wgpuDevicePoll(_context.Device, false, null);
+            System.Threading.Thread.Sleep(1);
+            if (stopwatch.ElapsedMilliseconds > 5000)
+            {
+                CleanupMappedReadBuffer(buffer, destroyAfterRead);
+                throw new TimeoutException("WebGPU BufferMapAsync timed out after 5 seconds during buffer readback.");
+            }
+        }
+
+        if (mapStatus != BufferMapAsyncStatus.Success)
+        {
+            CleanupMappedReadBuffer(buffer, destroyAfterRead);
+            throw new InvalidOperationException($"Failed to map readback buffer. WebGPU Status: {mapStatus}");
+        }
+
+        var bytes = new byte[sizeBytes];
+        var mappedPtr = _context.Wgpu.BufferGetConstMappedRange(buffer, offsetBytes, (nuint)sizeBytes);
+        if (mappedPtr != null)
+        {
+            Marshal.Copy((nint)mappedPtr, bytes, 0, checked((int)sizeBytes));
+        }
+
+        _context.Wgpu.BufferUnmap(buffer);
+        if (destroyAfterRead)
+        {
+            _context.Wgpu.BufferDestroy(buffer);
+            _context.Wgpu.BufferRelease(buffer);
+        }
+
+        return bytes;
+    }
+
+    private void CleanupMappedReadBuffer(Buffer* buffer, bool destroyAfterRead)
+    {
+        if (destroyAfterRead)
+        {
+            _context.Wgpu.BufferDestroy(buffer);
+            _context.Wgpu.BufferRelease(buffer);
+        }
+    }
+
+    private void ValidateReadRange(uint offsetBytes, uint sizeBytes)
+    {
+        if (offsetBytes > Size || sizeBytes > Size - offsetBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sizeBytes), "Buffer read exceeds the buffer bounds.");
+        }
+    }
+
+    private ReadbackRange CreateAlignedReadbackRange(uint offsetBytes, uint sizeBytes, uint offsetAlignment)
+    {
+        var alignedOffset = AlignDown(offsetBytes, offsetAlignment);
+        var leadingBytes = offsetBytes - alignedOffset;
+        var minimumSize = (ulong)leadingBytes + sizeBytes;
+        var alignedSize = AlignUp(minimumSize, 4);
+        var availableSize = Size - alignedOffset;
+        if (alignedSize > availableSize)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sizeBytes),
+                "GPU buffer readback cannot form an aligned enclosing range inside the buffer bounds.");
+        }
+
+        return new ReadbackRange(alignedOffset, alignedSize, leadingBytes);
+    }
+
+    private static uint AlignDown(uint value, uint alignment)
+    {
+        return value - (value % alignment);
+    }
+
+    private static uint AlignUp(ulong value, uint alignment)
+    {
+        return checked((uint)(((value + alignment - 1) / alignment) * alignment));
+    }
+
+    private readonly record struct ReadbackRange(uint OffsetBytes, uint SizeBytes, uint LeadingBytes);
+
     public void Dispose()
     {
         if (_isDisposed) return;
 
-        if (BufferPtr != null)
+        lock (_context.RenderLock)
         {
-            _context.Wgpu.BufferDestroy(BufferPtr);
-            _context.Wgpu.BufferRelease(BufferPtr);
-            BufferPtr = null;
+            if (BufferPtr != null)
+            {
+                if (!_context.IsDisposed)
+                {
+                    _context.QueueBufferDisposal((IntPtr)BufferPtr);
+                }
+
+                BufferPtr = null;
+            }
         }
 
         _isDisposed = true;
@@ -92,6 +270,16 @@ public unsafe class GpuBuffer : IDisposable
 
     ~GpuBuffer()
     {
-        Dispose();
+        if (BufferPtr != null)
+        {
+            try
+            {
+                _context.QueueBufferDisposal((IntPtr)BufferPtr);
+            }
+            catch {}
+        }
     }
+
+    [DllImport("wgpu_native", EntryPoint = "wgpuDevicePoll")]
+    private static extern bool wgpuDevicePoll(Device* device, bool wait, void* wrappedSubmissionIndex);
 }

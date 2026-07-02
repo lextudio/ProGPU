@@ -143,6 +143,20 @@ public class ArcSegment : PathSegment
     }
 
     public ArcSegment() { }
+
+    public ArcSegment(
+        Vector2 point,
+        Vector2 size,
+        float rotationAngle,
+        bool isLargeArc,
+        SweepDirection sweepDirection)
+    {
+        Point = point;
+        Size = size;
+        RotationAngle = rotationAngle;
+        IsLargeArc = isLargeArc;
+        SweepDirection = sweepDirection;
+    }
 }
 
 public class PathFigure : DependencyObject
@@ -204,6 +218,9 @@ public class PathGeometry : Geometry
 
         // Parse using lower-level SVG parser
         var internalGeom = ProGPU.Vector.PathGeometry.Parse(svgPathData);
+        geom.FillRule = internalGeom.FillRule == ProGPU.Vector.FillRule.EvenOdd
+            ? FillRule.EvenOdd
+            : FillRule.Nonzero;
         foreach (var internalFig in internalGeom.Figures)
         {
             var fig = new PathFigure
@@ -227,6 +244,15 @@ public class PathGeometry : Geometry
                 {
                     fig.Segments.Add(new BezierSegment(cubic.ControlPoint1, cubic.ControlPoint2, cubic.Point));
                 }
+                else if (internalSeg is ProGPU.Vector.ArcSegment arc)
+                {
+                    fig.Segments.Add(new ArcSegment(
+                        arc.Point,
+                        arc.Size,
+                        arc.RotationAngle,
+                        arc.IsLargeArc,
+                        (SweepDirection)(int)arc.SweepDirection));
+                }
             }
 
             geom.Figures.Add(fig);
@@ -237,9 +263,13 @@ public class PathGeometry : Geometry
 
     public ProGPU.Vector.PathGeometry GetTransformedInternalGeometry()
     {
-        var geom = new ProGPU.Vector.PathGeometry();
+        var geom = new ProGPU.Vector.PathGeometry
+        {
+            FillRule = ToVectorFillRule(FillRule)
+        };
         foreach (var figure in Figures)
         {
+            var sourceCurrentPoint = figure.StartPoint;
             var newFigure = new ProGPU.Vector.PathFigure
             {
                 StartPoint = TransformPoint(figure.StartPoint),
@@ -252,12 +282,14 @@ public class PathGeometry : Geometry
                 if (segment is LineSegment line)
                 {
                     newFigure.Segments.Add(new ProGPU.Vector.LineSegment(TransformPoint(line.Point)));
+                    sourceCurrentPoint = line.Point;
                 }
                 else if (segment is QuadraticBezierSegment quad)
                 {
                     newFigure.Segments.Add(new ProGPU.Vector.QuadraticBezierSegment(
                         TransformPoint(quad.Point1),
                         TransformPoint(quad.Point2)));
+                    sourceCurrentPoint = quad.Point2;
                 }
                 else if (segment is BezierSegment cubic)
                 {
@@ -265,11 +297,25 @@ public class PathGeometry : Geometry
                         TransformPoint(cubic.Point1),
                         TransformPoint(cubic.Point2),
                         TransformPoint(cubic.Point3)));
+                    sourceCurrentPoint = cubic.Point3;
                 }
                 else if (segment is ArcSegment arc)
                 {
-                    // Simple linear approximation for ArcSegment to maintain 100% compute pipeline compatibility
-                    newFigure.Segments.Add(new ProGPU.Vector.LineSegment(TransformPoint(arc.Point)));
+                    if (ProGPU.Vector.ArcSegmentGeometry.TryTransformArcSegment(
+                            sourceCurrentPoint,
+                            ToVectorArcSegment(arc),
+                            EffectiveTransform,
+                            out _,
+                            out var transformedArc))
+                    {
+                        newFigure.Segments.Add(transformedArc);
+                    }
+                    else
+                    {
+                        newFigure.Segments.Add(new ProGPU.Vector.LineSegment(TransformPoint(arc.Point)));
+                    }
+
+                    sourceCurrentPoint = arc.Point;
                 }
             }
 
@@ -303,8 +349,8 @@ public class PathGeometry : Geometry
 
             foreach (var figure in Figures)
             {
-                Vector2 currentPoint = TransformPoint(figure.StartPoint);
-                UpdateBounds(currentPoint);
+                var sourceCurrentPoint = figure.StartPoint;
+                UpdateBounds(TransformPoint(figure.StartPoint));
 
                 foreach (var segment in figure.Segments)
                 {
@@ -312,6 +358,7 @@ public class PathGeometry : Geometry
                     {
                         var pt = TransformPoint(line.Point);
                         UpdateBounds(pt);
+                        sourceCurrentPoint = line.Point;
                     }
                     else if (segment is QuadraticBezierSegment quad)
                     {
@@ -319,6 +366,7 @@ public class PathGeometry : Geometry
                         var p2 = TransformPoint(quad.Point2);
                         UpdateBounds(p1);
                         UpdateBounds(p2);
+                        sourceCurrentPoint = quad.Point2;
                     }
                     else if (segment is BezierSegment cubic)
                     {
@@ -328,11 +376,31 @@ public class PathGeometry : Geometry
                         UpdateBounds(p1);
                         UpdateBounds(p2);
                         UpdateBounds(p3);
+                        sourceCurrentPoint = cubic.Point3;
                     }
                     else if (segment is ArcSegment arc)
                     {
-                        var pt = TransformPoint(arc.Point);
-                        UpdateBounds(pt);
+                        if (ProGPU.Vector.ArcSegmentGeometry.TryTransformArcSegment(
+                                sourceCurrentPoint,
+                                ToVectorArcSegment(arc),
+                                EffectiveTransform,
+                                out var transformedStart,
+                                out var transformedArc) &&
+                            ProGPU.Vector.ArcSegmentGeometry.TryGetArcBounds(
+                                transformedStart,
+                                transformedArc,
+                                out var arcMin,
+                                out var arcMax))
+                        {
+                            UpdateBounds(arcMin);
+                            UpdateBounds(arcMax);
+                        }
+                        else
+                        {
+                            UpdateBounds(TransformPoint(arc.Point));
+                        }
+
+                        sourceCurrentPoint = arc.Point;
                     }
                 }
 
@@ -345,5 +413,22 @@ public class PathGeometry : Geometry
             if (minX == float.MaxValue) return Rect.Empty;
             return new Rect(minX, minY, maxX - minX, maxY - minY);
         }
+    }
+
+    private static ProGPU.Vector.ArcSegment ToVectorArcSegment(ArcSegment arc)
+    {
+        return new ProGPU.Vector.ArcSegment(
+            arc.Point,
+            arc.Size,
+            arc.RotationAngle,
+            arc.IsLargeArc,
+            (ProGPU.Vector.SweepDirection)(int)arc.SweepDirection);
+    }
+
+    private static ProGPU.Vector.FillRule ToVectorFillRule(FillRule fillRule)
+    {
+        return fillRule == FillRule.EvenOdd
+            ? ProGPU.Vector.FillRule.EvenOdd
+            : ProGPU.Vector.FillRule.Nonzero;
     }
 }

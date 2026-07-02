@@ -1,7 +1,6 @@
 namespace ProGPU.WinUI.Designer;
 
 using System;
-using System.Reflection;
 using System.Text;
 using System.Collections.Generic;
 using Microsoft.UI.Xaml;
@@ -15,7 +14,7 @@ using HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
 using System.Numerics;
 
-public class PropertyItem
+public class PropertyItem : IDataGridValueProvider
 {
     private string _value = string.Empty;
 
@@ -55,6 +54,43 @@ public class PropertyItem
         _value = value;
         PropertyType = propertyType;
         OnChanged = onChanged;
+    }
+
+    public bool TryGetDataGridValue(string propertyName, out object? value)
+    {
+        switch (propertyName)
+        {
+            case nameof(Name):
+                value = Name;
+                return true;
+            case nameof(Value):
+                value = Value;
+                return true;
+            default:
+                value = null;
+                return false;
+        }
+    }
+
+    public bool TrySetDataGridValue(string propertyName, object? value)
+    {
+        if (propertyName == nameof(Value))
+        {
+            Value = value?.ToString() ?? string.Empty;
+            return true;
+        }
+
+        return false;
+    }
+
+    public Type? GetDataGridValueType(string propertyName)
+    {
+        return propertyName switch
+        {
+            nameof(Name) => typeof(string),
+            nameof(Value) => typeof(string),
+            _ => null
+        };
     }
 }
 
@@ -221,18 +257,15 @@ public class PropertyGrid : Border
             }
         }));
 
-        var type = _selectedElement.GetType();
-
         // CornerRadius
-        var crProp = type.GetProperty("CornerRadius");
-        if (crProp != null)
+        if (TryGetDependencyProperty("CornerRadius", typeof(float), out var crProp))
         {
-            float crVal = crProp.GetValue(_selectedElement) is float f ? f : 0f;
+            float crVal = _selectedElement.GetValue(crProp) is float f ? f : 0f;
             _dataGrid.AddItem(new PropertyItem("CornerRadius", crVal.ToString("F1"), val =>
             {
                 if (float.TryParse(val, out float fcr))
                 {
-                    crProp.SetValue(_selectedElement, fcr);
+                    _selectedElement.SetValue(crProp, fcr);
                     _selectedElement.Invalidate();
                     PropertyChanged?.Invoke();
                 }
@@ -240,13 +273,22 @@ public class PropertyGrid : Border
         }
 
         // Text
-        var textProp = type.GetProperty("Text");
-        if (textProp != null && textProp.PropertyType == typeof(string))
+        if (_selectedElement is TextBox selectedTextBox)
         {
-            string txtVal = textProp.GetValue(_selectedElement) as string ?? "";
+            _dataGrid.AddItem(new PropertyItem("Text", selectedTextBox.Text, val =>
+            {
+                selectedTextBox.Text = val;
+                selectedTextBox.InvalidateMeasure();
+                selectedTextBox.Invalidate();
+                PropertyChanged?.Invoke();
+            }));
+        }
+        else if (TryGetDependencyProperty("Text", typeof(string), out var textProp))
+        {
+            string txtVal = _selectedElement.GetValue(textProp) as string ?? "";
             _dataGrid.AddItem(new PropertyItem("Text", txtVal, val =>
             {
-                textProp.SetValue(_selectedElement, val);
+                _selectedElement.SetValue(textProp, val);
                 _selectedElement.InvalidateMeasure();
                 _selectedElement.Invalidate();
                 PropertyChanged?.Invoke();
@@ -254,10 +296,10 @@ public class PropertyGrid : Border
         }
 
         // Content (for strings/buttons)
-        var contentProp = type.GetProperty("Content");
+        var contentProp = DependencyProperty.Lookup(_selectedElement.GetType(), "Content");
         if (contentProp != null)
         {
-            var contentVal = contentProp.GetValue(_selectedElement);
+            var contentVal = _selectedElement.GetValue(contentProp);
             string contentStr = "";
             if (contentVal is string s) contentStr = s;
             else if (contentVal is RichTextBlock rtb)
@@ -280,7 +322,7 @@ public class PropertyGrid : Border
                 }
                 else
                 {
-                    contentProp.SetValue(_selectedElement, val);
+                    _selectedElement.SetValue(contentProp, val);
                 }
                 _selectedElement.InvalidateMeasure();
                 _selectedElement.InvalidateArrange();
@@ -289,15 +331,14 @@ public class PropertyGrid : Border
         }
 
         // Minimum
-        var minProp = type.GetProperty("Minimum");
-        if (minProp != null && minProp.PropertyType == typeof(float))
+        if (TryGetDependencyProperty("Minimum", typeof(float), out var minProp))
         {
-            float minVal = (float)minProp.GetValue(_selectedElement);
+            float minVal = _selectedElement.GetValue(minProp) is float value ? value : 0f;
             _dataGrid.AddItem(new PropertyItem("Minimum", minVal.ToString("F1"), val =>
             {
                 if (float.TryParse(val, out float fval))
                 {
-                    minProp.SetValue(_selectedElement, fval);
+                    _selectedElement.SetValue(minProp, fval);
                     _selectedElement.Invalidate();
                     PropertyChanged?.Invoke();
                 }
@@ -305,15 +346,14 @@ public class PropertyGrid : Border
         }
 
         // Maximum
-        var maxProp = type.GetProperty("Maximum");
-        if (maxProp != null && maxProp.PropertyType == typeof(float))
+        if (TryGetDependencyProperty("Maximum", typeof(float), out var maxProp))
         {
-            float maxVal = (float)maxProp.GetValue(_selectedElement);
+            float maxVal = _selectedElement.GetValue(maxProp) is float value ? value : 0f;
             _dataGrid.AddItem(new PropertyItem("Maximum", maxVal.ToString("F1"), val =>
             {
                 if (float.TryParse(val, out float fval))
                 {
-                    maxProp.SetValue(_selectedElement, fval);
+                    _selectedElement.SetValue(maxProp, fval);
                     _selectedElement.Invalidate();
                     PropertyChanged?.Invoke();
                 }
@@ -321,15 +361,14 @@ public class PropertyGrid : Border
         }
 
         // Value
-        var valProp = type.GetProperty("Value");
-        if (valProp != null && valProp.PropertyType == typeof(float))
+        if (TryGetDependencyProperty("Value", typeof(float), out var valProp))
         {
-            float valVal = (float)valProp.GetValue(_selectedElement);
+            float valVal = _selectedElement.GetValue(valProp) is float value ? value : 0f;
             _dataGrid.AddItem(new PropertyItem("Value", valVal.ToString("F1"), val =>
             {
                 if (float.TryParse(val, out float fval))
                 {
-                    valProp.SetValue(_selectedElement, fval);
+                    _selectedElement.SetValue(valProp, fval);
                     _selectedElement.Invalidate();
                     PropertyChanged?.Invoke();
                 }
@@ -337,15 +376,14 @@ public class PropertyGrid : Border
         }
 
         // IsChecked
-        var isCheckedProp = type.GetProperty("IsChecked");
-        if (isCheckedProp != null && isCheckedProp.PropertyType == typeof(bool))
+        if (TryGetDependencyProperty("IsChecked", typeof(bool), out var isCheckedProp))
         {
-            bool isCheckedVal = (bool)isCheckedProp.GetValue(_selectedElement);
+            bool isCheckedVal = _selectedElement.GetValue(isCheckedProp) is bool value && value;
             _dataGrid.AddItem(new PropertyItem("IsChecked", isCheckedVal.ToString(), typeof(bool), val =>
             {
                 if (bool.TryParse(val, out bool bval))
                 {
-                    isCheckedProp.SetValue(_selectedElement, bval);
+                    _selectedElement.SetValue(isCheckedProp, bval);
                     _selectedElement.Invalidate();
                     PropertyChanged?.Invoke();
                 }
@@ -353,15 +391,14 @@ public class PropertyGrid : Border
         }
 
         // IsOn
-        var isOnProp = type.GetProperty("IsOn");
-        if (isOnProp != null && isOnProp.PropertyType == typeof(bool))
+        if (TryGetDependencyProperty("IsOn", typeof(bool), out var isOnProp))
         {
-            bool isOnVal = (bool)isOnProp.GetValue(_selectedElement);
+            bool isOnVal = _selectedElement.GetValue(isOnProp) is bool value && value;
             _dataGrid.AddItem(new PropertyItem("IsOn", isOnVal.ToString(), typeof(bool), val =>
             {
                 if (bool.TryParse(val, out bool bval))
                 {
-                    isOnProp.SetValue(_selectedElement, bval);
+                    _selectedElement.SetValue(isOnProp, bval);
                     _selectedElement.Invalidate();
                     PropertyChanged?.Invoke();
                 }
@@ -369,15 +406,14 @@ public class PropertyGrid : Border
         }
 
         // Orientation
-        var orientProp = type.GetProperty("Orientation");
-        if (orientProp != null)
+        if (TryGetDependencyProperty("Orientation", out var orientProp) && orientProp.PropertyType.IsEnum)
         {
-            var orientVal = orientProp.GetValue(_selectedElement);
-            _dataGrid.AddItem(new PropertyItem("Orientation", orientVal.ToString(), orientProp.PropertyType, val =>
+            var orientVal = _selectedElement.GetValue(orientProp);
+            _dataGrid.AddItem(new PropertyItem("Orientation", orientVal?.ToString() ?? string.Empty, orientProp.PropertyType, val =>
             {
                 if (Enum.TryParse(orientProp.PropertyType, val, out var eval))
                 {
-                    orientProp.SetValue(_selectedElement, eval);
+                    _selectedElement.SetValue(orientProp, eval);
                     _selectedElement.InvalidateMeasure();
                     PropertyChanged?.Invoke();
                 }
@@ -409,15 +445,14 @@ public class PropertyGrid : Border
         }));
 
         // HorizontalContentAlignment
-        var horizContentProp = type.GetProperty("HorizontalContentAlignment");
-        if (horizContentProp != null)
+        if (TryGetDependencyProperty("HorizontalContentAlignment", typeof(HorizontalAlignment), out var horizContentProp))
         {
-            var alignVal = horizContentProp.GetValue(_selectedElement);
-            _dataGrid.AddItem(new PropertyItem("HorizontalContentAlignment", alignVal.ToString(), typeof(HorizontalAlignment), val =>
+            var alignVal = _selectedElement.GetValue(horizContentProp);
+            _dataGrid.AddItem(new PropertyItem("HorizontalContentAlignment", alignVal?.ToString() ?? string.Empty, typeof(HorizontalAlignment), val =>
             {
                 if (Enum.TryParse<HorizontalAlignment>(val, out var align))
                 {
-                    horizContentProp.SetValue(_selectedElement, align);
+                    _selectedElement.SetValue(horizContentProp, align);
                     _selectedElement.InvalidateMeasure();
                     _selectedElement.InvalidateArrange();
                     PropertyChanged?.Invoke();
@@ -426,15 +461,14 @@ public class PropertyGrid : Border
         }
 
         // VerticalContentAlignment
-        var vertContentProp = type.GetProperty("VerticalContentAlignment");
-        if (vertContentProp != null)
+        if (TryGetDependencyProperty("VerticalContentAlignment", typeof(VerticalAlignment), out var vertContentProp))
         {
-            var alignVal = vertContentProp.GetValue(_selectedElement);
-            _dataGrid.AddItem(new PropertyItem("VerticalContentAlignment", alignVal.ToString(), typeof(VerticalAlignment), val =>
+            var alignVal = _selectedElement.GetValue(vertContentProp);
+            _dataGrid.AddItem(new PropertyItem("VerticalContentAlignment", alignVal?.ToString() ?? string.Empty, typeof(VerticalAlignment), val =>
             {
                 if (Enum.TryParse<VerticalAlignment>(val, out var align))
                 {
-                    vertContentProp.SetValue(_selectedElement, align);
+                    _selectedElement.SetValue(vertContentProp, align);
                     _selectedElement.InvalidateMeasure();
                     _selectedElement.InvalidateArrange();
                     PropertyChanged?.Invoke();
@@ -443,45 +477,42 @@ public class PropertyGrid : Border
         }
 
         // Background
-        var bgProp = type.GetProperty("Background");
-        if (bgProp != null)
+        if (TryGetBrushDependencyProperty("Background", out var bgProp))
         {
-            var bgVal = bgProp.GetValue(_selectedElement);
+            var bgVal = _selectedElement.GetValue(bgProp);
             string bgStr = GetBrushString(bgVal as Brush);
             _dataGrid.AddItem(new PropertyItem("Background", bgStr, typeof(Brush), val =>
             {
                 var converted = ConvertValueToBrush(val);
-                bgProp.SetValue(_selectedElement, converted);
+                _selectedElement.SetValue(bgProp, converted);
                 _selectedElement.Invalidate();
                 PropertyChanged?.Invoke();
             }));
         }
 
         // Foreground
-        var fgProp = type.GetProperty("Foreground");
-        if (fgProp != null)
+        if (TryGetBrushDependencyProperty("Foreground", out var fgProp))
         {
-            var fgVal = fgProp.GetValue(_selectedElement);
+            var fgVal = _selectedElement.GetValue(fgProp);
             string fgStr = GetBrushString(fgVal as Brush);
             _dataGrid.AddItem(new PropertyItem("Foreground", fgStr, typeof(Brush), val =>
             {
                 var converted = ConvertValueToBrush(val);
-                fgProp.SetValue(_selectedElement, converted);
+                _selectedElement.SetValue(fgProp, converted);
                 _selectedElement.Invalidate();
                 PropertyChanged?.Invoke();
             }));
         }
 
         // BorderBrush
-        var borderBrushProp = type.GetProperty("BorderBrush");
-        if (borderBrushProp != null)
+        if (TryGetBrushDependencyProperty("BorderBrush", out var borderBrushProp))
         {
-            var borderVal = borderBrushProp.GetValue(_selectedElement);
+            var borderVal = _selectedElement.GetValue(borderBrushProp);
             string borderStr = GetBrushString(borderVal as Brush);
             _dataGrid.AddItem(new PropertyItem("BorderBrush", borderStr, typeof(Brush), val =>
             {
                 var converted = ConvertValueToBrush(val);
-                borderBrushProp.SetValue(_selectedElement, converted);
+                _selectedElement.SetValue(borderBrushProp, converted);
                 _selectedElement.Invalidate();
                 PropertyChanged?.Invoke();
             }));
@@ -650,6 +681,50 @@ public class PropertyGrid : Border
                 }
             }));
         }
+    }
+
+    private bool TryGetDependencyProperty(string name, out DependencyProperty property)
+    {
+        property = null!;
+        if (_selectedElement == null)
+        {
+            return false;
+        }
+
+        var dependencyProperty = DependencyProperty.Lookup(_selectedElement.GetType(), name);
+        if (dependencyProperty == null)
+        {
+            return false;
+        }
+
+        property = dependencyProperty;
+        return true;
+    }
+
+    private bool TryGetDependencyProperty(string name, Type propertyType, out DependencyProperty property)
+    {
+        property = null!;
+        if (!TryGetDependencyProperty(name, out var dependencyProperty) ||
+            dependencyProperty.PropertyType != propertyType)
+        {
+            return false;
+        }
+
+        property = dependencyProperty;
+        return true;
+    }
+
+    private bool TryGetBrushDependencyProperty(string name, out DependencyProperty property)
+    {
+        property = null!;
+        if (!TryGetDependencyProperty(name, out var dependencyProperty) ||
+            !typeof(Brush).IsAssignableFrom(dependencyProperty.PropertyType))
+        {
+            return false;
+        }
+
+        property = dependencyProperty;
+        return true;
     }
 
     private string GetBrushString(Brush? brush)

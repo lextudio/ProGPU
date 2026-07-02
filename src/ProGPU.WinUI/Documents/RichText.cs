@@ -244,11 +244,6 @@ public class RichTextBlock : FrameworkElement
         base.OnThemeChanged();
     }
 
-    public TtfFont? GetActiveFont()
-    {
-        return Font ?? PopupService.DefaultFont;
-    }
-
     private TtfFont? ActiveFont => GetActiveFont();
 
     public float FontSize
@@ -477,6 +472,37 @@ public class RichEditBox : Control
     private static readonly SolidColorBrush PenumbraShadowBrush = new SolidColorBrush(0x00000014);
 
     public event EventHandler? TextChanged;
+
+    public string Text
+    {
+        get
+        {
+            var chars = GetFlatChars();
+            var sb = new System.Text.StringBuilder();
+            foreach (var c in chars) sb.Append(c.Character);
+            return sb.ToString();
+        }
+        set
+        {
+            Inlines.Clear();
+            if (!string.IsNullOrEmpty(value))
+            {
+                var run = new Run(value)
+                {
+                    Foreground = Foreground ?? ThemeManager.GetBrush("TextPrimary", ActualTheme),
+                    FontSize = FontSize
+                };
+                Inlines.Add(run);
+            }
+            _caretIndex = Math.Clamp(_caretIndex, 0, value?.Length ?? 0);
+            SelectionStart = _caretIndex;
+            SelectionLength = 0;
+            _blockView.PerformRichLayout(Size.X - Padding.Horizontal, force: true);
+            _blockView.Invalidate();
+            Invalidate();
+            TextChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
     private float _fontSize = 14f;
 

@@ -13,31 +13,51 @@ using Color = Silk.NET.WebGPU.Color;
 
 namespace ProGPU.Scene;
 
-[StructLayout(LayoutKind.Explicit, Size = 128)]
+[StructLayout(LayoutKind.Explicit, Size = 256)]
 public struct GpuBrush
 {
-    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial
+    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial, 5 = Two-point conical
     [FieldOffset(4)] public float Opacity;
     [FieldOffset(8)] public Vector2 StartPoint;
     [FieldOffset(16)] public Vector2 EndPoint;
     [FieldOffset(24)] public Vector2 Center;
     [FieldOffset(32)] public float Radius;
     [FieldOffset(36)] public uint StopCount;
-    [FieldOffset(40)] public uint Pad;
-    
-    [FieldOffset(48)] public Vector4 Color0;
-    [FieldOffset(64)] public Vector4 Color1;
-    [FieldOffset(80)] public Vector4 Color2;
-    [FieldOffset(96)] public Vector4 Color3;
-    [FieldOffset(112)] public Vector4 Offsets;
+    [FieldOffset(40)] public float RadiusY;
+    [FieldOffset(44)] public uint SpreadMethod;
+    [FieldOffset(48)] public uint ColorInterpolationMode;
+    [FieldOffset(52)] public uint StopOffset;
+
+    [FieldOffset(64)] public Vector4 Color0;
+    [FieldOffset(80)] public Vector4 Color1;
+    [FieldOffset(96)] public Vector4 Color2;
+    [FieldOffset(112)] public Vector4 Color3;
+    [FieldOffset(128)] public Vector4 Color4;
+    [FieldOffset(144)] public Vector4 Color5;
+    [FieldOffset(160)] public Vector4 Color6;
+    [FieldOffset(176)] public Vector4 Color7;
+    [FieldOffset(192)] public Vector4 Offsets;
+    [FieldOffset(208)] public Vector4 Offsets1;
+    [FieldOffset(224)] public Vector4 CoordinateTransform0;
+    [FieldOffset(240)] public Vector4 CoordinateTransform1;
 }
 
-[StructLayout(LayoutKind.Explicit, Size = 192)]
+[StructLayout(LayoutKind.Explicit, Size = 32)]
+public struct GpuGradientStop
+{
+    [FieldOffset(0)] public Vector4 Color;
+    [FieldOffset(16)] public float Offset;
+}
+
+[StructLayout(LayoutKind.Explicit, Size = 208)]
 public struct GpuUniforms
 {
     [FieldOffset(0)] public Matrix4x4 Projection;
     [FieldOffset(64)] public Matrix4x4 Mvp;
     [FieldOffset(128)] public Matrix4x4 View;
+    [FieldOffset(192)] public Vector2 CanvasSize;
+    [FieldOffset(200)] public float DpiScale;
+    [FieldOffset(204)] public float Pad0;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -96,20 +116,327 @@ public struct CompositorMetrics
     public int PathAtlasCachedCount;
 }
 
+public readonly record struct RenderTargetViewport(float X, float Y, float Width, float Height)
+{
+    public static RenderTargetViewport Full(uint width, uint height)
+    {
+        return new RenderTargetViewport(
+            0f,
+            0f,
+            Math.Max(1u, width),
+            Math.Max(1u, height));
+    }
+}
+
 public unsafe class Compositor : IDisposable
 {
+    internal const int MaxGradientStops = 65536;
+    private const float StrokeEpsilon = 0.0001f;
+    private const float AliasedShapeTypeOffset = 1000f;
+    private const float ArcSdfShapeType = 12f;
+
     public struct StaticTextRecord
     {
         public RenderCommand Command;
         public Matrix4x4 Transform;
     }
 
+    private static float EncodeShapeType(RenderCommand command, float shapeType)
+    {
+        return command.IsEdgeAliased ? shapeType + AliasedShapeTypeOffset : shapeType;
+    }
+
+    private static float EncodeShapeType(bool isEdgeAliased, float shapeType)
+    {
+        return isEdgeAliased ? shapeType + AliasedShapeTypeOffset : shapeType;
+    }
+
+    private static float EncodeTextFlags(bool useMvp, TextRenderingMode textRenderingMode)
+    {
+        return textRenderingMode switch
+        {
+            TextRenderingMode.Aliased => useMvp ? -2f : -1f,
+            TextRenderingMode.ClearType => useMvp ? 3f : 2f,
+            _ => useMvp ? 1f : 0f
+        };
+    }
+
+    private static float ForceTextUseMvp(float encodedFlags)
+    {
+        return EncodeTextFlags(useMvp: true, DecodeTextRenderingMode(encodedFlags));
+    }
+
+    private static TextRenderingMode DecodeTextRenderingMode(float encodedFlags)
+    {
+        if (encodedFlags < -0.5f)
+        {
+            return TextRenderingMode.Aliased;
+        }
+
+        if (encodedFlags > 1.5f)
+        {
+            return TextRenderingMode.ClearType;
+        }
+
+        return TextRenderingMode.Grayscale;
+    }
+
+    private static (byte SubpixelX, Vector2 SnappedLogicalPos) ResolveTextPlacement(
+        Vector2 transformedPosition,
+        float dpiScale,
+        float rasterFontSize,
+        bool isRotated,
+        TextHintingMode textHintingMode)
+    {
+        if (textHintingMode == TextHintingMode.Animated)
+        {
+            return (0, transformedPosition);
+        }
+
+        var transformedPhysicalPosition = transformedPosition * dpiScale;
+        if (!isRotated && rasterFontSize <= 24f)
+        {
+            float screenX = transformedPhysicalPosition.X;
+            float screenY = transformedPhysicalPosition.Y;
+            float ipartX = MathF.Floor(screenX);
+            float fpartX = screenX - ipartX;
+            int subpixelIndex = (int)MathF.Round(fpartX * 4f);
+            if (subpixelIndex == 4)
+            {
+                subpixelIndex = 0;
+                ipartX += 1.0f;
+            }
+
+            var snapped = new Vector2(ipartX, MathF.Round(screenY)) / dpiScale;
+            return ((byte)subpixelIndex, snapped);
+        }
+
+        if (!isRotated)
+        {
+            var snapped = new Vector2(
+                MathF.Round(transformedPhysicalPosition.X),
+                MathF.Round(transformedPhysicalPosition.Y)) / dpiScale;
+            return (0, snapped);
+        }
+
+        return (0, transformedPosition);
+    }
+
     private readonly List<StaticTextRecord> _compiledTextRecords = new();
+    private readonly GpuRenderCommandHitTestCacheBuilder _hitTestCacheBuilder;
+    private GpuHitTestDeviceIndex? _lastHitTestDeviceIndex;
+    private bool _suspendHitTestCacheWrites;
 
     public CompositorMetrics Metrics { get; private set; }
 
+    public GpuHitTestIndex? LastHitTestIndex { get; private set; }
+    public GpuHitTestDeviceIndex? LastHitTestDeviceIndex => _lastHitTestDeviceIndex;
+
+    public bool TryHitTestPoint(Vector2 point, out GpuHitTestResult result)
+    {
+        if (_lastHitTestDeviceIndex == null)
+        {
+            result = default;
+            return false;
+        }
+
+        return GpuHitTestEngine.TryHitTestPoint(_context, _pipelineCache, _lastHitTestDeviceIndex, point, out result);
+    }
+
+    public bool TryHitTestPointAll(
+        Vector2 point,
+        Span<GpuHitTestResult> results,
+        out int hitCount,
+        out GpuHitTestResult summary)
+    {
+        if (_lastHitTestDeviceIndex == null)
+        {
+            hitCount = 0;
+            summary = default;
+            return false;
+        }
+
+        return GpuHitTestEngine.TryHitTestPointAll(
+            _context,
+            _pipelineCache,
+            _lastHitTestDeviceIndex,
+            point,
+            results,
+            out hitCount,
+            out summary);
+    }
+
+    public bool TryQueryHitTestBoundsAll(
+        Vector2 min,
+        Vector2 max,
+        Span<GpuHitTestResult> results,
+        out int hitCount,
+        out GpuHitTestResult summary)
+    {
+        if (_lastHitTestDeviceIndex == null)
+        {
+            hitCount = 0;
+            summary = default;
+            return false;
+        }
+
+        return GpuHitTestEngine.TryQueryBoundsAll(
+            _context,
+            _pipelineCache,
+            _lastHitTestDeviceIndex,
+            min,
+            max,
+            results,
+            out hitCount,
+            out summary);
+    }
+
+    public bool TryQueryHitTestEllipseAll(
+        Vector2 min,
+        Vector2 max,
+        Span<GpuHitTestResult> results,
+        out int hitCount,
+        out GpuHitTestResult summary)
+    {
+        if (_lastHitTestDeviceIndex == null)
+        {
+            hitCount = 0;
+            summary = default;
+            return false;
+        }
+
+        return GpuHitTestEngine.TryQueryEllipseAll(
+            _context,
+            _pipelineCache,
+            _lastHitTestDeviceIndex,
+            min,
+            max,
+            results,
+            out hitCount,
+            out summary);
+    }
+
+    private void SetLastHitTestIndex(GpuHitTestIndex index)
+    {
+        _lastHitTestDeviceIndex?.Dispose();
+        _lastHitTestDeviceIndex = null;
+        LastHitTestIndex = index;
+
+        if (GpuHitTestDeviceIndex.TryCreate(_context, index, out GpuHitTestDeviceIndex? deviceIndex))
+        {
+            _lastHitTestDeviceIndex = deviceIndex;
+        }
+    }
+
+    private void ClearLastHitTestIndex()
+    {
+        _lastHitTestDeviceIndex?.Dispose();
+        _lastHitTestDeviceIndex = null;
+        LastHitTestIndex = null;
+    }
+
+    private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform)
+    {
+        if (!_suspendHitTestCacheWrites)
+        {
+            _hitTestCacheBuilder.AddCommand(command, transform);
+        }
+    }
+
+    private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform, IRenderDataProvider provider)
+    {
+        if (!_suspendHitTestCacheWrites)
+        {
+            _hitTestCacheBuilder.AddCommand(command, transform, provider);
+        }
+    }
+
+    private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform, int id)
+    {
+        if (!_suspendHitTestCacheWrites)
+        {
+            _hitTestCacheBuilder.AddCommand(command, transform, id);
+        }
+    }
+
+    private void PushHitTestClip(Rect clipBounds, Matrix4x4 transform)
+    {
+        if (!_suspendHitTestCacheWrites)
+        {
+            _hitTestCacheBuilder.PushClip(clipBounds, transform);
+        }
+    }
+
+    private void PopHitTestClip()
+    {
+        if (!_suspendHitTestCacheWrites)
+        {
+            _hitTestCacheBuilder.PopClip();
+        }
+    }
+
+    private void AddHitTestStateCommand(RenderCommand command, Matrix4x4 transform)
+    {
+        if (!IsHitTestStateCommand(command.Type))
+        {
+            return;
+        }
+
+        AddHitTestCommand(command, transform);
+    }
+
+    private void AddHitTestDrawCommand(RenderCommand command, Matrix4x4 transform)
+    {
+        if (IsHitTestStateCommand(command.Type))
+        {
+            return;
+        }
+
+        AddHitTestCommand(command, transform);
+    }
+
+    private void AddHitTestDrawCommand(RenderCommand command, Matrix4x4 transform, IRenderDataProvider provider)
+    {
+        if (IsHitTestStateCommand(command.Type))
+        {
+            return;
+        }
+
+        AddHitTestCommand(command, transform, provider);
+    }
+
+    private static bool IsHitTestStateCommand(RenderCommandType type)
+    {
+        return type is
+            RenderCommandType.PushClip or
+            RenderCommandType.PopClip or
+            RenderCommandType.PushGeometryClip or
+            RenderCommandType.PopGeometryClip or
+            RenderCommandType.PushOpacity or
+            RenderCommandType.PopOpacity;
+    }
+
+    private void EnsurePathHitTestCompilation(PathGeometry path)
+    {
+        try
+        {
+            _pathAtlas.TryGetCompiledHitTestPath(
+                path,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
     private readonly List<ICompositorExtension> _registeredExtensions = new();
     private readonly Dictionary<int, ICompositorExtension> _extensionsById = new();
+    private int _extensionFrameDepth;
 
     public void RegisterExtension(int id, ICompositorExtension extension)
     {
@@ -128,6 +455,54 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private bool BeginExtensionFrame()
+    {
+        bool ownsFrame = _extensionFrameDepth++ == 0;
+        if (!ownsFrame)
+        {
+            return false;
+        }
+
+        try
+        {
+            lock (_registeredExtensions)
+            {
+                foreach (var ext in _registeredExtensions)
+                {
+                    ext.BeginFrame(this);
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            _extensionFrameDepth--;
+            throw;
+        }
+    }
+
+    private void EndExtensionFrame(bool ownsFrame)
+    {
+        try
+        {
+            if (ownsFrame)
+            {
+                lock (_registeredExtensions)
+                {
+                    foreach (var ext in _registeredExtensions)
+                    {
+                        ext.EndFrame(this);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _extensionFrameDepth--;
+        }
+    }
+
     // Decoupled hooks to remove hard dependency on UI layer
     public event Action<uint, uint>? PreRender;
     public Func<System.Collections.Generic.IReadOnlyList<Visual>>? GetExternalLayers { get; set; }
@@ -135,6 +510,11 @@ public unsafe class Compositor : IDisposable
     public Func<Vector2>? GetMousePosition { get; set; }
     public Action<DrawingContext, uint, uint>? RenderDiagnostics { get; set; }
     public Vector4 ClearColor { get; set; } = new Vector4(0.08f, 0.08f, 0.12f, 1.0f);
+
+    public unsafe BindGroupLayout* VectorUniformBindGroupLayout => _vectorUniformBindGroupLayout;
+    public unsafe BindGroupLayout* VectorUniformBindGroupLayoutOffscreen => _vectorUniformBindGroupLayoutOffscreen;
+    internal unsafe BindGroupLayout* MaskBindGroupLayout => _maskBindGroupLayout;
+    internal unsafe BindGroupLayout* MaskBindGroupLayoutOffscreen => _maskBindGroupLayoutOffscreen;
 
     private readonly WgpuContext _context;
     private readonly RenderPipelineCache _pipelineCache;
@@ -170,9 +550,14 @@ public unsafe class Compositor : IDisposable
     private Matrix4x4 _cameraViewMatrix;
     private bool _hasGpuTransformsInFrame;
     private Matrix4x4 _gpuTransformsCameraView;
+    private uint? _explicitRenderTargetWidth;
+    private uint? _explicitRenderTargetHeight;
+    private RenderTargetViewport? _explicitRenderTargetViewport;
+    private float? _explicitDpiScale;
 
     // Sampler & Texture Bind Group for Typography
     private Sampler* _atlasSampler;
+    private Sampler* _nearestTextureSampler;
     private BindGroup* _atlasBindGroup;
     private BindGroupLayout* _atlasBindGroupLayout;
     private BindGroup* _atlasBindGroupOffscreen;
@@ -209,9 +594,34 @@ public unsafe class Compositor : IDisposable
     private GpuBuffer _vectorVertexBuffer;
     private GpuBuffer _vectorIndexBuffer;
     private GpuBuffer _textVertexBuffer;
-    private GpuBuffer _textIndexBuffer;
     private GpuBuffer _textureVertexBuffer;
     private GpuBuffer _textureIndexBuffer;
+
+    // Masking & Blending state
+    private readonly List<GpuTexture> _maskTexturePool = new();
+    private readonly Stack<GpuTexture> _maskStack = new();
+    private readonly Dictionary<GpuTexture, nint> _maskBindGroups = new();
+    private readonly Dictionary<GpuTexture, nint> _maskBindGroupsOffscreen = new();
+
+    private PipelineLayout* _vectorPipelineLayout;
+    private PipelineLayout* _textPipelineLayout;
+    private PipelineLayout* _texturePipelineLayout;
+    private PipelineLayout* _vectorPipelineLayoutOffscreen;
+    private PipelineLayout* _textPipelineLayoutOffscreen;
+    private PipelineLayout* _texturePipelineLayoutOffscreen;
+
+    private GpuTexture? _dummyMaskTexture;
+    private BindGroup* _dummyMaskBindGroup;
+    private BindGroup* _dummyMaskBindGroupOffscreen;
+
+    private BindGroupLayout* _maskBindGroupLayout;
+    private BindGroupLayout* _maskBindGroupLayoutOffscreen;
+
+    private readonly Stack<GpuBlendMode> _blendModeStack = new();
+    private GpuBlendMode _activeBlendMode = GpuBlendMode.SrcOver;
+
+    private readonly List<MaskRenderPassInfo> _maskRenderPasses = new();
+    private readonly List<GpuTexture> _masksToReturnToPool = new();
 
     public enum DrawCallType
     {
@@ -231,7 +641,7 @@ public unsafe class Compositor : IDisposable
         public uint IndexCount;
         public GpuTexture? Texture;
         public object? StaticBuffer;
-        
+
         // GPU Chart properties
         public Matrix4x4 Transform;
         public float LineThicknessOrRadius;
@@ -239,6 +649,10 @@ public unsafe class Compositor : IDisposable
         public Vector2 Scale;
         public Vector2 Translate;
         public Rect? ClipRect;
+        public GpuTexture? MaskTexture;
+        public GpuBlendMode BlendMode;
+        public TextureSamplingMode TextureSamplingMode;
+        public GpuTextureAlphaMode TextureAlphaMode;
 
         // Custom Extension properties
         public int ExtensionId;
@@ -260,8 +674,7 @@ public unsafe class Compositor : IDisposable
 
     private readonly List<VectorVertex> _vectorVerticesList = new();
     private readonly List<uint> _vectorIndicesList = new();
-    private readonly List<VectorVertex> _textVerticesList = new();
-    private readonly List<uint> _textIndicesList = new();
+    private readonly List<GlyphInstance> _textVerticesList = new();
     private readonly List<VectorVertex> _textureVerticesList = new();
     private readonly List<uint> _textureIndicesList = new();
     public readonly struct TextureCacheKey : IEquatable<TextureCacheKey>
@@ -269,17 +682,19 @@ public unsafe class Compositor : IDisposable
         public readonly ulong TextureId;
         public readonly uint Generation;
         public readonly bool IsOffscreen;
+        public readonly TextureSamplingMode SamplingMode;
 
-        public TextureCacheKey(ulong textureId, uint generation, bool isOffscreen)
+        public TextureCacheKey(ulong textureId, uint generation, bool isOffscreen, TextureSamplingMode samplingMode)
         {
             TextureId = textureId;
             Generation = generation;
             IsOffscreen = isOffscreen;
+            SamplingMode = samplingMode;
         }
 
-        public bool Equals(TextureCacheKey other) => TextureId == other.TextureId && Generation == other.Generation && IsOffscreen == other.IsOffscreen;
+        public bool Equals(TextureCacheKey other) => TextureId == other.TextureId && Generation == other.Generation && IsOffscreen == other.IsOffscreen && SamplingMode == other.SamplingMode;
         public override bool Equals(object? obj) => obj is TextureCacheKey other && Equals(other);
-        public override int GetHashCode() => HashCode.Combine(TextureId, Generation, IsOffscreen);
+        public override int GetHashCode() => HashCode.Combine(TextureId, Generation, IsOffscreen, SamplingMode);
     }
 
     public class CachedBindGroup
@@ -297,22 +712,47 @@ public unsafe class Compositor : IDisposable
     private readonly List<CompositorDrawCall> _drawCalls = new();
     private readonly Dictionary<TextureCacheKey, CachedBindGroup> _persistentTextureBindGroups = new();
     private readonly List<GpuBrush> _activeBrushes = new();
+    private readonly List<GpuGradientStop> _activeGradientStops = new();
     private readonly GpuBuffer _brushesStorageBuffer;
+    private readonly GpuBuffer _gradientStopsStorageBuffer;
     private ulong _frameNumber = 0;
     private float _totalTime = 0f;
     private readonly Dictionary<(string Text, TtfFont Font, float Size, TextAlignment Align), TextLayout> _layoutCache = new();
+    private enum BatchType
+    {
+        None,
+        Vector,
+        Text
+    }
+
+    [Flags]
+    private enum VisualCompositeScope
+    {
+        None = 0,
+        Clip = 1,
+        OuterClip = 2,
+        Opacity = 4,
+        OpacityMask = 8
+    }
+
+    private BatchType _currentBatchType = BatchType.None;
     private uint _pendingVectorStart = 0;
     private uint _pendingTextStart = 0;
 
     private readonly ComputeAccelerator _compute;
     private readonly Dictionary<Visual, (GpuTexture Source, GpuTexture Temp, GpuTexture Destination)> _effectTextures = new();
+    private readonly Dictionary<Visual, int> _effectCacheKeys = new();
+    private readonly Dictionary<Visual, WpfShaderEffectParams> _wpfShaderEffectDrawParams = new();
     private readonly HashSet<Visual> _elementsRenderingEffects = new();
     private readonly HashSet<Visual> _elementsRenderingLayers = new();
-    private readonly HashSet<GpuTexture> _allocatedLayerTextures = new();
+    private readonly Dictionary<Visual, GpuTexture> _allocatedLayerTextures = new();
+    private readonly HashSet<Visual> _activeLayerTextureOwners = new();
 
     private bool _isDisposed;
+    public bool IsDisposed => _isDisposed;
 
     private readonly Stack<Rect> _clipStack = new();
+    private readonly Stack<bool> _clipScopeIsGeometryMask = new();
     private Rect? _activeClipRect;
 
     private readonly Stack<float> _opacityStack = new();
@@ -325,16 +765,47 @@ public unsafe class Compositor : IDisposable
     public int VectorVertexCount => _vectorVerticesList.Count;
     public List<VectorVertex> VectorVertices => _vectorVerticesList;
     public List<uint> VectorIndices => _vectorIndicesList;
-    
-    internal WgpuContext Context => _context;
+
+    public WgpuContext Context => _context;
     internal RenderPipelineCache PipelineCache => _pipelineCache;
     internal GpuBuffer VectorVertexBuffer => _vectorVertexBuffer;
     internal GpuBuffer VectorIndexBuffer => _vectorIndexBuffer;
     internal GpuBuffer VectorUniformBuffer => _uniformBuffer;
     internal GpuBuffer BrushesStorageBuffer => _brushesStorageBuffer;
+    internal GpuBuffer GradientStopsStorageBuffer => _gradientStopsStorageBuffer;
     internal uint CurrentWidth => _currentWidth;
     internal uint CurrentHeight => _currentHeight;
-    internal float CurrentDpiScale => _currentDpiScale;
+    internal float CurrentCanvasPixelX => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.X
+        : 0f;
+
+    internal float CurrentCanvasPixelY => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.Y
+        : 0f;
+
+    internal float CurrentCanvasPixelWidth => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.Width
+        : _explicitRenderTargetWidth.HasValue
+        ? _explicitRenderTargetWidth.Value
+        : MathF.Max(1f, _currentWidth * (_currentDpiScale > 0f ? _currentDpiScale : 1f));
+
+    internal float CurrentCanvasPixelHeight => _explicitRenderTargetViewport.HasValue
+        ? _explicitRenderTargetViewport.Value.Height
+        : _explicitRenderTargetHeight.HasValue
+        ? _explicitRenderTargetHeight.Value
+        : MathF.Max(1f, _currentHeight * (_currentDpiScale > 0f ? _currentDpiScale : 1f));
+    private uint CurrentCanvasPixelXUInt => RoundNonNegativeToUInt(CurrentCanvasPixelX);
+    private uint CurrentCanvasPixelYUInt => RoundNonNegativeToUInt(CurrentCanvasPixelY);
+    private uint CurrentCanvasPixelWidthUInt => Math.Max(1u, RoundNonNegativeToUInt(CurrentCanvasPixelWidth));
+    private uint CurrentCanvasPixelHeightUInt => Math.Max(1u, RoundNonNegativeToUInt(CurrentCanvasPixelHeight));
+    private uint CurrentMaskTargetPixelWidthUInt => _explicitRenderTargetViewport.HasValue && _explicitRenderTargetWidth.HasValue
+        ? Math.Max(1u, _explicitRenderTargetWidth.Value)
+        : CurrentCanvasPixelWidthUInt;
+
+    private uint CurrentMaskTargetPixelHeightUInt => _explicitRenderTargetViewport.HasValue && _explicitRenderTargetHeight.HasValue
+        ? Math.Max(1u, _explicitRenderTargetHeight.Value)
+        : CurrentCanvasPixelHeightUInt;
+    public float CurrentDpiScale => _currentDpiScale;
     internal Matrix4x4 CurrentProjection => _currentProjection;
     internal System.Runtime.CompilerServices.ConditionalWeakTable<object, GpuSeriesBuffer> DynamicGpuBufferCache => _dynamicGpuBufferCache;
     internal List<CompositorDrawCall> DrawCalls => _drawCalls;
@@ -344,11 +815,13 @@ public unsafe class Compositor : IDisposable
     internal uint PendingTextStart { get => _pendingTextStart; set => _pendingTextStart = value; }
     internal BindGroup* VectorUniformBindGroup => _vectorUniformBindGroup;
     internal BindGroup* VectorUniformBindGroupOffscreen => _vectorUniformBindGroupOffscreen;
-    
+    internal Sampler* AtlasSampler => _atlasSampler;
+    internal ulong FrameNumber => _frameNumber;
+
     internal void CompilePolyline(IRenderDataProvider? provider, RenderCommand cmd, in Matrix4x4 transform) => CompilePolylineCommand(provider, cmd, transform);
     public int VectorIndexCount => _vectorIndicesList.Count;
-    public int TextVertexCount => _textVerticesList.Count;
-    public int TextIndexCount => _textIndicesList.Count;
+    public int TextVertexCount => _textVerticesList.Count * 6;
+    public int TextIndexCount => _textVerticesList.Count * 6;
     public int TextureVertexCount => _textureVerticesList.Count;
     public int TextureIndexCount => _textureIndicesList.Count;
     public int TextureDrawCallCount
@@ -366,7 +839,16 @@ public unsafe class Compositor : IDisposable
 
     public GlyphAtlas Atlas => _atlas;
     public TextureFormat RenderFormat { get; private set; }
-    
+
+    private Vector4 ResolveDrawCallBrushColor(Brush? brush)
+    {
+        Vector4 color = brush is SolidColorBrush solid
+            ? solid.Color
+            : new Vector4(1f, 1f, 1f, 1f);
+        color.W *= (brush?.Opacity ?? 1f) * _activeOpacity;
+        return color;
+    }
+
     public StaticCompilationContext? ActiveCompilationContext { get; private set; }
 
     public Compositor(WgpuContext context, TextureFormat? renderFormat = null)
@@ -375,25 +857,32 @@ public unsafe class Compositor : IDisposable
         RenderFormat = renderFormat ?? _context.SwapChainFormat;
         _pipelineCache = new RenderPipelineCache(_context);
         _compute = new ComputeAccelerator(_context);
-        
+
         // 1. Initialize Glyph Atlas (4096x4096)
         _atlas = new GlyphAtlas(_context, 4096);
         _pathAtlas = new PathAtlas(_context, 4096);
+        _hitTestCacheBuilder = new GpuRenderCommandHitTestCacheBuilder(_pathAtlas);
 
         // 2. Uniform Buffer allocation (Projection Matrix + MVP - 128 bytes)
         _uniformBuffer = new GpuBuffer(
-            _context, 
-            (uint)Marshal.SizeOf<GpuUniforms>(), 
-            BufferUsage.Uniform | BufferUsage.CopyDst, 
+            _context,
+            (uint)Marshal.SizeOf<GpuUniforms>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
             "Compositor Uniform Projection Buffer"
         );
 
-        // Allocate brushes storage buffer (8192 brushes * 128 bytes = 1,048,576 bytes)
+        // Allocate brushes storage buffer for the fixed GPU brush ABI.
         _brushesStorageBuffer = new GpuBuffer(
             _context,
-            8192 * 128,
+            8192u * (uint)Marshal.SizeOf<GpuBrush>(),
             BufferUsage.Storage | BufferUsage.CopyDst,
             "Compositor Brushes Storage Buffer"
+        );
+        _gradientStopsStorageBuffer = new GpuBuffer(
+            _context,
+            (uint)MaxGradientStops * (uint)Marshal.SizeOf<GpuGradientStop>(),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Compositor Gradient Stops Storage Buffer"
         );
 
         // 3. Dynamic mesh buffer setup (Vertex format: VectorVertex)
@@ -404,8 +893,7 @@ public unsafe class Compositor : IDisposable
         _vectorVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Vector Vertex Buffer");
         _vectorIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Vector Index Buffer");
 
-        _textVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Text Vertex Buffer");
-        _textIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Text Index Buffer");
+        _textVertexBuffer = new GpuBuffer(_context, initialVertexCount * (uint)Marshal.SizeOf<GlyphInstance>(), BufferUsage.Vertex | BufferUsage.CopyDst, "Text Vertex Buffer");
 
         _textureVertexBuffer = new GpuBuffer(_context, initialVertexCount * vertexStride, BufferUsage.Vertex | BufferUsage.CopyDst, "Texture Vertex Buffer");
         _textureIndexBuffer = new GpuBuffer(_context, initialIndexCount * 4, BufferUsage.Index | BufferUsage.CopyDst, "Texture Index Buffer");
@@ -419,8 +907,12 @@ public unsafe class Compositor : IDisposable
         RegisterExtension(CompositorBuiltInExtensions.GpuScatterSeries, new GpuScatterSeriesExtensionPipeline());
         RegisterExtension(CompositorBuiltInExtensions.CustomGrid, new CustomGridExtensionPipeline());
         RegisterExtension(CompositorBuiltInExtensions.Mesh3D, new Mesh3DExtensionPipeline());
+        RegisterExtension(CompositorBuiltInExtensions.ImageEffect, new ImageEffectExtensionPipeline());
+        RegisterExtension(CompositorBuiltInExtensions.ShaderToy, new ShaderToyExtensionPipeline());
+        RegisterExtension(CompositorBuiltInExtensions.WpfShaderEffect, new WpfShaderEffectExtensionPipeline());
 
         InitializePipelinesAndBindGroups();
+        GpuTexture.OnDisposedWithId += HandleTextureDisposed;
     }
 
     private void InitializePipelinesAndBindGroups()
@@ -440,12 +932,102 @@ public unsafe class Compositor : IDisposable
         };
         _atlasSampler = _context.Wgpu.DeviceCreateSampler(_context.Device, &samplerDesc);
 
+        var nearestSamplerDesc = samplerDesc;
+        nearestSamplerDesc.MagFilter = FilterMode.Nearest;
+        nearestSamplerDesc.MinFilter = FilterMode.Nearest;
+        nearestSamplerDesc.MipmapFilter = MipmapFilterMode.Nearest;
+        _nearestTextureSampler = _context.Wgpu.DeviceCreateSampler(_context.Device, &nearestSamplerDesc);
+
         // 5. Compile WGSL shaders
         var vecShaderModule = _pipelineCache.GetOrCreateShader("Vector", Shaders.VectorShader, "VectorShader");
         var textShaderModule = _pipelineCache.GetOrCreateShader("Text", Shaders.TextShader, "TextShader");
         var texShaderModule = _pipelineCache.GetOrCreateShader("Texture", Shaders.TextureShader, "TextureShader");
         var chartLineShaderModule = _pipelineCache.GetOrCreateShader("ChartLine", Shaders.ChartLineShader, "ChartLineShader");
         var chartScatterShaderModule = _pipelineCache.GetOrCreateShader("ChartScatter", Shaders.ChartScatterShader, "ChartScatterShader");
+
+        // Create explicit BindGroupLayouts
+        _vectorUniformBindGroupLayout = CreateVectorUniformLayout();
+        _vectorUniformBindGroupLayoutOffscreen = CreateVectorUniformLayout();
+        _textUniformBindGroupLayout = CreateUniformOnlyLayout();
+        _textUniformBindGroupLayoutOffscreen = CreateUniformOnlyLayout();
+        _textureUniformBindGroupLayout = CreateUniformOnlyLayout();
+        _textureUniformBindGroupLayoutOffscreen = CreateUniformOnlyLayout();
+
+        _pathAtlasBindGroupLayout = CreateSamplerTextureLayout();
+        _pathAtlasBindGroupLayoutOffscreen = CreateSamplerTextureLayout();
+        _atlasBindGroupLayout = CreateSamplerTextureLayout();
+        _atlasBindGroupLayoutOffscreen = CreateSamplerTextureLayout();
+        _textureBindGroupLayout = CreateSamplerTextureLayout();
+        _textureBindGroupLayoutOffscreen = CreateSamplerTextureLayout();
+        _maskBindGroupLayout = CreateSamplerTextureLayout();
+        _maskBindGroupLayoutOffscreen = CreateSamplerTextureLayout();
+
+        // Create explicit PipelineLayouts to share layouts across dynamic blend pipelines
+        var vectorLayouts = stackalloc BindGroupLayout*[3];
+        vectorLayouts[0] = _vectorUniformBindGroupLayout;
+        vectorLayouts[1] = _pathAtlasBindGroupLayout;
+        vectorLayouts[2] = _maskBindGroupLayout;
+        var vectorPipelineLayoutDesc = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 3,
+            BindGroupLayouts = vectorLayouts
+        };
+        _vectorPipelineLayout = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &vectorPipelineLayoutDesc);
+
+        var vectorLayoutsOffscreen = stackalloc BindGroupLayout*[3];
+        vectorLayoutsOffscreen[0] = _vectorUniformBindGroupLayoutOffscreen;
+        vectorLayoutsOffscreen[1] = _pathAtlasBindGroupLayoutOffscreen;
+        vectorLayoutsOffscreen[2] = _maskBindGroupLayoutOffscreen;
+        var vectorPipelineLayoutDescOffscreen = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 3,
+            BindGroupLayouts = vectorLayoutsOffscreen
+        };
+        _vectorPipelineLayoutOffscreen = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &vectorPipelineLayoutDescOffscreen);
+
+        var textLayouts = stackalloc BindGroupLayout*[3];
+        textLayouts[0] = _textUniformBindGroupLayout;
+        textLayouts[1] = _atlasBindGroupLayout;
+        textLayouts[2] = _maskBindGroupLayout;
+        var textPipelineLayoutDesc = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 3,
+            BindGroupLayouts = textLayouts
+        };
+        _textPipelineLayout = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &textPipelineLayoutDesc);
+
+        var textLayoutsOffscreen = stackalloc BindGroupLayout*[3];
+        textLayoutsOffscreen[0] = _textUniformBindGroupLayoutOffscreen;
+        textLayoutsOffscreen[1] = _atlasBindGroupLayoutOffscreen;
+        textLayoutsOffscreen[2] = _maskBindGroupLayoutOffscreen;
+        var textPipelineLayoutDescOffscreen = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 3,
+            BindGroupLayouts = textLayoutsOffscreen
+        };
+        _textPipelineLayoutOffscreen = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &textPipelineLayoutDescOffscreen);
+
+        var textureLayouts = stackalloc BindGroupLayout*[3];
+        textureLayouts[0] = _textureUniformBindGroupLayout;
+        textureLayouts[1] = _textureBindGroupLayout;
+        textureLayouts[2] = _maskBindGroupLayout;
+        var texturePipelineLayoutDesc = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 3,
+            BindGroupLayouts = textureLayouts
+        };
+        _texturePipelineLayout = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &texturePipelineLayoutDesc);
+
+        var textureLayoutsOffscreen = stackalloc BindGroupLayout*[3];
+        textureLayoutsOffscreen[0] = _textureUniformBindGroupLayoutOffscreen;
+        textureLayoutsOffscreen[1] = _textureBindGroupLayoutOffscreen;
+        textureLayoutsOffscreen[2] = _maskBindGroupLayoutOffscreen;
+        var texturePipelineLayoutDescOffscreen = new PipelineLayoutDescriptor
+        {
+            BindGroupLayoutCount = 3,
+            BindGroupLayouts = textureLayoutsOffscreen
+        };
+        _texturePipelineLayoutOffscreen = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &texturePipelineLayoutDescOffscreen);
 
         var vertexAttribs = new VertexAttribute[]
         {
@@ -471,75 +1053,106 @@ public unsafe class Compositor : IDisposable
 
             // Compile primary graphics pipelines with 4x MSAA
             _vectorPipeline = _pipelineCache.GetOrCreateRenderPipeline(
-                "Vector", 
-                vecShaderModule, 
-                "vs_main", 
-                "fs_main", 
-                RenderFormat, 
-                PrimitiveTopology.TriangleList, 
+                "Vector",
+                vecShaderModule,
+                "vs_main",
+                "fs_main",
+                RenderFormat,
+                PrimitiveTopology.TriangleList,
                 new[] { layoutDesc },
                 enableBlend: true,
-                sampleCount: 4
+                sampleCount: 4,
+                pipelineLayout: _vectorPipelineLayout
             );
 
-            _textPipeline = _pipelineCache.GetOrCreateRenderPipeline(
-                "Text", 
-                textShaderModule, 
-                "vs_main", 
-                "fs_main", 
-                RenderFormat, 
-                PrimitiveTopology.TriangleList, 
-                new[] { layoutDesc },
-                enableBlend: true,
-                sampleCount: 4
-            );
+            var textVertexAttribs = new VertexAttribute[]
+            {
+                new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // SnappedLogicalPos
+                new() { Format = VertexFormat.Float32x2, Offset = 8, ShaderLocation = 1 }, // BasisX
+                new() { Format = VertexFormat.Float32x2, Offset = 16, ShaderLocation = 2 }, // BasisY
+                new() { Format = VertexFormat.Float32x4, Offset = 24, ShaderLocation = 3 }, // BearSize
+                new() { Format = VertexFormat.Float32x4, Offset = 40, ShaderLocation = 4 }, // TexCoords
+                new() { Format = VertexFormat.Float32x4, Offset = 56, ShaderLocation = 5 }, // Color
+                new() { Format = VertexFormat.Float32x4, Offset = 72, ShaderLocation = 6 }, // ScaleBoldItalicUseMvp
+                new() { Format = VertexFormat.Float32, Offset = 88, ShaderLocation = 7 }    // BrushIndex
+            };
+
+            fixed (VertexAttribute* textAttribsPtr = textVertexAttribs)
+            {
+                var textLayoutDesc = new VertexBufferLayout
+                {
+                    ArrayStride = (uint)Marshal.SizeOf<GlyphInstance>(),
+                    StepMode = VertexStepMode.Instance,
+                    AttributeCount = 8,
+                    Attributes = textAttribsPtr
+                };
+
+                _textPipeline = _pipelineCache.GetOrCreateRenderPipeline(
+                    "Text",
+                    textShaderModule,
+                    "vs_main",
+                    "fs_main",
+                    RenderFormat,
+                    PrimitiveTopology.TriangleList,
+                    new[] { textLayoutDesc },
+                    enableBlend: true,
+                    sampleCount: 4,
+                    pipelineLayout: _textPipelineLayout
+                );
+
+                _textPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
+                    "Text_Offscreen",
+                    textShaderModule,
+                    "vs_main",
+                    "fs_main",
+                    RenderFormat,
+                    PrimitiveTopology.TriangleList,
+                    new[] { textLayoutDesc },
+                    enableBlend: true,
+                    sampleCount: 1,
+                    pipelineLayout: _textPipelineLayoutOffscreen
+                );
+            }
 
             _texturePipeline = _pipelineCache.GetOrCreateRenderPipeline(
-                "Texture", 
-                texShaderModule, 
-                "vs_main", 
-                "fs_main", 
-                RenderFormat, 
-                PrimitiveTopology.TriangleList, 
+                "Texture",
+                texShaderModule,
+                "vs_main",
+                "fs_main",
+                RenderFormat,
+                PrimitiveTopology.TriangleList,
                 new[] { layoutDesc },
                 enableBlend: true,
-                sampleCount: 4
+                sampleCount: 4,
+                pipelineLayout: _texturePipelineLayout,
+                sourceAlphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             _vectorPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
-                "Vector_Offscreen", 
-                vecShaderModule, 
-                "vs_main", 
-                "fs_main", 
-                RenderFormat, 
-                PrimitiveTopology.TriangleList, 
+                "Vector_Offscreen",
+                vecShaderModule,
+                "vs_main",
+                "fs_main",
+                RenderFormat,
+                PrimitiveTopology.TriangleList,
                 new[] { layoutDesc },
                 enableBlend: true,
-                sampleCount: 1
-            );
-
-            _textPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
-                "Text_Offscreen", 
-                textShaderModule, 
-                "vs_main", 
-                "fs_main", 
-                RenderFormat, 
-                PrimitiveTopology.TriangleList, 
-                new[] { layoutDesc },
-                enableBlend: true,
-                sampleCount: 1
+                sampleCount: 1,
+                pipelineLayout: _vectorPipelineLayoutOffscreen
             );
 
             _texturePipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
-                "Texture_Offscreen", 
-                texShaderModule, 
-                "vs_main", 
-                "fs_main", 
-                RenderFormat, 
-                PrimitiveTopology.TriangleList, 
+                "Texture_Offscreen",
+                texShaderModule,
+                "vs_main",
+                "fs_main",
+                RenderFormat,
+                PrimitiveTopology.TriangleList,
                 new[] { layoutDesc },
                 enableBlend: true,
-                sampleCount: 1
+                sampleCount: 1,
+                pipelineLayout: _texturePipelineLayoutOffscreen,
+                sourceAlphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             // Compile high performance Chart GPGPU pipelines (with MSAA 4x)
@@ -610,18 +1223,6 @@ public unsafe class Compositor : IDisposable
         _chartLineBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_chartLinePipeline, 0);
         _chartScatterBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_chartScatterPipeline, 0);
 
-        _textureBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_texturePipeline, 1);
-        _textureBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_texturePipelineOffscreen, 1);
-
-        // 7. Uniform bind groups structure configuration
-        _vectorUniformBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_vectorPipeline, 0);
-        _textUniformBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_textPipeline, 0);
-        _textureUniformBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_texturePipeline, 0);
-        
-        _vectorUniformBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_vectorPipelineOffscreen, 0);
-        _textUniformBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_textPipelineOffscreen, 0);
-        _textureUniformBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_texturePipelineOffscreen, 0);
-
         var uBufferEntryVector = new BindGroupEntry
         {
             Binding = 0,
@@ -646,14 +1247,23 @@ public unsafe class Compositor : IDisposable
             Size = _brushesStorageBuffer.Size
         };
 
-        var vectorEntries = stackalloc BindGroupEntry[2];
+        var gradientStopsEntry = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = _gradientStopsStorageBuffer.BufferPtr,
+            Offset = 0,
+            Size = _gradientStopsStorageBuffer.Size
+        };
+
+        var vectorEntries = stackalloc BindGroupEntry[3];
         vectorEntries[0] = uBufferEntryVector;
         vectorEntries[1] = brushesEntry;
+        vectorEntries[2] = gradientStopsEntry;
 
         var uDescVector = new BindGroupDescriptor
         {
             Layout = _vectorUniformBindGroupLayout,
-            EntryCount = 2,
+            EntryCount = 3,
             Entries = vectorEntries
         };
         _vectorUniformBindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVector);
@@ -661,7 +1271,7 @@ public unsafe class Compositor : IDisposable
         var uDescVectorOffscreen = new BindGroupDescriptor
         {
             Layout = _vectorUniformBindGroupLayoutOffscreen,
-            EntryCount = 2,
+            EntryCount = 3,
             Entries = vectorEntries
         };
         _vectorUniformBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescVectorOffscreen);
@@ -698,10 +1308,6 @@ public unsafe class Compositor : IDisposable
         };
         _textureUniformBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &uDescTextureOffscreen);
 
-        // 8. Atlas bind group structure configuration
-        _atlasBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_textPipeline, 1);
-        _atlasBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_textPipelineOffscreen, 1);
-
         var samplerEntry = new BindGroupEntry
         {
             Binding = 0,
@@ -734,10 +1340,6 @@ public unsafe class Compositor : IDisposable
         };
         _atlasBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &atlasDescOffscreen);
 
-        // Initialize Path Atlas bind group
-        _pathAtlasBindGroupLayout = _context.Wgpu.RenderPipelineGetBindGroupLayout(_vectorPipeline, 1);
-        _pathAtlasBindGroupLayoutOffscreen = _context.Wgpu.RenderPipelineGetBindGroupLayout(_vectorPipelineOffscreen, 1);
-
         var pathViewEntry = new BindGroupEntry
         {
             Binding = 1,
@@ -762,23 +1364,119 @@ public unsafe class Compositor : IDisposable
             Entries = pathAtlasEntries
         };
         _pathAtlasBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &pathAtlasDescOffscreen);
+
+        _dummyMaskTexture = new GpuTexture(
+            _context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Dummy Mask Texture"
+        );
+        byte[] dummyData = new byte[] { 255, 255, 255, 255 };
+        _dummyMaskTexture.WritePixels(new ReadOnlySpan<byte>(dummyData));
+
+        var maskEntries = stackalloc BindGroupEntry[2];
+        maskEntries[0] = new BindGroupEntry { Binding = 0, Sampler = _atlasSampler };
+        maskEntries[1] = new BindGroupEntry { Binding = 1, TextureView = _dummyMaskTexture.ViewPtr };
+
+        var bgDescMask = new BindGroupDescriptor
+        {
+            Layout = _maskBindGroupLayout,
+            EntryCount = 2,
+            Entries = maskEntries
+        };
+        _dummyMaskBindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDescMask);
+
+        var bgDescMaskOffscreen = new BindGroupDescriptor
+        {
+            Layout = _maskBindGroupLayoutOffscreen,
+            EntryCount = 2,
+            Entries = maskEntries
+        };
+        _dummyMaskBindGroupOffscreen = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDescMaskOffscreen);
+    }
+
+    public void RenderScene(
+        Visual root,
+        uint logicalWidth,
+        uint logicalHeight,
+        uint renderTargetWidth,
+        uint renderTargetHeight,
+        float dpiScale,
+        TextureView* targetView)
+    {
+        RenderScene(
+            root,
+            logicalWidth,
+            logicalHeight,
+            renderTargetWidth,
+            renderTargetHeight,
+            RenderTargetViewport.Full(renderTargetWidth, renderTargetHeight),
+            dpiScale,
+            targetView);
+    }
+
+    public void RenderScene(
+        Visual root,
+        uint logicalWidth,
+        uint logicalHeight,
+        uint renderTargetWidth,
+        uint renderTargetHeight,
+        RenderTargetViewport renderTargetViewport,
+        float dpiScale,
+        TextureView* targetView)
+    {
+        var previousRenderTargetWidth = _explicitRenderTargetWidth;
+        var previousRenderTargetHeight = _explicitRenderTargetHeight;
+        var previousRenderTargetViewport = _explicitRenderTargetViewport;
+        var previousDpiScale = _explicitDpiScale;
+        renderTargetWidth = Math.Max(1u, renderTargetWidth);
+        renderTargetHeight = Math.Max(1u, renderTargetHeight);
+        _explicitRenderTargetWidth = renderTargetWidth;
+        _explicitRenderTargetHeight = renderTargetHeight;
+        _explicitRenderTargetViewport = NormalizeRenderTargetViewport(
+            renderTargetViewport,
+            renderTargetWidth,
+            renderTargetHeight);
+        _explicitDpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
+
+        try
+        {
+            RenderScene(root, logicalWidth, logicalHeight, targetView);
+        }
+        finally
+        {
+            _explicitRenderTargetWidth = previousRenderTargetWidth;
+            _explicitRenderTargetHeight = previousRenderTargetHeight;
+            _explicitRenderTargetViewport = previousRenderTargetViewport;
+            _explicitDpiScale = previousDpiScale;
+        }
     }
 
     public void RenderScene(Visual root, uint width, uint height, TextureView* targetView)
     {
         if (_isDisposed) return;
-        
+
+        using var currentContextScope = WgpuContext.PushCurrent(_context);
+
+        _context.CleanupPendingResources();
+
         _currentWidth = width;
         _currentHeight = height;
-        _currentDpiScale = 1.0f;
-        if (_context.Window != null && width == (uint)_context.Window.Size.X && height == (uint)_context.Window.Size.Y)
+        _currentDpiScale = _explicitDpiScale ?? 1.0f;
+        if (!_explicitDpiScale.HasValue &&
+            _context.Window != null &&
+            width == (uint)_context.Window.Size.X &&
+            height == (uint)_context.Window.Size.Y)
         {
-            _currentDpiScale = (float)_context.Window.FramebufferSize.X / _context.Window.Size.X;
+            _currentDpiScale = (float)DisplayScaleResolver.ResolveWindowDisplayScale(_context.Window);
         }
 
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var compileSw = System.Diagnostics.Stopwatch.StartNew();
         _pathAtlas.CleanupFrame();
+        _activeLayerTextureOwners.Clear();
 
         if (_atlas.IsAlmostFull)
         {
@@ -805,13 +1503,15 @@ public unsafe class Compositor : IDisposable
 
         // 2. Clear CPU collection batch lists and active brushes
         _activeBrushes.Clear();
+        _activeGradientStops.Clear();
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
-        _textIndicesList.Clear();
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
         _drawCalls.Clear();
+        _hitTestCacheBuilder.Clear();
+        ClearLastHitTestIndex();
 
 
         if (_layoutCache.Count > 1000)
@@ -820,56 +1520,131 @@ public unsafe class Compositor : IDisposable
         }
 
         _clipStack.Clear();
+        _clipScopeIsGeometryMask.Clear();
         _activeClipRect = null;
 
         _opacityStack.Clear();
         _activeOpacity = 1.0f;
+        _currentBatchType = BatchType.None;
 
-        lock (_registeredExtensions)
+        _blendModeStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _maskStack.Clear();
+        _maskRenderPasses.Clear();
+        _masksToReturnToPool.Clear();
+
+        var extensionFrame = BeginExtensionFrame();
+        CommandEncoder* encoder = null;
+        IReadOnlyList<Visual>? externalLayers = null;
+        Visual? activeToolTip = null;
+        System.Diagnostics.Stopwatch uploadSw = null!;
+        System.Diagnostics.Stopwatch passSw = null!;
+        try
         {
-            foreach (var ext in _registeredExtensions)
-            {
-                ext.BeginFrame(this);
-            }
-        }
 
         // 3. Compile Layer 0: Root Visual Scene
         _pendingVectorStart = (uint)_vectorIndicesList.Count;
-        _pendingTextStart = (uint)_textIndicesList.Count;
+        _pendingTextStart = (uint)_textVerticesList.Count;
         CompileVisualTree(root, Matrix4x4.Identity);
         CommitPendingDrawCalls();
 
         // 4. Compile Layer 1: Active Popups / External Layers (in proper Z-order)
-        var externalLayers = GetExternalLayers?.Invoke();
-        if (externalLayers != null)
+        externalLayers = GetExternalLayers?.Invoke();
+        if (externalLayers != null && externalLayers.Count > 0)
         {
+            var savedActiveClipRect = _activeClipRect;
+            var savedClipStack = _clipStack.ToArray();
+            var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+            var savedActiveOpacity = _activeOpacity;
+            var savedOpacityStack = _opacityStack.ToArray();
+
             for (int i = 0; i < externalLayers.Count; i++)
             {
+                _activeClipRect = null;
+                _clipStack.Clear();
+                _clipScopeIsGeometryMask.Clear();
+                _activeOpacity = 1.0f;
+                _opacityStack.Clear();
+
                 var layer = externalLayers[i];
                 _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                _pendingTextStart = (uint)_textIndicesList.Count;
-                
+                _pendingTextStart = (uint)_textVerticesList.Count;
+
                 CompileVisualTree(layer, Matrix4x4.Identity);
                 CommitPendingDrawCalls();
+            }
+
+            _activeClipRect = savedActiveClipRect;
+            _clipStack.Clear();
+            for (int j = savedClipStack.Length - 1; j >= 0; j--)
+            {
+                _clipStack.Push(savedClipStack[j]);
+            }
+            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
+            _activeOpacity = savedActiveOpacity;
+            _opacityStack.Clear();
+            for (int j = savedOpacityStack.Length - 1; j >= 0; j--)
+            {
+                _opacityStack.Push(savedOpacityStack[j]);
             }
         }
 
         // 5. Compile Layer 2: Tooltips
-        var activeToolTip = GetTooltip?.Invoke();
+        activeToolTip = GetTooltip?.Invoke();
         if (activeToolTip != null)
         {
+            var savedActiveClipRect = _activeClipRect;
+            var savedClipStack = _clipStack.ToArray();
+            var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+            var savedActiveOpacity = _activeOpacity;
+            var savedOpacityStack = _opacityStack.ToArray();
+
+            _activeClipRect = null;
+            _clipStack.Clear();
+            _clipScopeIsGeometryMask.Clear();
+            _activeOpacity = 1.0f;
+            _opacityStack.Clear();
+
             _pendingVectorStart = (uint)_vectorIndicesList.Count;
-            _pendingTextStart = (uint)_textIndicesList.Count;
-            
+            _pendingTextStart = (uint)_textVerticesList.Count;
+
             CompileVisualTree(activeToolTip, Matrix4x4.Identity);
             CommitPendingDrawCalls();
+
+            _activeClipRect = savedActiveClipRect;
+            _clipStack.Clear();
+            for (int j = savedClipStack.Length - 1; j >= 0; j--)
+            {
+                _clipStack.Push(savedClipStack[j]);
+            }
+            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
+            _activeOpacity = savedActiveOpacity;
+            _opacityStack.Clear();
+            for (int j = savedOpacityStack.Length - 1; j >= 0; j--)
+            {
+                _opacityStack.Push(savedOpacityStack[j]);
+            }
         }
+
+        SetLastHitTestIndex(_hitTestCacheBuilder.BuildIndex());
 
         // 6. Compile Layer 3: Adorner / DevTools bounds highlights
         if (RenderDiagnostics != null)
         {
+            var savedActiveClipRect = _activeClipRect;
+            var savedClipStack = _clipStack.ToArray();
+            var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+            var savedActiveOpacity = _activeOpacity;
+            var savedOpacityStack = _opacityStack.ToArray();
+
+            _activeClipRect = null;
+            _clipStack.Clear();
+            _clipScopeIsGeometryMask.Clear();
+            _activeOpacity = 1.0f;
+            _opacityStack.Clear();
+
             _pendingVectorStart = (uint)_vectorIndicesList.Count;
-            _pendingTextStart = (uint)_textIndicesList.Count;
+            _pendingTextStart = (uint)_textVerticesList.Count;
 
             var diagContext = new DrawingContext();
             RenderDiagnostics(diagContext, width, height);
@@ -947,18 +1722,34 @@ public unsafe class Compositor : IDisposable
                         {
                             Type = DrawCallType.StaticDxf,
                             StaticBuffer = cmd.StaticBuffer,
-                            ClipRect = _activeClipRect
+                            ClipRect = _activeClipRect,
+                            MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                            BlendMode = _activeBlendMode
                         });
                         _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        _pendingTextStart = (uint)_textIndicesList.Count;
+                        _pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                 }
             }
             CommitPendingDrawCalls();
+
+            _activeClipRect = savedActiveClipRect;
+            _clipStack.Clear();
+            for (int j = savedClipStack.Length - 1; j >= 0; j--)
+            {
+                _clipStack.Push(savedClipStack[j]);
+            }
+            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
+            _activeOpacity = savedActiveOpacity;
+            _opacityStack.Clear();
+            for (int j = savedOpacityStack.Length - 1; j >= 0; j--)
+            {
+                _opacityStack.Push(savedOpacityStack[j]);
+            }
         }
 
         compileSw.Stop();
-        var uploadSw = System.Diagnostics.Stopwatch.StartNew();
+        uploadSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Dynamic buffer writing will happen after uploads to keep logic clear
 
@@ -976,13 +1767,8 @@ public unsafe class Compositor : IDisposable
 
         if (_textVerticesList.Count > 0)
         {
-            EnsureBufferSize(ref _textVertexBuffer, (uint)_textVerticesList.Count * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex);
+            EnsureBufferSize(ref _textVertexBuffer, (uint)_textVerticesList.Count * (uint)Marshal.SizeOf<GlyphInstance>(), BufferUsage.Vertex);
             _textVertexBuffer.Write(CollectionsMarshal.AsSpan(_textVerticesList));
-        }
-        if (_textIndicesList.Count > 0)
-        {
-            EnsureBufferSize(ref _textIndexBuffer, (uint)_textIndicesList.Count * 4, BufferUsage.Index);
-            _textIndexBuffer.Write(CollectionsMarshal.AsSpan(_textIndicesList));
         }
 
         if (_textureVerticesList.Count > 0)
@@ -996,12 +1782,26 @@ public unsafe class Compositor : IDisposable
             _textureIndexBuffer.Write(CollectionsMarshal.AsSpan(_textureIndicesList));
         }
 
+        // Determine physical render target size for MSAA matching the physical FramebufferSize.
+        uint renderWidth = _explicitRenderTargetWidth ?? width;
+        uint renderHeight = _explicitRenderTargetHeight ?? height;
+        if (!_explicitRenderTargetWidth.HasValue &&
+            _context.Window != null &&
+            width == (uint)_context.Window.Size.X &&
+            height == (uint)_context.Window.Size.Y)
+        {
+            renderWidth = (uint)_context.Window.FramebufferSize.X;
+            renderHeight = (uint)_context.Window.FramebufferSize.Y;
+        }
+
         // Upload unified projection and MVP matrices
         var uniformsData = new GpuUniforms
         {
             Projection = projection,
             Mvp = _hasGpuTransformsInFrame ? Matrix4x4.Identity : projection,
-            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity
+            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity,
+            CanvasSize = new Vector2(renderWidth, renderHeight),
+            DpiScale = _currentDpiScale
         };
         _uniformBuffer.WriteSingle(uniformsData);
 
@@ -1010,6 +1810,10 @@ public unsafe class Compositor : IDisposable
         {
             _brushesStorageBuffer.Write(CollectionsMarshal.AsSpan(_activeBrushes));
         }
+        if (_activeGradientStops.Count > 0)
+        {
+            _gradientStopsStorageBuffer.Write(CollectionsMarshal.AsSpan(_activeGradientStops));
+        }
 
 
 
@@ -1017,16 +1821,7 @@ public unsafe class Compositor : IDisposable
         _pathAtlas.RasterizePendingPaths();
 
         uploadSw.Stop();
-        var passSw = System.Diagnostics.Stopwatch.StartNew();
-
-        // Determine physical render target size for MSAA matching the physical FramebufferSize.
-        uint renderWidth = width;
-        uint renderHeight = height;
-        if (_context.Window != null && width == (uint)_context.Window.Size.X && height == (uint)_context.Window.Size.Y)
-        {
-            renderWidth = (uint)_context.Window.FramebufferSize.X;
-            renderHeight = (uint)_context.Window.FramebufferSize.Y;
-        }
+        passSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Recreate MSAA resources if needed (handles initialization and window resizing)
         if (_msaaTexture == null || _msaaWidth != renderWidth || _msaaHeight != renderHeight)
@@ -1037,8 +1832,11 @@ public unsafe class Compositor : IDisposable
 
         // 5. WebGPU Command Encoder and Render Pass Execution
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compositor Command Encoder") };
-        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
+
+        // Run mask render passes first!
+        ExecuteMaskRenderPasses(encoder, isOffscreen: false);
 
         var bgColor = ClearColor;
         var colorAttachment = new RenderPassColorAttachment
@@ -1058,18 +1856,28 @@ public unsafe class Compositor : IDisposable
         };
 
         var pass = _context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
+        ApplyRenderPassViewport(pass, renderWidth, renderHeight, useRenderTargetViewport: true);
 
         DrawCallType? currentType = null;
+        GpuBlendMode? currentBlendMode = null;
+        GpuTexture? currentMaskTexture = null;
         var textureEntries = stackalloc BindGroupEntry[2];
 
         foreach (var dc in _drawCalls)
         {
-            ApplyDrawCallScissor(pass, dc);
+            if (!ApplyDrawCallScissor(pass, dc, useRenderTargetViewport: true))
+            {
+                continue;
+            }
+
             if (dc.Type == DrawCallType.Vector)
             {
-                if (currentType != DrawCallType.Vector)
+                var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: false);
+                var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: false);
+
+                if (currentType != DrawCallType.Vector || currentBlendMode != dc.BlendMode)
                 {
-                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, _vectorPipeline);
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                     fixed (BindGroup** pGrp = &_vectorUniformBindGroup)
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -1078,18 +1886,30 @@ public unsafe class Compositor : IDisposable
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pPathAtlas, 0, null);
                     }
-                    var buffer = _vectorVertexBuffer.BufferPtr;
-                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
-                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
                     currentType = DrawCallType.Vector;
+                    currentBlendMode = dc.BlendMode;
+                    currentMaskTexture = dc.MaskTexture;
                 }
+                else if (currentMaskTexture != dc.MaskTexture)
+                {
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                    currentMaskTexture = dc.MaskTexture;
+                }
+
+                var buffer = _vectorVertexBuffer.BufferPtr;
+                _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
+                _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
             else if (dc.Type == DrawCallType.Text)
             {
-                if (currentType != DrawCallType.Text)
+                var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: false);
+                var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: false);
+
+                if (currentType != DrawCallType.Text || currentBlendMode != dc.BlendMode)
                 {
-                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, _textPipeline);
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                     fixed (BindGroup** pGrp = &_textUniformBindGroup)
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -1098,16 +1918,32 @@ public unsafe class Compositor : IDisposable
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pAtlas, 0, null);
                     }
-                    var buffer = _textVertexBuffer.BufferPtr;
-                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
-                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textIndexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
                     currentType = DrawCallType.Text;
+                    currentBlendMode = dc.BlendMode;
+                    currentMaskTexture = dc.MaskTexture;
                 }
-                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
+                else if (currentMaskTexture != dc.MaskTexture)
+                {
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                    currentMaskTexture = dc.MaskTexture;
+                }
+
+                var buffer = _textVertexBuffer.BufferPtr;
+                _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
+                _context.Wgpu.RenderPassEncoderDraw(pass, 6, dc.IndexCount, 0, dc.IndexStart);
             }
-            else if (dc.Type == DrawCallType.Texture && dc.Texture != null)
+            else if (dc.Type == DrawCallType.Texture && IsTextureBindable(dc.Texture))
             {
-                _context.Wgpu.RenderPassEncoderSetPipeline(pass, _texturePipeline);
+                var texture = dc.Texture!;
+                var activePipeline = GetPipeline(
+                    dc.Type,
+                    dc.BlendMode,
+                    isOffscreen: false,
+                    textureAlphaMode: dc.TextureAlphaMode);
+                var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: false);
+
+                _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                 fixed (BindGroup** pGrp = &_textureUniformBindGroup)
                 {
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -1115,28 +1951,35 @@ public unsafe class Compositor : IDisposable
                 var buffer = _textureVertexBuffer.BufferPtr;
                 _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textureVertexBuffer.Size);
                 _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textureIndexBuffer.Size);
-                currentType = DrawCallType.Texture;
-
-                var viewPtr = dc.Texture.ViewPtr;
-                var cacheKey = new TextureCacheKey(dc.Texture.Id, dc.Texture.Generation, isOffscreen: false);
-
-                if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out var cachedBg))
+                if (currentMaskTexture != dc.MaskTexture || currentType != DrawCallType.Texture || currentBlendMode != dc.BlendMode)
                 {
-                    textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = _atlasSampler };
-                    textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
-
-                    var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayout, EntryCount = 2, Entries = textureEntries };
-                    var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
-                    if (bg == null)
-                    {
-                        System.Console.WriteLine($"[Compositor Error] Failed to create BindGroup for TextureView {(nint)viewPtr}");
-                    }
-                    cachedBg = new CachedBindGroup((nint)bg, _frameNumber);
-                    _persistentTextureBindGroups[cacheKey] = cachedBg;
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                    currentMaskTexture = dc.MaskTexture;
                 }
-                else
+
+                currentType = DrawCallType.Texture;
+                currentBlendMode = dc.BlendMode;
+
+                var viewPtr = texture.ViewPtr;
+                var cacheKey = new TextureCacheKey(texture.Id, texture.Generation, isOffscreen: false, dc.TextureSamplingMode);
+
+                CachedBindGroup? cachedBg;
+                lock (_persistentTextureBindGroups)
                 {
-                    cachedBg.LastUsedFrame = _frameNumber;
+                    if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out cachedBg))
+                    {
+                        textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = GetTextureSampler(dc.TextureSamplingMode) };
+                        textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
+
+                        var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayout, EntryCount = 2, Entries = textureEntries };
+                        var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
+                        cachedBg = new CachedBindGroup((nint)bg, _frameNumber);
+                        _persistentTextureBindGroups[cacheKey] = cachedBg;
+                    }
+                    else
+                    {
+                        cachedBg.LastUsedFrame = _frameNumber;
+                    }
                 }
 
                 var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;
@@ -1145,7 +1988,7 @@ public unsafe class Compositor : IDisposable
             }
             else if (dc.Type == DrawCallType.StaticDxf && dc.StaticBuffer != null)
             {
-                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: false);
+                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: false, dc.MaskTexture, dc.BlendMode);
                 currentType = DrawCallType.StaticDxf;
             }
             else if (dc.Type == DrawCallType.ChartLine)
@@ -1165,9 +2008,12 @@ public unsafe class Compositor : IDisposable
                 {
                     if (pipeline is ProGPU.Scene.Extensions.SplineExtensionPipeline)
                     {
-                        if (currentType != DrawCallType.Vector)
+                        var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: false);
+                        var selectedVectorPipeline = currentType != DrawCallType.Vector || currentBlendMode != dc.BlendMode;
+                        if (selectedVectorPipeline)
                         {
-                            _context.Wgpu.RenderPassEncoderSetPipeline(pass, _vectorPipeline);
+                            var splinePipeline = GetPipeline(DrawCallType.Vector, dc.BlendMode, isOffscreen: false);
+                            _context.Wgpu.RenderPassEncoderSetPipeline(pass, splinePipeline);
                             fixed (BindGroup** pGrp = &_vectorUniformBindGroup)
                             {
                                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -1176,11 +2022,16 @@ public unsafe class Compositor : IDisposable
                             {
                                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pPathAtlas, 0, null);
                             }
-                            var buffer = _vectorVertexBuffer.BufferPtr;
-                            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
-                            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
                             currentType = DrawCallType.Vector;
+                            currentBlendMode = dc.BlendMode;
                         }
+
+                        if (selectedVectorPipeline || currentMaskTexture != dc.MaskTexture)
+                        {
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                            currentMaskTexture = dc.MaskTexture;
+                        }
+
                         if (dc.PointBufferCount > 0)
                         {
                             _context.Wgpu.RenderPassEncoderDrawIndexed(pass, (uint)dc.PointBufferCount, 1, (uint)dc.PointBufferOffset, 0, 0);
@@ -1198,13 +2049,10 @@ public unsafe class Compositor : IDisposable
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
         _context.Wgpu.RenderPassEncoderRelease(pass);
-
-        lock (_registeredExtensions)
+        }
+        finally
         {
-            foreach (var ext in _registeredExtensions)
-            {
-                ext.EndFrame(this);
-            }
+            EndExtensionFrame(extensionFrame);
         }
 
         // Submit to queue
@@ -1217,10 +2065,19 @@ public unsafe class Compositor : IDisposable
         _context.Wgpu.CommandBufferRelease(cmdBuffer);
         _context.Wgpu.CommandEncoderRelease(encoder);
 
+        foreach (var tex in _masksToReturnToPool)
+        {
+            _maskTexturePool.Add(tex);
+        }
+        _masksToReturnToPool.Clear();
+        _maskRenderPasses.Clear();
+
         _frameNumber++;
         _totalTime += 1f / 60f;
         EvictUnusedBindGroups();
+        SweepUnusedLayerTextures(root, externalLayers, activeToolTip);
         SweepUnusedEffectTextures(root, externalLayers, activeToolTip);
+        _activeLayerTextureOwners.Clear();
 
         passSw.Stop();
         totalSw.Stop();
@@ -1240,25 +2097,118 @@ public unsafe class Compositor : IDisposable
 
     private void EvictUnusedBindGroups()
     {
-        List<TextureCacheKey>? keysToRemove = null;
-        foreach (var kvp in _persistentTextureBindGroups)
+        lock (_persistentTextureBindGroups)
         {
-            if (_frameNumber - kvp.Value.LastUsedFrame > 60)
+            List<TextureCacheKey>? keysToRemove = null;
+            foreach (var kvp in _persistentTextureBindGroups)
             {
-                if (kvp.Value.BindGroupPtr != 0)
+                if (_frameNumber - kvp.Value.LastUsedFrame > 60)
                 {
-                    _context.Wgpu.BindGroupRelease((BindGroup*)kvp.Value.BindGroupPtr);
+                    QueueBindGroupRelease(kvp.Value.BindGroupPtr);
+                    keysToRemove ??= new List<TextureCacheKey>();
+                    keysToRemove.Add(kvp.Key);
                 }
-                keysToRemove ??= new List<TextureCacheKey>();
-                keysToRemove.Add(kvp.Key);
+            }
+            if (keysToRemove != null)
+            {
+                foreach (var key in keysToRemove)
+                {
+                    _persistentTextureBindGroups.Remove(key);
+                }
             }
         }
-        if (keysToRemove != null)
+    }
+
+    private bool IsTextureBindable(GpuTexture? texture)
+    {
+        var textureContext = texture?.Context;
+        return texture != null
+            && !texture.IsDisposed
+            && textureContext != null
+            && !textureContext.IsDisposed
+            && ReferenceEquals(textureContext, _context)
+            && texture.TexturePtr != null
+            && texture.ViewPtr != null;
+    }
+
+    private void HandleTextureDisposed(ulong textureId)
+    {
+        if (Environment.HasShutdownStarted) return;
+
+        RemoveMaskTexturePoolEntries(textureId);
+
+        lock (_persistentTextureBindGroups)
         {
-            foreach (var key in keysToRemove)
+            List<TextureCacheKey>? keysToRemove = null;
+            foreach (var key in _persistentTextureBindGroups.Keys)
             {
-                _persistentTextureBindGroups.Remove(key);
+                if (key.TextureId == textureId)
+                {
+                    keysToRemove ??= new List<TextureCacheKey>();
+                    keysToRemove.Add(key);
+                }
             }
+            if (keysToRemove != null)
+            {
+                foreach (var key in keysToRemove)
+                {
+                    if (_persistentTextureBindGroups.TryGetValue(key, out var cachedBg))
+                    {
+                        QueueBindGroupRelease(cachedBg.BindGroupPtr);
+                        _persistentTextureBindGroups.Remove(key);
+                    }
+                }
+            }
+        }
+
+        RemoveMaskBindGroups(_maskBindGroups, textureId);
+        RemoveMaskBindGroups(_maskBindGroupsOffscreen, textureId);
+    }
+
+    private void RemoveMaskTexturePoolEntries(ulong textureId)
+    {
+        for (int i = _maskTexturePool.Count - 1; i >= 0; i--)
+        {
+            if (_maskTexturePool[i].Id == textureId)
+            {
+                _maskTexturePool.RemoveAt(i);
+            }
+        }
+    }
+
+    private void RemoveMaskBindGroups(Dictionary<GpuTexture, nint> cache, ulong textureId)
+    {
+        lock (cache)
+        {
+            List<GpuTexture>? keysToRemove = null;
+            foreach (var key in cache.Keys)
+            {
+                if (key.Id == textureId)
+                {
+                    keysToRemove ??= new List<GpuTexture>();
+                    keysToRemove.Add(key);
+                }
+            }
+
+            if (keysToRemove != null)
+            {
+                foreach (var key in keysToRemove)
+                {
+                    if (cache.TryGetValue(key, out var bindGroupPtr))
+                    {
+                        QueueBindGroupRelease(bindGroupPtr);
+                        cache.Remove(key);
+                    }
+                }
+            }
+        }
+    }
+
+    private void QueueBindGroupRelease(nint bindGroupPtr)
+    {
+        if (bindGroupPtr != 0 && !_context.IsDisposed)
+        {
+            _context.QueueBindGroupDisposal((IntPtr)bindGroupPtr);
         }
     }
 
@@ -1304,22 +2254,90 @@ public unsafe class Compositor : IDisposable
                         textures.Temp.Dispose();
                         textures.Destination.Dispose();
                     }
+                    _effectCacheKeys.Remove(fe);
+                    _wpfShaderEffectDrawParams.Remove(fe);
                 }
             }
         }
     }
 
+    private void SweepUnusedLayerTextures(Visual mainRoot, IReadOnlyList<Visual>? externalLayers, Visual? activeToolTip)
+    {
+        if (_allocatedLayerTextures.Count == 0)
+        {
+            return;
+        }
+
+        List<Visual>? stale = null;
+        foreach (var entry in _allocatedLayerTextures)
+        {
+            var owner = entry.Key;
+            var texture = entry.Value;
+            if (texture.IsDisposed
+                || !ReferenceEquals(owner.LayerTexture, texture)
+                || !_activeLayerTextureOwners.Contains(owner)
+                || !owner.IsVisible
+                || !owner.CacheAsLayer
+                || !IsCacheAsLayerEnabled
+                || !IsAttachedToAnyActiveRoot(owner, mainRoot, externalLayers, activeToolTip))
+            {
+                stale ??= new List<Visual>();
+                stale.Add(owner);
+            }
+        }
+
+        if (stale == null)
+        {
+            return;
+        }
+
+        foreach (var owner in stale)
+        {
+            if (_allocatedLayerTextures.TryGetValue(owner, out var texture))
+            {
+                ReleaseLayerTexture(owner, texture);
+            }
+        }
+    }
+
+    private void ReleaseLayerTexture(Visual owner, GpuTexture texture)
+    {
+        if (_allocatedLayerTextures.TryGetValue(owner, out var allocated)
+            && ReferenceEquals(allocated, texture))
+        {
+            _allocatedLayerTextures.Remove(owner);
+        }
+
+        if (ReferenceEquals(owner.LayerTexture, texture))
+        {
+            owner.LayerTexture = null;
+        }
+
+        texture.Dispose();
+    }
+
     private void PushClipRect(Rect localClip, Matrix4x4 transform)
     {
         CommitPendingDrawCalls();
-        var vTopLeft = Vector2.Transform(new Vector2(localClip.X, localClip.Y), transform);
-        var vBottomRight = Vector2.Transform(new Vector2(localClip.X + localClip.Width, localClip.Y + localClip.Height), transform);
-        
-        float x1 = Math.Min(vTopLeft.X, vBottomRight.X);
-        float y1 = Math.Min(vTopLeft.Y, vBottomRight.Y);
-        float x2 = Math.Max(vTopLeft.X, vBottomRight.X);
-        float y2 = Math.Max(vTopLeft.Y, vBottomRight.Y);
-        
+        if (!IsAxisAlignedClipTransform(transform))
+        {
+            PushGeometryMask(
+                PrimitivePathGeometry.CreateRectangle(localClip.X, localClip.Y, localClip.Width, localClip.Height),
+                transform);
+            _clipScopeIsGeometryMask.Push(true);
+            return;
+        }
+
+        var p0 = Vector2.Transform(new Vector2(localClip.X, localClip.Y), transform);
+        var p1 = Vector2.Transform(new Vector2(localClip.X + localClip.Width, localClip.Y), transform);
+        var p2 = Vector2.Transform(new Vector2(localClip.X + localClip.Width, localClip.Y + localClip.Height), transform);
+        var p3 = Vector2.Transform(new Vector2(localClip.X, localClip.Y + localClip.Height), transform);
+
+        float x1 = MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p2.X, p3.X));
+        float y1 = MathF.Min(MathF.Min(p0.Y, p1.Y), MathF.Min(p2.Y, p3.Y));
+        float x2 = MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p2.X, p3.X));
+        float y2 = MathF.Max(MathF.Max(p0.Y, p1.Y), MathF.Max(p2.Y, p3.Y));
+
         var screenClip = new Rect(x1, y1, x2 - x1, y2 - y1);
 
         if (_activeClipRect.HasValue)
@@ -1335,15 +2353,37 @@ public unsafe class Compositor : IDisposable
             _activeClipRect = screenClip;
         }
         _clipStack.Push(_activeClipRect.Value);
+        _clipScopeIsGeometryMask.Push(false);
     }
 
     private void PopClipRect()
     {
         CommitPendingDrawCalls();
+        if (_clipScopeIsGeometryMask.Count > 0 && _clipScopeIsGeometryMask.Pop())
+        {
+            PopGeometryMask();
+            return;
+        }
+
         if (_clipStack.Count > 0)
         {
             _clipStack.Pop();
             _activeClipRect = _clipStack.Count > 0 ? _clipStack.Peek() : null;
+        }
+    }
+
+    private static bool IsAxisAlignedClipTransform(Matrix4x4 transform)
+    {
+        const float epsilon = 0.0001f;
+        return MathF.Abs(transform.M12) <= epsilon && MathF.Abs(transform.M21) <= epsilon;
+    }
+
+    private void RestoreClipScopeStack(bool[] savedClipScopeIsGeometryMask)
+    {
+        _clipScopeIsGeometryMask.Clear();
+        for (int i = savedClipScopeIsGeometryMask.Length - 1; i >= 0; i--)
+        {
+            _clipScopeIsGeometryMask.Push(savedClipScopeIsGeometryMask[i]);
         }
     }
 
@@ -1357,8 +2397,12 @@ public unsafe class Compositor : IDisposable
     {
         if (_opacityStack.Count > 0)
         {
-            float op = _opacityStack.Pop();
-            if (op > 0f) _activeOpacity /= op;
+            _opacityStack.Pop();
+            _activeOpacity = 1.0f;
+            foreach (var opacity in _opacityStack)
+            {
+                _activeOpacity *= opacity;
+            }
         }
         else
         {
@@ -1368,7 +2412,7 @@ public unsafe class Compositor : IDisposable
 
     [ThreadStatic]
     private static List<DrawingContext>? _contextPool;
-    
+
     [ThreadStatic]
     private static int _poolIndex;
 
@@ -1391,7 +2435,19 @@ public unsafe class Compositor : IDisposable
 
     private void CompileVisualTree(Visual node, Matrix4x4 parentTransform)
     {
-        if (!node.IsVisible || node.Opacity <= 0.0001f || _activeOpacity <= 0.0001f)
+        CompileVisualTree(node, parentTransform, offsetOverride: null);
+    }
+
+    private void CompileVisualTree(
+        Visual node,
+        Matrix4x4 parentTransform,
+        Vector2? offsetOverride,
+        bool includeLocalTransform = true,
+        bool includeLocalVisualState = true)
+    {
+        if (!node.IsVisible
+            || (includeLocalVisualState && node.Opacity <= 0.0001f)
+            || _activeOpacity <= 0.0001f)
         {
             node.IsDirty = false;
             return;
@@ -1410,218 +2466,283 @@ public unsafe class Compositor : IDisposable
         }
 
         // 1. Calculate global transform
-        var localTransform = node.GetLocalTransform();
+        var localTransform = includeLocalTransform
+            ? offsetOverride.HasValue
+                ? node.GetLocalTransform(offsetOverride.Value)
+                : node.GetLocalTransform()
+            : Matrix4x4.CreateTranslation(offsetOverride.GetValueOrDefault().X, offsetOverride.GetValueOrDefault().Y, 0f);
         var globalTransform = localTransform * parentTransform;
 
-        bool pushedClip = false;
-        if (node.ClipBounds.HasValue)
-        {
-            PushClipRect(node.ClipBounds.Value, globalTransform);
-            pushedClip = true;
-        }
+        var visualScope = includeLocalVisualState
+            ? PushVisualCompositeScope(node, globalTransform, parentTransform)
+            : VisualCompositeScope.None;
 
-        bool pushedOpacity = false;
-        if (node.Opacity < 1.0f)
+        AddVisualHitTestBounds(node, globalTransform);
+
+        bool isTemplated = node.HasTemplate;
+        if (isTemplated)
         {
-            PushOpacityValue(node.Opacity);
-            pushedOpacity = true;
+            if (node is ContainerVisual container)
+            {
+                var children = container.Children;
+                int count = children.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    CompileVisualTree(children[i], globalTransform);
+                }
+            }
         }
 
         // 2. Playback recorded commands
         var ctx = GetDrawingContext();
-        node.OnRender(ctx);
-
-        foreach (var cmd in ctx.Commands)
+        try
         {
-            int vectorStart = _vectorVerticesList.Count;
-            int textStart = _textVerticesList.Count;
-            var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
+            node.OnRender(ctx);
 
-            bool savedUseGpuTransformsActive = _useGpuTransformsActive;
-            Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
-
-            if (cmd.UseGpuTransforms)
+            foreach (var cmd in ctx.Commands)
             {
-                _useGpuTransformsActive = true;
-                _cameraViewMatrix = cmd.CameraView * globalTransform;
-                _hasGpuTransformsInFrame = true;
-                _gpuTransformsCameraView = cmd.CameraView * globalTransform;
-            }
+                int vectorStart = _vectorVerticesList.Count;
+                int textStart = _textVerticesList.Count;
+                var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
+                if (cmd.Type != RenderCommandType.DrawPath)
+                {
+                    activeTransform = (cmd.Transform == default) ? activeTransform : cmd.Transform * activeTransform;
+                }
 
-            switch (cmd.Type)
-            {
-                case RenderCommandType.DrawRect:
-                    CompileRectCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawPath:
-                    CompilePathCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawHatch:
-                    CompileHatchCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawAcisSolid:
-                    CompileAcisCommand(ctx, cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawText:
-                    CompileTextCommand(cmd, node as ITextLayoutProvider, activeTransform);
-                    break;
-                case RenderCommandType.DrawTexture:
-                    CompileTextureCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.PushClip:
-                    PushClipRect(cmd.Rect, globalTransform);
-                    break;
-                case RenderCommandType.PopClip:
-                    PopClipRect();
-                    break;
-                case RenderCommandType.PushOpacity:
-                    PushOpacityValue(cmd.FontSize);
-                    break;
-                case RenderCommandType.PopOpacity:
-                    PopOpacityValue();
-                    break;
-                case RenderCommandType.DrawLine:
-                    CompileLineCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawLine3D:
-                    CompileLine3DCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawEllipse:
-                    CompileEllipseCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawCircle:
-                    CompileCircleCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawRoundedRect:
-                    CompileRoundedRectCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawBezier:
-                    CompileBezierCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawCubicBezier:
-                    CompileCubicBezierCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawPolyline:
-                    CompilePolylineCommand(ctx, cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawSpline:
-                    CompileSplineCommand(ctx, cmd, activeTransform);
-                    break;
-                case RenderCommandType.FillTriangle:
-                    CompileFillTriangleCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.FillQuad:
-                    CompileFillQuadCommand(cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawStaticDxf:
-                    CommitPendingDrawCalls();
-                    _drawCalls.Add(new CompositorDrawCall
-                    {
-                        Type = DrawCallType.StaticDxf,
-                        StaticBuffer = cmd.StaticBuffer,
-                        ClipRect = _activeClipRect
-                    });
-                    _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                    _pendingTextStart = (uint)_textIndicesList.Count;
-                    break;
-                case RenderCommandType.DrawExtension:
-                    {
-                        var pipeline = GetExtension(cmd.ExtensionId);
-                        if (pipeline != null)
+                bool savedUseGpuTransformsActive = _useGpuTransformsActive;
+                Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
+
+                if (cmd.UseGpuTransforms)
+                {
+                    _useGpuTransformsActive = true;
+                    _cameraViewMatrix = cmd.CameraView * globalTransform;
+                    _hasGpuTransformsInFrame = true;
+                    _gpuTransformsCameraView = cmd.CameraView * globalTransform;
+                }
+
+                AddHitTestStateCommand(cmd, activeTransform);
+
+                switch (cmd.Type)
+                {
+                    case RenderCommandType.DrawRect:
+                        CompileRectCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawPath:
+                        CompilePathCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawHatch:
+                        CompileHatchCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawAcisSolid:
+                        CompileAcisCommand(ctx, cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawText:
+                        CompileTextCommand(cmd, node as ITextLayoutProvider, activeTransform);
+                        break;
+                    case RenderCommandType.DrawTexture:
+                        CompileTextureCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.PushGeometryClip:
+                        if (cmd.Path != null) PushGeometryMask(cmd.Path, activeTransform);
+                        break;
+                    case RenderCommandType.PopGeometryClip:
+                        PopGeometryMask();
+                        break;
+                    case RenderCommandType.PushOpacityMask:
+                        if (cmd.Brush != null) PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
+                        break;
+                    case RenderCommandType.PopOpacityMask:
+                        PopOpacityMaskValue();
+                        break;
+                    case RenderCommandType.PushBlendMode:
+                        CommitPendingDrawCalls();
+                        _blendModeStack.Push(_activeBlendMode);
+                        _activeBlendMode = (GpuBlendMode)cmd.IntParam;
+                        break;
+                    case RenderCommandType.PopBlendMode:
+                        CommitPendingDrawCalls();
+                        if (_blendModeStack.Count > 0) _activeBlendMode = _blendModeStack.Pop();
+                        else _activeBlendMode = GpuBlendMode.SrcOver;
+                        break;
+                    case RenderCommandType.PushClip:
+                        PushClipRect(cmd.Rect, activeTransform);
+                        break;
+                    case RenderCommandType.PopClip:
+                        PopClipRect();
+                        break;
+                    case RenderCommandType.PushOpacity:
+                        PushOpacityValue(cmd.FontSize);
+                        break;
+                    case RenderCommandType.PopOpacity:
+                        PopOpacityValue();
+                        break;
+                    case RenderCommandType.DrawLine:
+                        CompileLineCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawLine3D:
+                        CompileLine3DCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawEllipse:
+                        CompileEllipseCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawCircle:
+                        CompileCircleCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawRoundedRect:
+                        CompileRoundedRectCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawBezier:
+                        CompileBezierCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawCubicBezier:
+                        CompileCubicBezierCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawPolyline:
+                        CompilePolylineCommand(ctx, cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawSpline:
+                        CompileSplineCommand(ctx, cmd, activeTransform);
+                        break;
+                    case RenderCommandType.FillTriangle:
+                        CompileFillTriangleCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.FillQuad:
+                        CompileFillQuadCommand(cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawStaticDxf:
+                        CommitPendingDrawCalls();
+                        _drawCalls.Add(new CompositorDrawCall
                         {
-                            CommitPendingDrawCalls();
-                            var localCmd = cmd;
-                            pipeline.Compile(this, ctx, activeTransform, ref localCmd);
-                            var cmdTransform = localCmd.Transform;
-                            if (cmdTransform == default || cmdTransform == new Matrix4x4())
+                            Type = DrawCallType.StaticDxf,
+                            StaticBuffer = cmd.StaticBuffer,
+                            ClipRect = _activeClipRect,
+                            MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                            BlendMode = _activeBlendMode
+                        });
+                        _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                        _pendingTextStart = (uint)_textVerticesList.Count;
+                        break;
+                    case RenderCommandType.DrawExtension:
+                        {
+                            var pipeline = GetExtension(cmd.ExtensionId);
+                            if (pipeline != null)
                             {
-                                cmdTransform = Matrix4x4.Identity;
+                                CommitPendingDrawCalls();
+                                var localCmd = cmd;
+                                pipeline.Compile(this, ctx, activeTransform, ref localCmd);
+                                var cmdTransform = localCmd.Transform;
+                                if (cmdTransform == default || cmdTransform == new Matrix4x4())
+                                {
+                                    cmdTransform = Matrix4x4.Identity;
+                                }
+                                _drawCalls.Add(new CompositorDrawCall
+                                {
+                                    Type = DrawCallType.Extension,
+                                    ExtensionId = localCmd.ExtensionId,
+                                    IntParam = localCmd.IntParam,
+                                    FloatParam = localCmd.FloatParam,
+                                    DataParam = localCmd.DataParam,
+                                    PointBufferOffset = (int)_pendingVectorStart,
+                                    PointBufferCount = (int)((uint)_vectorIndicesList.Count - _pendingVectorStart),
+                                    DoubleBufferOffset = localCmd.DoubleBufferOffset,
+                                    DoubleBufferCount = localCmd.DoubleBufferCount,
+                                    WeightBufferOffset = localCmd.WeightBufferOffset,
+                                    WeightBufferCount = localCmd.WeightBufferCount,
+                                    FloatBufferOffset = localCmd.FloatBufferOffset,
+                                    FloatBufferCount = localCmd.FloatBufferCount,
+                                    StaticBuffer = localCmd.StaticBuffer,
+                                    Brush = localCmd.Brush,
+                                    Pen = localCmd.Pen,
+                                    Path = localCmd.Path,
+                                    Transform = activeTransform * cmdTransform,
+                                    LineThicknessOrRadius = localCmd.RadiusX,
+                                    Scale = localCmd.Scale,
+                                    Translate = localCmd.Translate,
+                                    Color = ResolveDrawCallBrushColor(localCmd.Brush),
+                                    ClipRect = _activeClipRect,
+                                    MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                                    BlendMode = _activeBlendMode
+                                });
+                                _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                                _pendingTextStart = (uint)_textVerticesList.Count;
                             }
-                            _drawCalls.Add(new CompositorDrawCall
-                            {
-                                Type = DrawCallType.Extension,
-                                ExtensionId = localCmd.ExtensionId,
-                                IntParam = localCmd.IntParam,
-                                FloatParam = localCmd.FloatParam,
-                                DataParam = localCmd.DataParam,
-                                PointBufferOffset = (int)_pendingVectorStart,
-                                PointBufferCount = (int)((uint)_vectorIndicesList.Count - _pendingVectorStart),
-                                DoubleBufferOffset = localCmd.DoubleBufferOffset,
-                                DoubleBufferCount = localCmd.DoubleBufferCount,
-                                WeightBufferOffset = localCmd.WeightBufferOffset,
-                                WeightBufferCount = localCmd.WeightBufferCount,
-                                FloatBufferOffset = localCmd.FloatBufferOffset,
-                                FloatBufferCount = localCmd.FloatBufferCount,
-                                StaticBuffer = localCmd.StaticBuffer,
-                                Brush = localCmd.Brush,
-                                Pen = localCmd.Pen,
-                                Path = localCmd.Path,
-                                Transform = activeTransform * cmdTransform,
-                                LineThicknessOrRadius = localCmd.RadiusX,
-                                Scale = localCmd.Scale,
-                                Translate = localCmd.Translate,
-                                Color = (localCmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
-                                ClipRect = _activeClipRect
-                            });
-                            _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                            _pendingTextStart = (uint)_textIndicesList.Count;
                         }
+                        break;
+                    case RenderCommandType.DrawGpuLineSeries:
+                        CompileGpuLineSeriesCommand(ctx, cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawGpuScatterSeries:
+                        CompileGpuScatterSeriesCommand(ctx, cmd, activeTransform);
+                        break;
+                    case RenderCommandType.DrawPicture:
+                        CompilePicture(ctx, cmd.Picture, activeTransform);
+                        break;
+                    case RenderCommandType.DrawGlyphRun:
+                        CompileGlyphRunCommand(cmd, activeTransform);
+                        break;
+                }
+
+                AddHitTestDrawCommand(cmd, activeTransform, ctx);
+
+                if (cmd.UseGpuTransforms)
+                {
+                    for (int i = vectorStart; i < _vectorVerticesList.Count; i++)
+                    {
+                        var v = _vectorVerticesList[i];
+                        v.ShapeType += 100f;
+                        _vectorVerticesList[i] = v;
                     }
-                    break;
-                case RenderCommandType.DrawGpuLineSeries:
-                    CompileGpuLineSeriesCommand(ctx, cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawGpuScatterSeries:
-                    CompileGpuScatterSeriesCommand(ctx, cmd, activeTransform);
-                    break;
-                case RenderCommandType.DrawPicture:
-                    CompilePicture(ctx, cmd.Picture, activeTransform);
-                    break;
-            }
-
-            if (cmd.UseGpuTransforms)
-            {
-                for (int i = vectorStart; i < _vectorVerticesList.Count; i++)
-                {
-                    var v = _vectorVerticesList[i];
-                    v.ShapeType += 100f;
-                    _vectorVerticesList[i] = v;
+                    for (int i = textStart; i < _textVerticesList.Count; i++)
+                    {
+                        var v = _textVerticesList[i];
+                        v.ScaleBoldItalicUseMvp.W = ForceTextUseMvp(v.ScaleBoldItalicUseMvp.W);
+                        _textVerticesList[i] = v;
+                    }
                 }
-                for (int i = textStart; i < _textVerticesList.Count; i++)
+
+                _useGpuTransformsActive = savedUseGpuTransformsActive;
+                _cameraViewMatrix = savedCameraViewMatrix;
+            }
+        }
+        finally
+        {
+            ctx.Clear();
+            ReleaseDrawingContext();
+        }
+
+        if (!isTemplated)
+        {
+            if (node is ContainerVisual container)
+            {
+                var children = container.Children;
+                int count = children.Count;
+                for (int i = 0; i < count; i++)
                 {
-                    var v = _textVerticesList[i];
-                    v.ShapeType += 100f;
-                    _textVerticesList[i] = v;
+                    CompileVisualTree(children[i], globalTransform);
                 }
             }
-
-            _useGpuTransformsActive = savedUseGpuTransformsActive;
-            _cameraViewMatrix = savedCameraViewMatrix;
         }
 
-        ReleaseDrawingContext();
-
-        if (node is ContainerVisual container)
-        {
-            var children = container.Children;
-            int count = children.Count;
-            for (int i = 0; i < count; i++)
-            {
-                CompileVisualTree(children[i], globalTransform);
-            }
-        }
-
-        if (pushedOpacity)
-        {
-            PopOpacityValue();
-        }
-
-        if (pushedClip)
-        {
-            PopClipRect();
-        }
+        PopVisualCompositeScope(visualScope);
 
         node.IsDirty = false;
+    }
+
+    private void AddVisualHitTestBounds(Visual node, Matrix4x4 globalTransform)
+    {
+        if (node.HitTestId == 0 || node.Size.X <= 0f || node.Size.Y <= 0f)
+        {
+            return;
+        }
+
+        AddHitTestCommand(
+            new RenderCommand
+            {
+                Type = RenderCommandType.DrawTexture,
+                Rect = new Rect(Vector2.Zero, node.Size)
+            },
+            globalTransform,
+            node.HitTestId);
     }
 
     private void CompilePicture(DrawingContext parentContext, GpuPicture? picture, Matrix4x4 globalTransform)
@@ -1632,7 +2753,11 @@ public unsafe class Compositor : IDisposable
             int vectorStart = _vectorVerticesList.Count;
             int textStart = _textVerticesList.Count;
             var activeTransform = cmd.UseGpuTransforms ? Matrix4x4.Identity : globalTransform;
-            
+            if (cmd.Type != RenderCommandType.DrawPath)
+            {
+                activeTransform = (cmd.Transform == default) ? activeTransform : cmd.Transform * activeTransform;
+            }
+
             bool savedUseGpuTransformsActive = _useGpuTransformsActive;
             Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
 
@@ -1643,6 +2768,8 @@ public unsafe class Compositor : IDisposable
                 _hasGpuTransformsInFrame = true;
                 _gpuTransformsCameraView = cmd.CameraView * globalTransform;
             }
+
+            AddHitTestStateCommand(cmd, activeTransform);
 
             switch (cmd.Type)
             {
@@ -1664,8 +2791,30 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.DrawTexture:
                     CompileTextureCommand(cmd, activeTransform);
                     break;
+                case RenderCommandType.PushGeometryClip:
+                    if (cmd.Path != null) PushGeometryMask(cmd.Path, activeTransform);
+                    break;
+                case RenderCommandType.PopGeometryClip:
+                    PopGeometryMask();
+                    break;
+                case RenderCommandType.PushOpacityMask:
+                    if (cmd.Brush != null) PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
+                    break;
+                case RenderCommandType.PopOpacityMask:
+                    PopOpacityMaskValue();
+                    break;
+                case RenderCommandType.PushBlendMode:
+                    CommitPendingDrawCalls();
+                    _blendModeStack.Push(_activeBlendMode);
+                    _activeBlendMode = (GpuBlendMode)cmd.IntParam;
+                    break;
+                case RenderCommandType.PopBlendMode:
+                    CommitPendingDrawCalls();
+                    if (_blendModeStack.Count > 0) _activeBlendMode = _blendModeStack.Pop();
+                    else _activeBlendMode = GpuBlendMode.SrcOver;
+                    break;
                 case RenderCommandType.PushClip:
-                    PushClipRect(cmd.Rect, globalTransform);
+                    PushClipRect(cmd.Rect, activeTransform);
                     break;
                 case RenderCommandType.PopClip:
                     PopClipRect();
@@ -1745,11 +2894,13 @@ public unsafe class Compositor : IDisposable
                                 LineThicknessOrRadius = localCmd.RadiusX,
                                 Scale = localCmd.Scale,
                                 Translate = localCmd.Translate,
-                                Color = (localCmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
-                                ClipRect = _activeClipRect
+                                Color = ResolveDrawCallBrushColor(localCmd.Brush),
+                                ClipRect = _activeClipRect,
+                                MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                                BlendMode = _activeBlendMode
                             });
                             _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                            _pendingTextStart = (uint)_textIndicesList.Count;
+                            _pendingTextStart = (uint)_textVerticesList.Count;
                         }
                     }
                     break;
@@ -1762,7 +2913,12 @@ public unsafe class Compositor : IDisposable
                 case RenderCommandType.DrawPicture:
                     CompilePicture(parentContext, cmd.Picture, activeTransform);
                     break;
+                case RenderCommandType.DrawGlyphRun:
+                    CompileGlyphRunCommand(cmd, activeTransform);
+                    break;
             }
+
+            AddHitTestDrawCommand(cmd, activeTransform, picture);
 
             if (cmd.UseGpuTransforms)
             {
@@ -1775,7 +2931,7 @@ public unsafe class Compositor : IDisposable
                 for (int i = textStart; i < _textVerticesList.Count; i++)
                 {
                     var v = _textVerticesList[i];
-                    v.ShapeType += 100f;
+                    v.ScaleBoldItalicUseMvp.W = ForceTextUseMvp(v.ScaleBoldItalicUseMvp.W);
                     _textVerticesList[i] = v;
                 }
             }
@@ -1787,11 +2943,13 @@ public unsafe class Compositor : IDisposable
 
     private void CompileRectCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         int startIndex = _vectorVerticesList.Count;
         var r = cmd.Rect;
         float wHalf = r.Width / 2f;
         float hHalf = r.Height / 2f;
         var shapeSize = new Vector2(r.Width, r.Height);
+        var rectShapeType = EncodeShapeType(cmd, 0f);
 
         if (cmd.Brush != null)
         {
@@ -1810,10 +2968,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-wHalf - pad, -hHalf - pad), bIdx, shapeSize, 0f, 0f, 0f);
-            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(wHalf + pad, -hHalf - pad), bIdx, shapeSize, 0f, 0f, 0f);
-            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(wHalf + pad, hHalf + pad), bIdx, shapeSize, 0f, 0f, 0f);
-            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-wHalf - pad, hHalf + pad), bIdx, shapeSize, 0f, 0f, 0f);
+            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-wHalf - pad, -hHalf - pad), bIdx, shapeSize, 0f, 0f, rectShapeType);
+            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(wHalf + pad, -hHalf - pad), bIdx, shapeSize, 0f, 0f, rectShapeType);
+            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(wHalf + pad, hHalf + pad), bIdx, shapeSize, 0f, 0f, rectShapeType);
+            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-wHalf - pad, hHalf + pad), bIdx, shapeSize, 0f, 0f, rectShapeType);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1827,7 +2985,7 @@ public unsafe class Compositor : IDisposable
             indexSpan[5] = idxStart + 3;
         }
 
-        if (cmd.Pen != null)
+        if (cmd.Pen != null && cmd.Pen.Thickness > 0f)
         {
             float pad = cmd.Pen.Thickness / 2f + 1.5f;
             var p0_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y - pad), transform);
@@ -1844,10 +3002,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-wHalf - pad, -hHalf - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
-            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(wHalf + pad, -hHalf - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
-            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(wHalf + pad, hHalf + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
-            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-wHalf - pad, hHalf + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 0f);
+            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-wHalf - pad, -hHalf - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, rectShapeType);
+            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(wHalf + pad, -hHalf - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, rectShapeType);
+            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(wHalf + pad, hHalf + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, rectShapeType);
+            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-wHalf - pad, hHalf + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, rectShapeType);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -1876,8 +3034,13 @@ public unsafe class Compositor : IDisposable
 
     private void CompilePathCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         if (cmd.Path == null) return;
+
         int startIndex = _vectorVerticesList.Count;
+
+        transform = (cmd.Transform == default) ? transform : cmd.Transform * transform;
+        EnsurePathHitTestCompilation(cmd.Path);
 
         if (cmd.Brush != null)
         {
@@ -1916,105 +3079,83 @@ public unsafe class Compositor : IDisposable
 
                 if (_activeClipRect.HasValue && !_useGpuTransformsActive)
                 {
-                    float rx1 = v0.X;
-                    float ry1 = v0.Y;
-                    float rx2 = v2.X;
-                    float ry2 = v2.Y;
+                    float rx1 = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+                    float rx2 = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+                    float ry1 = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
+                    float ry2 = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
 
-                    float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
-                    float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
-                    float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
-                    float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
+                    float clipLeft = _activeClipRect.Value.X;
+                    float clipTop = _activeClipRect.Value.Y;
+                    float clipRight = clipLeft + _activeClipRect.Value.Width;
+                    float clipBottom = clipTop + _activeClipRect.Value.Height;
 
-                    if (cx2 > cx1 && cy2 > cy1)
+                    if (rx2 <= clipLeft || rx1 >= clipRight || ry2 <= clipTop || ry1 >= clipBottom)
                     {
-                        float dx = rx2 - rx1;
-                        float dy = ry2 - ry1;
-
-                        uv0 = new Vector2(
-                            info.TexCoordMin.X + (cx1 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy1 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-                        uv1 = new Vector2(
-                            info.TexCoordMin.X + (cx2 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy1 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-                        uv2 = new Vector2(
-                            info.TexCoordMin.X + (cx2 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-                        uv3 = new Vector2(
-                            info.TexCoordMin.X + (cx1 - rx1) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy2 - ry1) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-
-                        float cp0_x = dx > 0.0001f ? unscaledMinX + (cx1 - rx1) / dx * unscaledWidth : unscaledMinX;
-                        float cp0_y = dy > 0.0001f ? unscaledMinY + (cy1 - ry1) / dy * unscaledHeight : unscaledMinY;
-                        float cp2_x = dx > 0.0001f ? unscaledMinX + (cx2 - rx1) / dx * unscaledWidth : unscaledMinX + unscaledWidth;
-                        float cp2_y = dy > 0.0001f ? unscaledMinY + (cy2 - ry1) / dy * unscaledHeight : unscaledMinY + unscaledHeight;
-
-                        var cp0_clip = new Vector2(cp0_x, cp0_y);
-                        var cp1_clip = new Vector2(cp2_x, cp0_y);
-                        var cp2_clip = new Vector2(cp2_x, cp2_y);
-                        var cp3_clip = new Vector2(cp0_x, cp2_y);
-
-                        v0 = new Vector2(cx1, cy1);
-                        v1 = new Vector2(cx2, cy1);
-                        v2 = new Vector2(cx2, cy2);
-                        v3 = new Vector2(cx1, cy2);
-
-                        uint idxStart = (uint)_vectorVerticesList.Count;
-
-                        int originalVertexCount = _vectorVerticesList.Count;
-                        CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
-                        var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
-
-                        vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeSize: cp0_clip, shapeType: 4f);
-                        vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeSize: cp1_clip, shapeType: 4f);
-                        vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeSize: cp2_clip, shapeType: 4f);
-                        vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeSize: cp3_clip, shapeType: 4f);
-
-                        int originalIndexCount = _vectorIndicesList.Count;
-                        CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
-                        var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
-
-                        indexSpan[0] = idxStart;
-                        indexSpan[1] = idxStart + 1;
-                        indexSpan[2] = idxStart + 2;
-                        indexSpan[3] = idxStart;
-                        indexSpan[4] = idxStart + 2;
-                        indexSpan[5] = idxStart + 3;
+                        return; // Completely clipped!
                     }
                 }
-                else
-                {
-                    uint idxStart = (uint)_vectorVerticesList.Count;
 
-                    int originalVertexCount = _vectorVerticesList.Count;
-                    CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
-                    var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
+                uint idxStart = (uint)_vectorVerticesList.Count;
 
-                    vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeSize: cp0, shapeType: 4f);
-                    vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeSize: cp1, shapeType: 4f);
-                    vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeSize: cp2, shapeType: 4f);
-                    vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeSize: cp3, shapeType: 4f);
+                int originalVertexCount = _vectorVerticesList.Count;
+                CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
+                var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
+                var pathShapeType = EncodeShapeType(cmd, 4f);
 
-                    int originalIndexCount = _vectorIndicesList.Count;
-                    CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
-                    var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
+                vertexSpan[0] = new VectorVertex(v0, color, uv0, bIdx, shapeSize: cp0, shapeType: pathShapeType);
+                vertexSpan[1] = new VectorVertex(v1, color, uv1, bIdx, shapeSize: cp1, shapeType: pathShapeType);
+                vertexSpan[2] = new VectorVertex(v2, color, uv2, bIdx, shapeSize: cp2, shapeType: pathShapeType);
+                vertexSpan[3] = new VectorVertex(v3, color, uv3, bIdx, shapeSize: cp3, shapeType: pathShapeType);
 
-                    indexSpan[0] = idxStart;
-                    indexSpan[1] = idxStart + 1;
-                    indexSpan[2] = idxStart + 2;
-                    indexSpan[3] = idxStart;
-                    indexSpan[4] = idxStart + 2;
-                    indexSpan[5] = idxStart + 3;
-                }
+                int originalIndexCount = _vectorIndicesList.Count;
+                CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
+                var indexSpan = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, 6);
+
+                indexSpan[0] = idxStart;
+                indexSpan[1] = idxStart + 1;
+                indexSpan[2] = idxStart + 2;
+                indexSpan[3] = idxStart;
+                indexSpan[4] = idxStart + 2;
+                indexSpan[5] = idxStart + 3;
             }
         }
 
-        if (cmd.Pen != null)
+        if (cmd.Pen != null && cmd.Pen.Thickness > 0f)
         {
+            if (cmd.Pen.HasDashPattern)
+            {
+                PathGeometry dashedPath;
+                Pen undashedPen;
+                if (cmd.GeometryCache?.TryGetDashedStrokePath(cmd.Pen, out dashedPath, out undashedPen) != true)
+                {
+                    if (!TryCreateDashedStrokePath(cmd.Path, cmd.Pen, out dashedPath))
+                    {
+                        throw new NotSupportedException("Dashed strokes are not supported for this path geometry.");
+                    }
+
+                    undashedPen = CreateUndashedPen(cmd.Pen);
+                }
+
+                var dashedCmd = cmd;
+                dashedCmd.Brush = null;
+                dashedCmd.Path = dashedPath;
+                dashedCmd.Pen = undashedPen;
+                dashedCmd.Transform = default;
+                if (_activeClipRect.HasValue)
+                {
+                    var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+                    for (int i = startIndex; i < vertices.Length; i++)
+                    {
+                        var v = vertices[i];
+                        v.Position = ClampToClip(v.Position);
+                        vertices[i] = v;
+                    }
+                }
+
+                CompilePathCommand(dashedCmd, transform);
+                return;
+            }
+
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
             float thickness = cmd.Pen.Thickness;
@@ -2023,8 +3164,28 @@ public unsafe class Compositor : IDisposable
             int maxIndices = 0;
             foreach (var figure in cmd.Path.Figures)
             {
+                int maxJoinTriangles = CountStrokeSegmentJoinTriangleBudget(figure);
+                maxVertices += maxJoinTriangles * 3;
+                maxIndices += maxJoinTriangles * 3;
+
+                int maxCapTriangles = CountStrokeSegmentCapTriangleBudget(figure, cmd.Pen.StartLineCap, cmd.Pen.EndLineCap);
+                maxVertices += maxCapTriangles * 3;
+                maxIndices += maxCapTriangles * 3;
+
+                var currentPoint = figure.StartPoint;
                 foreach (var segment in figure.Segments)
                 {
+                    var segmentStart = currentPoint;
+                    if (!segment.IsStroked)
+                    {
+                        if (TryGetPathSegmentEndPoint(segment, out var skippedSegmentEndPoint))
+                        {
+                            currentPoint = skippedSegmentEndPoint;
+                        }
+
+                        continue;
+                    }
+
                     if (segment is LineSegment)
                     {
                         maxVertices += 4;
@@ -2041,6 +3202,25 @@ public unsafe class Compositor : IDisposable
                         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
                         maxVertices += 2 * (N + 1);
                         maxIndices += 6 * N;
+                    }
+                    else if (segment is ArcSegment arc)
+                    {
+                        if (CanUseArcSdfStroke(segmentStart, arc, transform))
+                        {
+                            maxVertices += 4;
+                            maxIndices += 6;
+                        }
+                        else
+                        {
+                            var segmentCount = ArcSegmentGeometry.CountFlattenedSegments(segmentStart, arc);
+                            maxVertices += 4 * segmentCount;
+                            maxIndices += 6 * segmentCount;
+                        }
+                    }
+
+                    if (TryGetPathSegmentEndPoint(segment, out var segmentEndPoint))
+                    {
+                        currentPoint = segmentEndPoint;
                     }
                 }
                 if (figure.IsClosed)
@@ -2065,41 +3245,133 @@ public unsafe class Compositor : IDisposable
             foreach (var figure in cmd.Path.Figures)
             {
                 var currentPoint = figure.StartPoint;
+                var firstSegmentStartDirection = default(Vector2);
+                var previousSegmentEndDirection = default(Vector2);
+                var firstSegmentSmoothJoin = false;
+                var hasFirstSegmentStartDirection = false;
+                var hasPreviousSegmentEndDirection = false;
+                var hasLastCapCandidate = false;
+                var lastCapCenter = default(Vector2);
+                var lastCapDirection = default(Vector2);
+                var isFirstSegment = true;
 
                 foreach (var segment in figure.Segments)
                 {
+                    var segmentStart = currentPoint;
+                    if (!segment.IsStroked)
+                    {
+                        if (!figure.IsClosed && hasLastCapCandidate)
+                        {
+                            AppendStrokeSegmentCapTriangles(
+                                verticesSpan,
+                                indicesSpan,
+                                ref currentVertexCount,
+                                ref currentIndexCount,
+                                cmd.Pen,
+                                penSolidColor,
+                                penBrushIdx,
+                                Vector2.Transform(lastCapCenter, transform),
+                                TransformDirection(lastCapDirection, transform),
+                                cmd.IsEdgeAliased,
+                                isStart: false);
+                        }
+
+                        if (TryGetPathSegmentEndPoint(segment, out var skippedSegmentEndPoint))
+                        {
+                            currentPoint = skippedSegmentEndPoint;
+                        }
+
+                        firstSegmentStartDirection = default;
+                        previousSegmentEndDirection = default;
+                        firstSegmentSmoothJoin = false;
+                        hasFirstSegmentStartDirection = false;
+                        hasPreviousSegmentEndDirection = false;
+                        hasLastCapCandidate = false;
+                        lastCapCenter = default;
+                        lastCapDirection = default;
+                        isFirstSegment = true;
+                        continue;
+                    }
+
+                    var hasSegmentStartDirection = TryGetPathSegmentStartDirection(segment, segmentStart, out var segmentStartDirection);
+                    if (isFirstSegment && hasSegmentStartDirection)
+                    {
+                        firstSegmentStartDirection = segmentStartDirection;
+                        firstSegmentSmoothJoin = segment.IsSmoothJoin;
+                        hasFirstSegmentStartDirection = true;
+                    }
+
+                    if (!figure.IsClosed &&
+                        isFirstSegment &&
+                        hasSegmentStartDirection)
+                    {
+                        AppendStrokeSegmentCapTriangles(
+                            verticesSpan,
+                            indicesSpan,
+                            ref currentVertexCount,
+                            ref currentIndexCount,
+                            cmd.Pen,
+                            penSolidColor,
+                            penBrushIdx,
+                            Vector2.Transform(segmentStart, transform),
+                            TransformDirection(segmentStartDirection, transform),
+                            cmd.IsEdgeAliased,
+                            isStart: true);
+                    }
+
+                    if (!isFirstSegment &&
+                        hasPreviousSegmentEndDirection &&
+                        hasSegmentStartDirection)
+                    {
+                        AppendStrokeSegmentJoinTriangles(
+                            verticesSpan,
+                            indicesSpan,
+                            ref currentVertexCount,
+                            ref currentIndexCount,
+                            cmd.Pen,
+                            penSolidColor,
+                            penBrushIdx,
+                            Vector2.Transform(segmentStart, transform),
+                            TransformDirection(previousSegmentEndDirection, transform),
+                            TransformDirection(segmentStartDirection, transform),
+                            cmd.IsEdgeAliased,
+                            segment.IsSmoothJoin);
+                    }
+
                     if (segment is LineSegment line)
                     {
-                        var p0_trans = Vector2.Transform(currentPoint, transform);
-                        var p1_trans = Vector2.Transform(line.Point, transform);
+                        var lineStart = segmentStart;
+                        var lineEnd = line.Point;
 
-                        uint idxStart = (uint)currentVertexCount;
+                        AppendStrokeLineVertices(
+                            verticesSpan,
+                            indicesSpan,
+                            ref currentVertexCount,
+                            ref currentIndexCount,
+                            penSolidColor,
+                            penBrushIdx,
+                            thickness,
+                            Vector2.Transform(lineStart, transform),
+                            Vector2.Transform(lineEnd, transform),
+                            cmd.IsEdgeAliased);
 
-                        verticesSpan[currentVertexCount++] = new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f);
-                        verticesSpan[currentVertexCount++] = new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f);
-                        verticesSpan[currentVertexCount++] = new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f);
-                        verticesSpan[currentVertexCount++] = new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f);
-
-                        indicesSpan[currentIndexCount++] = idxStart;
-                        indicesSpan[currentIndexCount++] = idxStart + 1;
-                        indicesSpan[currentIndexCount++] = idxStart + 2;
-
-                        indicesSpan[currentIndexCount++] = idxStart + 1;
-                        indicesSpan[currentIndexCount++] = idxStart + 3;
-                        indicesSpan[currentIndexCount++] = idxStart + 2;
-
-                        currentPoint = line.Point;
+                        currentPoint = lineEnd;
+                        hasLastCapCandidate = TryGetPathSegmentEndDirection(segment, segmentStart, out lastCapDirection);
+                        hasPreviousSegmentEndDirection = hasLastCapCandidate;
+                        previousSegmentEndDirection = lastCapDirection;
+                        lastCapCenter = lineEnd;
+                        isFirstSegment = false;
                     }
                     else if (segment is QuadraticBezierSegment quad)
                     {
-                        var p0_trans = Vector2.Transform(currentPoint, transform);
+                        var p0_trans = Vector2.Transform(segmentStart, transform);
                         var p1_trans = Vector2.Transform(quad.ControlPoint, transform);
                         var p2_trans = Vector2.Transform(quad.Point, transform);
 
                         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
                         uint idxStart = (uint)currentVertexCount;
 
-                        var baseVertex = new VectorVertex(p0_trans, Vector4.Zero, p1_trans, penBrushIdx, p2_trans, idxStart, thickness, 5f);
+                        var baseVertex = new VectorVertex(p0_trans, Vector4.Zero, p1_trans, penBrushIdx, p2_trans, idxStart, thickness, EncodeShapeType(cmd, 5f));
                         int vertexToAdd = 2 * (N + 1);
                         verticesSpan.Slice(currentVertexCount, vertexToAdd).Fill(baseVertex);
                         currentVertexCount += vertexToAdd;
@@ -2121,10 +3393,15 @@ public unsafe class Compositor : IDisposable
                         }
 
                         currentPoint = quad.Point;
+                        hasLastCapCandidate = TryGetPathSegmentEndDirection(segment, segmentStart, out lastCapDirection);
+                        hasPreviousSegmentEndDirection = hasLastCapCandidate;
+                        previousSegmentEndDirection = lastCapDirection;
+                        lastCapCenter = quad.Point;
+                        isFirstSegment = false;
                     }
                     else if (segment is CubicBezierSegment cubic)
                     {
-                        var p0_trans = Vector2.Transform(currentPoint, transform);
+                        var p0_trans = Vector2.Transform(segmentStart, transform);
                         var p1_trans = Vector2.Transform(cubic.ControlPoint1, transform);
                         var p2_trans = Vector2.Transform(cubic.ControlPoint2, transform);
                         var p3_trans = Vector2.Transform(cubic.Point, transform);
@@ -2132,7 +3409,7 @@ public unsafe class Compositor : IDisposable
                         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
                         uint idxStart = (uint)currentVertexCount;
 
-                        var baseVertex = new VectorVertex(p0_trans, new Vector4(p3_trans.X, p3_trans.Y, 0f, 0f), p1_trans, penBrushIdx, p2_trans, idxStart, thickness, 6f);
+                        var baseVertex = new VectorVertex(p0_trans, new Vector4(p3_trans.X, p3_trans.Y, 0f, 0f), p1_trans, penBrushIdx, p2_trans, idxStart, thickness, EncodeShapeType(cmd, 6f));
                         int vertexToAdd = 2 * (N + 1);
                         verticesSpan.Slice(currentVertexCount, vertexToAdd).Fill(baseVertex);
                         currentVertexCount += vertexToAdd;
@@ -2154,28 +3431,151 @@ public unsafe class Compositor : IDisposable
                         }
 
                         currentPoint = cubic.Point;
+                        hasLastCapCandidate = TryGetPathSegmentEndDirection(segment, segmentStart, out lastCapDirection);
+                        hasPreviousSegmentEndDirection = hasLastCapCandidate;
+                        previousSegmentEndDirection = lastCapDirection;
+                        lastCapCenter = cubic.Point;
+                        isFirstSegment = false;
+                    }
+                    else if (segment is ArcSegment arc)
+                    {
+                        if (!AppendStrokeArcVertices(
+                                verticesSpan,
+                                indicesSpan,
+                                ref currentVertexCount,
+                                ref currentIndexCount,
+                                penBrushIdx,
+                                thickness,
+                                segmentStart,
+                                arc,
+                                transform,
+                                cmd.IsEdgeAliased))
+                        {
+                            var points = ArcSegmentGeometry.FlattenArc(segmentStart, arc);
+                            for (int i = 0; i < points.Length - 1; i++)
+                            {
+                                var arcLineStart = points[i];
+                                var arcLineEnd = points[i + 1];
+                                if (arcLineStart == arcLineEnd)
+                                {
+                                    continue;
+                                }
+
+                                AppendStrokeLineVertices(
+                                    verticesSpan,
+                                    indicesSpan,
+                                    ref currentVertexCount,
+                                    ref currentIndexCount,
+                                    penSolidColor,
+                                    penBrushIdx,
+                                    thickness,
+                                    Vector2.Transform(arcLineStart, transform),
+                                    Vector2.Transform(arcLineEnd, transform),
+                                    cmd.IsEdgeAliased);
+                            }
+                        }
+
+                        currentPoint = arc.Point;
+                        hasLastCapCandidate = TryGetPathSegmentEndDirection(segment, segmentStart, out lastCapDirection);
+                        hasPreviousSegmentEndDirection = hasLastCapCandidate;
+                        previousSegmentEndDirection = lastCapDirection;
+                        lastCapCenter = arc.Point;
+                        isFirstSegment = false;
+                    }
+                    else if (TryGetPathSegmentEndPoint(segment, out var segmentEndPoint))
+                    {
+                        currentPoint = segmentEndPoint;
+                        hasPreviousSegmentEndDirection = false;
+                        hasLastCapCandidate = false;
+                        isFirstSegment = false;
                     }
                 }
 
-                if (figure.IsClosed && currentPoint != figure.StartPoint)
+                if (!figure.IsClosed && hasLastCapCandidate)
                 {
-                    var p0_trans = Vector2.Transform(currentPoint, transform);
-                    var p1_trans = Vector2.Transform(figure.StartPoint, transform);
+                    AppendStrokeSegmentCapTriangles(
+                        verticesSpan,
+                        indicesSpan,
+                        ref currentVertexCount,
+                        ref currentIndexCount,
+                        cmd.Pen,
+                        penSolidColor,
+                        penBrushIdx,
+                        Vector2.Transform(lastCapCenter, transform),
+                        TransformDirection(lastCapDirection, transform),
+                        cmd.IsEdgeAliased,
+                        isStart: false);
+                }
+                else if (figure.IsClosed && currentPoint != figure.StartPoint)
+                {
+                    var closeLineStart = currentPoint;
+                    var closeLineEnd = figure.StartPoint;
+                    var closeLineDirection = closeLineEnd - closeLineStart;
 
-                    uint idxStart = (uint)currentVertexCount;
+                    if (hasPreviousSegmentEndDirection)
+                    {
+                        AppendStrokeSegmentJoinTriangles(
+                            verticesSpan,
+                            indicesSpan,
+                            ref currentVertexCount,
+                            ref currentIndexCount,
+                            cmd.Pen,
+                            penSolidColor,
+                            penBrushIdx,
+                            Vector2.Transform(closeLineStart, transform),
+                            TransformDirection(previousSegmentEndDirection, transform),
+                            TransformDirection(closeLineDirection, transform),
+                            cmd.IsEdgeAliased,
+                            isSmoothJoin: false);
+                    }
 
-                    verticesSpan[currentVertexCount++] = new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f);
-                    verticesSpan[currentVertexCount++] = new VectorVertex(p0_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f);
-                    verticesSpan[currentVertexCount++] = new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, 1f, thickness, 3f);
-                    verticesSpan[currentVertexCount++] = new VectorVertex(p1_trans, penSolidColor, p0_trans, penBrushIdx, p1_trans, -1f, thickness, 3f);
+                    AppendStrokeLineVertices(
+                        verticesSpan,
+                        indicesSpan,
+                        ref currentVertexCount,
+                        ref currentIndexCount,
+                        penSolidColor,
+                        penBrushIdx,
+                        thickness,
+                        Vector2.Transform(closeLineStart, transform),
+                        Vector2.Transform(closeLineEnd, transform),
+                        cmd.IsEdgeAliased);
 
-                    indicesSpan[currentIndexCount++] = idxStart;
-                    indicesSpan[currentIndexCount++] = idxStart + 1;
-                    indicesSpan[currentIndexCount++] = idxStart + 2;
-
-                    indicesSpan[currentIndexCount++] = idxStart + 1;
-                    indicesSpan[currentIndexCount++] = idxStart + 3;
-                    indicesSpan[currentIndexCount++] = idxStart + 2;
+                    if (hasFirstSegmentStartDirection)
+                    {
+                        AppendStrokeSegmentJoinTriangles(
+                            verticesSpan,
+                            indicesSpan,
+                            ref currentVertexCount,
+                            ref currentIndexCount,
+                            cmd.Pen,
+                            penSolidColor,
+                            penBrushIdx,
+                            Vector2.Transform(closeLineEnd, transform),
+                            TransformDirection(closeLineDirection, transform),
+                            TransformDirection(firstSegmentStartDirection, transform),
+                            cmd.IsEdgeAliased,
+                            firstSegmentSmoothJoin);
+                    }
+                }
+                else if (figure.IsClosed &&
+                         hasPreviousSegmentEndDirection &&
+                         hasFirstSegmentStartDirection &&
+                         currentPoint == figure.StartPoint)
+                {
+                    AppendStrokeSegmentJoinTriangles(
+                        verticesSpan,
+                        indicesSpan,
+                        ref currentVertexCount,
+                        ref currentIndexCount,
+                        cmd.Pen,
+                        penSolidColor,
+                        penBrushIdx,
+                        Vector2.Transform(figure.StartPoint, transform),
+                        TransformDirection(previousSegmentEndDirection, transform),
+                        TransformDirection(firstSegmentStartDirection, transform),
+                        cmd.IsEdgeAliased,
+                        firstSegmentSmoothJoin);
                 }
             }
 
@@ -2195,8 +3595,717 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    internal static bool TryCreateDashedStrokePath(PathGeometry source, Pen pen, out PathGeometry dashedPath)
+    {
+        dashedPath = new PathGeometry
+        {
+            FillRule = source.FillRule
+        };
+
+        if (source.IsCombined)
+        {
+            return false;
+        }
+
+        var dashArray = pen.DashArray;
+        if (dashArray is not { Length: > 0 } ||
+            !DashPattern.TryCreate(dashArray, pen.DashOffset, pen.Thickness, out var pattern))
+        {
+            return false;
+        }
+
+        foreach (var figure in source.Figures)
+        {
+            var patternIndex = pattern.InitialIndex;
+            var distanceInPattern = pattern.InitialDistance;
+            var currentPoint = figure.StartPoint;
+
+            foreach (var segment in figure.Segments)
+            {
+                var segmentStart = currentPoint;
+                if (!segment.IsStroked)
+                {
+                    if (TryGetPathSegmentEndPoint(segment, out var skippedEndPoint))
+                    {
+                        currentPoint = skippedEndPoint;
+                    }
+
+                    patternIndex = pattern.InitialIndex;
+                    distanceInPattern = pattern.InitialDistance;
+                    continue;
+                }
+
+                switch (segment)
+                {
+                    case LineSegment line:
+                        AddDashedLineFigures(
+                            dashedPath,
+                            pattern,
+                            segmentStart,
+                            line.Point,
+                            ref patternIndex,
+                            ref distanceInPattern);
+                        currentPoint = line.Point;
+                        break;
+
+                    case QuadraticBezierSegment quadratic:
+                        if (BezierSegmentGeometry.TryCreateDashedQuadraticBezierSegments(
+                                segmentStart,
+                                quadratic,
+                                pattern.Intervals,
+                                patternIndex,
+                                distanceInPattern,
+                                out var quadraticSegments,
+                                out patternIndex,
+                                out distanceInPattern))
+                        {
+                            foreach (var dashSegment in quadraticSegments)
+                            {
+                                AddDashedSegmentFigure(dashedPath, dashSegment.Start, dashSegment.Segment);
+                            }
+                        }
+
+                        currentPoint = quadratic.Point;
+                        break;
+
+                    case CubicBezierSegment cubic:
+                        if (BezierSegmentGeometry.TryCreateDashedCubicBezierSegments(
+                                segmentStart,
+                                cubic,
+                                pattern.Intervals,
+                                patternIndex,
+                                distanceInPattern,
+                                out var cubicSegments,
+                                out patternIndex,
+                                out distanceInPattern))
+                        {
+                            foreach (var dashSegment in cubicSegments)
+                            {
+                                AddDashedSegmentFigure(dashedPath, dashSegment.Start, dashSegment.Segment);
+                            }
+                        }
+
+                        currentPoint = cubic.Point;
+                        break;
+
+                    case ArcSegment arc:
+                        if (ArcSegmentGeometry.TryCreateDashedArcSegments(
+                                segmentStart,
+                                arc,
+                                pattern.Intervals,
+                                patternIndex,
+                                distanceInPattern,
+                                out var arcSegments,
+                                out patternIndex,
+                                out distanceInPattern))
+                        {
+                            foreach (var dashSegment in arcSegments)
+                            {
+                                AddDashedSegmentFigure(dashedPath, dashSegment.Start, dashSegment.Arc);
+                            }
+                        }
+
+                        currentPoint = arc.Point;
+                        break;
+
+                    default:
+                        return false;
+                }
+            }
+
+            if (figure.IsClosed && Vector2.DistanceSquared(currentPoint, figure.StartPoint) > StrokeEpsilon * StrokeEpsilon)
+            {
+                AddDashedLineFigures(
+                    dashedPath,
+                    pattern,
+                    currentPoint,
+                    figure.StartPoint,
+                    ref patternIndex,
+                    ref distanceInPattern);
+            }
+        }
+
+        return true;
+    }
+
+    private static void AddDashedLineFigures(
+        PathGeometry dashedPath,
+        DashPattern pattern,
+        Vector2 start,
+        Vector2 end,
+        ref int patternIndex,
+        ref float distanceInPattern)
+    {
+        if (!pattern.TryCreateLineSegments(
+                start,
+                end,
+                patternIndex,
+                distanceInPattern,
+                out var dashSegments,
+                out patternIndex,
+                out distanceInPattern))
+        {
+            return;
+        }
+
+        foreach (var dashSegment in dashSegments)
+        {
+            AddDashedSegmentFigure(dashedPath, dashSegment.Start, new LineSegment(dashSegment.End));
+        }
+    }
+
+    private static void AddDashedSegmentFigure(PathGeometry dashedPath, Vector2 start, PathSegment segment)
+    {
+        if (TryGetPathSegmentEndPoint(segment, out var endPoint) &&
+            Vector2.DistanceSquared(start, endPoint) <= StrokeEpsilon * StrokeEpsilon)
+        {
+            return;
+        }
+
+        segment.IsSmoothJoin = false;
+        segment.IsStroked = true;
+        var figure = new PathFigure(start)
+        {
+            IsClosed = false,
+            IsFilled = false
+        };
+        figure.Segments.Add(segment);
+        dashedPath.Figures.Add(figure);
+    }
+
+    internal static Pen CreateUndashedPen(Pen pen)
+    {
+        return new Pen(
+            pen.Brush,
+            pen.Thickness,
+            pen.LineJoin,
+            pen.MiterLimit,
+            pen.StartLineCap,
+            pen.EndLineCap,
+            pen.DashCap);
+    }
+
+    private static int CountStrokeSegmentJoinTriangleBudget(PathFigure figure)
+    {
+        int joinCount = 0;
+        var currentPoint = figure.StartPoint;
+        var hasFirstSegmentStartDirection = false;
+        var hasPreviousSegmentEndDirection = false;
+        var isFirstSegment = true;
+
+        foreach (var segment in figure.Segments)
+        {
+            var segmentStart = currentPoint;
+            if (!segment.IsStroked)
+            {
+                if (TryGetPathSegmentEndPoint(segment, out var skippedSegmentEndPoint))
+                {
+                    currentPoint = skippedSegmentEndPoint;
+                }
+
+                hasFirstSegmentStartDirection = false;
+                hasPreviousSegmentEndDirection = false;
+                isFirstSegment = true;
+                continue;
+            }
+
+            var hasSegmentStartDirection = TryGetPathSegmentStartDirection(segment, segmentStart, out var segmentStartDirection);
+            if (isFirstSegment && hasSegmentStartDirection)
+            {
+                hasFirstSegmentStartDirection = true;
+            }
+
+            if (!isFirstSegment &&
+                hasPreviousSegmentEndDirection &&
+                hasSegmentStartDirection)
+            {
+                joinCount++;
+            }
+
+            if (TryGetPathSegmentEndDirection(segment, segmentStart, out _))
+            {
+                hasPreviousSegmentEndDirection = true;
+            }
+            else
+            {
+                hasPreviousSegmentEndDirection = false;
+            }
+
+            if (TryGetPathSegmentEndPoint(segment, out var segmentEndPoint))
+            {
+                currentPoint = segmentEndPoint;
+            }
+
+            isFirstSegment = false;
+        }
+
+        if (figure.IsClosed && hasFirstSegmentStartDirection)
+        {
+            if (currentPoint != figure.StartPoint)
+            {
+                if (TrySelectDirection(out _, figure.StartPoint - currentPoint))
+                {
+                    if (hasPreviousSegmentEndDirection)
+                    {
+                        joinCount++;
+                    }
+
+                    joinCount++;
+                }
+            }
+            else if (hasPreviousSegmentEndDirection)
+            {
+                joinCount++;
+            }
+        }
+
+        return joinCount * StrokeJoinGeometry.MaxTrianglesPerJoin;
+    }
+
+    private static int CountStrokeSegmentCapTriangleBudget(PathFigure figure, PenLineCap startLineCap, PenLineCap endLineCap)
+    {
+        if (figure.IsClosed || (startLineCap == PenLineCap.Flat && endLineCap == PenLineCap.Flat))
+        {
+            return 0;
+        }
+
+        var currentPoint = figure.StartPoint;
+        var isFirstSegmentInSubpath = true;
+        var pendingEndCap = false;
+        var capCount = 0;
+
+        foreach (var segment in figure.Segments)
+        {
+            if (!segment.IsStroked)
+            {
+                if (pendingEndCap && endLineCap != PenLineCap.Flat)
+                {
+                    capCount++;
+                }
+
+                pendingEndCap = false;
+                isFirstSegmentInSubpath = true;
+                if (TryGetPathSegmentEndPoint(segment, out var skippedSegmentEndPoint))
+                {
+                    currentPoint = skippedSegmentEndPoint;
+                }
+
+                continue;
+            }
+
+            if (isFirstSegmentInSubpath &&
+                startLineCap != PenLineCap.Flat &&
+                TryGetPathSegmentStartDirection(segment, currentPoint, out _))
+            {
+                capCount++;
+            }
+
+            pendingEndCap = TryGetPathSegmentEndDirection(segment, currentPoint, out _);
+            if (TryGetPathSegmentEndPoint(segment, out var segmentEndPoint))
+            {
+                currentPoint = segmentEndPoint;
+            }
+
+            isFirstSegmentInSubpath = false;
+        }
+
+        if (pendingEndCap && endLineCap != PenLineCap.Flat)
+        {
+            capCount++;
+        }
+
+        return capCount * StrokeCapGeometry.MaxTrianglesPerCap;
+    }
+
+    private static void AppendStrokeLineVertices(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        Vector4 penSolidColor,
+        float penBrushIdx,
+        float thickness,
+        Vector2 startPoint,
+        Vector2 endPoint,
+        bool isEdgeAliased)
+    {
+        uint idxStart = (uint)currentVertexCount;
+        var lineShapeType = EncodeShapeType(isEdgeAliased, 3f);
+
+        verticesSpan[currentVertexCount++] = new VectorVertex(startPoint, penSolidColor, startPoint, penBrushIdx, endPoint, 1f, thickness, lineShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(startPoint, penSolidColor, startPoint, penBrushIdx, endPoint, -1f, thickness, lineShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(endPoint, penSolidColor, startPoint, penBrushIdx, endPoint, 1f, thickness, lineShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(endPoint, penSolidColor, startPoint, penBrushIdx, endPoint, -1f, thickness, lineShapeType);
+
+        indicesSpan[currentIndexCount++] = idxStart;
+        indicesSpan[currentIndexCount++] = idxStart + 1;
+        indicesSpan[currentIndexCount++] = idxStart + 2;
+
+        indicesSpan[currentIndexCount++] = idxStart + 1;
+        indicesSpan[currentIndexCount++] = idxStart + 3;
+        indicesSpan[currentIndexCount++] = idxStart + 2;
+    }
+
+    private static bool AppendStrokeArcVertices(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        float penBrushIdx,
+        float thickness,
+        Vector2 segmentStart,
+        ArcSegment arc,
+        Matrix4x4 transform,
+        bool isEdgeAliased)
+    {
+        return AppendStrokeArcSdfVertices(
+            verticesSpan,
+            indicesSpan,
+            ref currentVertexCount,
+            ref currentIndexCount,
+            penBrushIdx,
+            thickness,
+            segmentStart,
+            arc,
+            transform,
+            isEdgeAliased);
+    }
+
+    private static bool AppendStrokeArcSdfVertices(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        float penBrushIdx,
+        float thickness,
+        Vector2 segmentStart,
+        ArcSegment arc,
+        Matrix4x4 transform,
+        bool isEdgeAliased)
+    {
+        if (!CanUseArcSdfStroke(segmentStart, arc, transform) ||
+            !ArcSegmentGeometry.TryCreateShaderParameters(
+                segmentStart,
+                arc,
+                transform,
+                out var arcParameters))
+        {
+            return false;
+        }
+
+        float pad = thickness * 0.5f + 2.0f;
+        if (!TryGetTransformedArcBounds(segmentStart, arc, transform, pad, out Vector2 min, out Vector2 max))
+        {
+            Vector2 extent = new(
+                MathF.Abs(arcParameters.AxisX.X) + MathF.Abs(arcParameters.AxisY.X) + pad,
+                MathF.Abs(arcParameters.AxisX.Y) + MathF.Abs(arcParameters.AxisY.Y) + pad);
+            min = arcParameters.Center - extent;
+            max = arcParameters.Center + extent;
+        }
+
+        if (!IsFinite(min) ||
+            !IsFinite(max) ||
+            min.X >= max.X ||
+            min.Y >= max.Y)
+        {
+            return false;
+        }
+
+        uint idxStart = (uint)currentVertexCount;
+        var arcShapeType = EncodeShapeType(isEdgeAliased, ArcSdfShapeType);
+        var shaderParameters = new Vector4(
+            arcParameters.Center.X,
+            arcParameters.Center.Y,
+            arcParameters.Theta1,
+            arcParameters.DeltaTheta);
+
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(min.X, min.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(max.X, min.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(max.X, max.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(
+            new Vector2(min.X, max.Y),
+            shaderParameters,
+            arcParameters.AxisX,
+            penBrushIdx,
+            arcParameters.AxisY,
+            0f,
+            thickness,
+            arcShapeType);
+
+        indicesSpan[currentIndexCount++] = idxStart;
+        indicesSpan[currentIndexCount++] = idxStart + 1;
+        indicesSpan[currentIndexCount++] = idxStart + 2;
+
+        indicesSpan[currentIndexCount++] = idxStart;
+        indicesSpan[currentIndexCount++] = idxStart + 2;
+        indicesSpan[currentIndexCount++] = idxStart + 3;
+
+        return true;
+    }
+
+    private static bool CanUseArcSdfStroke(Vector2 segmentStart, ArcSegment arc, Matrix4x4 transform)
+    {
+        if (!ArcSegmentGeometry.TryCreateShaderParameters(segmentStart, arc, transform, out var arcParameters))
+        {
+            return false;
+        }
+
+        float determinant = arcParameters.AxisX.X * arcParameters.AxisY.Y -
+                            arcParameters.AxisX.Y * arcParameters.AxisY.X;
+        return float.IsFinite(determinant) && MathF.Abs(determinant) > 0.0001f;
+    }
+
+    private static bool TryGetTransformedArcBounds(
+        Vector2 segmentStart,
+        ArcSegment arc,
+        Matrix4x4 transform,
+        float padding,
+        out Vector2 min,
+        out Vector2 max)
+    {
+        min = default;
+        max = default;
+        if (!ArcSegmentGeometry.TryTransformArcSegment(segmentStart, arc, transform, out var transformedStart, out var transformedArc) ||
+            !ArcSegmentGeometry.TryGetArcBounds(transformedStart, transformedArc, out min, out max))
+        {
+            return false;
+        }
+
+        var pad = new Vector2(padding, padding);
+        min -= pad;
+        max += pad;
+        return true;
+    }
+
+    private static void AppendStrokeSegmentJoinTriangles(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        Pen pen,
+        Vector4 penSolidColor,
+        float penBrushIdx,
+        Vector2 joinPoint,
+        Vector2 incomingDirection,
+        Vector2 outgoingDirection,
+        bool isEdgeAliased,
+        bool isSmoothJoin)
+    {
+        var triangles = StrokeJoinGeometry.CreateDirectionalJoin(
+            pen.LineJoin,
+            pen.Thickness,
+            pen.MiterLimit,
+            joinPoint,
+            incomingDirection,
+            outgoingDirection,
+            isSmoothJoin);
+
+        foreach (var triangle in triangles)
+        {
+            uint idxStart = (uint)currentVertexCount;
+            var fillShapeType = EncodeShapeType(isEdgeAliased, 7f);
+
+            verticesSpan[currentVertexCount++] = new VectorVertex(triangle.P0, penSolidColor, triangle.P0, penBrushIdx, default, 0f, 0f, fillShapeType);
+            verticesSpan[currentVertexCount++] = new VectorVertex(triangle.P1, penSolidColor, triangle.P1, penBrushIdx, default, 0f, 0f, fillShapeType);
+            verticesSpan[currentVertexCount++] = new VectorVertex(triangle.P2, penSolidColor, triangle.P2, penBrushIdx, default, 0f, 0f, fillShapeType);
+
+            indicesSpan[currentIndexCount++] = idxStart;
+            indicesSpan[currentIndexCount++] = idxStart + 1;
+            indicesSpan[currentIndexCount++] = idxStart + 2;
+        }
+    }
+
+    private static void AppendStrokeSegmentCapTriangles(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        Pen pen,
+        Vector4 penSolidColor,
+        float penBrushIdx,
+        Vector2 center,
+        Vector2 directionAlongPath,
+        bool isEdgeAliased,
+        bool isStart)
+    {
+        var triangles = StrokeCapGeometry.CreateDirectionalCap(
+            isStart ? pen.StartLineCap : pen.EndLineCap,
+            pen.Thickness,
+            center,
+            directionAlongPath,
+            isStart);
+
+        foreach (var triangle in triangles)
+        {
+            uint idxStart = (uint)currentVertexCount;
+            var fillShapeType = EncodeShapeType(isEdgeAliased, 7f);
+
+            verticesSpan[currentVertexCount++] = new VectorVertex(triangle.P0, penSolidColor, triangle.P0, penBrushIdx, default, 0f, 0f, fillShapeType);
+            verticesSpan[currentVertexCount++] = new VectorVertex(triangle.P1, penSolidColor, triangle.P1, penBrushIdx, default, 0f, 0f, fillShapeType);
+            verticesSpan[currentVertexCount++] = new VectorVertex(triangle.P2, penSolidColor, triangle.P2, penBrushIdx, default, 0f, 0f, fillShapeType);
+
+            indicesSpan[currentIndexCount++] = idxStart;
+            indicesSpan[currentIndexCount++] = idxStart + 1;
+            indicesSpan[currentIndexCount++] = idxStart + 2;
+        }
+    }
+
+    private static Vector2 TransformDirection(Vector2 direction, Matrix4x4 transform)
+    {
+        return Vector2.Transform(direction, transform) - Vector2.Transform(Vector2.Zero, transform);
+    }
+
+    private static bool TryGetPathSegmentStartDirection(PathSegment segment, Vector2 segmentStart, out Vector2 direction)
+    {
+        switch (segment)
+        {
+            case LineSegment line:
+                return TrySelectDirection(out direction, line.Point - segmentStart);
+            case QuadraticBezierSegment quadratic:
+                return TrySelectDirection(
+                    out direction,
+                    quadratic.ControlPoint - segmentStart,
+                    quadratic.Point - segmentStart);
+            case CubicBezierSegment cubic:
+                return TrySelectDirection(
+                    out direction,
+                    cubic.ControlPoint1 - segmentStart,
+                    cubic.ControlPoint2 - segmentStart,
+                    cubic.Point - segmentStart);
+            case ArcSegment arc:
+                return TryGetArcDirection(segmentStart, arc, isStart: true, out direction);
+            default:
+                direction = default;
+                return false;
+        }
+    }
+
+    private static bool TryGetPathSegmentEndDirection(PathSegment segment, Vector2 segmentStart, out Vector2 direction)
+    {
+        switch (segment)
+        {
+            case LineSegment line:
+                return TrySelectDirection(out direction, line.Point - segmentStart);
+            case QuadraticBezierSegment quadratic:
+                return TrySelectDirection(
+                    out direction,
+                    quadratic.Point - quadratic.ControlPoint,
+                    quadratic.Point - segmentStart);
+            case CubicBezierSegment cubic:
+                return TrySelectDirection(
+                    out direction,
+                    cubic.Point - cubic.ControlPoint2,
+                    cubic.Point - cubic.ControlPoint1,
+                    cubic.Point - segmentStart);
+            case ArcSegment arc:
+                return TryGetArcDirection(segmentStart, arc, isStart: false, out direction);
+            default:
+                direction = default;
+                return false;
+        }
+    }
+
+    private static bool TryGetArcDirection(Vector2 segmentStart, ArcSegment arc, bool isStart, out Vector2 direction)
+    {
+        direction = default;
+        if (!ArcSegmentGeometry.TryGetArcCenter(
+                segmentStart,
+                arc.Point,
+                arc.Size,
+                arc.RotationAngle,
+                arc.IsLargeArc,
+                arc.SweepDirection,
+                out _,
+                out float theta1,
+                out float deltaTheta,
+                out float radiusX,
+                out float radiusY))
+        {
+            return false;
+        }
+
+        float phi = arc.RotationAngle * MathF.PI / 180f;
+        float cosPhi = MathF.Cos(phi);
+        float sinPhi = MathF.Sin(phi);
+        var axisX = new Vector2(radiusX * cosPhi, radiusX * sinPhi);
+        var axisY = new Vector2(-radiusY * sinPhi, radiusY * cosPhi);
+        float theta = isStart ? theta1 : theta1 + deltaTheta;
+        float sweepSign = deltaTheta < 0f ? -1f : 1f;
+        var tangent = (-axisX * MathF.Sin(theta) + axisY * MathF.Cos(theta)) * sweepSign;
+
+        return TrySelectDirection(out direction, tangent);
+    }
+
+    private static bool TrySelectDirection(out Vector2 direction, params Vector2[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            var length = candidate.Length();
+            if (float.IsFinite(length) && length > StrokeEpsilon)
+            {
+                direction = candidate;
+                return true;
+            }
+        }
+
+        direction = default;
+        return false;
+    }
+
+    private static bool IsFinite(Vector2 value)
+    {
+        return float.IsFinite(value.X) && float.IsFinite(value.Y);
+    }
+
+    private static bool TryGetPathSegmentEndPoint(PathSegment segment, out Vector2 endPoint)
+    {
+        switch (segment)
+        {
+            case LineSegment line:
+                endPoint = line.Point;
+                return true;
+            case QuadraticBezierSegment quadratic:
+                endPoint = quadratic.Point;
+                return true;
+            case CubicBezierSegment cubic:
+                endPoint = cubic.Point;
+                return true;
+            case ArcSegment arc:
+                endPoint = arc.Point;
+                return true;
+            default:
+                endPoint = default;
+                return false;
+        }
+    }
+
     private void CompileHatchCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         var pipeline = GetExtension(CompositorBuiltInExtensions.Hatch);
         if (pipeline != null)
         {
@@ -2207,6 +4316,7 @@ public unsafe class Compositor : IDisposable
 
     private void CompileAcisCommand(IRenderDataProvider? provider, RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         var pipeline = GetExtension(CompositorBuiltInExtensions.AcisSolid);
         if (pipeline != null)
         {
@@ -2217,7 +4327,22 @@ public unsafe class Compositor : IDisposable
 
     private void CompileLineCommand(RenderCommand cmd, Matrix4x4 transform)
     {
-        if (cmd.Pen == null) return;
+        SwitchBatch(BatchType.Vector);
+        if (cmd.Pen == null || cmd.Pen.Thickness <= 0f) return;
+        if (cmd.Pen.HasDashPattern)
+        {
+            var path = cmd.GeometryCache?.StrokePath ??
+                RenderCommandGeometryCache.CreateLinePath(cmd.Position, cmd.Position2);
+
+            var pathCmd = cmd;
+            pathCmd.Type = RenderCommandType.DrawPath;
+            pathCmd.Path = path;
+            pathCmd.Brush = null;
+            pathCmd.Transform = default;
+            CompilePathCommand(pathCmd, transform);
+            return;
+        }
+
         int startIndex = _vectorVerticesList.Count;
         float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
         var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
@@ -2225,6 +4350,7 @@ public unsafe class Compositor : IDisposable
         var p0_pos = Vector2.Transform(cmd.Position, transform);
         var p1_pos = Vector2.Transform(cmd.Position2, transform);
         float thickness = cmd.Pen.Thickness;
+        var lineShapeType = EncodeShapeType(cmd, 3f);
 
         uint idxStart = (uint)startIndex;
 
@@ -2232,10 +4358,10 @@ public unsafe class Compositor : IDisposable
         CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
         var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-        vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
-        vertexSpan[1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
-        vertexSpan[2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, 3f);
-        vertexSpan[3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, 3f);
+        vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, lineShapeType);
+        vertexSpan[1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, lineShapeType);
+        vertexSpan[2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, lineShapeType);
+        vertexSpan[3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, lineShapeType);
 
         int originalIndexCount = _vectorIndicesList.Count;
         CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -2262,6 +4388,7 @@ public unsafe class Compositor : IDisposable
 
     private void CompileLine3DCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         var pipeline = GetExtension(CompositorBuiltInExtensions.Line3D);
         if (pipeline != null)
         {
@@ -2272,7 +4399,8 @@ public unsafe class Compositor : IDisposable
 
     private void CompileBezierCommand(RenderCommand cmd, Matrix4x4 transform)
     {
-        if (cmd.Pen == null) return;
+        SwitchBatch(BatchType.Vector);
+        if (cmd.Pen == null || cmd.Pen.Thickness <= 0f) return;
         int startIndex = _vectorVerticesList.Count;
         float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
         var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
@@ -2285,8 +4413,8 @@ public unsafe class Compositor : IDisposable
         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
         uint idxStart = (uint)startIndex;
 
-        var baseVertex = new VectorVertex(p0_trans, Vector4.Zero, p1_trans, penBrushIdx, p2_trans, idxStart, thickness, 5f);
-        
+        var baseVertex = new VectorVertex(p0_trans, Vector4.Zero, p1_trans, penBrushIdx, p2_trans, idxStart, thickness, EncodeShapeType(cmd, 5f));
+
         int originalVertexCount = _vectorVerticesList.Count;
         int vertexToAdd = 2 * (N + 1);
         CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + vertexToAdd);
@@ -2328,7 +4456,8 @@ public unsafe class Compositor : IDisposable
 
     private void CompileCubicBezierCommand(RenderCommand cmd, Matrix4x4 transform)
     {
-        if (cmd.Pen == null) return;
+        SwitchBatch(BatchType.Vector);
+        if (cmd.Pen == null || cmd.Pen.Thickness <= 0f) return;
         int startIndex = _vectorVerticesList.Count;
         float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
         var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
@@ -2342,8 +4471,8 @@ public unsafe class Compositor : IDisposable
         int N = Math.Clamp((int)(thickness * 1.5f) + 8, 8, 24);
         uint idxStart = (uint)startIndex;
 
-        var baseVertex = new VectorVertex(p0_trans, new Vector4(p3_trans.X, p3_trans.Y, 0f, 0f), p1_trans, penBrushIdx, p2_trans, idxStart, thickness, 6f);
-        
+        var baseVertex = new VectorVertex(p0_trans, new Vector4(p3_trans.X, p3_trans.Y, 0f, 0f), p1_trans, penBrushIdx, p2_trans, idxStart, thickness, EncodeShapeType(cmd, 6f));
+
         int originalVertexCount = _vectorVerticesList.Count;
         int vertexToAdd = 2 * (N + 1);
         CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + vertexToAdd);
@@ -2385,10 +4514,11 @@ public unsafe class Compositor : IDisposable
 
     private void CompilePolylineCommand(IRenderDataProvider? provider, RenderCommand cmd, Matrix4x4 transform)
     {
-        if (cmd.Pen == null) return;
+        SwitchBatch(BatchType.Vector);
+        if (cmd.Pen == null || cmd.Pen.Thickness <= 0f) return;
 
-        ReadOnlySpan<Vector2> pointsSpan = provider != null ? 
-            provider.GetPoints(cmd.PointBufferOffset, cmd.PointBufferCount) : 
+        ReadOnlySpan<Vector2> pointsSpan = provider != null ?
+            provider.GetPoints(cmd.PointBufferOffset, cmd.PointBufferCount) :
             cmd.PolylinePoints;
 
         int count = pointsSpan.Length;
@@ -2398,6 +4528,7 @@ public unsafe class Compositor : IDisposable
         float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
         var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
         float thickness = cmd.Pen.Thickness;
+        var lineShapeType = EncodeShapeType(cmd, 3f);
 
         int segmentCount = count - 1;
         if (cmd.IsClosed) segmentCount++;
@@ -2429,10 +4560,10 @@ public unsafe class Compositor : IDisposable
             uint idxStart = (uint)(originalVertexCount + i * 4);
 
             int vIdx = i * 4;
-            vertexSpan[vIdx] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, 3f);
-            vertexSpan[vIdx + 1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, 3f);
-            vertexSpan[vIdx + 2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, 3f);
-            vertexSpan[vIdx + 3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, 3f);
+            vertexSpan[vIdx] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 1f, thickness, lineShapeType);
+            vertexSpan[vIdx + 1] = new VectorVertex(p0_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -1f, thickness, lineShapeType);
+            vertexSpan[vIdx + 2] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, 2f, thickness, lineShapeType);
+            vertexSpan[vIdx + 3] = new VectorVertex(p1_pos, penSolidColor, p0_pos, penBrushIdx, p1_pos, -2f, thickness, lineShapeType);
 
             int iIdx = i * 6;
             indexSpan[iIdx] = idxStart;
@@ -2457,6 +4588,7 @@ public unsafe class Compositor : IDisposable
 
     private void CompileSplineCommand(IRenderDataProvider? provider, RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         var pipeline = GetExtension(CompositorBuiltInExtensions.Spline);
         if (pipeline != null)
         {
@@ -2467,6 +4599,7 @@ public unsafe class Compositor : IDisposable
 
     private void CompileFillTriangleCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         if (cmd.Brush == null) return;
         int startIndex = _vectorVerticesList.Count;
         float brushIdx = RegisterBrush(cmd.Brush);
@@ -2475,6 +4608,7 @@ public unsafe class Compositor : IDisposable
         var p1 = Vector2.Transform(cmd.Position, transform);
         var p2 = Vector2.Transform(cmd.Position2, transform);
         var p3 = Vector2.Transform(cmd.Position3, transform);
+        var fillShapeType = EncodeShapeType(cmd, 7f);
 
         uint idxStart = (uint)startIndex;
 
@@ -2482,9 +4616,9 @@ public unsafe class Compositor : IDisposable
         CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 3);
         var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 3);
 
-        vertexSpan[0] = new VectorVertex(p1, brushColor, cmd.Position, brushIdx, default, 0f, 0f, 7f);
-        vertexSpan[1] = new VectorVertex(p2, brushColor, cmd.Position2, brushIdx, default, 0f, 0f, 7f);
-        vertexSpan[2] = new VectorVertex(p3, brushColor, cmd.Position3, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[0] = new VectorVertex(p1, brushColor, cmd.Position, brushIdx, default, 0f, 0f, fillShapeType);
+        vertexSpan[1] = new VectorVertex(p2, brushColor, cmd.Position2, brushIdx, default, 0f, 0f, fillShapeType);
+        vertexSpan[2] = new VectorVertex(p3, brushColor, cmd.Position3, brushIdx, default, 0f, 0f, fillShapeType);
 
         int originalIndexCount = _vectorIndicesList.Count;
         CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 3);
@@ -2508,6 +4642,7 @@ public unsafe class Compositor : IDisposable
 
     private void CompileFillQuadCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         if (cmd.Brush == null) return;
         int startIndex = _vectorVerticesList.Count;
         float brushIdx = RegisterBrush(cmd.Brush);
@@ -2517,6 +4652,7 @@ public unsafe class Compositor : IDisposable
         var p2 = Vector2.Transform(cmd.Position2, transform);
         var p3 = Vector2.Transform(cmd.Position3, transform);
         var p4 = Vector2.Transform(cmd.Position4, transform);
+        var fillShapeType = EncodeShapeType(cmd, 7f);
 
         uint idxStart = (uint)startIndex;
 
@@ -2524,10 +4660,10 @@ public unsafe class Compositor : IDisposable
         CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
         var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-        vertexSpan[0] = new VectorVertex(p1, brushColor, cmd.Position, brushIdx, default, 0f, 0f, 7f);
-        vertexSpan[1] = new VectorVertex(p2, brushColor, cmd.Position2, brushIdx, default, 0f, 0f, 7f);
-        vertexSpan[2] = new VectorVertex(p3, brushColor, cmd.Position3, brushIdx, default, 0f, 0f, 7f);
-        vertexSpan[3] = new VectorVertex(p4, brushColor, cmd.Position4, brushIdx, default, 0f, 0f, 7f);
+        vertexSpan[0] = new VectorVertex(p1, brushColor, cmd.Position, brushIdx, default, 0f, 0f, fillShapeType);
+        vertexSpan[1] = new VectorVertex(p2, brushColor, cmd.Position2, brushIdx, default, 0f, 0f, fillShapeType);
+        vertexSpan[2] = new VectorVertex(p3, brushColor, cmd.Position3, brushIdx, default, 0f, 0f, fillShapeType);
+        vertexSpan[3] = new VectorVertex(p4, brushColor, cmd.Position4, brushIdx, default, 0f, 0f, fillShapeType);
 
         int originalIndexCount = _vectorIndicesList.Count;
         CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -2552,71 +4688,15 @@ public unsafe class Compositor : IDisposable
         }
     }
 
-    private Vector2 EvaluateBSpline(int degree, ReadOnlySpan<Vector2> controlPoints, ReadOnlySpan<double> knots, ReadOnlySpan<double> weights, double u, Matrix4x4 transform)
-    {
-        int k = -1;
-        if (u < knots[degree]) u = knots[degree];
-        if (u > knots[knots.Length - degree - 1]) u = knots[knots.Length - degree - 1];
-
-        for (int i = degree; i < knots.Length - 1; i++)
-        {
-            if (u >= knots[i] && u <= knots[i + 1])
-            {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1)
-        {
-            k = knots.Length - degree - 2;
-        }
-
-        Span<Vector3> d = stackalloc Vector3[degree + 1];
-        for (int j = 0; j <= degree; j++)
-        {
-            int idx = k - degree + j;
-            if (idx >= 0 && idx < controlPoints.Length)
-            {
-                float w = 1f;
-                if (!weights.IsEmpty && idx < weights.Length)
-                {
-                    w = (float)weights[idx];
-                }
-                d[j] = new Vector3(controlPoints[idx].X * w, controlPoints[idx].Y * w, w);
-            }
-            else
-            {
-                d[j] = Vector3.Zero;
-            }
-        }
-
-        for (int r = 1; r <= degree; r++)
-        {
-            for (int j = degree; j >= r; j--)
-            {
-                int i = k - degree + j;
-                double denom = knots[i + degree + 1 - r] - knots[i];
-                float alpha = (denom > 1e-9) ? (float)((u - knots[i]) / denom) : 0f;
-                d[j] = (1f - alpha) * d[j - 1] + alpha * d[j];
-            }
-        }
-
-        Vector3 finalH = d[degree];
-        Vector2 cartesianPt = (Math.Abs(finalH.Z) > 1e-9f) 
-            ? new Vector2(finalH.X / finalH.Z, finalH.Y / finalH.Z) 
-            : new Vector2(finalH.X, finalH.Y);
-
-        return Vector2.Transform(cartesianPt, transform);
-    }
-
     private void CompileEllipseCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Vector);
         int startIndex = _vectorVerticesList.Count;
         var center = cmd.Position2;
         var rx = cmd.RadiusX;
         var ry = cmd.RadiusY;
         var shapeSize = new Vector2(2f * rx, 2f * ry);
+        var ellipseShapeType = EncodeShapeType(cmd, 1f);
 
         if (cmd.Brush != null)
         {
@@ -2635,10 +4715,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-rx - pad, -ry - pad), bIdx, shapeSize, 0f, 0f, 1f);
-            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(rx + pad, -ry - pad), bIdx, shapeSize, 0f, 0f, 1f);
-            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(rx + pad, ry + pad), bIdx, shapeSize, 0f, 0f, 1f);
-            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-rx - pad, ry + pad), bIdx, shapeSize, 0f, 0f, 1f);
+            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-rx - pad, -ry - pad), bIdx, shapeSize, 0f, 0f, ellipseShapeType);
+            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(rx + pad, -ry - pad), bIdx, shapeSize, 0f, 0f, ellipseShapeType);
+            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(rx + pad, ry + pad), bIdx, shapeSize, 0f, 0f, ellipseShapeType);
+            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-rx - pad, ry + pad), bIdx, shapeSize, 0f, 0f, ellipseShapeType);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -2652,7 +4732,7 @@ public unsafe class Compositor : IDisposable
             indexSpan[5] = idxStart + 3;
         }
 
-        if (cmd.Pen != null)
+        if (cmd.Pen != null && cmd.Pen.Thickness > 0f)
         {
             float pad = cmd.Pen.Thickness / 2f + 1.5f;
             var p0_pos = Vector2.Transform(new Vector2(center.X - rx - pad, center.Y - ry - pad), transform);
@@ -2669,10 +4749,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-rx - pad, -ry - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
-            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(rx + pad, -ry - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
-            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(rx + pad, ry + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
-            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-rx - pad, ry + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, 1f);
+            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-rx - pad, -ry - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, ellipseShapeType);
+            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(rx + pad, -ry - pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, ellipseShapeType);
+            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(rx + pad, ry + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, ellipseShapeType);
+            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-rx - pad, ry + pad), penBrushIdx, shapeSize, 0f, cmd.Pen.Thickness, ellipseShapeType);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -2706,19 +4786,33 @@ public unsafe class Compositor : IDisposable
 
     private void CompileRoundedRectCommand(RenderCommand cmd, Matrix4x4 transform)
     {
-        int startIndex = _vectorVerticesList.Count;
         var r = cmd.Rect;
-        var radius = Math.Min(cmd.RadiusX, Math.Min(r.Width / 2f, r.Height / 2f));
+        var radiusX = Math.Min(MathF.Abs(cmd.RadiusX), r.Width / 2f);
+        var radiusY = Math.Min(MathF.Abs(cmd.RadiusY), r.Height / 2f);
 
-        if (radius <= 0f)
+        if (radiusX <= 0f || radiusY <= 0f)
         {
             CompileRectCommand(cmd, transform);
             return;
         }
 
+        if (MathF.Abs(radiusX - radiusY) > 0.0001f)
+        {
+            var pathCommand = cmd;
+            pathCommand.Type = RenderCommandType.DrawPath;
+            pathCommand.Path = PrimitivePathGeometry.CreateRoundedRectangle(r.X, r.Y, r.Width, r.Height, radiusX, radiusY);
+            pathCommand.Transform = default;
+            CompilePathCommand(pathCommand, transform);
+            return;
+        }
+
+        SwitchBatch(BatchType.Vector);
+        int startIndex = _vectorVerticesList.Count;
+        var radius = radiusX;
         float wHalf = r.Width / 2f;
         float hHalf = r.Height / 2f;
         var shapeSize = new Vector2(r.Width, r.Height);
+        var roundedRectShapeType = EncodeShapeType(cmd, 2f);
 
         if (cmd.Brush != null)
         {
@@ -2737,10 +4831,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-wHalf - pad, -hHalf - pad), bIdx, shapeSize, radius, 0f, 2f);
-            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(wHalf + pad, -hHalf - pad), bIdx, shapeSize, radius, 0f, 2f);
-            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(wHalf + pad, hHalf + pad), bIdx, shapeSize, radius, 0f, 2f);
-            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-wHalf - pad, hHalf + pad), bIdx, shapeSize, radius, 0f, 2f);
+            vertexSpan[0] = new VectorVertex(f0_pos, solidColor, new Vector2(-wHalf - pad, -hHalf - pad), bIdx, shapeSize, radius, 0f, roundedRectShapeType);
+            vertexSpan[1] = new VectorVertex(f1_pos, solidColor, new Vector2(wHalf + pad, -hHalf - pad), bIdx, shapeSize, radius, 0f, roundedRectShapeType);
+            vertexSpan[2] = new VectorVertex(f2_pos, solidColor, new Vector2(wHalf + pad, hHalf + pad), bIdx, shapeSize, radius, 0f, roundedRectShapeType);
+            vertexSpan[3] = new VectorVertex(f3_pos, solidColor, new Vector2(-wHalf - pad, hHalf + pad), bIdx, shapeSize, radius, 0f, roundedRectShapeType);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -2754,7 +4848,7 @@ public unsafe class Compositor : IDisposable
             indexSpan[5] = idxStart + 3;
         }
 
-        if (cmd.Pen != null)
+        if (cmd.Pen != null && cmd.Pen.Thickness > 0f)
         {
             float pad = cmd.Pen.Thickness / 2f + 1.5f;
             var p0_pos = Vector2.Transform(new Vector2(r.X - pad, r.Y - pad), transform);
@@ -2771,10 +4865,10 @@ public unsafe class Compositor : IDisposable
             CollectionsMarshal.SetCount(_vectorVerticesList, originalVertexCount + 4);
             var vertexSpan = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, 4);
 
-            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-wHalf - pad, -hHalf - pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
-            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(wHalf + pad, -hHalf - pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
-            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(wHalf + pad, hHalf + pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
-            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-wHalf - pad, hHalf + pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, 2f);
+            vertexSpan[0] = new VectorVertex(p0_pos, penSolidColor, new Vector2(-wHalf - pad, -hHalf - pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, roundedRectShapeType);
+            vertexSpan[1] = new VectorVertex(p1_pos, penSolidColor, new Vector2(wHalf + pad, -hHalf - pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, roundedRectShapeType);
+            vertexSpan[2] = new VectorVertex(p2_pos, penSolidColor, new Vector2(wHalf + pad, hHalf + pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, roundedRectShapeType);
+            vertexSpan[3] = new VectorVertex(p3_pos, penSolidColor, new Vector2(-wHalf - pad, hHalf + pad), penBrushIdx, shapeSize, radius, cmd.Pen.Thickness, roundedRectShapeType);
 
             int originalIndexCount = _vectorIndicesList.Count;
             CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + 6);
@@ -2803,9 +4897,11 @@ public unsafe class Compositor : IDisposable
     internal float RegisterBrush(Brush? brush)
     {
         if (brush == null) return 0f;
-        
+
         GpuBrush gpuBrush = new GpuBrush();
         gpuBrush.Opacity = brush.Opacity * _activeOpacity;
+        SetBrushCoordinateTransform(ref gpuBrush, Matrix4x4.Identity);
+        var gradientStopStart = _activeGradientStops.Count;
 
         if (brush is SolidColorBrush solid)
         {
@@ -2817,40 +4913,34 @@ public unsafe class Compositor : IDisposable
             gpuBrush.Type = 1;
             gpuBrush.StartPoint = linear.StartPoint;
             gpuBrush.EndPoint = linear.EndPoint;
-            if (linear.Stops != null)
-            {
-                gpuBrush.StopCount = (uint)Math.Min(4, linear.Stops.Length);
-                if (gpuBrush.StopCount > 0) gpuBrush.Color0 = linear.Stops[0].Color;
-                if (gpuBrush.StopCount > 1) gpuBrush.Color1 = linear.Stops[1].Color;
-                if (gpuBrush.StopCount > 2) gpuBrush.Color2 = linear.Stops[2].Color;
-                if (gpuBrush.StopCount > 3) gpuBrush.Color3 = linear.Stops[3].Color;
-
-                float o0 = gpuBrush.StopCount > 0 ? linear.Stops[0].Offset : 0f;
-                float o1 = gpuBrush.StopCount > 1 ? linear.Stops[1].Offset : 1f;
-                float o2 = gpuBrush.StopCount > 2 ? linear.Stops[2].Offset : 1f;
-                float o3 = gpuBrush.StopCount > 3 ? linear.Stops[3].Offset : 1f;
-                gpuBrush.Offsets = new Vector4(o0, o1, o2, o3);
-            }
+            SetBrushCoordinateTransform(ref gpuBrush, linear.CoordinateTransform);
+            gpuBrush.SpreadMethod = (uint)linear.SpreadMethod;
+            gpuBrush.ColorInterpolationMode = (uint)linear.ColorInterpolationMode;
+            ApplyGradientStops(ref gpuBrush, linear.Stops);
         }
         else if (brush is RadialGradientBrush radial)
         {
             gpuBrush.Type = 2;
+            gpuBrush.StartPoint = radial.GradientOrigin;
             gpuBrush.Center = radial.Center;
-            gpuBrush.Radius = radial.Radius;
-            if (radial.Stops != null)
-            {
-                gpuBrush.StopCount = (uint)Math.Min(4, radial.Stops.Length);
-                if (gpuBrush.StopCount > 0) gpuBrush.Color0 = radial.Stops[0].Color;
-                if (gpuBrush.StopCount > 1) gpuBrush.Color1 = radial.Stops[1].Color;
-                if (gpuBrush.StopCount > 2) gpuBrush.Color2 = radial.Stops[2].Color;
-                if (gpuBrush.StopCount > 3) gpuBrush.Color3 = radial.Stops[3].Color;
-
-                float o0 = gpuBrush.StopCount > 0 ? radial.Stops[0].Offset : 0f;
-                float o1 = gpuBrush.StopCount > 1 ? radial.Stops[1].Offset : 1f;
-                float o2 = gpuBrush.StopCount > 2 ? radial.Stops[2].Offset : 1f;
-                float o3 = gpuBrush.StopCount > 3 ? radial.Stops[3].Offset : 1f;
-                gpuBrush.Offsets = new Vector4(o0, o1, o2, o3);
-            }
+            gpuBrush.Radius = radial.RadiusX;
+            gpuBrush.RadiusY = radial.RadiusY;
+            SetBrushCoordinateTransform(ref gpuBrush, radial.CoordinateTransform);
+            gpuBrush.SpreadMethod = (uint)radial.SpreadMethod;
+            gpuBrush.ColorInterpolationMode = (uint)radial.ColorInterpolationMode;
+            ApplyGradientStops(ref gpuBrush, radial.Stops);
+        }
+        else if (brush is TwoPointConicalGradientBrush conical)
+        {
+            gpuBrush.Type = 5;
+            gpuBrush.StartPoint = conical.StartCenter;
+            gpuBrush.Center = conical.EndCenter;
+            gpuBrush.Radius = conical.StartRadius;
+            gpuBrush.RadiusY = conical.EndRadius;
+            SetBrushCoordinateTransform(ref gpuBrush, conical.CoordinateTransform);
+            gpuBrush.SpreadMethod = (uint)conical.SpreadMethod;
+            gpuBrush.ColorInterpolationMode = (uint)conical.ColorInterpolationMode;
+            ApplyGradientStops(ref gpuBrush, conical.Stops);
         }
         else if (brush is HatchPatternBrush hatch)
         {
@@ -2873,37 +4963,130 @@ public unsafe class Compositor : IDisposable
         {
             if (BrushesEqual(_activeBrushes[i], gpuBrush))
             {
+                TrimGradientStops((uint)gradientStopStart);
                 return (float)i;
             }
         }
 
-        if (_activeBrushes.Count < 64)
+        if (_activeBrushes.Count < 8192)
         {
             _activeBrushes.Add(gpuBrush);
             return (float)(_activeBrushes.Count - 1);
         }
 
+        TrimGradientStops((uint)gradientStopStart);
         return 0f;
     }
 
     private bool BrushesEqual(GpuBrush a, GpuBrush b)
     {
-        return a.Type == b.Type &&
-               a.Opacity == b.Opacity &&
-               a.StartPoint == b.StartPoint &&
-               a.EndPoint == b.EndPoint &&
-               a.Center == b.Center &&
-               a.Radius == b.Radius &&
-               a.StopCount == b.StopCount &&
-               a.Color0 == b.Color0 &&
-               a.Color1 == b.Color1 &&
-               a.Color2 == b.Color2 &&
-               a.Color3 == b.Color3 &&
-               a.Offsets == b.Offsets;
+        if (a.Type != b.Type ||
+            a.Opacity != b.Opacity ||
+            a.StartPoint != b.StartPoint ||
+            a.EndPoint != b.EndPoint ||
+            a.Center != b.Center ||
+            a.Radius != b.Radius ||
+            a.RadiusY != b.RadiusY ||
+            a.SpreadMethod != b.SpreadMethod ||
+            a.ColorInterpolationMode != b.ColorInterpolationMode ||
+            a.StopCount != b.StopCount ||
+            a.Color0 != b.Color0 ||
+            a.Color1 != b.Color1 ||
+            a.Color2 != b.Color2 ||
+            a.Color3 != b.Color3 ||
+            a.Color4 != b.Color4 ||
+            a.Color5 != b.Color5 ||
+            a.Color6 != b.Color6 ||
+            a.Color7 != b.Color7 ||
+            a.Offsets != b.Offsets ||
+            a.Offsets1 != b.Offsets1 ||
+            a.CoordinateTransform0 != b.CoordinateTransform0 ||
+            a.CoordinateTransform1 != b.CoordinateTransform1)
+        {
+            return false;
+        }
+
+        return !IsGradientBrushType(a.Type) || GradientStopsEqual(a, b);
+    }
+
+    private bool GradientStopsEqual(GpuBrush a, GpuBrush b)
+    {
+        for (var i = 0; i < a.StopCount; i++)
+        {
+            var left = _activeGradientStops[(int)(a.StopOffset + i)];
+            var right = _activeGradientStops[(int)(b.StopOffset + i)];
+            if (left.Color != right.Color || left.Offset != right.Offset)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void TrimGradientStops(uint start)
+    {
+        if (start < _activeGradientStops.Count)
+        {
+            _activeGradientStops.RemoveRange((int)start, _activeGradientStops.Count - (int)start);
+        }
+    }
+
+    private static bool IsGradientBrushType(uint brushType)
+    {
+        return brushType == 1 || brushType == 2 || brushType == 5;
+    }
+
+    private static void SetBrushCoordinateTransform(ref GpuBrush gpuBrush, Matrix4x4 transform)
+    {
+        gpuBrush.CoordinateTransform0 = new Vector4(transform.M11, transform.M21, transform.M41, 0f);
+        gpuBrush.CoordinateTransform1 = new Vector4(transform.M12, transform.M22, transform.M42, 0f);
+    }
+
+    private void ApplyGradientStops(ref GpuBrush gpuBrush, GradientStop[]? stops)
+    {
+        if (stops == null)
+        {
+            return;
+        }
+
+        var available = Math.Max(0, MaxGradientStops - _activeGradientStops.Count);
+        var stopCount = Math.Min(stops.Length, available);
+        gpuBrush.StopOffset = (uint)_activeGradientStops.Count;
+        gpuBrush.StopCount = (uint)stopCount;
+        for (var i = 0; i < stopCount; i++)
+        {
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = stops[i].Color,
+                Offset = stops[i].Offset
+            });
+        }
+
+        if (stopCount > 0) gpuBrush.Color0 = stops[0].Color;
+        if (stopCount > 1) gpuBrush.Color1 = stops[1].Color;
+        if (stopCount > 2) gpuBrush.Color2 = stops[2].Color;
+        if (stopCount > 3) gpuBrush.Color3 = stops[3].Color;
+        if (stopCount > 4) gpuBrush.Color4 = stops[4].Color;
+        if (stopCount > 5) gpuBrush.Color5 = stops[5].Color;
+        if (stopCount > 6) gpuBrush.Color6 = stops[6].Color;
+        if (stopCount > 7) gpuBrush.Color7 = stops[7].Color;
+
+        var o0 = stopCount > 0 ? stops[0].Offset : 0f;
+        var o1 = stopCount > 1 ? stops[1].Offset : 1f;
+        var o2 = stopCount > 2 ? stops[2].Offset : 1f;
+        var o3 = stopCount > 3 ? stops[3].Offset : 1f;
+        var o4 = stopCount > 4 ? stops[4].Offset : 1f;
+        var o5 = stopCount > 5 ? stops[5].Offset : 1f;
+        var o6 = stopCount > 6 ? stops[6].Offset : 1f;
+        var o7 = stopCount > 7 ? stops[7].Offset : 1f;
+        gpuBrush.Offsets = new Vector4(o0, o1, o2, o3);
+        gpuBrush.Offsets1 = new Vector4(o4, o5, o6, o7);
     }
 
     private void CompileTextCommand(RenderCommand cmd, ITextLayoutProvider? textNode, Matrix4x4 transform)
     {
+        SwitchBatch(BatchType.Text);
         if (ActiveCompilationContext != null && !ActiveCompilationContext.IsRecompiling)
         {
             _compiledTextRecords.Add(new StaticTextRecord { Command = cmd, Transform = transform });
@@ -2943,22 +5126,7 @@ public unsafe class Compositor : IDisposable
         var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
         color.W *= _activeOpacity;
 
-        int maxGlyphs = layout.Glyphs.Count;
-        int maxPassCount = cmd.IsBold ? 2 : 1;
-        int maxVertices = maxGlyphs * maxPassCount * 4;
-        int maxIndices = maxGlyphs * maxPassCount * 6;
-
-        int vertexStart = _textVerticesList.Count;
-        int indexStart = _textIndicesList.Count;
-
-        CollectionsMarshal.SetCount(_textVerticesList, vertexStart + maxVertices);
-        CollectionsMarshal.SetCount(_textIndicesList, indexStart + maxIndices);
-
-        var textVerticesSpan = CollectionsMarshal.AsSpan(_textVerticesList);
-        var textIndicesSpan = CollectionsMarshal.AsSpan(_textIndicesList);
-
-        int currentVertexCount = vertexStart;
-        int currentIndexCount = indexStart;
+        EnsureTextVertexCapacity(layout.Glyphs.Count * (cmd.IsBold ? 2 : 1));
 
         foreach (var runGlyph in layout.Glyphs)
         {
@@ -3011,18 +5179,19 @@ public unsafe class Compositor : IDisposable
                     {
                         Type = RenderCommandType.DrawPath,
                         Path = transformedOutline,
-                        Brush = new SolidColorBrush(layer.Color)
+                        Brush = new SolidColorBrush(layer.Color),
+                        IsEdgeAliased = cmd.TextRenderingMode == TextRenderingMode.Aliased
                     };
                     CompilePathCommand(pathCmd, activeTransform);
                 }
+
+                SwitchBatch(BatchType.Text);
                 continue;
             }
 
-            // Retrieve baseline coordinate from layout position by subtracting dummy Bear offset
             float baseCursorX = runGlyph.Position.X - runGlyph.Glyph.BearX;
             float baseCursorY = runGlyph.Position.Y - runGlyph.Glyph.BearY;
 
-            // Compute high-DPI scaling factor dynamically from the compositor target context
             float dpiScale = _currentDpiScale;
             if (ActiveCompilationContext != null && ActiveCompilationContext.StaticZoom > 0.0001f)
             {
@@ -3030,9 +5199,6 @@ public unsafe class Compositor : IDisposable
             }
 
             float physicalFontSize = cmd.FontSize * dpiScale;
-
-            // Cap the physical font size rasterized into the atlas to prevent blowout on huge zoom levels.
-            // Snap to discrete font sizes (0.5px steps below 24px, 2px steps above 24px) for perfect cache hit ratios.
             float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 64f);
             if (rasterFontSize <= 24f)
             {
@@ -3048,39 +5214,13 @@ public unsafe class Compositor : IDisposable
                              activeTransform.M11 < 0.0f ||
                              activeTransform.M22 < 0.0f;
 
-            // Compute subpixel positioning and snap vertices to integer pixels to avoid bilinear blur.
             Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), activeTransform);
-            Vector2 transPosPhysical = transPos * dpiScale;
-
-            float scaleX = new Vector2(activeTransform.M11, activeTransform.M12).Length();
-            float scaleY = new Vector2(activeTransform.M21, activeTransform.M22).Length();
-
-            byte subpixelX = 0;
-            float ipartX = 0f;
-            float snappedY = 0f;
-
-            if (!isRotated && rasterFontSize <= 24f) // Only use subpixel positioning for small text to avoid atlas bloating
-            {
-                float screenX = transPosPhysical.X;
-                float screenY = transPosPhysical.Y;
-
-                float ipartX_temp = MathF.Floor(screenX);
-                float fpartX = screenX - ipartX_temp;
-                int subIdx = (int)MathF.Round(fpartX * 4f);
-                if (subIdx == 4)
-                {
-                    subIdx = 0;
-                    ipartX_temp += 1.0f;
-                }
-                subpixelX = (byte)subIdx;
-                ipartX = ipartX_temp;
-                snappedY = MathF.Round(screenY);
-            }
-            else if (!isRotated)
-            {
-                ipartX = MathF.Round(transPosPhysical.X);
-                snappedY = MathF.Round(transPosPhysical.Y);
-            }
+            var (subpixelX, snappedLogicalPos) = ResolveTextPlacement(
+                transPos,
+                dpiScale,
+                rasterFontSize,
+                isRotated,
+                cmd.TextHintingMode);
 
             float scaleRatio = physicalFontSize / rasterFontSize;
 
@@ -3093,146 +5233,229 @@ public unsafe class Compositor : IDisposable
             for (int pass = 0; pass < passCount; pass++)
             {
                 float xOffset = pass * boldOffset;
-                Vector2 v0, v1, v2, v3;
-
-                if (!isRotated)
-                {
-                    // Position the quad in physical screen pixels scaled by scaleRatio
-                    float rx0 = ipartX + info.BearX * scaleX * scaleRatio + xOffset * scaleX * dpiScale;
-                    float ry0 = snappedY + info.BearY * scaleY * scaleRatio;
-                    float rx1 = rx0 + info.Width * scaleX * scaleRatio;
-                    float ry1 = ry0 + info.Height * scaleY * scaleRatio;
-
-                    float skewFactor = cmd.IsItalic ? 0.22f : 0f;
-                    float yBase = snappedY; // Baseline is snappedY
-
-                    float sx0 = rx0 - (ry0 - yBase) * skewFactor;
-                    float sx1 = rx1 - (ry0 - yBase) * skewFactor;
-                    float sx2 = rx1 - (ry1 - yBase) * skewFactor;
-                    float sx3 = rx0 - (ry1 - yBase) * skewFactor;
-
-                    // Divide by dpiScale to map the physical coordinates back to logical compositor projection space
-                    v0 = new Vector2(sx0, ry0) / dpiScale;
-                    v1 = new Vector2(sx1, ry0) / dpiScale;
-                    v2 = new Vector2(sx2, ry1) / dpiScale;
-                    v3 = new Vector2(sx3, ry1) / dpiScale;
-                }
-                else
-                {
-                    // Rotated text: transform each vertex individually on the CPU scaled by scaleRatio
-                    float lx0 = info.BearX / dpiScale * scaleRatio + xOffset;
-                    float ly0 = info.BearY / dpiScale * scaleRatio;
-                    float lx1 = lx0 + info.Width / dpiScale * scaleRatio;
-                    float ly1 = ly0 + info.Height / dpiScale * scaleRatio;
-
-                    float skewFactor = cmd.IsItalic ? 0.22f : 0f;
-                    float yBase = 0f;
-
-                    float lsx0 = lx0 - (ly0 - yBase) * skewFactor;
-                    float lsx1 = lx1 - (ly0 - yBase) * skewFactor;
-                    float lsx2 = lx1 - (ly1 - yBase) * skewFactor;
-                    float lsx3 = lx0 - (ly1 - yBase) * skewFactor;
-
-                    Vector2 localP0 = new Vector2(baseCursorX + cmd.Position.X + lsx0, baseCursorY + cmd.Position.Y + ly0);
-                    Vector2 localP1 = new Vector2(baseCursorX + cmd.Position.X + lsx1, baseCursorY + cmd.Position.Y + ly0);
-                    Vector2 localP2 = new Vector2(baseCursorX + cmd.Position.X + lsx2, baseCursorY + cmd.Position.Y + ly1);
-                    Vector2 localP3 = new Vector2(baseCursorX + cmd.Position.X + lsx3, baseCursorY + cmd.Position.Y + ly1);
-
-                    v0 = Vector2.Transform(localP0, activeTransform);
-                    v1 = Vector2.Transform(localP1, activeTransform);
-                    v2 = Vector2.Transform(localP2, activeTransform);
-                    v3 = Vector2.Transform(localP3, activeTransform);
-                }
-
-                uint idxStart = (uint)currentVertexCount;
-
-                // Set dynamic UV texture mappings
-                var uv0 = new Vector2(info.TexCoordMin.X, info.TexCoordMin.Y);
-                var uv1 = new Vector2(info.TexCoordMax.X, info.TexCoordMin.Y);
-                var uv2 = new Vector2(info.TexCoordMax.X, info.TexCoordMax.Y);
-                var uv3 = new Vector2(info.TexCoordMin.X, info.TexCoordMax.Y);
 
                 if (_activeClipRect.HasValue && !_useGpuTransformsActive)
                 {
-                    if (isRotated)
+                    float halfSize = cmd.FontSize * 2f;
+                    float minX = snappedLogicalPos.X - halfSize;
+                    float maxX = snappedLogicalPos.X + halfSize;
+                    float minY = snappedLogicalPos.Y - halfSize;
+                    float maxY = snappedLogicalPos.Y + halfSize;
+
+                    float clipLeft = _activeClipRect.Value.X;
+                    float clipTop = _activeClipRect.Value.Y;
+                    float clipRight = clipLeft + _activeClipRect.Value.Width;
+                    float clipBottom = clipTop + _activeClipRect.Value.Height;
+
+                    if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
                     {
-                        // For rotated text, a simple axis-aligned vertex crop would distort the geometry and scramble the UVs.
-                        // Instead, we perform a bounding-box intersection check. If it is completely outside, we discard it.
-                        // If it is inside or partially inside, we render it uncropped to preserve its exact rotation and texture alignment.
-                        float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
-                        float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
-                        float minY = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
-                        float maxY = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
-
-                        float clipLeft = _activeClipRect.Value.X;
-                        float clipTop = _activeClipRect.Value.Y;
-                        float clipRight = clipLeft + _activeClipRect.Value.Width;
-                        float clipBottom = clipTop + _activeClipRect.Value.Height;
-
-                        if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
-                        {
-                            continue; // Completely clipped!
-                        }
-                    }
-                    else
-                    {
-                        float rcxStart = v0.X;
-                        float rcyStart = v0.Y;
-                        float rcxEnd = v2.X;
-                        float rcyEnd = v2.Y;
-
-                        float cx1 = Math.Max(rcxStart, _activeClipRect.Value.X);
-                        float cy1 = Math.Max(rcyStart, _activeClipRect.Value.Y);
-                        float cx2 = Math.Min(rcxEnd, _activeClipRect.Value.X + _activeClipRect.Value.Width);
-                        float cy2 = Math.Min(rcyEnd, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
-
-                        if (cx2 <= cx1 || cy2 <= cy1) continue; // Completely clipped!
-
-                        float dx = rcxEnd - rcxStart;
-                        float dy = rcyEnd - rcyStart;
-
-                        uv0 = new Vector2(
-                            info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-                        uv1 = new Vector2(
-                            info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy1 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-                        uv2 = new Vector2(
-                            info.TexCoordMin.X + (cx2 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-                        uv3 = new Vector2(
-                            info.TexCoordMin.X + (cx1 - rcxStart) / dx * (info.TexCoordMax.X - info.TexCoordMin.X),
-                            info.TexCoordMin.Y + (cy2 - rcyStart) / dy * (info.TexCoordMax.Y - info.TexCoordMin.Y)
-                        );
-
-                        v0 = new Vector2(cx1, cy1);
-                        v1 = new Vector2(cx2, cy1);
-                        v2 = new Vector2(cx2, cy2);
-                        v3 = new Vector2(cx1, cy2);
+                        continue;
                     }
                 }
 
-                textVerticesSpan[currentVertexCount++] = new VectorVertex(v0, color, uv0, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
-                textVerticesSpan[currentVertexCount++] = new VectorVertex(v1, color, uv1, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
-                textVerticesSpan[currentVertexCount++] = new VectorVertex(v2, color, uv2, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
-                textVerticesSpan[currentVertexCount++] = new VectorVertex(v3, color, uv3, bIdx, cornerRadius: DefaultTextGamma, strokeThickness: DefaultTextContrast);
+                Vector2 basisX = new Vector2(activeTransform.M11, activeTransform.M12);
+                Vector2 basisY = new Vector2(activeTransform.M21, activeTransform.M22);
 
-                // Quads Triangle Indices
-                textIndicesSpan[currentIndexCount++] = idxStart;
-                textIndicesSpan[currentIndexCount++] = idxStart + 1;
-                textIndicesSpan[currentIndexCount++] = idxStart + 2;
-
-                textIndicesSpan[currentIndexCount++] = idxStart;
-                textIndicesSpan[currentIndexCount++] = idxStart + 2;
-                textIndicesSpan[currentIndexCount++] = idxStart + 3;
+                _textVerticesList.Add(new GlyphInstance
+                {
+                    SnappedLogicalPos = snappedLogicalPos,
+                    BasisX = basisX,
+                    BasisY = basisY,
+                    BearSize = new Vector4(info.BearX, info.BearY, info.Width, info.Height),
+                    TexCoords = new Vector4(info.TexCoordMin.X, info.TexCoordMin.Y, info.TexCoordMax.X, info.TexCoordMax.Y),
+                    Color = color,
+                    ScaleBoldItalicUseMvp = new Vector4(scaleRatio, xOffset, cmd.IsItalic ? 0.22f : 0f, EncodeTextFlags(ActiveCompilationContext != null, cmd.TextRenderingMode)),
+                    BrushIndex = bIdx,
+                    Padding = 0f
+                });
             }
         }
+    }
 
-        CollectionsMarshal.SetCount(_textVerticesList, currentVertexCount);
-        CollectionsMarshal.SetCount(_textIndicesList, currentIndexCount);
+    private void CompileGlyphRunCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        SwitchBatch(BatchType.Text);
+        if (ActiveCompilationContext != null && !ActiveCompilationContext.IsRecompiling)
+        {
+            _compiledTextRecords.Add(new StaticTextRecord { Command = cmd, Transform = transform });
+        }
+
+        var activeTransform = transform;
+        if (MathF.Abs(cmd.Rotation) > 0.0001f)
+        {
+            var localMat = Matrix4x4.CreateTranslation(-cmd.Position.X, -cmd.Position.Y, 0f) *
+                           Matrix4x4.CreateRotationZ(cmd.Rotation) *
+                           Matrix4x4.CreateTranslation(cmd.Position.X, cmd.Position.Y, 0f);
+            activeTransform = localMat * activeTransform;
+        }
+
+        var font = cmd.Font;
+        if (font == null || cmd.GlyphIndices == null || cmd.GlyphPositions == null) return;
+
+        float bIdx = RegisterBrush(cmd.Brush);
+        var brush = cmd.Brush as SolidColorBrush;
+        var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
+        color.W *= _activeOpacity;
+
+        EnsureTextVertexCapacity(cmd.GlyphIndices.Length * (cmd.IsBold ? 2 : 1));
+
+        float dpiScale = _currentDpiScale;
+        if (ActiveCompilationContext != null && ActiveCompilationContext.StaticZoom > 0.0001f)
+        {
+            dpiScale *= ActiveCompilationContext.StaticZoom;
+        }
+
+        float physicalFontSize = cmd.FontSize * dpiScale;
+        float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 64f);
+        if (rasterFontSize <= 24f)
+        {
+            rasterFontSize = MathF.Round(rasterFontSize * 2f) / 2f;
+        }
+        else
+        {
+            rasterFontSize = MathF.Round(rasterFontSize / 2f) * 2f;
+        }
+
+        bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
+                         MathF.Abs(activeTransform.M21) > 0.0001f ||
+                         activeTransform.M11 < 0.0f ||
+                         activeTransform.M22 < 0.0f;
+
+        for (int i = 0; i < cmd.GlyphIndices.Length; i++)
+        {
+            ushort glyphIdx = cmd.GlyphIndices[i];
+            Vector2 position = cmd.GlyphPositions[i];
+
+            var colorLayers = font.GetColorLayers(glyphIdx);
+
+            if (colorLayers != null && colorLayers.Count > 0)
+            {
+                foreach (var layer in colorLayers)
+                {
+                    var layerOutline = font.GetGlyphOutline(layer.GlyphId);
+                    if (layerOutline == null) continue;
+
+                    float emScale = cmd.FontSize / font.UnitsPerEm;
+                    var transformedOutline = new PathGeometry();
+                    float x0 = position.X + cmd.Position.X;
+                    float y0 = position.Y + cmd.Position.Y;
+
+                    foreach (var fig in layerOutline.Figures)
+                    {
+                        Vector2 startPt = new Vector2(x0 + fig.StartPoint.X * emScale, y0 - fig.StartPoint.Y * emScale);
+                        var newFig = new PathFigure(startPt) { IsClosed = fig.IsClosed, IsFilled = fig.IsFilled };
+                        foreach (var seg in fig.Segments)
+                        {
+                            if (seg is LineSegment ls)
+                            {
+                                newFig.Segments.Add(new LineSegment(new Vector2(x0 + ls.Point.X * emScale, y0 - ls.Point.Y * emScale)));
+                            }
+                            else if (seg is QuadraticBezierSegment qbs)
+                            {
+                                newFig.Segments.Add(new QuadraticBezierSegment(
+                                    new Vector2(x0 + qbs.ControlPoint.X * emScale, y0 - qbs.ControlPoint.Y * emScale),
+                                    new Vector2(x0 + qbs.Point.X * emScale, y0 - qbs.Point.Y * emScale)
+                                ));
+                            }
+                            else if (seg is CubicBezierSegment cbs)
+                            {
+                                newFig.Segments.Add(new CubicBezierSegment(
+                                    new Vector2(x0 + cbs.ControlPoint1.X * emScale, y0 - cbs.ControlPoint1.Y * emScale),
+                                    new Vector2(x0 + cbs.ControlPoint2.X * emScale, y0 - cbs.ControlPoint2.Y * emScale),
+                                    new Vector2(x0 + cbs.Point.X * emScale, y0 - cbs.Point.Y * emScale)
+                                ));
+                            }
+                        }
+                        transformedOutline.Figures.Add(newFig);
+                    }
+
+                    var pathCmd = new RenderCommand
+                    {
+                        Type = RenderCommandType.DrawPath,
+                        Path = transformedOutline,
+                        Brush = new SolidColorBrush(layer.Color),
+                        IsEdgeAliased = cmd.TextRenderingMode == TextRenderingMode.Aliased
+                    };
+                    CompilePathCommand(pathCmd, activeTransform);
+                }
+
+                SwitchBatch(BatchType.Text);
+                continue;
+            }
+
+            float baseCursorX = position.X;
+            float baseCursorY = position.Y;
+
+            Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), activeTransform);
+            var (subpixelX, snappedLogicalPos) = ResolveTextPlacement(
+                transPos,
+                dpiScale,
+                rasterFontSize,
+                isRotated,
+                cmd.TextHintingMode);
+
+            float scaleRatio = physicalFontSize / rasterFontSize;
+
+            var info = _atlas.GetOrCreateGlyphByIndex(font, glyphIdx, rasterFontSize, subpixelX);
+            if (info.Width == 0 || info.Height == 0) continue;
+
+            int passCount = cmd.IsBold ? 2 : 1;
+            float boldOffset = cmd.FontSize * 0.035f;
+
+            for (int pass = 0; pass < passCount; pass++)
+            {
+                float xOffset = pass * boldOffset;
+
+                if (_activeClipRect.HasValue && !_useGpuTransformsActive)
+                {
+                    float halfSize = cmd.FontSize * 2f;
+                    float minX = snappedLogicalPos.X - halfSize;
+                    float maxX = snappedLogicalPos.X + halfSize;
+                    float minY = snappedLogicalPos.Y - halfSize;
+                    float maxY = snappedLogicalPos.Y + halfSize;
+
+                    float clipLeft = _activeClipRect.Value.X;
+                    float clipTop = _activeClipRect.Value.Y;
+                    float clipRight = clipLeft + _activeClipRect.Value.Width;
+                    float clipBottom = clipTop + _activeClipRect.Value.Height;
+
+                    if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
+                    {
+                        continue;
+                    }
+                }
+
+                Vector2 basisX = new Vector2(activeTransform.M11, activeTransform.M12);
+                Vector2 basisY = new Vector2(activeTransform.M21, activeTransform.M22);
+
+                _textVerticesList.Add(new GlyphInstance
+                {
+                    SnappedLogicalPos = snappedLogicalPos,
+                    BasisX = basisX,
+                    BasisY = basisY,
+                    BearSize = new Vector4(info.BearX, info.BearY, info.Width, info.Height),
+                    TexCoords = new Vector4(info.TexCoordMin.X, info.TexCoordMin.Y, info.TexCoordMax.X, info.TexCoordMax.Y),
+                    Color = color,
+                    ScaleBoldItalicUseMvp = new Vector4(scaleRatio, xOffset, cmd.IsItalic ? 0.22f : 0f, EncodeTextFlags(ActiveCompilationContext != null, cmd.TextRenderingMode)),
+                    BrushIndex = bIdx,
+                    Padding = 0f
+                });
+            }
+        }
+    }
+
+    private void EnsureTextVertexCapacity(int additionalCapacity)
+    {
+        if (additionalCapacity <= 0)
+        {
+            return;
+        }
+
+        int requiredCapacity = _textVerticesList.Count + additionalCapacity;
+        if (_textVerticesList.Capacity < requiredCapacity)
+        {
+            _textVerticesList.Capacity = requiredCapacity;
+        }
     }
 
     private void CompileTextureCommand(RenderCommand cmd, Matrix4x4 transform)
@@ -3242,7 +5465,16 @@ public unsafe class Compositor : IDisposable
         CommitPendingDrawCalls();
 
         var r = cmd.Rect;
-        var color = new Vector4(1f, 1f, 1f, _activeOpacity);
+        var textureOpacity = cmd.TextureSamplingMode == TextureSamplingMode.Cubic
+            ? -_activeOpacity
+            : _activeOpacity;
+        var isPremultiplied = cmd.Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied;
+        var premultipliedOpacityScale = isPremultiplied ? _activeOpacity : 1f;
+        var color = new Vector4(
+            premultipliedOpacityScale,
+            isPremultiplied ? 1f : 0f,
+            premultipliedOpacityScale,
+            textureOpacity);
 
         var v0 = Vector2.Transform(new Vector2(r.X, r.Y), transform);
         var v1 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
@@ -3251,10 +5483,28 @@ public unsafe class Compositor : IDisposable
 
         uint idxStart = (uint)_textureVerticesList.Count;
 
-        var uv0 = new Vector2(0f, 0f);
-        var uv1 = new Vector2(1f, 0f);
-        var uv2 = new Vector2(1f, 1f);
-        var uv3 = new Vector2(0f, 1f);
+        Vector2 uv0, uv1, uv2, uv3;
+        if (cmd.SrcRect.Width > 0f && cmd.SrcRect.Height > 0f)
+        {
+            float texW = cmd.Texture.Width;
+            float texH = cmd.Texture.Height;
+            float l = cmd.SrcRect.X / texW;
+            float t = cmd.SrcRect.Y / texH;
+            float right = (cmd.SrcRect.X + cmd.SrcRect.Width) / texW;
+            float b = (cmd.SrcRect.Y + cmd.SrcRect.Height) / texH;
+
+            uv0 = new Vector2(l, t);
+            uv1 = new Vector2(right, t);
+            uv2 = new Vector2(right, b);
+            uv3 = new Vector2(l, b);
+        }
+        else
+        {
+            uv0 = new Vector2(0f, 0f);
+            uv1 = new Vector2(1f, 0f);
+            uv2 = new Vector2(1f, 1f);
+            uv3 = new Vector2(0f, 1f);
+        }
 
         bool isRotated = MathF.Abs(transform.M12) > 0.0001f ||
                          MathF.Abs(transform.M21) > 0.0001f ||
@@ -3262,52 +5512,34 @@ public unsafe class Compositor : IDisposable
                          transform.M22 < 0.0f;
         if (_activeClipRect.HasValue && !_useGpuTransformsActive)
         {
-            if (isRotated)
+            float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+            float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+            float minY = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
+            float maxY = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
+
+            float clipLeft = _activeClipRect.Value.X;
+            float clipTop = _activeClipRect.Value.Y;
+            float clipRight = clipLeft + _activeClipRect.Value.Width;
+            float clipBottom = clipTop + _activeClipRect.Value.Height;
+
+            if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
             {
-                // For rotated textures, a simple axis-aligned vertex crop would distort the geometry and scramble the UVs.
-                // Instead, we perform a bounding-box intersection check. If it is completely outside, we discard it.
-                // If it is inside or partially inside, we render it uncropped to preserve its exact rotation and texture alignment.
-                float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
-                float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
-                float minY = MathF.Min(MathF.Min(v0.Y, v1.Y), MathF.Min(v2.Y, v3.Y));
-                float maxY = MathF.Max(MathF.Max(v0.Y, v1.Y), MathF.Max(v2.Y, v3.Y));
-
-                float clipLeft = _activeClipRect.Value.X;
-                float clipTop = _activeClipRect.Value.Y;
-                float clipRight = clipLeft + _activeClipRect.Value.Width;
-                float clipBottom = clipTop + _activeClipRect.Value.Height;
-
-                if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom)
-                {
-                    return; // Completely clipped!
-                }
+                return; // Completely clipped!
             }
-            else
+
+            if (!isRotated &&
+                !QuadClipper.TryClipAxisAlignedQuad(
+                    _activeClipRect.Value,
+                    ref v0,
+                    ref v1,
+                    ref v2,
+                    ref v3,
+                    ref uv0,
+                    ref uv1,
+                    ref uv2,
+                    ref uv3))
             {
-                float rx1 = v0.X;
-                float ry1 = v0.Y;
-                float rx2 = v2.X;
-                float ry2 = v2.Y;
-
-                float cx1 = Math.Max(rx1, _activeClipRect.Value.X);
-                float cy1 = Math.Max(ry1, _activeClipRect.Value.Y);
-                float cx2 = Math.Min(rx2, _activeClipRect.Value.X + _activeClipRect.Value.Width);
-                float cy2 = Math.Min(ry2, _activeClipRect.Value.Y + _activeClipRect.Value.Height);
-
-                if (cx2 <= cx1 || cy2 <= cy1) return; // Completely clipped!
-
-                float dx = rx2 - rx1;
-                float dy = ry2 - ry1;
-
-                uv0 = new Vector2((cx1 - rx1) / dx, (cy1 - ry1) / dy);
-                uv1 = new Vector2((cx2 - rx1) / dx, (cy1 - ry1) / dy);
-                uv2 = new Vector2((cx2 - rx1) / dx, (cy2 - ry1) / dy);
-                uv3 = new Vector2((cx1 - rx1) / dx, (cy2 - ry1) / dy);
-
-                v0 = new Vector2(cx1, cy1);
-                v1 = new Vector2(cx2, cy1);
-                v2 = new Vector2(cx2, cy2);
-                v3 = new Vector2(cx1, cy2);
+                return;
             }
         }
 
@@ -3337,37 +5569,89 @@ public unsafe class Compositor : IDisposable
             IndexStart = (uint)(_textureIndicesList.Count - 6),
             IndexCount = 6,
             Texture = cmd.Texture,
-            ClipRect = _activeClipRect
+            ClipRect = _activeClipRect,
+            MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+            BlendMode = _activeBlendMode,
+            TextureSamplingMode = cmd.TextureSamplingMode,
+            TextureAlphaMode = cmd.Texture.AlphaMode
         });
     }
 
-    private void CommitPendingDrawCalls()
+    internal Sampler* GetTextureSampler(TextureSamplingMode samplingMode)
+    {
+        return samplingMode == TextureSamplingMode.Nearest && _nearestTextureSampler != null
+            ? _nearestTextureSampler
+            : _atlasSampler;
+    }
+
+    private void CommitPendingVectorDrawCall()
     {
         uint vecCount = (uint)_vectorIndicesList.Count - _pendingVectorStart;
         if (vecCount > 0)
         {
-            _drawCalls.Add(new CompositorDrawCall 
-            { 
-                Type = DrawCallType.Vector, 
-                IndexStart = _pendingVectorStart, 
+            _drawCalls.Add(new CompositorDrawCall
+            {
+                Type = DrawCallType.Vector,
+                IndexStart = _pendingVectorStart,
                 IndexCount = vecCount,
-                ClipRect = _activeClipRect
+                ClipRect = _activeClipRect,
+                MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                BlendMode = _activeBlendMode
             });
             _pendingVectorStart = (uint)_vectorIndicesList.Count;
         }
+    }
 
-        uint textCount = (uint)_textIndicesList.Count - _pendingTextStart;
+    private void CommitPendingTextDrawCall()
+    {
+        uint textCount = (uint)_textVerticesList.Count - _pendingTextStart;
         if (textCount > 0)
         {
-            _drawCalls.Add(new CompositorDrawCall 
-            { 
-                Type = DrawCallType.Text, 
-                IndexStart = _pendingTextStart, 
+            _drawCalls.Add(new CompositorDrawCall
+            {
+                Type = DrawCallType.Text,
+                IndexStart = _pendingTextStart,
                 IndexCount = textCount,
-                ClipRect = _activeClipRect
+                ClipRect = _activeClipRect,
+                MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                BlendMode = _activeBlendMode
             });
-            _pendingTextStart = (uint)_textIndicesList.Count;
+            _pendingTextStart = (uint)_textVerticesList.Count;
         }
+    }
+
+    private void SwitchBatch(BatchType nextType)
+    {
+        if (_currentBatchType == nextType) return;
+
+        if (_currentBatchType == BatchType.Vector)
+        {
+            CommitPendingVectorDrawCall();
+        }
+        else if (_currentBatchType == BatchType.Text)
+        {
+            CommitPendingTextDrawCall();
+        }
+
+        _currentBatchType = nextType;
+    }
+
+    private void CommitPendingDrawCalls()
+    {
+        if (_currentBatchType == BatchType.Vector)
+        {
+            CommitPendingVectorDrawCall();
+        }
+        else if (_currentBatchType == BatchType.Text)
+        {
+            CommitPendingTextDrawCall();
+        }
+        else
+        {
+            CommitPendingVectorDrawCall();
+            CommitPendingTextDrawCall();
+        }
+        _currentBatchType = BatchType.None;
     }
 
     private void EnsureBufferSize(ref GpuBuffer buffer, uint requiredSize, BufferUsage usage)
@@ -3376,7 +5660,7 @@ public unsafe class Compositor : IDisposable
 
         uint newSize = Math.Max(buffer.Size * 2, requiredSize);
         buffer.Dispose();
-        
+
         string lbl = usage == BufferUsage.Vertex ? "Vector/Text Resize Vertex Buffer" : "Vector/Text Resize Index Buffer";
         buffer = new GpuBuffer(_context, newSize, usage | BufferUsage.CopyDst, lbl);
     }
@@ -3385,90 +5669,152 @@ public unsafe class Compositor : IDisposable
     {
         if (_isDisposed) return;
 
-        ReleaseMsaaResources();
-
-        _uniformBuffer.Dispose();
-        _brushesStorageBuffer.Dispose();
-        _vectorVertexBuffer.Dispose();
-        _vectorIndexBuffer.Dispose();
-        _textVertexBuffer.Dispose();
-        _textIndexBuffer.Dispose();
-        _textureVertexBuffer.Dispose();
-        _textureIndexBuffer.Dispose();
-        
-        _atlas.Dispose();
-        _pathAtlas.Dispose();
-        
-        lock (_registeredExtensions)
+        lock (_context.RenderLock)
         {
-            foreach (var ext in _registeredExtensions)
+            ReleaseMsaaResources();
+
+            _uniformBuffer.Dispose();
+            _brushesStorageBuffer.Dispose();
+            _gradientStopsStorageBuffer.Dispose();
+            _vectorVertexBuffer.Dispose();
+            _vectorIndexBuffer.Dispose();
+            _textVertexBuffer.Dispose();
+            _textureVertexBuffer.Dispose();
+            _textureIndexBuffer.Dispose();
+            _lastHitTestDeviceIndex?.Dispose();
+            _lastHitTestDeviceIndex = null;
+            LastHitTestIndex = null;
+
+            _atlas.Dispose();
+            _pathAtlas.Dispose();
+
+            lock (_registeredExtensions)
             {
-                if (ext is IDisposable disposable)
+                foreach (var ext in _registeredExtensions)
                 {
-                    disposable.Dispose();
+                    if (ext is IDisposable disposable)
+                    {
+                        disposable.Dispose();
+                    }
                 }
             }
+
+            if (!_context.IsDisposed)
+            {
+                if (_pathAtlasBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_pathAtlasBindGroup);
+                if (_pathAtlasBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_pathAtlasBindGroupLayout);
+                if (_pathAtlasBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_pathAtlasBindGroupOffscreen);
+                if (_pathAtlasBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_pathAtlasBindGroupLayoutOffscreen);
+            }
+            _pipelineCache.Dispose();
+            _compute.Dispose();
+            foreach (var tuple in _effectTextures.Values)
+            {
+                tuple.Source.Dispose();
+                tuple.Temp.Dispose();
+                tuple.Destination.Dispose();
+            }
+            _effectTextures.Clear();
+
+            foreach (var entry in _allocatedLayerTextures)
+            {
+                if (ReferenceEquals(entry.Key.LayerTexture, entry.Value))
+                {
+                    entry.Key.LayerTexture = null;
+                }
+
+                entry.Value.Dispose();
+            }
+            _allocatedLayerTextures.Clear();
+            _activeLayerTextureOwners.Clear();
+
+            if (!_context.IsDisposed)
+            {
+                if (_atlasSampler != null) _context.QueueSamplerDisposal((IntPtr)_atlasSampler);
+                if (_nearestTextureSampler != null) _context.QueueSamplerDisposal((IntPtr)_nearestTextureSampler);
+
+                if (_vectorUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroup);
+                if (_vectorUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroupOffscreen);
+                if (_textUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_textUniformBindGroup);
+                if (_textUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_textUniformBindGroupOffscreen);
+                if (_textureUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_textureUniformBindGroup);
+                if (_textureUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_textureUniformBindGroupOffscreen);
+
+                if (_vectorUniformBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_vectorUniformBindGroupLayout);
+                if (_vectorUniformBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_vectorUniformBindGroupLayoutOffscreen);
+                if (_textUniformBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textUniformBindGroupLayout);
+                if (_textUniformBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textUniformBindGroupLayoutOffscreen);
+                if (_textureUniformBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureUniformBindGroupLayout);
+                if (_textureUniformBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureUniformBindGroupLayoutOffscreen);
+
+                if (_vectorPipelineLayout != null) _context.QueuePipelineLayoutDisposal((IntPtr)_vectorPipelineLayout);
+                if (_textPipelineLayout != null) _context.QueuePipelineLayoutDisposal((IntPtr)_textPipelineLayout);
+                if (_texturePipelineLayout != null) _context.QueuePipelineLayoutDisposal((IntPtr)_texturePipelineLayout);
+                if (_vectorPipelineLayoutOffscreen != null) _context.QueuePipelineLayoutDisposal((IntPtr)_vectorPipelineLayoutOffscreen);
+                if (_textPipelineLayoutOffscreen != null) _context.QueuePipelineLayoutDisposal((IntPtr)_textPipelineLayoutOffscreen);
+                if (_texturePipelineLayoutOffscreen != null) _context.QueuePipelineLayoutDisposal((IntPtr)_texturePipelineLayoutOffscreen);
+
+                if (_atlasBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_atlasBindGroup);
+                if (_atlasBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_atlasBindGroupOffscreen);
+                if (_atlasBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_atlasBindGroupLayout);
+                if (_atlasBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_atlasBindGroupLayoutOffscreen);
+
+                if (_texturePipeline != null) _context.QueueRenderPipelineDisposal((IntPtr)_texturePipeline);
+                if (_textureBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureBindGroupLayout);
+                if (_textureBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_textureBindGroupLayoutOffscreen);
+
+                if (_chartLinePipeline != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartLinePipeline);
+                if (_chartScatterPipeline != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartScatterPipeline);
+                if (_chartLinePipelineOffscreen != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartLinePipelineOffscreen);
+                if (_chartScatterPipelineOffscreen != null) _context.QueueRenderPipelineDisposal((IntPtr)_chartScatterPipelineOffscreen);
+
+                if (_chartLineBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_chartLineBindGroupLayout);
+                if (_chartScatterBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_chartScatterBindGroupLayout);
+            }
+
+            lock (_persistentTextureBindGroups)
+            {
+                if (!_context.IsDisposed)
+                {
+                    foreach (var cachedBg in _persistentTextureBindGroups.Values)
+                    {
+                        if (cachedBg.BindGroupPtr != 0) _context.QueueBindGroupDisposal((IntPtr)cachedBg.BindGroupPtr);
+                    }
+                }
+                _persistentTextureBindGroups.Clear();
+            }
+
+            GpuTexture.OnDisposedWithId -= HandleTextureDisposed;
+
+            if (_dummyMaskTexture != null) _dummyMaskTexture.Dispose();
+            if (!_context.IsDisposed)
+            {
+                if (_dummyMaskBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_dummyMaskBindGroup);
+                if (_dummyMaskBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_dummyMaskBindGroupOffscreen);
+                if (_maskBindGroupLayout != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_maskBindGroupLayout);
+                if (_maskBindGroupLayoutOffscreen != null) _context.QueueBindGroupLayoutDisposal((IntPtr)_maskBindGroupLayoutOffscreen);
+
+                foreach (var bg in _maskBindGroups.Values)
+                {
+                    _context.QueueBindGroupDisposal((IntPtr)bg);
+                }
+                foreach (var bg in _maskBindGroupsOffscreen.Values)
+                {
+                    _context.QueueBindGroupDisposal((IntPtr)bg);
+                }
+            }
+            _maskBindGroups.Clear();
+            _maskBindGroupsOffscreen.Clear();
+
+            var pooledMaskTextures = _maskTexturePool.ToArray();
+            _maskTexturePool.Clear();
+            foreach (var tex in pooledMaskTextures)
+            {
+                tex.Dispose();
+            }
+
+            _isDisposed = true;
         }
-        
-        if (_pathAtlasBindGroup != null) _context.Wgpu.BindGroupRelease(_pathAtlasBindGroup);
-        if (_pathAtlasBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_pathAtlasBindGroupLayout);
-        if (_pathAtlasBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_pathAtlasBindGroupOffscreen);
-        if (_pathAtlasBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_pathAtlasBindGroupLayoutOffscreen);
-        _pipelineCache.Dispose();
-        _compute.Dispose();
-        foreach (var tuple in _effectTextures.Values)
-        {
-            tuple.Source.Dispose();
-            tuple.Temp.Dispose();
-            tuple.Destination.Dispose();
-        }
-        _effectTextures.Clear();
-
-        foreach (var tex in _allocatedLayerTextures)
-        {
-            tex.Dispose();
-        }
-        _allocatedLayerTextures.Clear();
-
-        if (_atlasSampler != null) _context.Wgpu.SamplerRelease(_atlasSampler);
-
-        if (_vectorUniformBindGroup != null) _context.Wgpu.BindGroupRelease(_vectorUniformBindGroup);
-        if (_vectorUniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_vectorUniformBindGroupOffscreen);
-        if (_textUniformBindGroup != null) _context.Wgpu.BindGroupRelease(_textUniformBindGroup);
-        if (_textUniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_textUniformBindGroupOffscreen);
-        if (_textureUniformBindGroup != null) _context.Wgpu.BindGroupRelease(_textureUniformBindGroup);
-        if (_textureUniformBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_textureUniformBindGroupOffscreen);
-
-        if (_vectorUniformBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_vectorUniformBindGroupLayout);
-        if (_vectorUniformBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_vectorUniformBindGroupLayoutOffscreen);
-        if (_textUniformBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_textUniformBindGroupLayout);
-        if (_textUniformBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_textUniformBindGroupLayoutOffscreen);
-        if (_textureUniformBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_textureUniformBindGroupLayout);
-        if (_textureUniformBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_textureUniformBindGroupLayoutOffscreen);
-
-        if (_atlasBindGroup != null) _context.Wgpu.BindGroupRelease(_atlasBindGroup);
-        if (_atlasBindGroupOffscreen != null) _context.Wgpu.BindGroupRelease(_atlasBindGroupOffscreen);
-        if (_atlasBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_atlasBindGroupLayout);
-        if (_atlasBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_atlasBindGroupLayoutOffscreen);
-
-        if (_texturePipeline != null) _context.Wgpu.RenderPipelineRelease(_texturePipeline);
-        if (_textureBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_textureBindGroupLayout);
-        if (_textureBindGroupLayoutOffscreen != null) _context.Wgpu.BindGroupLayoutRelease(_textureBindGroupLayoutOffscreen);
-
-        if (_chartLinePipeline != null) _context.Wgpu.RenderPipelineRelease(_chartLinePipeline);
-        if (_chartScatterPipeline != null) _context.Wgpu.RenderPipelineRelease(_chartScatterPipeline);
-        if (_chartLinePipelineOffscreen != null) _context.Wgpu.RenderPipelineRelease(_chartLinePipelineOffscreen);
-        if (_chartScatterPipelineOffscreen != null) _context.Wgpu.RenderPipelineRelease(_chartScatterPipelineOffscreen);
-        if (_chartLineBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_chartLineBindGroupLayout);
-        if (_chartScatterBindGroupLayout != null) _context.Wgpu.BindGroupLayoutRelease(_chartScatterBindGroupLayout);
-
-        foreach (var cachedBg in _persistentTextureBindGroups.Values)
-        {
-            if (cachedBg.BindGroupPtr != 0) _context.Wgpu.BindGroupRelease((BindGroup*)cachedBg.BindGroupPtr);
-        }
-        _persistentTextureBindGroups.Clear();
-
-        _isDisposed = true;
         GC.SuppressFinalize(this);
     }
 
@@ -3520,17 +5866,27 @@ public unsafe class Compositor : IDisposable
 
     private void ReleaseMsaaResources()
     {
-        if (_msaaTextureView != null)
+        lock (_context.RenderLock)
         {
-            _context.Wgpu.TextureViewRelease(_msaaTextureView);
-            _msaaTextureView = null;
-        }
+            if (_context.IsDisposed)
+            {
+                _msaaTextureView = null;
+                _msaaTexture = null;
+                return;
+            }
 
-        if (_msaaTexture != null)
-        {
-            _context.Wgpu.TextureDestroy(_msaaTexture);
-            _context.Wgpu.TextureRelease(_msaaTexture);
-            _msaaTexture = null;
+            if (_msaaTextureView != null)
+            {
+                _context.Wgpu.TextureViewRelease(_msaaTextureView);
+                _msaaTextureView = null;
+            }
+
+            if (_msaaTexture != null)
+            {
+                _context.Wgpu.TextureDestroy(_msaaTexture);
+                _context.Wgpu.TextureRelease(_msaaTexture);
+                _msaaTexture = null;
+            }
         }
     }
 
@@ -3539,83 +5895,237 @@ public unsafe class Compositor : IDisposable
         return p;
     }
 
-    private unsafe void ApplyDrawCallScissor(RenderPassEncoder* pass, CompositorDrawCall dc)
+    private unsafe bool ApplyDrawCallScissor(
+        RenderPassEncoder* pass,
+        CompositorDrawCall dc,
+        bool useRenderTargetViewport)
     {
-        uint targetWidth = (uint)Math.Round(_currentWidth * _currentDpiScale);
-        uint targetHeight = (uint)Math.Round(_currentHeight * _currentDpiScale);
+        uint viewportX = useRenderTargetViewport ? CurrentCanvasPixelXUInt : 0u;
+        uint viewportY = useRenderTargetViewport ? CurrentCanvasPixelYUInt : 0u;
+        uint targetWidth = CurrentCanvasPixelWidthUInt;
+        uint targetHeight = CurrentCanvasPixelHeightUInt;
 
         if (dc.ClipRect.HasValue)
         {
-            var rect = dc.ClipRect.Value;
-            float rx = Math.Max(0f, rect.X * _currentDpiScale);
-            float ry = Math.Max(0f, rect.Y * _currentDpiScale);
-            float rw = Math.Max(0f, rect.Width * _currentDpiScale);
-            float rh = Math.Max(0f, rect.Height * _currentDpiScale);
-
-            uint sx = (uint)Math.Round(rx);
-            uint sy = (uint)Math.Round(ry);
-            uint sw = (uint)Math.Round(rw);
-            uint sh = (uint)Math.Round(rh);
-
-            sw = Math.Max(1u, sw);
-            sh = Math.Max(1u, sh);
-
-            if (sx < targetWidth && sy < targetHeight)
+            if (!TryComputeScissorRect(
+                    dc.ClipRect.Value,
+                    _currentDpiScale,
+                    viewportX,
+                    viewportY,
+                    targetWidth,
+                    targetHeight,
+                    out uint sx,
+                    out uint sy,
+                    out uint sw,
+                    out uint sh))
             {
-                sw = Math.Min(sw, targetWidth - sx);
-                sh = Math.Min(sh, targetHeight - sy);
-                _context.Wgpu.RenderPassEncoderSetScissorRect(pass, sx, sy, sw, sh);
+                return false;
             }
-            else
-            {
-                _context.Wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, 1, 1);
-            }
+
+            _context.Wgpu.RenderPassEncoderSetScissorRect(pass, sx, sy, sw, sh);
+            return true;
         }
-        else
+
+        _context.Wgpu.RenderPassEncoderSetScissorRect(pass, viewportX, viewportY, targetWidth, targetHeight);
+        return true;
+    }
+
+    private static bool TryComputeScissorRect(
+        Rect rect,
+        float dpiScale,
+        uint viewportX,
+        uint viewportY,
+        uint targetWidth,
+        uint targetHeight,
+        out uint sx,
+        out uint sy,
+        out uint sw,
+        out uint sh)
+    {
+        sx = 0;
+        sy = 0;
+        sw = 0;
+        sh = 0;
+
+        if (dpiScale <= 0f ||
+            targetWidth == 0 ||
+            targetHeight == 0)
         {
-            _context.Wgpu.RenderPassEncoderSetScissorRect(pass, 0, 0, targetWidth, targetHeight);
+            return false;
         }
+
+        float clipLeft = rect.X * dpiScale;
+        float clipTop = rect.Y * dpiScale;
+        float clipRight = (rect.X + rect.Width) * dpiScale;
+        float clipBottom = (rect.Y + rect.Height) * dpiScale;
+
+        if (!float.IsFinite(clipLeft) ||
+            !float.IsFinite(clipTop) ||
+            !float.IsFinite(clipRight) ||
+            !float.IsFinite(clipBottom) ||
+            clipRight <= clipLeft ||
+            clipBottom <= clipTop)
+        {
+            return false;
+        }
+
+        float viewportLeft = 0f;
+        float viewportTop = 0f;
+        float viewportRight = targetWidth;
+        float viewportBottom = targetHeight;
+
+        float clippedLeft = Math.Max(viewportLeft, clipLeft);
+        float clippedTop = Math.Max(viewportTop, clipTop);
+        float clippedRight = Math.Min(viewportRight, clipRight);
+        float clippedBottom = Math.Min(viewportBottom, clipBottom);
+
+        if (clippedRight <= clippedLeft ||
+            clippedBottom <= clippedTop)
+        {
+            return false;
+        }
+
+        uint localX = (uint)Math.Floor(clippedLeft);
+        uint localY = (uint)Math.Floor(clippedTop);
+        uint localRight = (uint)Math.Ceiling(clippedRight);
+        uint localBottom = (uint)Math.Ceiling(clippedBottom);
+
+        if (localRight <= localX ||
+            localBottom <= localY)
+        {
+            return false;
+        }
+
+        sx = viewportX + localX;
+        sy = viewportY + localY;
+        sw = Math.Min(localRight, targetWidth) - localX;
+        sh = Math.Min(localBottom, targetHeight) - localY;
+        return sw > 0 && sh > 0;
+    }
+
+    private unsafe void ApplyRenderPassViewport(
+        RenderPassEncoder* pass,
+        uint targetWidth,
+        uint targetHeight,
+        bool useRenderTargetViewport)
+    {
+        targetWidth = Math.Max(1u, targetWidth);
+        targetHeight = Math.Max(1u, targetHeight);
+        var viewport = useRenderTargetViewport
+            ? NormalizeRenderTargetViewport(
+                _explicitRenderTargetViewport ?? RenderTargetViewport.Full(targetWidth, targetHeight),
+                targetWidth,
+                targetHeight)
+            : RenderTargetViewport.Full(targetWidth, targetHeight);
+        _context.Wgpu.RenderPassEncoderSetViewport(
+            pass,
+            viewport.X,
+            viewport.Y,
+            viewport.Width,
+            viewport.Height,
+            0f,
+            1f);
+    }
+
+    private static RenderTargetViewport NormalizeRenderTargetViewport(
+        RenderTargetViewport viewport,
+        uint targetWidth,
+        uint targetHeight)
+    {
+        float targetWidthF = Math.Max(1u, targetWidth);
+        float targetHeightF = Math.Max(1u, targetHeight);
+        float x = ClampFinite(viewport.X, 0f, MathF.Max(0f, targetWidthF - 1f));
+        float y = ClampFinite(viewport.Y, 0f, MathF.Max(0f, targetHeightF - 1f));
+        float width = IsPositiveFinite(viewport.Width)
+            ? viewport.Width
+            : targetWidthF - x;
+        float height = IsPositiveFinite(viewport.Height)
+            ? viewport.Height
+            : targetHeightF - y;
+
+        width = Math.Clamp(width, 1f, MathF.Max(1f, targetWidthF - x));
+        height = Math.Clamp(height, 1f, MathF.Max(1f, targetHeightF - y));
+        return new RenderTargetViewport(x, y, width, height);
+    }
+
+    private static float ClampFinite(float value, float min, float max)
+    {
+        return float.IsFinite(value)
+            ? Math.Clamp(value, min, max)
+            : min;
+    }
+
+    private static bool IsPositiveFinite(float value)
+    {
+        return float.IsFinite(value) && value > 0f;
+    }
+
+    private static uint RoundNonNegativeToUInt(float value)
+    {
+        if (!float.IsFinite(value) || value <= 0f)
+        {
+            return 0u;
+        }
+
+        return (uint)Math.Round(value);
     }
 
     ~Compositor()
     {
-        Dispose();
+        // Do not call Dispose() or native WebGPU release APIs during finalization.
     }
 
     // Helper methods for real-time drop shadows and Gaussian/backdrop blurs
     private void ApplyAndDrawEffect(Visual fe, Matrix4x4 parentTransform)
     {
         if (fe.Size.X <= 0f || fe.Size.Y <= 0f) return;
+        var effect = fe.Effect;
+        if (effect == null) return;
 
         float blurRadius = 0f;
         float padding = 0f;
 
-        if (fe.Effect is BlurEffect blur)
+        if (effect is BlurEffect blur)
         {
             blurRadius = blur.BlurRadius;
             padding = MathF.Ceiling(blurRadius * 2f);
         }
-        else if (fe.Effect is DropShadowEffect shadow)
+        else if (effect is DropShadowEffect shadow)
         {
             blurRadius = shadow.BlurRadius;
             padding = MathF.Ceiling(blurRadius * 2f);
         }
+        else if (effect is WpfShaderEffect shaderEffect)
+        {
+            padding = MathF.Ceiling(MathF.Max(0f, shaderEffect.Padding));
+        }
 
-
-        uint w = (uint)(fe.Size.X + padding * 2f);
-        uint h = (uint)(fe.Size.Y + padding * 2f);
+        float dpiScale = _currentDpiScale > 0f ? _currentDpiScale : 1f;
+        float logicalWidth = MathF.Max(1f, fe.Size.X + padding * 2f);
+        float logicalHeight = MathF.Max(1f, fe.Size.Y + padding * 2f);
+        uint logicalRenderWidth = (uint)MathF.Ceiling(logicalWidth);
+        uint logicalRenderHeight = (uint)MathF.Ceiling(logicalHeight);
+        uint w = (uint)MathF.Ceiling(logicalWidth * dpiScale);
+        uint h = (uint)MathF.Ceiling(logicalHeight * dpiScale);
 
         bool hasCached = _effectTextures.TryGetValue(fe, out var textures);
-        bool needsUpdate = !hasCached || fe.IsDirty;
+        int effectCacheKey = effect.GetRenderCacheKey();
+        bool hasCachedEffectKey = _effectCacheKeys.TryGetValue(fe, out var cachedEffectKey);
+        bool needsUpdate = !hasCached ||
+            fe.IsDirty ||
+            !hasCachedEffectKey ||
+            cachedEffectKey != effectCacheKey ||
+            textures.Source.Width != w ||
+            textures.Source.Height != h;
 
         if (needsUpdate)
         {
             if (!hasCached)
             {
-                var source = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Effect Source");
-                var temp = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Temp");
-                var destination = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Destination");
-                
+                var source = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Effect Source", alphaMode: GpuTextureAlphaMode.Premultiplied);
+                var temp = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Temp", alphaMode: GpuTextureAlphaMode.Premultiplied);
+                var destination = new GpuTexture(_context, w, h, TextureFormat.Rgba8Unorm, TextureUsage.TextureBinding | TextureUsage.StorageBinding, "Effect Destination", alphaMode: GpuTextureAlphaMode.Premultiplied);
+
                 textures = (source, temp, destination);
                 _effectTextures[fe] = textures;
             }
@@ -3630,7 +6140,15 @@ public unsafe class Compositor : IDisposable
             try
             {
                 // 1. Render the subtree of fe offscreen centered into textures.Source (offset by padding)
-                RenderOffscreen(fe, w, h, textures.Source, padding, 1.0f);
+                RenderOffscreen(
+                    fe,
+                    logicalRenderWidth,
+                    logicalRenderHeight,
+                    textures.Source,
+                    padding,
+                    dpiScale,
+                    includeRootTransform: false,
+                    includeRootVisualState: false);
             }
             finally
             {
@@ -3642,44 +6160,57 @@ public unsafe class Compositor : IDisposable
             {
                 if (blurEffect.BlurRadius > 0.01f)
                 {
-                    _compute.ApplyGaussianBlur(textures.Source, textures.Temp, textures.Destination, blurEffect.BlurRadius);
+                    _compute.ApplyGaussianBlur(textures.Source, textures.Temp, textures.Destination, blurEffect.BlurRadius * dpiScale);
                 }
             }
             else if (fe.Effect is DropShadowEffect shadowEffect)
             {
                 // We pass zero offset to the compute shader because we handle offset dynamically in DrawTextureOnMain on the CPU
-                _compute.ApplyDropShadow(textures.Source, textures.Temp, textures.Destination, Vector2.Zero, shadowEffect.Color, shadowEffect.BlurRadius);
+                _compute.ApplyDropShadow(textures.Source, textures.Temp, textures.Destination, Vector2.Zero, shadowEffect.Color, shadowEffect.BlurRadius * dpiScale);
             }
 
+            _effectCacheKeys[fe] = effectCacheKey;
         }
 
-        // Draw the cached texture onto the main swapchain
-        if (fe.Effect is BlurEffect bEff)
+        var compositeTransform = fe.GetLocalTransform() * parentTransform;
+        var paddedRect = new Rect(-padding, -padding, logicalWidth, logicalHeight);
+        var compositeScope = PushVisualCompositeScope(fe, compositeTransform, parentTransform);
+        try
         {
-            if (bEff.BlurRadius <= 0.01f)
+            // Draw the cached texture onto the main swapchain.
+            if (fe.Effect is BlurEffect bEff)
             {
-                // Draw original source directly (no blur!)
-                var controlRect = new Rect(fe.Offset - new Vector2(padding, padding), new Vector2(w, h));
-                DrawTextureOnMain(textures.Source, controlRect, parentTransform);
+                if (bEff.BlurRadius <= 0.01f)
+                {
+                    // Draw original source directly (no blur!)
+                    DrawTextureOnMain(textures.Source, paddedRect, compositeTransform, fe.HitTestId);
+                }
+                else
+                {
+                    // Draw the blurred result back onto the main screen (shifted back by padding)
+                    DrawTextureOnMain(textures.Destination, paddedRect, compositeTransform, fe.HitTestId);
+                }
             }
-            else
+            else if (fe.Effect is DropShadowEffect sEff)
             {
-                // Draw the blurred result back onto the main screen (shifted back by padding)
-                var controlRect = new Rect(fe.Offset - new Vector2(padding, padding), new Vector2(w, h));
-                DrawTextureOnMain(textures.Destination, controlRect, parentTransform);
-            }
-        }
-        else if (fe.Effect is DropShadowEffect sEff)
-        {
-            // Draw blurred shadow first (at offset, shifted back by padding)
-            var shadowRect = new Rect(fe.Offset + sEff.Offset - new Vector2(padding, padding), new Vector2(w, h));
-            DrawTextureOnMain(textures.Destination, shadowRect, parentTransform);
-            
-            // Draw original source on top (shifted back by padding)
-            var controlRect = new Rect(fe.Offset - new Vector2(padding, padding), new Vector2(w, h));
-            DrawTextureOnMain(textures.Source, controlRect, parentTransform);
-        }
+                // Draw blurred shadow first (at offset, shifted back by padding)
+                var shadowRect = new Rect(
+                    sEff.Offset - new Vector2(padding, padding),
+                    new Vector2(logicalWidth, logicalHeight));
+                DrawTextureOnMain(textures.Destination, shadowRect, compositeTransform, fe.HitTestId);
 
+                // Draw original source on top (shifted back by padding)
+                DrawTextureOnMain(textures.Source, paddedRect, compositeTransform, fe.HitTestId);
+            }
+            else if (fe.Effect is WpfShaderEffect shaderEffect)
+            {
+                DrawWpfShaderEffectOnMain(fe, shaderEffect, textures.Source, paddedRect, compositeTransform);
+            }
+        }
+        finally
+        {
+            PopVisualCompositeScope(compositeScope);
+        }
 
         fe.IsDirty = false;
     }
@@ -3689,31 +6220,52 @@ public unsafe class Compositor : IDisposable
         if (node.Size.X <= 0f || node.Size.Y <= 0f) return;
 
         // Compute high-DPI scaling factor dynamically from the compositor target context
-        float dpiScale = _currentDpiScale;
+        float dpiScale = _currentDpiScale > 0f ? _currentDpiScale : 1f;
 
-        uint w = (uint)MathF.Max(1f, node.Size.X * dpiScale);
-        uint h = (uint)MathF.Max(1f, node.Size.Y * dpiScale);
+        uint logicalRenderWidth = (uint)MathF.Max(1f, MathF.Ceiling(node.Size.X));
+        uint logicalRenderHeight = (uint)MathF.Max(1f, MathF.Ceiling(node.Size.Y));
+        uint w = (uint)MathF.Max(1f, MathF.Ceiling(node.Size.X * dpiScale));
+        uint h = (uint)MathF.Max(1f, MathF.Ceiling(node.Size.Y * dpiScale));
+
+        if (node.LayerTexture != null
+            && (node.LayerTexture.IsDisposed || !ReferenceEquals(node.LayerTexture.Context, _context)))
+        {
+            ReleaseLayerTexture(node, node.LayerTexture);
+        }
+
+        _activeLayerTextureOwners.Add(node);
 
         bool hasCached = node.LayerTexture != null;
-        bool needsUpdate = !hasCached || node.IsDirty;
+        bool cachedTextureSizeChanged = hasCached
+            && (node.LayerTexture!.Width != w || node.LayerTexture.Height != h);
+        bool needsUpdate = !hasCached || node.IsDirty || cachedTextureSizeChanged;
 
         if (needsUpdate)
         {
             if (node.LayerTexture == null)
             {
-                node.LayerTexture = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Layer Cache Texture");
-                _allocatedLayerTextures.Add(node.LayerTexture);
+                node.LayerTexture = new GpuTexture(_context, w, h, RenderFormat, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Layer Cache Texture", alphaMode: GpuTextureAlphaMode.Premultiplied);
+                _allocatedLayerTextures[node] = node.LayerTexture;
             }
             else if (node.LayerTexture.Width != w || node.LayerTexture.Height != h)
             {
                 node.LayerTexture.Resize(w, h);
+                _allocatedLayerTextures[node] = node.LayerTexture;
             }
 
             _elementsRenderingLayers.Add(node);
             try
             {
                 // Render the subtree of node offscreen centered with 0 padding into node.LayerTexture
-                RenderOffscreen(node, (uint)node.Size.X, (uint)node.Size.Y, node.LayerTexture, 0f, dpiScale);
+                RenderOffscreen(
+                    node,
+                    logicalRenderWidth,
+                    logicalRenderHeight,
+                    node.LayerTexture,
+                    0f,
+                    dpiScale,
+                    includeRootTransform: false,
+                    includeRootVisualState: false);
             }
             finally
             {
@@ -3721,14 +6273,83 @@ public unsafe class Compositor : IDisposable
             }
         }
 
-        // Draw the cached layer texture onto the main swapchain
-        var controlRect = new Rect(node.Offset, node.Size);
-        DrawTextureOnMain(node.LayerTexture!, controlRect, parentTransform);
+        var controlRect = new Rect(Vector2.Zero, node.Size);
+        var compositeTransform = node.GetLocalTransform() * parentTransform;
+        var compositeScope = PushVisualCompositeScope(node, compositeTransform, parentTransform);
+        try
+        {
+            // Draw the cached layer texture onto the main swapchain.
+            DrawTextureOnMain(node.LayerTexture!, controlRect, compositeTransform, node.HitTestId);
+        }
+        finally
+        {
+            PopVisualCompositeScope(compositeScope);
+        }
 
         node.IsDirty = false;
     }
 
-    private void DrawTextureOnMain(GpuTexture texture, Rect localRect, Matrix4x4 parentTransform)
+    private VisualCompositeScope PushVisualCompositeScope(
+        Visual node,
+        Matrix4x4 compositeTransform,
+        Matrix4x4 parentTransform)
+    {
+        var scope = VisualCompositeScope.None;
+        if (node.ClipBounds.HasValue)
+        {
+            PushClipRect(node.ClipBounds.Value, compositeTransform);
+            PushHitTestClip(node.ClipBounds.Value, compositeTransform);
+            scope |= VisualCompositeScope.Clip;
+        }
+
+        if (node.OuterClipBounds.HasValue)
+        {
+            PushClipRect(node.OuterClipBounds.Value, parentTransform);
+            PushHitTestClip(node.OuterClipBounds.Value, parentTransform);
+            scope |= VisualCompositeScope.OuterClip;
+        }
+
+        if (node.Opacity < 1.0f)
+        {
+            PushOpacityValue(node.Opacity);
+            scope |= VisualCompositeScope.Opacity;
+        }
+
+        if (node.OpacityMask != null && node.OpacityMaskBounds.HasValue)
+        {
+            PushOpacityMaskValue(node.OpacityMask, node.OpacityMaskBounds.Value, compositeTransform);
+            scope |= VisualCompositeScope.OpacityMask;
+        }
+
+        return scope;
+    }
+
+    private void PopVisualCompositeScope(VisualCompositeScope scope)
+    {
+        if ((scope & VisualCompositeScope.OpacityMask) != 0)
+        {
+            PopOpacityMaskValue();
+        }
+
+        if ((scope & VisualCompositeScope.Opacity) != 0)
+        {
+            PopOpacityValue();
+        }
+
+        if ((scope & VisualCompositeScope.OuterClip) != 0)
+        {
+            PopHitTestClip();
+            PopClipRect();
+        }
+
+        if ((scope & VisualCompositeScope.Clip) != 0)
+        {
+            PopHitTestClip();
+            PopClipRect();
+        }
+    }
+
+    private void DrawTextureOnMain(GpuTexture texture, Rect localRect, Matrix4x4 parentTransform, int hitTestId = 0)
     {
         var cmd = new RenderCommand
         {
@@ -3736,17 +6357,125 @@ public unsafe class Compositor : IDisposable
             Texture = texture,
             Rect = localRect
         };
+        if (hitTestId != 0)
+        {
+            AddHitTestCommand(cmd, parentTransform, hitTestId);
+        }
+
         CompileTextureCommand(cmd, parentTransform);
     }
 
-    public void RenderOffscreen(Visual node, uint width, uint height, GpuTexture targetTexture, float padding, float dpiScale)
+    private void DrawWpfShaderEffectOnMain(
+        Visual visual,
+        WpfShaderEffect effect,
+        GpuTexture sourceTexture,
+        Rect localRect,
+        Matrix4x4 parentTransform)
     {
+        var pipeline = GetExtension(CompositorBuiltInExtensions.WpfShaderEffect);
+        if (pipeline == null)
+        {
+            DrawTextureOnMain(sourceTexture, localRect, parentTransform, visual.HitTestId);
+            return;
+        }
+
+        if (visual.HitTestId != 0)
+        {
+            AddHitTestCommand(
+                new RenderCommand
+                {
+                    Type = RenderCommandType.DrawTexture,
+                    Rect = localRect
+                },
+                parentTransform,
+                visual.HitTestId);
+        }
+
+        CommitPendingDrawCalls();
+
+        if (!_wpfShaderEffectDrawParams.TryGetValue(visual, out var parameters))
+        {
+            parameters = new WpfShaderEffectParams();
+            _wpfShaderEffectDrawParams[visual] = parameters;
+        }
+
+        effect.UpdateDrawParameters(parameters, sourceTexture, localRect);
+
+        var cmd = new RenderCommand
+        {
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = CompositorBuiltInExtensions.WpfShaderEffect,
+            DataParam = parameters
+        };
+
+        pipeline.Compile(this, null, parentTransform, ref cmd);
+        var cmdTransform = cmd.Transform;
+        if (cmdTransform == default || cmdTransform == new Matrix4x4())
+        {
+            cmdTransform = Matrix4x4.Identity;
+        }
+
+        _drawCalls.Add(new CompositorDrawCall
+        {
+            Type = DrawCallType.Extension,
+            ExtensionId = cmd.ExtensionId,
+            IntParam = cmd.IntParam,
+            FloatParam = cmd.FloatParam,
+            DataParam = cmd.DataParam,
+            PointBufferOffset = (int)_pendingVectorStart,
+            PointBufferCount = (int)((uint)_vectorIndicesList.Count - _pendingVectorStart),
+            DoubleBufferOffset = cmd.DoubleBufferOffset,
+            DoubleBufferCount = cmd.DoubleBufferCount,
+            WeightBufferOffset = cmd.WeightBufferOffset,
+            WeightBufferCount = cmd.WeightBufferCount,
+            FloatBufferOffset = cmd.FloatBufferOffset,
+            FloatBufferCount = cmd.FloatBufferCount,
+            StaticBuffer = cmd.StaticBuffer,
+            Brush = cmd.Brush,
+            Pen = cmd.Pen,
+            Path = cmd.Path,
+            Transform = parentTransform * cmdTransform,
+            LineThicknessOrRadius = cmd.RadiusX,
+            Scale = cmd.Scale,
+            Translate = cmd.Translate,
+            Color = ResolveDrawCallBrushColor(cmd.Brush),
+            ClipRect = _activeClipRect,
+            MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+            BlendMode = _activeBlendMode
+        });
+
+        _pendingVectorStart = (uint)_vectorIndicesList.Count;
+        _pendingTextStart = (uint)_textVerticesList.Count;
+    }
+
+    public void RenderOffscreen(
+        Visual node,
+        uint width,
+        uint height,
+        GpuTexture targetTexture,
+        float padding,
+        float dpiScale,
+        Vector4? clearColor = null,
+        bool loadExistingContents = false,
+        bool includeRootTransform = true,
+        bool includeRootVisualState = true)
+    {
+        using var currentContextScope = WgpuContext.PushCurrent(_context);
+
         var savedWidth = _currentWidth;
         var savedHeight = _currentHeight;
         var savedDpiScale = _currentDpiScale;
+        var savedExplicitRenderTargetWidth = _explicitRenderTargetWidth;
+        var savedExplicitRenderTargetHeight = _explicitRenderTargetHeight;
+        var savedExplicitRenderTargetViewport = _explicitRenderTargetViewport;
+        var savedExplicitDpiScale = _explicitDpiScale;
         _currentWidth = width;
         _currentHeight = height;
-        _currentDpiScale = dpiScale;
+        _currentDpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
+        _explicitRenderTargetWidth = Math.Max(1u, targetTexture.Width);
+        _explicitRenderTargetHeight = Math.Max(1u, targetTexture.Height);
+        _explicitRenderTargetViewport = null;
+        _explicitDpiScale = _currentDpiScale;
 
         // 1. Calculate orthographic projection matrix for offscreen
         var projection = new Matrix4x4(
@@ -3762,51 +6491,74 @@ public unsafe class Compositor : IDisposable
         var savedVectorVertices = _vectorVerticesList.ToArray();
         var savedVectorIndices = _vectorIndicesList.ToArray();
         var savedTextVertices = _textVerticesList.ToArray();
-        var savedTextIndices = _textIndicesList.ToArray();
         var savedTextureVertices = _textureVerticesList.ToArray();
         var savedTextureIndices = _textureIndicesList.ToArray();
         var savedDrawCalls = _drawCalls.ToArray();
         var savedActiveBrushes = _activeBrushes.ToArray();
+        var savedActiveGradientStops = _activeGradientStops.ToArray();
         var savedClipStack = _clipStack.ToArray();
+        var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
         var savedActiveClipRect = _activeClipRect;
         var savedOpacityStack = _opacityStack.ToArray();
         var savedActiveOpacity = _activeOpacity;
         var savedPendingVectorStart = _pendingVectorStart;
         var savedPendingTextStart = _pendingTextStart;
+        var savedCurrentBatchType = _currentBatchType;
 
         var savedUseGpuTransformsActive = _useGpuTransformsActive;
         var savedCameraViewMatrix = _cameraViewMatrix;
         var savedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
         var savedGpuTransformsCameraView = _gpuTransformsCameraView;
 
+        var savedBlendModeStack = _blendModeStack.ToArray();
+        var savedActiveBlendMode = _activeBlendMode;
+        var savedMaskStack = _maskStack.ToArray();
+        var savedMaskRenderPasses = _maskRenderPasses.ToArray();
+        var savedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+        var savedSuspendHitTestCacheWrites = _suspendHitTestCacheWrites;
+
         _useGpuTransformsActive = false;
         _cameraViewMatrix = Matrix4x4.Identity;
         _hasGpuTransformsInFrame = false;
         _gpuTransformsCameraView = Matrix4x4.Identity;
+        _suspendHitTestCacheWrites = true;
 
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
-        _textIndicesList.Clear();
         _textureVerticesList.Clear();
         _textureIndicesList.Clear();
         _drawCalls.Clear();
         _activeBrushes.Clear();
+        _activeGradientStops.Clear();
         _clipStack.Clear();
+        _clipScopeIsGeometryMask.Clear();
         _activeClipRect = null;
         _opacityStack.Clear();
         _activeOpacity = 1.0f;
+        _currentBatchType = BatchType.None;
 
-        // Save offset and temporarily set to padding to render centered in the inflated offscreen texture
-        var oldOffset = node.Offset;
-        node.Offset = new Vector2(padding, padding);
+        _blendModeStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _maskStack.Clear();
+        _maskRenderPasses.Clear();
+        _masksToReturnToPool.Clear();
 
         _pendingVectorStart = 0;
         _pendingTextStart = 0;
 
-        CompileVisualTree(node, Matrix4x4.Identity);
+        var extensionFrame = BeginExtensionFrame();
+        CommandEncoder* encoder = null;
+        var extensionFrameEnded = false;
+        try
+        {
 
-        node.Offset = oldOffset;
+        CompileVisualTree(
+            node,
+            Matrix4x4.Identity,
+            new Vector2(padding, padding),
+            includeRootTransform,
+            includeRootVisualState);
 
         CommitPendingDrawCalls();
 
@@ -3824,13 +6576,8 @@ public unsafe class Compositor : IDisposable
 
         if (_textVerticesList.Count > 0)
         {
-            EnsureBufferSize(ref _textVertexBuffer, (uint)_textVerticesList.Count * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex);
+            EnsureBufferSize(ref _textVertexBuffer, (uint)_textVerticesList.Count * (uint)Marshal.SizeOf<GlyphInstance>(), BufferUsage.Vertex);
             _textVertexBuffer.Write(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_textVerticesList));
-        }
-        if (_textIndicesList.Count > 0)
-        {
-            EnsureBufferSize(ref _textIndexBuffer, (uint)_textIndicesList.Count * 4, BufferUsage.Index);
-            _textIndexBuffer.Write(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_textIndicesList));
         }
 
         if (_textureVerticesList.Count > 0)
@@ -3848,12 +6595,18 @@ public unsafe class Compositor : IDisposable
         {
             Projection = projection,
             Mvp = _hasGpuTransformsInFrame ? Matrix4x4.Identity : projection,
-            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity
+            View = _hasGpuTransformsInFrame ? _gpuTransformsCameraView : Matrix4x4.Identity,
+            CanvasSize = new Vector2(targetTexture.Width, targetTexture.Height),
+            DpiScale = _currentDpiScale
         };
         _uniformBuffer.WriteSingle(uniformsData);
         if (_activeBrushes.Count > 0)
         {
             _brushesStorageBuffer.Write(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_activeBrushes));
+        }
+        if (_activeGradientStops.Count > 0)
+        {
+            _gradientStopsStorageBuffer.Write(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_activeGradientStops));
         }
         _pathAtlas.RasterizePendingPaths();
 
@@ -3862,17 +6615,26 @@ public unsafe class Compositor : IDisposable
 
         // Render pass for offscreen (1x MSAA)
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Offscreen Compositor Encoder") };
-        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
 
+        // Run mask render passes first!
+        ExecuteMaskRenderPasses(encoder, isOffscreen: true);
+
         // Clear with transparent color
+        var clearVal = new Color { R = 0, G = 0, B = 0, A = 0 };
+        if (clearColor.HasValue)
+        {
+            clearVal = new Color { R = clearColor.Value.X, G = clearColor.Value.Y, B = clearColor.Value.Z, A = clearColor.Value.W };
+        }
+
         var colorAttachment = new RenderPassColorAttachment
         {
             View = targetView,
             ResolveTarget = null,
-            LoadOp = LoadOp.Clear,
+            LoadOp = loadExistingContents ? LoadOp.Load : LoadOp.Clear,
             StoreOp = StoreOp.Store,
-            ClearValue = new Color { R = 0, G = 0, B = 0, A = 0 }
+            ClearValue = clearVal
         };
 
         var passDesc = new RenderPassDescriptor
@@ -3883,18 +6645,28 @@ public unsafe class Compositor : IDisposable
         };
 
         var pass = _context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
+        ApplyRenderPassViewport(pass, targetTexture.Width, targetTexture.Height, useRenderTargetViewport: false);
 
         DrawCallType? currentType = null;
+        GpuBlendMode? currentBlendMode = null;
+        GpuTexture? currentMaskTexture = null;
         var textureEntries = stackalloc BindGroupEntry[2];
 
         foreach (var dc in _drawCalls)
         {
-            ApplyDrawCallScissor(pass, dc);
+            if (!ApplyDrawCallScissor(pass, dc, useRenderTargetViewport: false))
+            {
+                continue;
+            }
+
             if (dc.Type == DrawCallType.Vector)
             {
-                if (currentType != DrawCallType.Vector)
+                var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: true);
+                var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: true);
+
+                if (currentType != DrawCallType.Vector || currentBlendMode != dc.BlendMode)
                 {
-                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, _vectorPipelineOffscreen);
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                     fixed (BindGroup** pGrp = &_vectorUniformBindGroupOffscreen)
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -3903,18 +6675,30 @@ public unsafe class Compositor : IDisposable
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pPathAtlas, 0, null);
                     }
-                    var buffer = _vectorVertexBuffer.BufferPtr;
-                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
-                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
                     currentType = DrawCallType.Vector;
+                    currentBlendMode = dc.BlendMode;
+                    currentMaskTexture = dc.MaskTexture;
                 }
+                else if (currentMaskTexture != dc.MaskTexture)
+                {
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                    currentMaskTexture = dc.MaskTexture;
+                }
+
+                var buffer = _vectorVertexBuffer.BufferPtr;
+                _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
+                _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
                 _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
             }
             else if (dc.Type == DrawCallType.Text)
             {
-                if (currentType != DrawCallType.Text)
+                var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: true);
+                var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: true);
+
+                if (currentType != DrawCallType.Text || currentBlendMode != dc.BlendMode)
                 {
-                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, _textPipelineOffscreen);
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                     fixed (BindGroup** pGrp = &_textUniformBindGroupOffscreen)
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -3923,16 +6707,32 @@ public unsafe class Compositor : IDisposable
                     {
                         _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pAtlas, 0, null);
                     }
-                    var buffer = _textVertexBuffer.BufferPtr;
-                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
-                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textIndexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
                     currentType = DrawCallType.Text;
+                    currentBlendMode = dc.BlendMode;
+                    currentMaskTexture = dc.MaskTexture;
                 }
-                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
+                else if (currentMaskTexture != dc.MaskTexture)
+                {
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                    currentMaskTexture = dc.MaskTexture;
+                }
+
+                var buffer = _textVertexBuffer.BufferPtr;
+                _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
+                _context.Wgpu.RenderPassEncoderDraw(pass, 6, dc.IndexCount, 0, dc.IndexStart);
             }
-            else if (dc.Type == DrawCallType.Texture && dc.Texture != null)
+            else if (dc.Type == DrawCallType.Texture && IsTextureBindable(dc.Texture))
             {
-                _context.Wgpu.RenderPassEncoderSetPipeline(pass, _texturePipelineOffscreen);
+                var texture = dc.Texture!;
+                var activePipeline = GetPipeline(
+                    dc.Type,
+                    dc.BlendMode,
+                    isOffscreen: true,
+                    textureAlphaMode: dc.TextureAlphaMode);
+                var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: true);
+
+                _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
                 fixed (BindGroup** pGrp = &_textureUniformBindGroupOffscreen)
                 {
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -3940,24 +6740,35 @@ public unsafe class Compositor : IDisposable
                 var buffer = _textureVertexBuffer.BufferPtr;
                 _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textureVertexBuffer.Size);
                 _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textureIndexBuffer.Size);
-                currentType = DrawCallType.Texture;
-
-                var viewPtr = dc.Texture.ViewPtr;
-                var cacheKey = new TextureCacheKey(dc.Texture.Id, dc.Texture.Generation, isOffscreen: true);
-
-                if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out var cachedBg))
+                if (currentMaskTexture != dc.MaskTexture || currentType != DrawCallType.Texture || currentBlendMode != dc.BlendMode)
                 {
-                    textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = _atlasSampler };
-                    textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
-
-                    var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayoutOffscreen, EntryCount = 2, Entries = textureEntries };
-                    var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
-                    cachedBg = new CachedBindGroup((nint)bg, _frameNumber);
-                    _persistentTextureBindGroups[cacheKey] = cachedBg;
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                    currentMaskTexture = dc.MaskTexture;
                 }
-                else
+
+                currentType = DrawCallType.Texture;
+                currentBlendMode = dc.BlendMode;
+
+                var viewPtr = texture.ViewPtr;
+                var cacheKey = new TextureCacheKey(texture.Id, texture.Generation, isOffscreen: true, dc.TextureSamplingMode);
+
+                CachedBindGroup? cachedBg;
+                lock (_persistentTextureBindGroups)
                 {
-                    cachedBg.LastUsedFrame = _frameNumber;
+                    if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out cachedBg))
+                    {
+                        textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = GetTextureSampler(dc.TextureSamplingMode) };
+                        textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
+
+                        var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayoutOffscreen, EntryCount = 2, Entries = textureEntries };
+                        var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
+                        cachedBg = new CachedBindGroup((nint)bg, _frameNumber);
+                        _persistentTextureBindGroups[cacheKey] = cachedBg;
+                    }
+                    else
+                    {
+                        cachedBg.LastUsedFrame = _frameNumber;
+                    }
                 }
 
                 var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;
@@ -3966,7 +6777,7 @@ public unsafe class Compositor : IDisposable
             }
             else if (dc.Type == DrawCallType.StaticDxf && dc.StaticBuffer != null)
             {
-                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: true);
+                DrawStaticDxfBuffer(pass, dc.StaticBuffer, isOffscreen: true, dc.MaskTexture, dc.BlendMode);
                 currentType = DrawCallType.StaticDxf;
             }
             else if (dc.Type == DrawCallType.ChartLine)
@@ -3986,9 +6797,12 @@ public unsafe class Compositor : IDisposable
                 {
                     if (pipeline is ProGPU.Scene.Extensions.SplineExtensionPipeline)
                     {
-                        if (currentType != DrawCallType.Vector)
+                        var maskBindGroup = GetMaskBindGroup(dc.MaskTexture, isOffscreen: true);
+                        var selectedVectorPipeline = currentType != DrawCallType.Vector || currentBlendMode != dc.BlendMode;
+                        if (selectedVectorPipeline)
                         {
-                            _context.Wgpu.RenderPassEncoderSetPipeline(pass, _vectorPipelineOffscreen);
+                            var splinePipeline = GetPipeline(DrawCallType.Vector, dc.BlendMode, isOffscreen: true);
+                            _context.Wgpu.RenderPassEncoderSetPipeline(pass, splinePipeline);
                             fixed (BindGroup** pGrp = &_vectorUniformBindGroupOffscreen)
                             {
                                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
@@ -3997,11 +6811,16 @@ public unsafe class Compositor : IDisposable
                             {
                                 _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pPathAtlas, 0, null);
                             }
-                            var buffer = _vectorVertexBuffer.BufferPtr;
-                            _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
-                            _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
                             currentType = DrawCallType.Vector;
+                            currentBlendMode = dc.BlendMode;
                         }
+
+                        if (selectedVectorPipeline || currentMaskTexture != dc.MaskTexture)
+                        {
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+                            currentMaskTexture = dc.MaskTexture;
+                        }
+
                         if (dc.PointBufferCount > 0)
                         {
                             _context.Wgpu.RenderPassEncoderDrawIndexed(pass, (uint)dc.PointBufferCount, 1, (uint)dc.PointBufferOffset, 0, 0);
@@ -4019,6 +6838,8 @@ public unsafe class Compositor : IDisposable
 
         _context.Wgpu.RenderPassEncoderEnd(pass);
         _context.Wgpu.RenderPassEncoderRelease(pass);
+        EndExtensionFrame(extensionFrame);
+        extensionFrameEnded = true;
 
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Offscreen Compositor Command Buffer") };
         var cmdBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &cmdDesc);
@@ -4028,63 +6849,156 @@ public unsafe class Compositor : IDisposable
 
         _context.Wgpu.CommandBufferRelease(cmdBuffer);
         _context.Wgpu.CommandEncoderRelease(encoder);
+        targetTexture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+        targetTexture.MarkContentsDirty();
+
+        foreach (var tex in _masksToReturnToPool)
+        {
+            _maskTexturePool.Add(tex);
+        }
+        _masksToReturnToPool.Clear();
+        _maskRenderPasses.Clear();
 
         EvictUnusedBindGroups();
-
-        // Restore main lists and state
-        _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
-        _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
-        _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-        _textIndicesList.Clear(); _textIndicesList.AddRange(savedTextIndices);
-        _textureVerticesList.Clear(); _textureVerticesList.AddRange(savedTextureVertices);
-        _textureIndicesList.Clear(); _textureIndicesList.AddRange(savedTextureIndices);
-        _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
-        _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
-        _clipStack.Clear();
-        foreach (var clip in savedClipStack) _clipStack.Push(clip);
-        _activeClipRect = savedActiveClipRect;
-        _opacityStack.Clear();
-        for (int i = savedOpacityStack.Length - 1; i >= 0; i--)
-        {
-            _opacityStack.Push(savedOpacityStack[i]);
         }
-        _activeOpacity = savedActiveOpacity;
-        _pendingVectorStart = savedPendingVectorStart;
-        _pendingTextStart = savedPendingTextStart;
+        finally
+        {
+            if (!extensionFrameEnded)
+            {
+                EndExtensionFrame(extensionFrame);
+            }
 
-        _useGpuTransformsActive = savedUseGpuTransformsActive;
-        _cameraViewMatrix = savedCameraViewMatrix;
-        _hasGpuTransformsInFrame = savedHasGpuTransformsInFrame;
-        _gpuTransformsCameraView = savedGpuTransformsCameraView;
+            // Restore main lists and state
+            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
+            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
+            _textureVerticesList.Clear(); _textureVerticesList.AddRange(savedTextureVertices);
+            _textureIndicesList.Clear(); _textureIndicesList.AddRange(savedTextureIndices);
+            _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
+            _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
+            _activeGradientStops.Clear(); _activeGradientStops.AddRange(savedActiveGradientStops);
+            _clipStack.Clear();
+            for (int i = savedClipStack.Length - 1; i >= 0; i--)
+            {
+                _clipStack.Push(savedClipStack[i]);
+            }
+            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
+            _activeClipRect = savedActiveClipRect;
 
-        _currentWidth = savedWidth;
-        _currentHeight = savedHeight;
-        _currentDpiScale = savedDpiScale;
-        _currentProjection = savedProjection;
+            _opacityStack.Clear();
+            for (int i = savedOpacityStack.Length - 1; i >= 0; i--)
+            {
+                _opacityStack.Push(savedOpacityStack[i]);
+            }
+            _activeOpacity = savedActiveOpacity;
+
+            _blendModeStack.Clear();
+            for (int i = savedBlendModeStack.Length - 1; i >= 0; i--)
+            {
+                _blendModeStack.Push(savedBlendModeStack[i]);
+            }
+            _activeBlendMode = savedActiveBlendMode;
+
+            _maskStack.Clear();
+            for (int i = savedMaskStack.Length - 1; i >= 0; i--)
+            {
+                _maskStack.Push(savedMaskStack[i]);
+            }
+
+            _maskRenderPasses.Clear();
+            _maskRenderPasses.AddRange(savedMaskRenderPasses);
+
+            _masksToReturnToPool.Clear();
+            _masksToReturnToPool.AddRange(savedMasksToReturnToPool);
+
+            _pendingVectorStart = savedPendingVectorStart;
+            _pendingTextStart = savedPendingTextStart;
+            _currentBatchType = savedCurrentBatchType;
+
+            _useGpuTransformsActive = savedUseGpuTransformsActive;
+            _cameraViewMatrix = savedCameraViewMatrix;
+            _hasGpuTransformsInFrame = savedHasGpuTransformsInFrame;
+            _gpuTransformsCameraView = savedGpuTransformsCameraView;
+            _suspendHitTestCacheWrites = savedSuspendHitTestCacheWrites;
+
+            _currentWidth = savedWidth;
+            _currentHeight = savedHeight;
+            _currentDpiScale = savedDpiScale;
+            _explicitRenderTargetWidth = savedExplicitRenderTargetWidth;
+            _explicitRenderTargetHeight = savedExplicitRenderTargetHeight;
+            _explicitRenderTargetViewport = savedExplicitRenderTargetViewport;
+            _explicitDpiScale = savedExplicitDpiScale;
+            _currentProjection = savedProjection;
+        }
     }
 
     public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands, float staticZoom = 1.0f)
     {
-        // Save current lists
-        var savedVectorVertices = _vectorVerticesList.ToArray();
-        var savedVectorIndices = _vectorIndicesList.ToArray();
-        var savedTextVertices = _textVerticesList.ToArray();
-        var savedTextIndices = _textIndicesList.ToArray();
-        var savedActiveBrushes = _activeBrushes.ToArray();
+        // Save current lists and states
+        var dxfSavedVectorVertices = _vectorVerticesList.ToArray();
+        var dxfSavedVectorIndices = _vectorIndicesList.ToArray();
+        var dxfSavedTextVertices = _textVerticesList.ToArray();
+        var dxfSavedTextureVertices = _textureVerticesList.ToArray();
+        var dxfSavedTextureIndices = _textureIndicesList.ToArray();
+        var dxfSavedDrawCalls = _drawCalls.ToArray();
+        var dxfSavedActiveBrushes = _activeBrushes.ToArray();
+        var dxfSavedActiveGradientStops = _activeGradientStops.ToArray();
+        var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
 
-        var savedActiveClipRect = _activeClipRect;
-        var savedClipStack = _clipStack.ToArray();
+        var dxfSavedActiveClipRect = _activeClipRect;
+        var dxfSavedClipStack = _clipStack.ToArray();
+        var dxfSavedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
 
-        _activeClipRect = null;
-        _clipStack.Clear();
-        
+        var dxfSavedOpacityStack = _opacityStack.ToArray();
+        var dxfSavedActiveOpacity = _activeOpacity;
+
+        var dxfSavedPendingVectorStart = _pendingVectorStart;
+        var dxfSavedPendingTextStart = _pendingTextStart;
+        var dxfSavedCurrentBatchType = _currentBatchType;
+
+        var dxfSavedUseGpuTransformsActive = _useGpuTransformsActive;
+        var dxfSavedCameraViewMatrix = _cameraViewMatrix;
+        var dxfSavedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
+        var dxfSavedGpuTransformsCameraView = _gpuTransformsCameraView;
+
+        var dxfSavedBlendModeStack = _blendModeStack.ToArray();
+        var dxfSavedActiveBlendMode = _activeBlendMode;
+        var dxfSavedMaskStack = _maskStack.ToArray();
+        var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
+        var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+
         // Clear for compilation
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
-        _textIndicesList.Clear();
+        _textureVerticesList.Clear();
+        _textureIndicesList.Clear();
+        _drawCalls.Clear();
         _activeBrushes.Clear();
+        _activeGradientStops.Clear();
         _compiledTextRecords.Clear();
+
+        _activeClipRect = null;
+        _clipStack.Clear();
+        _clipScopeIsGeometryMask.Clear();
+
+        _opacityStack.Clear();
+        _activeOpacity = 1.0f;
+
+        _pendingVectorStart = 0;
+        _pendingTextStart = 0;
+        _currentBatchType = BatchType.None;
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
+
+        _blendModeStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _maskStack.Clear();
+        _maskRenderPasses.Clear();
+        _masksToReturnToPool.Clear();
 
         ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom };
         lock (_registeredExtensions)
@@ -4107,25 +7021,25 @@ public unsafe class Compositor : IDisposable
                 uint vecCount = (uint)_vectorIndicesList.Count - pendingVectorStart;
                 if (vecCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall 
-                    { 
-                        Type = DrawCallType.Vector, 
-                        IndexStart = pendingVectorStart, 
+                    staticDrawCalls.Add(new CompositorDrawCall
+                    {
+                        Type = DrawCallType.Vector,
+                        IndexStart = pendingVectorStart,
                         IndexCount = vecCount,
                     });
                     pendingVectorStart = (uint)_vectorIndicesList.Count;
                 }
 
-                uint textCount = (uint)_textIndicesList.Count - pendingTextStart;
+                uint textCount = (uint)_textVerticesList.Count - pendingTextStart;
                 if (textCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall 
-                    { 
-                        Type = DrawCallType.Text, 
-                        IndexStart = pendingTextStart, 
+                    staticDrawCalls.Add(new CompositorDrawCall
+                    {
+                        Type = DrawCallType.Text,
+                        IndexStart = pendingTextStart,
                         IndexCount = textCount,
                     });
-                    pendingTextStart = (uint)_textIndicesList.Count;
+                    pendingTextStart = (uint)_textVerticesList.Count;
                 }
             }
 
@@ -4165,7 +7079,7 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawAcisSolid:
                         CommitStaticDrawCalls();
@@ -4174,7 +7088,7 @@ public unsafe class Compositor : IDisposable
                             if (pipeline != null)
                             {
                                 var localCmd = cmd;
-                                pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
+                                pipeline.Compile(this, null, localCmd.Transform, ref localCmd);
                                 staticDrawCalls.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
@@ -4187,10 +7101,13 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawText:
                         CompileTextCommand(cmd, null, Matrix4x4.Identity);
+                        break;
+                    case RenderCommandType.DrawGlyphRun:
+                        CompileGlyphRunCommand(cmd, Matrix4x4.Identity);
                         break;
                     case RenderCommandType.DrawTexture:
                         CompileTextureCommand(cmd, Matrix4x4.Identity);
@@ -4223,7 +7140,7 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawEllipse:
                         CompileEllipseCommand(cmd, Matrix4x4.Identity);
@@ -4262,7 +7179,7 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawExtension:
                         {
@@ -4271,7 +7188,10 @@ public unsafe class Compositor : IDisposable
                             {
                                 CommitStaticDrawCalls();
                                 var localCmd = cmd;
-                                pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
+                                var compileTransform = localCmd.ExtensionId == CompositorBuiltInExtensions.AcisSolid
+                                    ? localCmd.Transform
+                                    : Matrix4x4.Identity;
+                                pipeline.Compile(this, null, compileTransform, ref localCmd);
                                 var cmdTransform = localCmd.Transform;
                                 if (cmdTransform == default || cmdTransform == new Matrix4x4())
                                 {
@@ -4300,11 +7220,13 @@ public unsafe class Compositor : IDisposable
                                     LineThicknessOrRadius = localCmd.RadiusX,
                                     Scale = localCmd.Scale,
                                     Translate = localCmd.Translate,
-                                    Color = (localCmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
-                                    ClipRect = _activeClipRect
+                                    Color = ResolveDrawCallBrushColor(localCmd.Brush),
+                                    ClipRect = _activeClipRect,
+                                    MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                                    BlendMode = _activeBlendMode
                                 });
                                 pendingVectorStart = (uint)_vectorIndicesList.Count;
-                                pendingTextStart = (uint)_textIndicesList.Count;
+                                pendingTextStart = (uint)_textVerticesList.Count;
                             }
                         }
                         break;
@@ -4327,7 +7249,7 @@ public unsafe class Compositor : IDisposable
             for (int i = 0; i < _textVerticesList.Count; i++)
             {
                 var v = _textVerticesList[i];
-                v.ShapeType += 200f;
+                v.ScaleBoldItalicUseMvp.W = ForceTextUseMvp(v.ScaleBoldItalicUseMvp.W);
                 _textVerticesList[i] = v;
             }
 
@@ -4338,8 +7260,8 @@ public unsafe class Compositor : IDisposable
                 _vectorVerticesList.ToArray(),
                 _vectorIndicesList.ToArray(),
                 _textVerticesList.ToArray(),
-                _textIndicesList.ToArray(),
                 _activeBrushes.ToArray(),
+                _activeGradientStops.ToArray(),
                 staticDrawCalls.ToArray()
             );
 
@@ -4367,44 +7289,129 @@ public unsafe class Compositor : IDisposable
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            // Restore dynamic lists
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-            _textIndicesList.Clear(); _textIndicesList.AddRange(savedTextIndices);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
-            
-            _activeClipRect = savedActiveClipRect;
+            // Restore dynamic lists and states
+            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(dxfSavedVectorVertices);
+            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(dxfSavedVectorIndices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(dxfSavedTextVertices);
+            _textureVerticesList.Clear(); _textureVerticesList.AddRange(dxfSavedTextureVertices);
+            _textureIndicesList.Clear(); _textureIndicesList.AddRange(dxfSavedTextureIndices);
+            _drawCalls.Clear(); _drawCalls.AddRange(dxfSavedDrawCalls);
+            _activeBrushes.Clear(); _activeBrushes.AddRange(dxfSavedActiveBrushes);
+            _activeGradientStops.Clear(); _activeGradientStops.AddRange(dxfSavedActiveGradientStops);
+            _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
+
+            _activeClipRect = dxfSavedActiveClipRect;
             _clipStack.Clear();
-            for (int i = savedClipStack.Length - 1; i >= 0; i--)
+            for (int i = dxfSavedClipStack.Length - 1; i >= 0; i--)
             {
-                _clipStack.Push(savedClipStack[i]);
+                _clipStack.Push(dxfSavedClipStack[i]);
             }
+            RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask);
+
+            _opacityStack.Clear();
+            for (int i = dxfSavedOpacityStack.Length - 1; i >= 0; i--)
+            {
+                _opacityStack.Push(dxfSavedOpacityStack[i]);
+            }
+            _activeOpacity = dxfSavedActiveOpacity;
+
+            _pendingVectorStart = dxfSavedPendingVectorStart;
+            _pendingTextStart = dxfSavedPendingTextStart;
+            _currentBatchType = dxfSavedCurrentBatchType;
+
+            _useGpuTransformsActive = dxfSavedUseGpuTransformsActive;
+            _cameraViewMatrix = dxfSavedCameraViewMatrix;
+            _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
+            _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
+
+            _blendModeStack.Clear();
+            for (int i = dxfSavedBlendModeStack.Length - 1; i >= 0; i--)
+            {
+                _blendModeStack.Push(dxfSavedBlendModeStack[i]);
+            }
+            _activeBlendMode = dxfSavedActiveBlendMode;
+
+            _maskStack.Clear();
+            for (int i = dxfSavedMaskStack.Length - 1; i >= 0; i--)
+            {
+                _maskStack.Push(dxfSavedMaskStack[i]);
+            }
+
+            _maskRenderPasses.Clear();
+            _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
+
+            _masksToReturnToPool.Clear();
+            _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
         }
     }
 
     public DxfStaticBuffer CompileStaticDxf(DrawingContext context, float staticZoom = 1.0f)
     {
-        // Save current lists
-        var savedVectorVertices = _vectorVerticesList.ToArray();
-        var savedVectorIndices = _vectorIndicesList.ToArray();
-        var savedTextVertices = _textVerticesList.ToArray();
-        var savedTextIndices = _textIndicesList.ToArray();
-        var savedActiveBrushes = _activeBrushes.ToArray();
+        // Save current lists and states
+        var dxfSavedVectorVertices = _vectorVerticesList.ToArray();
+        var dxfSavedVectorIndices = _vectorIndicesList.ToArray();
+        var dxfSavedTextVertices = _textVerticesList.ToArray();
+        var dxfSavedTextureVertices = _textureVerticesList.ToArray();
+        var dxfSavedTextureIndices = _textureIndicesList.ToArray();
+        var dxfSavedDrawCalls = _drawCalls.ToArray();
+        var dxfSavedActiveBrushes = _activeBrushes.ToArray();
+        var dxfSavedActiveGradientStops = _activeGradientStops.ToArray();
+        var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
 
-        var savedActiveClipRect = _activeClipRect;
-        var savedClipStack = _clipStack.ToArray();
+        var dxfSavedActiveClipRect = _activeClipRect;
+        var dxfSavedClipStack = _clipStack.ToArray();
+        var dxfSavedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
 
-        _activeClipRect = null;
-        _clipStack.Clear();
-        
+        var dxfSavedOpacityStack = _opacityStack.ToArray();
+        var dxfSavedActiveOpacity = _activeOpacity;
+
+        var dxfSavedPendingVectorStart = _pendingVectorStart;
+        var dxfSavedPendingTextStart = _pendingTextStart;
+        var dxfSavedCurrentBatchType = _currentBatchType;
+
+        var dxfSavedUseGpuTransformsActive = _useGpuTransformsActive;
+        var dxfSavedCameraViewMatrix = _cameraViewMatrix;
+        var dxfSavedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
+        var dxfSavedGpuTransformsCameraView = _gpuTransformsCameraView;
+
+        var dxfSavedBlendModeStack = _blendModeStack.ToArray();
+        var dxfSavedActiveBlendMode = _activeBlendMode;
+        var dxfSavedMaskStack = _maskStack.ToArray();
+        var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
+        var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+
         // Clear for compilation
         _vectorVerticesList.Clear();
         _vectorIndicesList.Clear();
         _textVerticesList.Clear();
-        _textIndicesList.Clear();
+        _textureVerticesList.Clear();
+        _textureIndicesList.Clear();
+        _drawCalls.Clear();
         _activeBrushes.Clear();
+        _activeGradientStops.Clear();
         _compiledTextRecords.Clear();
+
+        _activeClipRect = null;
+        _clipStack.Clear();
+        _clipScopeIsGeometryMask.Clear();
+
+        _opacityStack.Clear();
+        _activeOpacity = 1.0f;
+
+        _pendingVectorStart = 0;
+        _pendingTextStart = 0;
+        _currentBatchType = BatchType.None;
+
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        _hasGpuTransformsInFrame = false;
+        _gpuTransformsCameraView = Matrix4x4.Identity;
+
+        _blendModeStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _maskStack.Clear();
+        _maskRenderPasses.Clear();
+        _masksToReturnToPool.Clear();
 
         ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom };
         lock (_registeredExtensions)
@@ -4427,28 +7434,28 @@ public unsafe class Compositor : IDisposable
                 uint vecCount = (uint)_vectorIndicesList.Count - pendingVectorStart;
                 if (vecCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall 
-                    { 
-                        Type = DrawCallType.Vector, 
-                        IndexStart = pendingVectorStart, 
+                    staticDrawCalls.Add(new CompositorDrawCall
+                    {
+                        Type = DrawCallType.Vector,
+                        IndexStart = pendingVectorStart,
                         IndexCount = vecCount,
                     });
                     pendingVectorStart = (uint)_vectorIndicesList.Count;
                 }
 
-                uint textCount = (uint)_textIndicesList.Count - pendingTextStart;
+                uint textCount = (uint)_textVerticesList.Count - pendingTextStart;
                 if (textCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall 
-                    { 
-                        Type = DrawCallType.Text, 
-                        IndexStart = pendingTextStart, 
+                    staticDrawCalls.Add(new CompositorDrawCall
+                    {
+                        Type = DrawCallType.Text,
+                        IndexStart = pendingTextStart,
                         IndexCount = textCount,
                     });
-                    pendingTextStart = (uint)_textIndicesList.Count;
+                    pendingTextStart = (uint)_textVerticesList.Count;
                 }
             }
-            
+
             foreach (var cmd in context.Commands)
             {
                 bool savedUseGpuTransformsActive = _useGpuTransformsActive;
@@ -4485,7 +7492,7 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawAcisSolid:
                         CommitStaticDrawCalls();
@@ -4494,7 +7501,7 @@ public unsafe class Compositor : IDisposable
                             if (pipeline != null)
                             {
                                 var localCmd = cmd;
-                                pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
+                                pipeline.Compile(this, context, localCmd.Transform, ref localCmd);
                                 staticDrawCalls.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
@@ -4507,10 +7514,13 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawText:
                         CompileTextCommand(cmd, null, Matrix4x4.Identity);
+                        break;
+                    case RenderCommandType.DrawGlyphRun:
+                        CompileGlyphRunCommand(cmd, Matrix4x4.Identity);
                         break;
                     case RenderCommandType.DrawTexture:
                         CompileTextureCommand(cmd, Matrix4x4.Identity);
@@ -4543,7 +7553,7 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawEllipse:
                         CompileEllipseCommand(cmd, Matrix4x4.Identity);
@@ -4582,7 +7592,7 @@ public unsafe class Compositor : IDisposable
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawExtension:
                         {
@@ -4591,7 +7601,10 @@ public unsafe class Compositor : IDisposable
                             {
                                 CommitStaticDrawCalls();
                                 var localCmd = cmd;
-                                pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
+                                var compileTransform = localCmd.ExtensionId == CompositorBuiltInExtensions.AcisSolid
+                                    ? localCmd.Transform
+                                    : Matrix4x4.Identity;
+                                pipeline.Compile(this, context, compileTransform, ref localCmd);
                                 var cmdTransform = localCmd.Transform;
                                 if (cmdTransform == default || cmdTransform == new Matrix4x4())
                                 {
@@ -4620,11 +7633,13 @@ public unsafe class Compositor : IDisposable
                                     LineThicknessOrRadius = localCmd.RadiusX,
                                     Scale = localCmd.Scale,
                                     Translate = localCmd.Translate,
-                                    Color = (localCmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
-                                    ClipRect = _activeClipRect
+                                    Color = ResolveDrawCallBrushColor(localCmd.Brush),
+                                    ClipRect = _activeClipRect,
+                                    MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                                    BlendMode = _activeBlendMode
                                 });
                                 pendingVectorStart = (uint)_vectorIndicesList.Count;
-                                pendingTextStart = (uint)_textIndicesList.Count;
+                                pendingTextStart = (uint)_textVerticesList.Count;
                             }
                         }
                         break;
@@ -4659,13 +7674,13 @@ public unsafe class Compositor : IDisposable
                                     PointBufferOffset = (int)pendingVectorStart,
                                     PointBufferCount = (int)((uint)_vectorIndicesList.Count - pendingVectorStart),
                                     Transform = Matrix4x4.Identity * cmdTransform,
-                                    Color = (localCmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
+                                    Color = ResolveDrawCallBrushColor(localCmd.Brush),
                                     ClipRect = _activeClipRect
                                 });
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawGpuScatterSeries:
                         CommitStaticDrawCalls();
@@ -4692,13 +7707,13 @@ public unsafe class Compositor : IDisposable
                                     PointBufferOffset = (int)pendingVectorStart,
                                     PointBufferCount = (int)((uint)_vectorIndicesList.Count - pendingVectorStart),
                                     Transform = Matrix4x4.Identity * cmdTransform,
-                                    Color = (localCmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
+                                    Color = ResolveDrawCallBrushColor(localCmd.Brush),
                                     ClipRect = _activeClipRect
                                 });
                             }
                         }
                         pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        pendingTextStart = (uint)_textIndicesList.Count;
+                        pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawPicture:
                         CompilePicture(context, cmd.Picture, Matrix4x4.Identity);
@@ -4716,7 +7731,7 @@ public unsafe class Compositor : IDisposable
             for (int i = 0; i < _textVerticesList.Count; i++)
             {
                 var v = _textVerticesList[i];
-                v.ShapeType += 200f;
+                v.ScaleBoldItalicUseMvp.W = ForceTextUseMvp(v.ScaleBoldItalicUseMvp.W);
                 _textVerticesList[i] = v;
             }
 
@@ -4727,8 +7742,8 @@ public unsafe class Compositor : IDisposable
                 _vectorVerticesList.ToArray(),
                 _vectorIndicesList.ToArray(),
                 _textVerticesList.ToArray(),
-                _textIndicesList.ToArray(),
                 _activeBrushes.ToArray(),
+                _activeGradientStops.ToArray(),
                 staticDrawCalls.ToArray()
             );
 
@@ -4756,29 +7771,75 @@ public unsafe class Compositor : IDisposable
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            // Restore dynamic lists
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-            _textIndicesList.Clear(); _textIndicesList.AddRange(savedTextIndices);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
-            
-            _activeClipRect = savedActiveClipRect;
+            // Restore dynamic lists and states
+            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(dxfSavedVectorVertices);
+            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(dxfSavedVectorIndices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(dxfSavedTextVertices);
+            _textureVerticesList.Clear(); _textureVerticesList.AddRange(dxfSavedTextureVertices);
+            _textureIndicesList.Clear(); _textureIndicesList.AddRange(dxfSavedTextureIndices);
+            _drawCalls.Clear(); _drawCalls.AddRange(dxfSavedDrawCalls);
+            _activeBrushes.Clear(); _activeBrushes.AddRange(dxfSavedActiveBrushes);
+            _activeGradientStops.Clear(); _activeGradientStops.AddRange(dxfSavedActiveGradientStops);
+            _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
+
+            _activeClipRect = dxfSavedActiveClipRect;
             _clipStack.Clear();
-            for (int i = savedClipStack.Length - 1; i >= 0; i--)
+            for (int i = dxfSavedClipStack.Length - 1; i >= 0; i--)
             {
-                _clipStack.Push(savedClipStack[i]);
+                _clipStack.Push(dxfSavedClipStack[i]);
             }
+            RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask);
+
+            _opacityStack.Clear();
+            for (int i = dxfSavedOpacityStack.Length - 1; i >= 0; i--)
+            {
+                _opacityStack.Push(dxfSavedOpacityStack[i]);
+            }
+            _activeOpacity = dxfSavedActiveOpacity;
+
+            _pendingVectorStart = dxfSavedPendingVectorStart;
+            _pendingTextStart = dxfSavedPendingTextStart;
+            _currentBatchType = dxfSavedCurrentBatchType;
+
+            _useGpuTransformsActive = dxfSavedUseGpuTransformsActive;
+            _cameraViewMatrix = dxfSavedCameraViewMatrix;
+            _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
+            _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
+
+            _blendModeStack.Clear();
+            for (int i = dxfSavedBlendModeStack.Length - 1; i >= 0; i--)
+            {
+                _blendModeStack.Push(dxfSavedBlendModeStack[i]);
+            }
+            _activeBlendMode = dxfSavedActiveBlendMode;
+
+            _maskStack.Clear();
+            for (int i = dxfSavedMaskStack.Length - 1; i >= 0; i--)
+            {
+                _maskStack.Push(dxfSavedMaskStack[i]);
+            }
+
+            _maskRenderPasses.Clear();
+            _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
+
+            _masksToReturnToPool.Clear();
+            _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
         }
     }
-    
+
     public void RecompileStaticText(DxfStaticBuffer staticBuffer, float staticZoom)
     {
         var savedTextVertices = _textVerticesList.ToArray();
-        var savedTextIndices = _textIndicesList.ToArray();
+        var savedDrawCalls = _drawCalls.ToArray();
+        var savedPendingTextStart = _pendingTextStart;
+        var savedCurrentBatchType = _currentBatchType;
+        var savedActiveOpacity = _activeOpacity;
 
         _textVerticesList.Clear();
-        _textIndicesList.Clear();
+        _drawCalls.Clear();
+        _pendingTextStart = 0;
+        _currentBatchType = BatchType.None;
+        _activeOpacity = 1.0f;
 
         ActiveCompilationContext = new StaticCompilationContext { StaticZoom = staticZoom, IsRecompiling = true };
 
@@ -4793,45 +7854,55 @@ public unsafe class Compositor : IDisposable
             for (int i = 0; i < _textVerticesList.Count; i++)
             {
                 var v = _textVerticesList[i];
-                v.ShapeType += 200f; // Static buffers use 200+ shape type
+                v.ScaleBoldItalicUseMvp.W = ForceTextUseMvp(v.ScaleBoldItalicUseMvp.W);
                 _textVerticesList[i] = v;
             }
 
-            staticBuffer.UpdateTextBuffer(_textVerticesList.ToArray(), _textIndicesList.ToArray());
+            staticBuffer.UpdateTextBuffer(_textVerticesList.ToArray());
         }
         finally
         {
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            _textVerticesList.Clear();
-            _textVerticesList.AddRange(savedTextVertices);
-            _textIndicesList.Clear();
-            _textIndicesList.AddRange(savedTextIndices);
+            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
+            _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
+            _pendingTextStart = savedPendingTextStart;
+            _currentBatchType = savedCurrentBatchType;
+            _activeOpacity = savedActiveOpacity;
         }
     }
 
-    internal unsafe void DrawStaticDxfBuffer(RenderPassEncoder* pass, object staticBufferObj, bool isOffscreen)
+    internal unsafe void DrawStaticDxfBuffer(
+        RenderPassEncoder* pass,
+        object staticBufferObj,
+        bool isOffscreen,
+        GpuTexture? maskTexture = null,
+        GpuBlendMode blendMode = GpuBlendMode.SrcOver)
     {
         if (staticBufferObj is not DxfStaticBuffer sb) return;
-        
+
+        sb.UpdateDefaultViewport(_currentProjection, new Vector2(_currentWidth, _currentHeight), _currentDpiScale);
+
         var currentType = DrawCallType.StaticDxf;
-        
+        var maskBg = GetMaskBindGroup(maskTexture, isOffscreen);
+
         foreach (var dc in sb.DrawCalls)
         {
             if (dc.Type == DrawCallType.Vector)
             {
                 if (currentType != DrawCallType.Vector)
                 {
-                    var pipeline = isOffscreen ? _vectorPipelineOffscreen : _vectorPipeline;
+                    var pipeline = GetPipeline(DrawCallType.Vector, blendMode, isOffscreen);
                     var uniformBg = isOffscreen ? sb.UniformBindGroupOffscreen : sb.UniformBindGroup;
                     var pathAtlasBg = isOffscreen ? _pathAtlasBindGroupOffscreen : _pathAtlasBindGroup;
-                    
+
                     _context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, pathAtlasBg, 0, null);
-                    
-                    if (sb.VertexBuffer != null)
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBg, 0, null);
+
+                    if (sb.VertexBuffer != null && sb.IndexBuffer != null)
                     {
                         var buffer = sb.VertexBuffer.BufferPtr;
                         _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.VertexBuffer.Size);
@@ -4845,23 +7916,23 @@ public unsafe class Compositor : IDisposable
             {
                 if (currentType != DrawCallType.Text)
                 {
-                    var pipeline = isOffscreen ? _textPipelineOffscreen : _textPipeline;
+                    var pipeline = GetPipeline(DrawCallType.Text, blendMode, isOffscreen);
                     var uniformBg = isOffscreen ? sb.TextUniformBindGroupOffscreen : sb.TextUniformBindGroup;
                     var atlasBg = isOffscreen ? _atlasBindGroupOffscreen : _atlasBindGroup;
-                    
+
                     _context.Wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, atlasBg, 0, null);
-                    
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBg, 0, null);
+
                     if (sb.TextVertexBuffer != null)
                     {
                         var buffer = sb.TextVertexBuffer.BufferPtr;
                         _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.TextVertexBuffer.Size);
-                        _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, sb.TextIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, sb.TextIndexBuffer.Size);
                     }
                     currentType = DrawCallType.Text;
                 }
-                _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
+                _context.Wgpu.RenderPassEncoderDraw(pass, 6, dc.IndexCount, 0, dc.IndexStart);
             }
             else if (dc.Type == DrawCallType.Extension)
             {
@@ -4872,15 +7943,16 @@ public unsafe class Compositor : IDisposable
                     {
                         if (currentType != DrawCallType.Vector)
                         {
-                            var vectorPipeline = isOffscreen ? _vectorPipelineOffscreen : _vectorPipeline;
+                            var vectorPipeline = GetPipeline(DrawCallType.Vector, blendMode, isOffscreen);
                             var uniformBg = isOffscreen ? sb.UniformBindGroupOffscreen : sb.UniformBindGroup;
                             var pathAtlasBg = isOffscreen ? _pathAtlasBindGroupOffscreen : _pathAtlasBindGroup;
-                            
+
                             _context.Wgpu.RenderPassEncoderSetPipeline(pass, vectorPipeline);
                             _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, uniformBg, 0, null);
                             _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, pathAtlasBg, 0, null);
-                            
-                            if (sb.VertexBuffer != null)
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBg, 0, null);
+
+                            if (sb.VertexBuffer != null && sb.IndexBuffer != null)
                             {
                                 var buffer = sb.VertexBuffer.BufferPtr;
                                 _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, sb.VertexBuffer.Size);
@@ -4976,7 +8048,10 @@ public unsafe class Compositor : IDisposable
                 }
 
                 int requiredLength = pointsCount * 2;
-                bool needsUpload = cachedBuffer.PointsCount != pointsCount || cachedBuffer.Buffer == null;
+                bool needsUpload =
+                    !cachedBuffer.IsOwnedBy(_context) ||
+                    cachedBuffer.PointsCount != pointsCount ||
+                    cachedBuffer.Buffer == null;
 
                 if (!needsUpload)
                 {
@@ -5022,13 +8097,13 @@ public unsafe class Compositor : IDisposable
             StaticBuffer = staticBuffer,
             Transform = transform,
             LineThicknessOrRadius = cmd.RadiusX,
-            Color = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
+            Color = ResolveDrawCallBrushColor(cmd.Brush),
             Scale = cmd.Scale,
             Translate = cmd.Translate,
             ClipRect = _activeClipRect
         });
         _pendingVectorStart = (uint)_vectorIndicesList.Count;
-        _pendingTextStart = (uint)_textIndicesList.Count;
+        _pendingTextStart = (uint)_textVerticesList.Count;
     }
 
     private void CompileGpuScatterSeriesCommand(IRenderDataProvider? provider, RenderCommand cmd, Matrix4x4 transform)
@@ -5072,7 +8147,10 @@ public unsafe class Compositor : IDisposable
                 }
 
                 int requiredLength = pointsCount * 3;
-                bool needsUpload = cachedBuffer.PointsCount != pointsCount || cachedBuffer.Buffer == null;
+                bool needsUpload =
+                    !cachedBuffer.IsOwnedBy(_context) ||
+                    cachedBuffer.PointsCount != pointsCount ||
+                    cachedBuffer.Buffer == null;
 
                 if (!needsUpload)
                 {
@@ -5177,13 +8255,13 @@ public unsafe class Compositor : IDisposable
             StaticBuffer = staticBuffer,
             Transform = transform,
             LineThicknessOrRadius = cmd.RadiusX,
-            Color = (cmd.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f),
+            Color = ResolveDrawCallBrushColor(cmd.Brush),
             Scale = cmd.Scale,
             Translate = cmd.Translate,
             ClipRect = _activeClipRect
         });
         _pendingVectorStart = (uint)_vectorIndicesList.Count;
-        _pendingTextStart = (uint)_textIndicesList.Count;
+        _pendingTextStart = (uint)_textVerticesList.Count;
     }
 
     private unsafe void RenderChartLine(RenderPassEncoder* pass, CompositorDrawCall dc, bool isOffscreen)
@@ -5258,7 +8336,7 @@ public unsafe class Compositor : IDisposable
 
         var pipeline = isOffscreen ? _chartLinePipelineOffscreen : _chartLinePipeline;
         wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
-        
+
         var lineBg = (BindGroup*)seriesBuffer.LineBindGroup;
         wgpu.RenderPassEncoderSetBindGroup(pass, 0, lineBg, 0, null);
 
@@ -5330,7 +8408,7 @@ public unsafe class Compositor : IDisposable
 
         var pipeline = isOffscreen ? _chartScatterPipelineOffscreen : _chartScatterPipeline;
         wgpu.RenderPassEncoderSetPipeline(pass, pipeline);
-        
+
         var scatterBg = (BindGroup*)seriesBuffer.ScatterBindGroup;
         wgpu.RenderPassEncoderSetBindGroup(pass, 0, scatterBg, 0, null);
 
@@ -5339,5 +8417,649 @@ public unsafe class Compositor : IDisposable
 
         uint instanceCount = (uint)seriesBuffer.PointsCount;
         wgpu.RenderPassEncoderDraw(pass, 6, instanceCount, 0, 0);
+    }
+
+    private struct MaskRenderPassInfo
+    {
+        public GpuTexture MaskTexture;
+        public GpuTexture? PreviousMaskTexture;
+        public List<CompositorDrawCall> DrawCalls;
+    }
+
+    private GpuTexture GetMaskTexture(uint width, uint height)
+    {
+        for (int i = 0; i < _maskTexturePool.Count; i++)
+        {
+            var tex = _maskTexturePool[i];
+            if (!CanReuseMaskTexture(tex))
+            {
+                _maskTexturePool.RemoveAt(i);
+                i--;
+                continue;
+            }
+
+            if (tex.Width == width && tex.Height == height)
+            {
+                _maskTexturePool.RemoveAt(i);
+                return tex;
+            }
+        }
+
+        return new GpuTexture(
+            _context,
+            width,
+            height,
+            TextureFormat.R8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.RenderAttachment | TextureUsage.CopyDst,
+            "Geometry Mask Texture"
+        );
+    }
+
+    internal BindGroup* GetMaskBindGroup(GpuTexture? maskTexture, bool isOffscreen)
+    {
+        if (maskTexture == null)
+        {
+            return isOffscreen ? _dummyMaskBindGroupOffscreen : _dummyMaskBindGroup;
+        }
+
+        if (!CanReuseMaskTexture(maskTexture))
+        {
+            throw new ObjectDisposedException(nameof(GpuTexture), "Cannot bind a disposed or foreign-context mask texture.");
+        }
+
+        var cache = isOffscreen ? _maskBindGroupsOffscreen : _maskBindGroups;
+        if (cache.TryGetValue(maskTexture, out var bgNint))
+        {
+            return (BindGroup*)bgNint;
+        }
+
+        var maskEntries = stackalloc BindGroupEntry[2];
+        maskEntries[0] = new BindGroupEntry { Binding = 0, Sampler = _atlasSampler };
+        maskEntries[1] = new BindGroupEntry { Binding = 1, TextureView = maskTexture.ViewPtr };
+
+        var bgDescMask = new BindGroupDescriptor
+        {
+            Layout = isOffscreen ? _maskBindGroupLayoutOffscreen : _maskBindGroupLayout,
+            EntryCount = 2,
+            Entries = maskEntries
+        };
+
+        var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDescMask);
+        if (bg == null)
+        {
+            throw new InvalidOperationException("Failed to create mask BindGroup");
+        }
+
+        cache[maskTexture] = (nint)bg;
+        return bg;
+    }
+
+    private bool CanReuseMaskTexture(GpuTexture texture)
+    {
+        var textureContext = texture.Context;
+        return !texture.IsDisposed
+            && textureContext != null
+            && ReferenceEquals(textureContext, _context)
+            && texture.TexturePtr != null
+            && texture.ViewPtr != null;
+    }
+
+    private static bool BlendModeRequiresPremultipliedSource(GpuBlendMode blendMode)
+    {
+        return blendMode is GpuBlendMode.DstOver or GpuBlendMode.Multiply or GpuBlendMode.Screen;
+    }
+
+    private static string GetFragmentEntryPoint(
+        DrawCallType type,
+        GpuBlendMode blendMode,
+        GpuTextureAlphaMode textureAlphaMode,
+        bool writesOpacityMask)
+    {
+        if (writesOpacityMask)
+        {
+            return "fs_mask";
+        }
+
+        if (!BlendModeRequiresPremultipliedSource(blendMode))
+        {
+            return "fs_main";
+        }
+
+        return type == DrawCallType.Texture && textureAlphaMode == GpuTextureAlphaMode.Premultiplied
+            ? "fs_main"
+            : "fs_main_premultiplied";
+    }
+
+    private static GpuTextureAlphaMode GetPipelineSourceAlphaMode(
+        DrawCallType type,
+        GpuBlendMode blendMode,
+        GpuTextureAlphaMode textureAlphaMode)
+    {
+        if (BlendModeRequiresPremultipliedSource(blendMode))
+        {
+            return GpuTextureAlphaMode.Premultiplied;
+        }
+
+        return type == DrawCallType.Texture
+            ? textureAlphaMode
+            : GpuTextureAlphaMode.Straight;
+    }
+
+    private RenderPipeline* GetPipeline(
+        DrawCallType type,
+        GpuBlendMode blendMode,
+        bool isOffscreen,
+        TextureFormat? overrideFormat = null,
+        GpuTextureAlphaMode textureAlphaMode = GpuTextureAlphaMode.Premultiplied)
+    {
+        string baseName;
+        ShaderModule* shaderModule;
+        VertexBufferLayout[] layouts;
+        uint sampleCount = isOffscreen ? 1u : 4u;
+
+        var vertexAttribs = new VertexAttribute[]
+        {
+            new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // Position
+            new() { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }, // Color
+            new() { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }, // TexCoord
+            new() { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 }, // BrushIndex
+            new() { Format = VertexFormat.Float32x2, Offset = 36, ShaderLocation = 4 }, // ShapeSize
+            new() { Format = VertexFormat.Float32, Offset = 44, ShaderLocation = 5 }, // CornerRadius
+            new() { Format = VertexFormat.Float32, Offset = 48, ShaderLocation = 6 }, // StrokeThickness
+            new() { Format = VertexFormat.Float32, Offset = 52, ShaderLocation = 7 } // ShapeType
+        };
+
+        fixed (VertexAttribute* attribsPtr = vertexAttribs)
+        {
+            var layoutDesc = new VertexBufferLayout
+            {
+                ArrayStride = (uint)Marshal.SizeOf<VectorVertex>(),
+                StepMode = VertexStepMode.Vertex,
+                AttributeCount = 8,
+                Attributes = attribsPtr
+            };
+            layouts = new[] { layoutDesc };
+
+            PipelineLayout* pipelineLayout = null;
+            if (type == DrawCallType.Vector)
+            {
+                baseName = isOffscreen ? "Vector_Offscreen" : "Vector";
+                shaderModule = _pipelineCache.GetOrCreateShader("Vector", Shaders.VectorShader, "VectorShader");
+                pipelineLayout = isOffscreen ? _vectorPipelineLayoutOffscreen : _vectorPipelineLayout;
+            }
+            else if (type == DrawCallType.Text)
+            {
+                baseName = isOffscreen ? "Text_Offscreen" : "Text";
+                shaderModule = _pipelineCache.GetOrCreateShader("Text", Shaders.TextShader, "TextShader");
+                pipelineLayout = isOffscreen ? _textPipelineLayoutOffscreen : _textPipelineLayout;
+
+                var textVertexAttribs = new VertexAttribute[]
+                {
+                    new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // SnappedLogicalPos
+                    new() { Format = VertexFormat.Float32x2, Offset = 8, ShaderLocation = 1 }, // BasisX
+                    new() { Format = VertexFormat.Float32x2, Offset = 16, ShaderLocation = 2 }, // BasisY
+                    new() { Format = VertexFormat.Float32x4, Offset = 24, ShaderLocation = 3 }, // BearSize
+                    new() { Format = VertexFormat.Float32x4, Offset = 40, ShaderLocation = 4 }, // TexCoords
+                    new() { Format = VertexFormat.Float32x4, Offset = 56, ShaderLocation = 5 }, // Color
+                    new() { Format = VertexFormat.Float32x4, Offset = 72, ShaderLocation = 6 }, // ScaleBoldItalicUseMvp
+                    new() { Format = VertexFormat.Float32, Offset = 88, ShaderLocation = 7 }    // BrushIndex
+                };
+
+                fixed (VertexAttribute* textAttribsPtr = textVertexAttribs)
+                {
+                    var textLayoutDesc = new VertexBufferLayout
+                    {
+                        ArrayStride = (uint)Marshal.SizeOf<GlyphInstance>(),
+                        StepMode = VertexStepMode.Instance,
+                        AttributeCount = 8,
+                        Attributes = textAttribsPtr
+                    };
+
+                    bool writesOpacityMask = overrideFormat == TextureFormat.R8Unorm;
+                    var textFragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, GpuTextureAlphaMode.Straight, writesOpacityMask);
+                    var textSourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, GpuTextureAlphaMode.Straight);
+                    string textFragmentKey = textFragmentEntryPoint == "fs_main" ? string.Empty : $"_{textFragmentEntryPoint}";
+                    string textPipelineKey = overrideFormat.HasValue
+                        ? $"{baseName}_{blendMode}_{overrideFormat.Value}{textFragmentKey}"
+                        : $"{baseName}_{blendMode}{textFragmentKey}";
+
+                    return _pipelineCache.GetOrCreateRenderPipeline(
+                        textPipelineKey,
+                        shaderModule,
+                        "vs_main",
+                        textFragmentEntryPoint,
+                        overrideFormat ?? RenderFormat,
+                        PrimitiveTopology.TriangleList,
+                        new[] { textLayoutDesc },
+                        enableBlend: true,
+                        enableDepthStencil: false,
+                        sampleCount: sampleCount,
+                        blendMode: blendMode,
+                        pipelineLayout: pipelineLayout,
+                        sourceAlphaMode: textSourceAlphaMode
+                    );
+                }
+            }
+            else if (type == DrawCallType.Texture)
+            {
+                baseName = isOffscreen ? "Texture_Offscreen" : "Texture";
+                shaderModule = _pipelineCache.GetOrCreateShader("Texture", Shaders.TextureShader, "TextureShader");
+                pipelineLayout = isOffscreen ? _texturePipelineLayoutOffscreen : _texturePipelineLayout;
+            }
+            else
+            {
+                throw new ArgumentException($"Unsupported pipeline draw call type: {type}");
+            }
+
+            bool writesMaskTarget = overrideFormat == TextureFormat.R8Unorm;
+            var fragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, textureAlphaMode, writesMaskTarget);
+            var sourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, textureAlphaMode);
+            string alphaModeKey = type == DrawCallType.Texture ? $"_{textureAlphaMode}" : string.Empty;
+            string fragmentKey = fragmentEntryPoint == "fs_main" ? string.Empty : $"_{fragmentEntryPoint}";
+            string pipelineKey = overrideFormat.HasValue
+                ? $"{baseName}_{blendMode}_{overrideFormat.Value}{alphaModeKey}{fragmentKey}"
+                : $"{baseName}_{blendMode}{alphaModeKey}{fragmentKey}";
+
+            return _pipelineCache.GetOrCreateRenderPipeline(
+                pipelineKey,
+                shaderModule,
+                "vs_main",
+                fragmentEntryPoint,
+                overrideFormat ?? RenderFormat,
+                PrimitiveTopology.TriangleList,
+                layouts,
+                enableBlend: true,
+                enableDepthStencil: false,
+                sampleCount: sampleCount,
+                blendMode: blendMode,
+                pipelineLayout: pipelineLayout,
+                sourceAlphaMode: sourceAlphaMode
+            );
+        }
+    }
+
+    private void PushGeometryMask(PathGeometry geometry, Matrix4x4 transform)
+    {
+        CommitPendingDrawCalls();
+        int preDrawCallCount = _drawCalls.Count;
+        var savedState = ResetStateForMaskCompilation();
+
+        try
+        {
+            var cmd = new RenderCommand
+            {
+                Type = RenderCommandType.DrawPath,
+                Path = geometry,
+                Brush = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f))
+            };
+            CompilePathCommand(cmd, transform);
+            CommitPendingDrawCalls();
+        }
+        finally
+        {
+            RestoreStateAfterMaskCompilation(savedState);
+        }
+
+        var maskDrawCalls = new List<CompositorDrawCall>();
+        for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
+        {
+            maskDrawCalls.Add(_drawCalls[i]);
+        }
+        _drawCalls.RemoveRange(preDrawCallCount, _drawCalls.Count - preDrawCallCount);
+
+        var maskTex = GetMaskTexture(CurrentMaskTargetPixelWidthUInt, CurrentMaskTargetPixelHeightUInt);
+        var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
+
+        _maskRenderPasses.Add(new MaskRenderPassInfo
+        {
+            MaskTexture = maskTex,
+            PreviousMaskTexture = prevMask,
+            DrawCalls = maskDrawCalls
+        });
+
+        _maskStack.Push(maskTex);
+    }
+
+    private void PushOpacityMaskValue(Brush brush, Rect bounds, Matrix4x4 transform)
+    {
+        CommitPendingDrawCalls();
+        int preDrawCallCount = _drawCalls.Count;
+        var savedState = ResetStateForMaskCompilation();
+
+        try
+        {
+            var cmd = new RenderCommand
+            {
+                Type = RenderCommandType.DrawRect,
+                Rect = bounds,
+                Brush = brush
+            };
+            CompileRectCommand(cmd, transform);
+            CommitPendingDrawCalls();
+        }
+        finally
+        {
+            RestoreStateAfterMaskCompilation(savedState);
+        }
+
+        var maskDrawCalls = new List<CompositorDrawCall>();
+        for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
+        {
+            maskDrawCalls.Add(_drawCalls[i]);
+        }
+        _drawCalls.RemoveRange(preDrawCallCount, _drawCalls.Count - preDrawCallCount);
+
+        var maskTex = GetMaskTexture(CurrentMaskTargetPixelWidthUInt, CurrentMaskTargetPixelHeightUInt);
+        var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
+
+        _maskRenderPasses.Add(new MaskRenderPassInfo
+        {
+            MaskTexture = maskTex,
+            PreviousMaskTexture = prevMask,
+            DrawCalls = maskDrawCalls
+        });
+
+        _maskStack.Push(maskTex);
+    }
+
+    private MaskCompilationState ResetStateForMaskCompilation()
+    {
+        var savedState = new MaskCompilationState(
+            _activeOpacity,
+            _opacityStack.ToArray(),
+            _activeBlendMode,
+            _blendModeStack.ToArray());
+        _activeOpacity = 1.0f;
+        _opacityStack.Clear();
+        _activeBlendMode = GpuBlendMode.SrcOver;
+        _blendModeStack.Clear();
+        return savedState;
+    }
+
+    private void RestoreStateAfterMaskCompilation(MaskCompilationState savedState)
+    {
+        _activeOpacity = savedState.ActiveOpacity;
+        _opacityStack.Clear();
+        for (int i = savedState.OpacityStack.Length - 1; i >= 0; i--)
+        {
+            _opacityStack.Push(savedState.OpacityStack[i]);
+        }
+
+        _activeBlendMode = savedState.ActiveBlendMode;
+        _blendModeStack.Clear();
+        for (int i = savedState.BlendModeStack.Length - 1; i >= 0; i--)
+        {
+            _blendModeStack.Push(savedState.BlendModeStack[i]);
+        }
+    }
+
+    private readonly record struct MaskCompilationState(
+        float ActiveOpacity,
+        float[] OpacityStack,
+        GpuBlendMode ActiveBlendMode,
+        GpuBlendMode[] BlendModeStack);
+
+    private void PopGeometryMask()
+    {
+        CommitPendingDrawCalls();
+        if (_maskStack.Count > 0)
+        {
+            var popped = _maskStack.Pop();
+            _masksToReturnToPool.Add(popped);
+        }
+    }
+
+    private void PopOpacityMaskValue()
+    {
+        CommitPendingDrawCalls();
+        if (_maskStack.Count > 0)
+        {
+            var popped = _maskStack.Pop();
+            _masksToReturnToPool.Add(popped);
+        }
+    }
+
+    private void ExecuteMaskRenderPasses(CommandEncoder* encoder, bool isOffscreen)
+    {
+        if (_maskRenderPasses.Count == 0) return;
+
+        foreach (var maskPass in _maskRenderPasses)
+        {
+            var targetView = maskPass.MaskTexture.ViewPtr;
+
+            var colorAttachment = new RenderPassColorAttachment
+            {
+                View = targetView,
+                ResolveTarget = null,
+                LoadOp = LoadOp.Clear,
+                StoreOp = StoreOp.Store,
+                ClearValue = new Color { R = 0, G = 0, B = 0, A = 0 }
+            };
+
+            var passDesc = new RenderPassDescriptor
+            {
+                ColorAttachmentCount = 1,
+                ColorAttachments = &colorAttachment,
+                DepthStencilAttachment = null
+            };
+
+            var pass = _context.Wgpu.CommandEncoderBeginRenderPass(encoder, &passDesc);
+            ApplyRenderPassViewport(
+                pass,
+                maskPass.MaskTexture.Width,
+                maskPass.MaskTexture.Height,
+                useRenderTargetViewport: !isOffscreen);
+
+            var maskBindGroup = GetMaskBindGroup(maskPass.PreviousMaskTexture, isOffscreen: true);
+
+            DrawCallType? currentType = null;
+            var textureEntries = stackalloc BindGroupEntry[2];
+
+            foreach (var dc in maskPass.DrawCalls)
+            {
+                if (!ApplyDrawCallScissor(pass, dc, useRenderTargetViewport: !isOffscreen))
+                {
+                    continue;
+                }
+
+                if (dc.Type == DrawCallType.Vector)
+                {
+                    if (currentType != DrawCallType.Vector)
+                    {
+                        var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: true, overrideFormat: TextureFormat.R8Unorm);
+                        _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
+                        fixed (BindGroup** pGrp = &_vectorUniformBindGroupOffscreen)
+                        {
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                        }
+                        fixed (BindGroup** pPathAtlas = &_pathAtlasBindGroupOffscreen)
+                        {
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pPathAtlas, 0, null);
+                        }
+                        _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+
+                        var buffer = _vectorVertexBuffer.BufferPtr;
+                        _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _vectorVertexBuffer.Size);
+                        _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _vectorIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _vectorIndexBuffer.Size);
+                        currentType = DrawCallType.Vector;
+                    }
+                    _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
+                }
+                else if (dc.Type == DrawCallType.Text)
+                {
+                    if (currentType != DrawCallType.Text)
+                    {
+                        var activePipeline = GetPipeline(dc.Type, dc.BlendMode, isOffscreen: true, overrideFormat: TextureFormat.R8Unorm);
+                        _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
+                        fixed (BindGroup** pGrp = &_textUniformBindGroupOffscreen)
+                        {
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                        }
+                        fixed (BindGroup** pAtlas = &_atlasBindGroupOffscreen)
+                        {
+                            _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, *pAtlas, 0, null);
+                        }
+                        _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+
+                        var buffer = _textVertexBuffer.BufferPtr;
+                        _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textVertexBuffer.Size);
+                        currentType = DrawCallType.Text;
+                    }
+                    _context.Wgpu.RenderPassEncoderDraw(pass, 6, dc.IndexCount, 0, dc.IndexStart);
+                }
+                else if (dc.Type == DrawCallType.Texture && IsTextureBindable(dc.Texture))
+                {
+                    var texture = dc.Texture!;
+                    var activePipeline = GetPipeline(
+                        dc.Type,
+                        dc.BlendMode,
+                        isOffscreen: true,
+                        overrideFormat: TextureFormat.R8Unorm,
+                        textureAlphaMode: dc.TextureAlphaMode);
+                    _context.Wgpu.RenderPassEncoderSetPipeline(pass, activePipeline);
+                    fixed (BindGroup** pGrp = &_textureUniformBindGroupOffscreen)
+                    {
+                        _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 0, *pGrp, 0, null);
+                    }
+                    var buffer = _textureVertexBuffer.BufferPtr;
+                    _context.Wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, buffer, 0, _textureVertexBuffer.Size);
+                    _context.Wgpu.RenderPassEncoderSetIndexBuffer(pass, _textureIndexBuffer.BufferPtr, IndexFormat.Uint32, 0, _textureIndexBuffer.Size);
+                    currentType = DrawCallType.Texture;
+
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
+
+                    var viewPtr = texture.ViewPtr;
+                    var cacheKey = new TextureCacheKey(texture.Id, texture.Generation, isOffscreen: true, dc.TextureSamplingMode);
+
+                    CachedBindGroup? cachedBg;
+                    lock (_persistentTextureBindGroups)
+                    {
+                        if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out cachedBg))
+                        {
+                            textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = GetTextureSampler(dc.TextureSamplingMode) };
+                            textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
+
+                            var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayoutOffscreen, EntryCount = 2, Entries = textureEntries };
+                            var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
+                            cachedBg = new CachedBindGroup((nint)bg, _frameNumber);
+                            _persistentTextureBindGroups[cacheKey] = cachedBg;
+                        }
+                        else
+                        {
+                            cachedBg.LastUsedFrame = _frameNumber;
+                        }
+                    }
+
+                    var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;
+                    _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 1, bindGroup, 0, null);
+                    _context.Wgpu.RenderPassEncoderDrawIndexed(pass, dc.IndexCount, 1, dc.IndexStart, 0, 0);
+                }
+            }
+
+            _context.Wgpu.RenderPassEncoderEnd(pass);
+            _context.Wgpu.RenderPassEncoderRelease(pass);
+        }
+    }
+
+    private unsafe BindGroupLayout* CreateVectorUniformLayout()
+    {
+        var entries = stackalloc BindGroupLayoutEntry[3];
+        entries[0] = new BindGroupLayoutEntry
+        {
+            Binding = 0,
+            Visibility = ShaderStage.Vertex | ShaderStage.Fragment,
+            Buffer = new BufferBindingLayout
+            {
+                Type = BufferBindingType.Uniform,
+                HasDynamicOffset = false,
+                MinBindingSize = 0
+            }
+        };
+        entries[1] = new BindGroupLayoutEntry
+        {
+            Binding = 1,
+            Visibility = ShaderStage.Vertex | ShaderStage.Fragment,
+            Buffer = new BufferBindingLayout
+            {
+                Type = BufferBindingType.ReadOnlyStorage,
+                HasDynamicOffset = false,
+                MinBindingSize = 0
+            }
+        };
+        entries[2] = new BindGroupLayoutEntry
+        {
+            Binding = 2,
+            Visibility = ShaderStage.Fragment,
+            Buffer = new BufferBindingLayout
+            {
+                Type = BufferBindingType.ReadOnlyStorage,
+                HasDynamicOffset = false,
+                MinBindingSize = 0
+            }
+        };
+
+        var desc = new BindGroupLayoutDescriptor
+        {
+            EntryCount = (UIntPtr)3,
+            Entries = entries
+        };
+
+        return _context.Wgpu.DeviceCreateBindGroupLayout(_context.Device, &desc);
+    }
+
+    private unsafe BindGroupLayout* CreateUniformOnlyLayout()
+    {
+        var entry = new BindGroupLayoutEntry
+        {
+            Binding = 0,
+            Visibility = ShaderStage.Vertex | ShaderStage.Fragment,
+            Buffer = new BufferBindingLayout
+            {
+                Type = BufferBindingType.Uniform,
+                HasDynamicOffset = false,
+                MinBindingSize = 0
+            }
+        };
+
+        var desc = new BindGroupLayoutDescriptor
+        {
+            EntryCount = (UIntPtr)1,
+            Entries = &entry
+        };
+
+        return _context.Wgpu.DeviceCreateBindGroupLayout(_context.Device, &desc);
+    }
+
+    private unsafe BindGroupLayout* CreateSamplerTextureLayout()
+    {
+        var entries = stackalloc BindGroupLayoutEntry[2];
+        entries[0] = new BindGroupLayoutEntry
+        {
+            Binding = 0,
+            Visibility = ShaderStage.Fragment,
+            Sampler = new SamplerBindingLayout
+            {
+                Type = SamplerBindingType.Filtering
+            }
+        };
+        entries[1] = new BindGroupLayoutEntry
+        {
+            Binding = 1,
+            Visibility = ShaderStage.Fragment,
+            Texture = new TextureBindingLayout
+            {
+                SampleType = TextureSampleType.Float,
+                ViewDimension = TextureViewDimension.TextureViewDimension2D,
+                Multisampled = false
+            }
+        };
+
+        var desc = new BindGroupLayoutDescriptor
+        {
+            EntryCount = (UIntPtr)2,
+            Entries = entries
+        };
+
+        return _context.Wgpu.DeviceCreateBindGroupLayout(_context.Device, &desc);
     }
 }

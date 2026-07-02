@@ -3,49 +3,190 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
 
+#nullable enable
+#pragma warning disable IDE0057, IDE0059, IDE0078, IDE0300, IDE0301, IDE0305
+
 namespace ProGPU.Vector;
 
-public abstract class PathSegment
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+abstract class PathSegment
 {
+    public bool IsSmoothJoin { get; set; }
+    public bool IsStroked { get; set; } = true;
 }
 
-public class LineSegment : PathSegment
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class LineSegment : PathSegment
 {
     public Vector2 Point { get; set; }
 
-    public LineSegment(Vector2 point)
+    public LineSegment(Vector2 point, bool isSmoothJoin = false, bool isStroked = true)
     {
         Point = point;
+        IsSmoothJoin = isSmoothJoin;
+        IsStroked = isStroked;
     }
 }
 
-public class QuadraticBezierSegment : PathSegment
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class QuadraticBezierSegment : PathSegment
 {
     public Vector2 ControlPoint { get; set; }
     public Vector2 Point { get; set; }
 
-    public QuadraticBezierSegment(Vector2 controlPoint, Vector2 point)
+    public QuadraticBezierSegment(Vector2 controlPoint, Vector2 point, bool isSmoothJoin = false, bool isStroked = true)
     {
         ControlPoint = controlPoint;
         Point = point;
+        IsSmoothJoin = isSmoothJoin;
+        IsStroked = isStroked;
     }
 }
 
-public class CubicBezierSegment : PathSegment
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class CubicBezierSegment : PathSegment
 {
     public Vector2 ControlPoint1 { get; set; }
     public Vector2 ControlPoint2 { get; set; }
     public Vector2 Point { get; set; }
 
-    public CubicBezierSegment(Vector2 controlPoint1, Vector2 controlPoint2, Vector2 point)
+    public CubicBezierSegment(Vector2 controlPoint1, Vector2 controlPoint2, Vector2 point, bool isSmoothJoin = false, bool isStroked = true)
     {
         ControlPoint1 = controlPoint1;
         ControlPoint2 = controlPoint2;
         Point = point;
+        IsSmoothJoin = isSmoothJoin;
+        IsStroked = isStroked;
     }
 }
 
-public class PathFigure
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+enum SweepDirection
+{
+    Counterclockwise = 0,
+    Clockwise = 1
+}
+
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+enum FillRule
+{
+    EvenOdd = 0,
+    Nonzero = 1
+}
+
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class ArcSegment : PathSegment
+{
+    public Vector2 Point { get; set; }
+    public Vector2 Size { get; set; }
+    public float RotationAngle { get; set; }
+    public bool IsLargeArc { get; set; }
+    public SweepDirection SweepDirection { get; set; }
+
+    public ArcSegment(
+        Vector2 point,
+        Vector2 size,
+        float rotationAngle,
+        bool isLargeArc,
+        SweepDirection sweepDirection,
+        bool isSmoothJoin = false,
+        bool isStroked = true)
+    {
+        Point = point;
+        Size = size;
+        RotationAngle = rotationAngle;
+        IsLargeArc = isLargeArc;
+        SweepDirection = sweepDirection;
+        IsSmoothJoin = isSmoothJoin;
+        IsStroked = isStroked;
+    }
+}
+
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+readonly struct ArcDashSegment
+{
+    public ArcDashSegment(Vector2 start, ArcSegment arc)
+    {
+        Start = start;
+        Arc = arc ?? throw new ArgumentNullException(nameof(arc));
+    }
+
+    public Vector2 Start { get; }
+    public ArcSegment Arc { get; }
+}
+
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+readonly struct QuadraticBezierDashSegment
+{
+    public QuadraticBezierDashSegment(Vector2 start, QuadraticBezierSegment segment)
+    {
+        Start = start;
+        Segment = segment ?? throw new ArgumentNullException(nameof(segment));
+    }
+
+    public Vector2 Start { get; }
+    public QuadraticBezierSegment Segment { get; }
+}
+
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+readonly struct CubicBezierDashSegment
+{
+    public CubicBezierDashSegment(Vector2 start, CubicBezierSegment segment)
+    {
+        Start = start;
+        Segment = segment ?? throw new ArgumentNullException(nameof(segment));
+    }
+
+    public Vector2 Start { get; }
+    public CubicBezierSegment Segment { get; }
+}
+
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class PathFigure
 {
     public Vector2 StartPoint { get; set; }
     public List<PathSegment> Segments { get; } = new();
@@ -61,9 +202,274 @@ public class PathFigure
     }
 }
 
-public class PathGeometry
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class PathGeometry
 {
     public List<PathFigure> Figures { get; } = new();
+    public FillRule FillRule { get; set; } = FillRule.Nonzero;
+
+    public bool IsCombined { get; set; }
+    public PathGeometry? PathA { get; set; }
+    public PathGeometry? PathB { get; set; }
+    public int Op { get; set; }
+
+    public PathGeometry CreateTransformed(Matrix4x4 transform)
+    {
+        if (IsCombined)
+        {
+            return new PathGeometry
+            {
+                IsCombined = true,
+                PathA = PathA?.CreateTransformed(transform) ?? new PathGeometry(),
+                PathB = PathB?.CreateTransformed(transform) ?? new PathGeometry(),
+                Op = Op,
+                FillRule = FillRule
+            };
+        }
+
+        var path = new PathGeometry
+        {
+            FillRule = FillRule
+        };
+        foreach (var figure in Figures)
+        {
+            var sourceCurrentPoint = figure.StartPoint;
+            var transformedFigure = new PathFigure
+            {
+                StartPoint = Vector2.Transform(figure.StartPoint, transform),
+                IsClosed = figure.IsClosed,
+                IsFilled = figure.IsFilled
+            };
+
+            foreach (var segment in figure.Segments)
+            {
+                switch (segment)
+                {
+                    case LineSegment line:
+                        transformedFigure.Segments.Add(new LineSegment(
+                            Vector2.Transform(line.Point, transform),
+                            line.IsSmoothJoin,
+                            line.IsStroked));
+                        sourceCurrentPoint = line.Point;
+                        break;
+
+                    case QuadraticBezierSegment quadratic:
+                        transformedFigure.Segments.Add(new QuadraticBezierSegment(
+                            Vector2.Transform(quadratic.ControlPoint, transform),
+                            Vector2.Transform(quadratic.Point, transform),
+                            quadratic.IsSmoothJoin,
+                            quadratic.IsStroked));
+                        sourceCurrentPoint = quadratic.Point;
+                        break;
+
+                    case CubicBezierSegment cubic:
+                        transformedFigure.Segments.Add(new CubicBezierSegment(
+                            Vector2.Transform(cubic.ControlPoint1, transform),
+                            Vector2.Transform(cubic.ControlPoint2, transform),
+                            Vector2.Transform(cubic.Point, transform),
+                            cubic.IsSmoothJoin,
+                            cubic.IsStroked));
+                        sourceCurrentPoint = cubic.Point;
+                        break;
+
+                    case ArcSegment arc:
+                        if (ArcSegmentGeometry.TryTransformArcSegment(
+                                sourceCurrentPoint,
+                                arc,
+                                transform,
+                                out _,
+                                out var transformedArc))
+                        {
+                            transformedFigure.Segments.Add(transformedArc);
+                        }
+                        else
+                        {
+                            transformedFigure.Segments.Add(new LineSegment(
+                                Vector2.Transform(arc.Point, transform),
+                                arc.IsSmoothJoin,
+                                arc.IsStroked));
+                        }
+
+                        sourceCurrentPoint = arc.Point;
+                        break;
+                }
+            }
+
+            path.Figures.Add(transformedFigure);
+        }
+
+        return path;
+    }
+
+    public bool TryGetBounds(out Vector2 min, out Vector2 max)
+    {
+        if (IsCombined)
+        {
+            return TryGetCombinedBounds(out min, out max);
+        }
+
+        var minValue = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+        var maxValue = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+        var hasBounds = false;
+
+        void Update(Vector2 point)
+        {
+            if (!float.IsFinite(point.X) || !float.IsFinite(point.Y))
+            {
+                return;
+            }
+
+            minValue = Vector2.Min(minValue, point);
+            maxValue = Vector2.Max(maxValue, point);
+            hasBounds = true;
+        }
+
+        foreach (var figure in Figures)
+        {
+            var currentPoint = figure.StartPoint;
+            Update(currentPoint);
+
+            foreach (var segment in figure.Segments)
+            {
+                switch (segment)
+                {
+                    case LineSegment line:
+                        Update(line.Point);
+                        currentPoint = line.Point;
+                        break;
+
+                    case QuadraticBezierSegment quadratic:
+                        Update(quadratic.ControlPoint);
+                        Update(quadratic.Point);
+                        currentPoint = quadratic.Point;
+                        break;
+
+                    case CubicBezierSegment cubic:
+                        Update(cubic.ControlPoint1);
+                        Update(cubic.ControlPoint2);
+                        Update(cubic.Point);
+                        currentPoint = cubic.Point;
+                        break;
+
+                    case ArcSegment arc:
+                        if (ArcSegmentGeometry.TryGetArcBounds(currentPoint, arc, out var arcMin, out var arcMax))
+                        {
+                            Update(arcMin);
+                            Update(arcMax);
+                        }
+                        else
+                        {
+                            Update(arc.Point);
+                        }
+
+                        currentPoint = arc.Point;
+                        break;
+                }
+            }
+
+            if (figure.IsClosed)
+            {
+                Update(figure.StartPoint);
+            }
+        }
+
+        if (!hasBounds)
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        min = minValue;
+        max = maxValue;
+        return true;
+    }
+
+    private bool TryGetCombinedBounds(out Vector2 min, out Vector2 max)
+    {
+        Vector2 minA = default;
+        Vector2 maxA = default;
+        Vector2 minB = default;
+        Vector2 maxB = default;
+        var hasA = PathA?.TryGetBounds(out minA, out maxA) == true;
+        var hasB = PathB?.TryGetBounds(out minB, out maxB) == true;
+
+        switch (Op)
+        {
+            case 1:
+                if (!hasA || !hasB)
+                {
+                    min = default;
+                    max = default;
+                    return false;
+                }
+
+                min = Vector2.Max(minA, minB);
+                max = Vector2.Min(maxA, maxB);
+                if (max.X < min.X || max.Y < min.Y)
+                {
+                    min = default;
+                    max = default;
+                    return false;
+                }
+
+                return true;
+
+            case 0:
+                if (hasA)
+                {
+                    min = minA;
+                    max = maxA;
+                    return true;
+                }
+
+                min = default;
+                max = default;
+                return false;
+
+            case 4:
+                if (hasB)
+                {
+                    min = minB;
+                    max = maxB;
+                    return true;
+                }
+
+                min = default;
+                max = default;
+                return false;
+
+            default:
+                if (hasA && hasB)
+                {
+                    min = Vector2.Min(minA, minB);
+                    max = Vector2.Max(maxA, maxB);
+                    return true;
+                }
+
+                if (hasA)
+                {
+                    min = minA;
+                    max = maxA;
+                    return true;
+                }
+
+                if (hasB)
+                {
+                    min = minB;
+                    max = maxB;
+                    return true;
+                }
+
+                min = default;
+                max = default;
+                return false;
+        }
+    }
 
     /// <summary>
     /// Parses SVG path data string (e.g. "M 10,10 L 20,20 C ... Z") into a PathGeometry object.
@@ -106,6 +512,14 @@ public class PathGeometry
 
             switch (cmdUpper)
             {
+                case 'F': // WPF path fill rule prefix: F0/F1 or F 0/F 1
+                    {
+                        var fillRuleValue = ReadFloat(tokens, ref index);
+                        geometry.FillRule = fillRuleValue == 0f ? FillRule.EvenOdd : FillRule.Nonzero;
+                        lastCommand = '\0';
+                    }
+                    break;
+
                 case 'M': // MoveTo
                     {
                         var pt = ReadVector2(tokens, ref index);
@@ -206,6 +620,28 @@ public class PathGeometry
                         currentFigure.Segments.Add(new CubicBezierSegment(ctrl1, ctrl2, to));
                         lastControlPoint = ctrl2;
                         currentPoint = to;
+                    }
+                    break;
+
+                case 'A': // Elliptical Arc
+                    {
+                        float rx = ReadFloat(tokens, ref index);
+                        float ry = ReadFloat(tokens, ref index);
+                        float xAxisRotation = ReadFloat(tokens, ref index);
+                        float largeArcFlagVal = ReadFloat(tokens, ref index);
+                        float sweepFlagVal = ReadFloat(tokens, ref index);
+                        var pt = ReadVector2(tokens, ref index);
+                        if (isRelative) pt += currentPoint;
+
+                        if (currentFigure == null)
+                        {
+                            currentFigure = new PathFigure(currentPoint);
+                            geometry.Figures.Add(currentFigure);
+                        }
+                        bool isLargeArc = largeArcFlagVal != 0f;
+                        SweepDirection sweepDirection = sweepFlagVal != 0f ? SweepDirection.Clockwise : SweepDirection.Counterclockwise;
+                        currentFigure.Segments.Add(new ArcSegment(pt, new Vector2(rx, ry), xAxisRotation, isLargeArc, sweepDirection));
+                        currentPoint = pt;
                     }
                     break;
 

@@ -35,7 +35,7 @@ public unsafe class GlyphAtlas : IDisposable
     private uint _currentY = 2;
     private uint _currentRowHeight = 0;
 
-    private readonly Dictionary<(TtfFont font, uint codePoint, float size, byte subpixelX), GlyphInfo> _glyphs = new();
+    private readonly Dictionary<(TtfFont font, ushort glyphIndex, float size, byte subpixelX), GlyphInfo> _glyphs = new();
     private readonly Dictionary<TtfFont, (GpuBuffer RecordsBuffer, GpuBuffer SegmentsBuffer)> _fontGpuData = new();
     
     private readonly RenderPipelineCache _pipelineCache;
@@ -142,13 +142,22 @@ public unsafe class GlyphAtlas : IDisposable
 
     public GlyphInfo GetOrCreateGlyph(TtfFont font, uint codePoint, float size, byte subpixelX = 0)
     {
+        ushort glyphIdx = font.GetGlyphIndex(codePoint);
+        if (IsWhitespaceCodePoint(codePoint))
+        {
+            return CreateEmptyGlyphInfo(font, glyphIdx, size);
+        }
+
+        return GetOrCreateGlyphByIndex(font, glyphIdx, size, subpixelX);
+    }
+
+    public GlyphInfo GetOrCreateGlyphByIndex(TtfFont font, ushort glyphIdx, float size, byte subpixelX = 0)
+    {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GlyphAtlas));
         
-        var key = (font, codePoint, size, subpixelX);
+        var key = (font, glyphIdx, size, subpixelX);
         if (!_glyphs.TryGetValue(key, out var info))
         {
-            ushort glyphIdx = font.GetGlyphIndex(codePoint);
-
             // If it is a dynamic color emoji inside the font, we don't need to rasterize it into the monochrome atlas!
             // Instead, we just provide proper layout bounds, and the compositor will render it using color vector paths.
             if (font.HasColorLayers(glyphIdx))
@@ -170,16 +179,10 @@ public unsafe class GlyphAtlas : IDisposable
             {
                 var outline = font.GetGlyphOutline(glyphIdx);
 
-                // Handle space or control characters (empty outlines)
-                if (outline == null || codePoint == ' ' || codePoint == '\t' || codePoint == '\n' || codePoint == '\r')
+                // Handle empty glyphs such as font-owned space outlines.
+                if (outline == null)
                 {
-                    float advance = font.GetAdvanceWidth(glyphIdx, size);
-                    info = new GlyphInfo
-                    {
-                        X = 0, Y = 0, Width = 0, Height = 0,
-                        BearX = 0, BearY = 0, Advance = advance,
-                        TexCoordMin = Vector2.Zero, TexCoordMax = Vector2.Zero
-                    };
+                    info = CreateEmptyGlyphInfo(font, glyphIdx, size);
                 }
                 else
                 {
@@ -459,6 +462,28 @@ public unsafe class GlyphAtlas : IDisposable
         return info;
     }
 
+    private static bool IsWhitespaceCodePoint(uint codePoint)
+    {
+        return codePoint is ' ' or '\t' or '\n' or '\r';
+    }
+
+    private static GlyphInfo CreateEmptyGlyphInfo(TtfFont font, ushort glyphIdx, float size)
+    {
+        float advance = font.GetAdvanceWidth(glyphIdx, size);
+        return new GlyphInfo
+        {
+            X = 0,
+            Y = 0,
+            Width = 0,
+            Height = 0,
+            BearX = 0,
+            BearY = 0,
+            Advance = advance,
+            TexCoordMin = Vector2.Zero,
+            TexCoordMax = Vector2.Zero
+        };
+    }
+
     public void Dispose()
     {
         if (_isDisposed) return;
@@ -478,10 +503,5 @@ public unsafe class GlyphAtlas : IDisposable
 
         _isDisposed = true;
         GC.SuppressFinalize(this);
-    }
-
-    ~GlyphAtlas()
-    {
-        Dispose();
     }
 }

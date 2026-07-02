@@ -21,6 +21,31 @@ public struct PathUniforms
     public uint Height;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+public struct PathOpUniforms
+{
+    public uint Op;
+    public uint DestX;
+    public uint DestY;
+    public uint DestWidth;
+    public uint DestHeight;
+    public uint SrcAX;
+    public uint SrcAY;
+    public uint SrcAWidth;
+    public uint SrcAHeight;
+    public uint SrcBX;
+    public uint SrcBY;
+    public uint SrcBWidth;
+    public uint SrcBHeight;
+    public int DestMinX;
+    public int DestMinY;
+    public int SrcAMinX;
+    public int SrcAMinY;
+    public int SrcBMinX;
+    public int SrcBMinY;
+    public uint Pad0;
+}
+
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
 public struct GpuPathRecord
 {
@@ -30,7 +55,7 @@ public struct GpuPathRecord
     public float MinY;
     public float MaxX;
     public float MaxY;
-    public uint Pad0;
+    public uint FillRule;
     public uint Pad1;
 }
 
@@ -77,8 +102,23 @@ public readonly struct PathCacheKey : IEquatable<PathCacheKey>
     public static bool operator !=(PathCacheKey left, PathCacheKey right) => !left.Equals(right);
 }
 
-public unsafe class PathAtlas : IDisposable
+public interface IPathHitTestCompilationCache
 {
+    bool TryGetCompiledHitTestPath(
+        PathGeometry path,
+        out GpuPathRecord[] records,
+        out GpuPathSegment[] segments,
+        out float localMinX,
+        out float localMinY,
+        out float localMaxX,
+        out float localMaxY);
+}
+
+public unsafe class PathAtlas : IDisposable
+    , IPathHitTestCompilationCache
+{
+    private const int MaxCompiledHitTestPathCount = 4096;
+
     private readonly WgpuContext _context;
     private readonly GpuTexture _atlasTexture;
     private readonly uint _atlasSize;
@@ -109,6 +149,7 @@ public unsafe class PathAtlas : IDisposable
     }
 
     private readonly Dictionary<PathCacheKey, PathInfo> _paths = new();
+    private readonly Dictionary<int, CompiledPathData> _compiledHitTestPaths = new();
     private readonly List<GpuBuffer> _tempBuffers = new();
     private readonly List<PathInfo> _pendingPaths = new();
 
@@ -120,6 +161,7 @@ public unsafe class PathAtlas : IDisposable
 
     public GpuTexture AtlasTexture => _atlasTexture;
     public int CachedPathCount => _paths.Count;
+    public int CachedHitTestPathCount => _compiledHitTestPaths.Count;
 
     public PathAtlas(WgpuContext context, uint atlasSize = 2048)
     {
@@ -147,12 +189,22 @@ public unsafe class PathAtlas : IDisposable
         _ringOffset = 0;
     }
 
+
     private static uint DivRoundUp(uint value, uint divisor) => (value + divisor - 1) / divisor;
 
     public static int ComputeHash(PathGeometry path)
     {
         if (path == null) return 0;
+        if (path.IsCombined)
+        {
+            return HashCode.Combine(
+                ComputeHash(path.PathA!),
+                ComputeHash(path.PathB!),
+                path.Op,
+                path.FillRule);
+        }
         var hash = new HashCode();
+        hash.Add(path.FillRule);
         foreach (var figure in path.Figures)
         {
             hash.Add(figure.StartPoint.X);
@@ -165,12 +217,14 @@ public unsafe class PathAtlas : IDisposable
                 if (segment is LineSegment line)
                 {
                     hash.Add(0); // Segment type: Line
+                    hash.Add(line.IsStroked);
                     hash.Add(line.Point.X);
                     hash.Add(line.Point.Y);
                 }
                 else if (segment is QuadraticBezierSegment quad)
                 {
                     hash.Add(1); // Segment type: Quadratic
+                    hash.Add(quad.IsStroked);
                     hash.Add(quad.ControlPoint.X);
                     hash.Add(quad.ControlPoint.Y);
                     hash.Add(quad.Point.X);
@@ -179,6 +233,7 @@ public unsafe class PathAtlas : IDisposable
                 else if (segment is CubicBezierSegment cubic)
                 {
                     hash.Add(2); // Segment type: Cubic
+                    hash.Add(cubic.IsStroked);
                     hash.Add(cubic.ControlPoint1.X);
                     hash.Add(cubic.ControlPoint1.Y);
                     hash.Add(cubic.ControlPoint2.X);
@@ -186,13 +241,37 @@ public unsafe class PathAtlas : IDisposable
                     hash.Add(cubic.Point.X);
                     hash.Add(cubic.Point.Y);
                 }
+                else if (segment is ArcSegment arc)
+                {
+                    hash.Add(3); // Segment type: Arc
+                    hash.Add(arc.IsStroked);
+                    hash.Add(arc.Point.X);
+                    hash.Add(arc.Point.Y);
+                    hash.Add(arc.Size.X);
+                    hash.Add(arc.Size.Y);
+                    hash.Add(arc.RotationAngle);
+                    hash.Add(arc.IsLargeArc);
+                    hash.Add((int)arc.SweepDirection);
+                }
             }
         }
         return hash.ToHashCode();
     }
 
-    public (GpuPathRecord[] Records, GpuPathSegment[] Segments) CompilePath(PathGeometry path, out float localMinX, out float localMinY, out float localMaxX, out float localMaxY)
+    public static (GpuPathRecord[] Records, GpuPathSegment[] Segments) CompilePath(PathGeometry path, out float localMinX, out float localMinY, out float localMaxX, out float localMaxY)
     {
+        if (path.IsCombined)
+        {
+            if (path.PathA == null || path.PathB == null)
+            {
+                localMinX = localMinY = localMaxX = localMaxY = 0f;
+                return (Array.Empty<GpuPathRecord>(), Array.Empty<GpuPathSegment>());
+            }
+
+            var combined = PathOpGeometrySolver.Combine(path.PathA, path.PathB, path.Op);
+            return CompilePath(combined, out localMinX, out localMinY, out localMaxX, out localMaxY);
+        }
+
         var segments = new List<GpuPathSegment>();
         float minX = float.MaxValue;
         float minY = float.MaxValue;
@@ -255,6 +334,53 @@ public unsafe class PathAtlas : IDisposable
                     UpdateBounds(cubic.Point);
                     currentPoint = cubic.Point;
                 }
+                else if (segment is ArcSegment arc)
+                {
+                    if (!ArcSegmentGeometry.TryGetArcCenter(
+                        currentPoint, arc.Point, arc.Size, arc.RotationAngle, arc.IsLargeArc, arc.SweepDirection,
+                        out Vector2 center, out float theta1, out float deltaTheta, out float rx, out float ry
+                    ))
+                    {
+                        if (currentPoint != arc.Point)
+                        {
+                            segments.Add(new GpuPathSegment
+                            {
+                                P0 = currentPoint,
+                                P1 = arc.Point,
+                                SegmentType = 0
+                            });
+                        }
+
+                        UpdateBounds(arc.Point);
+                        currentPoint = arc.Point;
+                        continue;
+                    }
+                    
+                    segments.Add(new GpuPathSegment
+                    {
+                        P0 = currentPoint,
+                        P1 = arc.Point,
+                        P2 = center,
+                        P3 = new Vector2(rx, ry),
+                        SegmentType = 3,
+                        Pad0 = BitConverter.SingleToUInt32Bits(theta1),
+                        Pad1 = BitConverter.SingleToUInt32Bits(deltaTheta),
+                        Pad2 = BitConverter.SingleToUInt32Bits(arc.RotationAngle * MathF.PI / 180.0f)
+                    });
+                    
+                    if (ArcSegmentGeometry.TryGetArcBounds(currentPoint, arc, out Vector2 min, out Vector2 max))
+                    {
+                        UpdateBounds(min);
+                        UpdateBounds(max);
+                    }
+                    else
+                    {
+                        UpdateBounds(currentPoint);
+                        UpdateBounds(arc.Point);
+                    }
+                    
+                    currentPoint = arc.Point;
+                }
             }
 
             if (figure.IsClosed && currentPoint != figure.StartPoint)
@@ -288,11 +414,73 @@ public unsafe class PathAtlas : IDisposable
             MinX = minX,
             MinY = minY,
             MaxX = maxX,
-            MaxY = maxY
+            MaxY = maxY,
+            FillRule = (uint)path.FillRule
         };
 
         return (records, segments.ToArray());
     }
+
+    public bool TryGetCompiledHitTestPath(
+        PathGeometry path,
+        out GpuPathRecord[] records,
+        out GpuPathSegment[] segments,
+        out float localMinX,
+        out float localMinY,
+        out float localMaxX,
+        out float localMaxY)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(PathAtlas));
+        ArgumentNullException.ThrowIfNull(path);
+
+        int contentHash = ComputeHash(path);
+        if (_compiledHitTestPaths.TryGetValue(contentHash, out var cached))
+        {
+            records = cached.Records;
+            segments = cached.Segments;
+            localMinX = cached.LocalMinX;
+            localMinY = cached.LocalMinY;
+            localMaxX = cached.LocalMaxX;
+            localMaxY = cached.LocalMaxY;
+            return segments.Length != 0;
+        }
+
+        try
+        {
+            (records, segments) = CompilePath(path, out localMinX, out localMinY, out localMaxX, out localMaxY);
+        }
+        catch (InvalidOperationException)
+        {
+            records = Array.Empty<GpuPathRecord>();
+            segments = Array.Empty<GpuPathSegment>();
+            localMinX = 0f;
+            localMinY = 0f;
+            localMaxX = 0f;
+            localMaxY = 0f;
+        }
+
+        if (_compiledHitTestPaths.Count >= MaxCompiledHitTestPathCount)
+        {
+            _compiledHitTestPaths.Clear();
+        }
+
+        _compiledHitTestPaths[contentHash] = new CompiledPathData(
+            records,
+            segments,
+            localMinX,
+            localMinY,
+            localMaxX,
+            localMaxY);
+        return segments.Length != 0;
+    }
+
+    private readonly record struct CompiledPathData(
+        GpuPathRecord[] Records,
+        GpuPathSegment[] Segments,
+        float LocalMinX,
+        float LocalMinY,
+        float LocalMaxX,
+        float LocalMaxY);
 
     private void RepackActivePaths()
     {
@@ -378,9 +566,18 @@ public unsafe class PathAtlas : IDisposable
             return info;
         }
 
-        var (records, segments) = CompilePath(path, out float unscaledMinX, out float unscaledMinY, out float unscaledMaxX, out float unscaledMaxY);
+        float unscaledMinX, unscaledMinY, unscaledMaxX, unscaledMaxY;
+        int xStart, yStart, width, height;
 
-        if (records.Length == 0 || segments.Length == 0)
+        if (!TryGetCompiledHitTestPath(
+                path,
+                out _,
+                out var segments,
+                out unscaledMinX,
+                out unscaledMinY,
+                out unscaledMaxX,
+                out unscaledMaxY) ||
+            segments.Length == 0)
         {
             info = new PathInfo
             {
@@ -410,13 +607,13 @@ public unsafe class PathAtlas : IDisposable
         float maxY = unscaledMaxY * scale;
 
         int padding = 4;
-        int xStart = (int)Math.Floor(minX) - padding;
+        xStart = (int)Math.Floor(minX) - padding;
         int xEnd = (int)Math.Ceiling(maxX) + padding;
-        int yStart = (int)Math.Floor(minY) - padding;
+        yStart = (int)Math.Floor(minY) - padding;
         int yEnd = (int)Math.Ceiling(maxY) + padding;
 
-        int width = xEnd - xStart;
-        int height = yEnd - yStart;
+        width = xEnd - xStart;
+        height = yEnd - yStart;
 
         if (width <= 0 || height <= 0)
         {
@@ -546,8 +743,19 @@ public unsafe class PathAtlas : IDisposable
         {
             if (info.Width == 0 || info.Height == 0) continue;
 
-            var (records, segments) = CompilePath(info.Geometry, out _, out _, out _, out _);
-            if (records.Length == 0 || segments.Length == 0) continue;
+            if (!TryGetCompiledHitTestPath(
+                    info.Geometry,
+                    out var records,
+                    out var segments,
+                    out _,
+                    out _,
+                    out _,
+                    out _) ||
+                records.Length == 0 ||
+                segments.Length == 0)
+            {
+                continue;
+            }
 
             int padding = 4;
             float scale = info.Key.Scale;
@@ -590,14 +798,14 @@ public unsafe class PathAtlas : IDisposable
             uint alignedSize = (uint)((Marshal.SizeOf<PathUniforms>() + 255) & ~255);
             if (_ringOffset + alignedSize > _uniformRingBuffer.Size)
             {
-                _ringOffset = 0; // Wrap around if we exceed size
+                _ringOffset = 0;
             }
-
-            _context.Wgpu.QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr, _ringOffset, &uniforms, (uint)Marshal.SizeOf<PathUniforms>());
+            uint uniformOffset = _ringOffset;
+            _context.Wgpu.QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr, uniformOffset, &uniforms, (uint)Marshal.SizeOf<PathUniforms>());
 
             var bindGroupLayout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_computePipeline, 0);
 
-            entries[0] = new BindGroupEntry { Binding = 0, Buffer = _uniformRingBuffer.BufferPtr, Offset = _ringOffset, Size = (uint)Marshal.SizeOf<PathUniforms>() };
+            entries[0] = new BindGroupEntry { Binding = 0, Buffer = _uniformRingBuffer.BufferPtr, Offset = uniformOffset, Size = (uint)Marshal.SizeOf<PathUniforms>() };
             entries[1] = new BindGroupEntry { Binding = 1, Buffer = recordsBuffer.BufferPtr, Offset = 0, Size = recordsBuffer.Size };
             entries[2] = new BindGroupEntry { Binding = 2, Buffer = segmentsBuffer.BufferPtr, Offset = 0, Size = segmentsBuffer.Size };
             entries[3] = new BindGroupEntry { Binding = 3, TextureView = _atlasTexture.ViewPtr };
@@ -665,14 +873,10 @@ public unsafe class PathAtlas : IDisposable
         _pipelineCache.Dispose();
         _atlasTexture.Dispose();
         _paths.Clear();
+        _compiledHitTestPaths.Clear();
         _pendingPaths.Clear();
 
         _isDisposed = true;
         GC.SuppressFinalize(this);
-    }
-
-    ~PathAtlas()
-    {
-        Dispose();
     }
 }

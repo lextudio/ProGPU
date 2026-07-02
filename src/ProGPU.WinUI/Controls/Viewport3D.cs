@@ -461,7 +461,7 @@ namespace Microsoft.UI.Xaml.Controls
         private WgpuContext? GetActiveWgpuContext()
         {
             var activeWindows = WindowManager.ActiveWindows;
-            if (activeWindows.Count == 0) return null;
+            if (activeWindows.Count == 0) return WgpuContext.Current;
             if (activeWindows.Count == 1) return activeWindows[0].WgpuContext;
 
             Visual? current = this;
@@ -489,11 +489,7 @@ namespace Microsoft.UI.Xaml.Controls
             var wgpuContext = GetActiveWgpuContext();
             if (wgpuContext == null) return;
 
-            float dpiScale = 1.0f;
-            if (wgpuContext.Window != null && wgpuContext.Window.Size.X > 0)
-            {
-                dpiScale = (float)wgpuContext.Window.FramebufferSize.X / wgpuContext.Window.Size.X;
-            }
+            float dpiScale = (float)DisplayScaleResolver.ResolveWindowDisplayScale(wgpuContext.Window);
 
             uint width = (uint)Math.Max(1, Size.X * dpiScale);
             uint height = (uint)Math.Max(1, Size.Y * dpiScale);
@@ -502,10 +498,10 @@ namespace Microsoft.UI.Xaml.Controls
             if (_colorTexture == null || _colorTexture.Width != width || _colorTexture.Height != height)
             {
                 _colorTexture?.Dispose();
-                _colorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Viewport3D Color Texture");
+                _colorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment | TextureUsage.TextureBinding, "Viewport3D Color Texture", alphaMode: GpuTextureAlphaMode.Premultiplied);
 
                 _msaaColorTexture?.Dispose();
-                _msaaColorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment, "Viewport3D MSAA Color Texture", sampleCount: 4u);
+                _msaaColorTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Rgba8Unorm, TextureUsage.RenderAttachment, "Viewport3D MSAA Color Texture", sampleCount: 4u, alphaMode: GpuTextureAlphaMode.Premultiplied);
 
                 _depthTexture?.Dispose();
                 _depthTexture = new GpuTexture(wgpuContext, width, height, TextureFormat.Depth24PlusStencil8, TextureUsage.RenderAttachment, "Viewport3D Depth Texture", sampleCount: 4u);

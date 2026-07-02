@@ -23,6 +23,7 @@ public class NavigationViewItem : Control
     private bool _isExpanded;
     private int _level;
     private FrameworkElement? _page;
+    private Func<FrameworkElement?>? _pageFactory;
 
     private float _cachedIconStartX = -9999f;
     private float _cachedIconStartY = -9999f;
@@ -88,7 +89,24 @@ public class NavigationViewItem : Control
     public FrameworkElement? Page
     {
         get => _page;
-        set { _page = value; }
+        set
+        {
+            _page = value;
+            _pageFactory = null;
+        }
+    }
+
+    public Func<FrameworkElement?>? PageFactory
+    {
+        get => _pageFactory;
+        set
+        {
+            _pageFactory = value;
+            if (value != null)
+            {
+                _page = null;
+            }
+        }
     }
 
     public ObservableCollection<NavigationViewItem> Items { get; }
@@ -119,6 +137,23 @@ public class NavigationViewItem : Control
         Text = text;
         Icon = icon;
         Page = page;
+    }
+
+    public NavigationViewItem(string text, string icon, Func<FrameworkElement?> pageFactory) : this()
+    {
+        Text = text;
+        Icon = icon;
+        PageFactory = pageFactory;
+    }
+
+    internal FrameworkElement? GetOrCreatePage()
+    {
+        if (_page == null && _pageFactory != null)
+        {
+            _page = _pageFactory();
+        }
+
+        return _page;
     }
 
     private NavigationView? FindParentNavigationView()

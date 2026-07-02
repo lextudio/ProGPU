@@ -11,7 +11,6 @@ using System.Numerics;
 using ProGPU.Layout;
 using ProGPU.Scene;
 using ProGPU.Vector;
-using ProGPU.Text;
 
 namespace Microsoft.UI.Xaml.Controls;
 
@@ -156,9 +155,10 @@ public class NavigationView : FrameworkElement
                 if (_selectedItem != null)
                 {
                     _selectedItem.IsSelected = true;
-                    if (_selectedItem.Page != null)
+                    var page = _selectedItem.GetOrCreatePage();
+                    if (page != null)
                     {
-                        Content = _selectedItem.Page;
+                        Content = page;
                     }
                 }
                 
@@ -243,11 +243,6 @@ public class NavigationView : FrameworkElement
     private void OnMenuItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         RebuildPaneChildren();
-    }
-
-    public TtfFont? GetActiveFont()
-    {
-        return Font ?? PopupService.DefaultFont;
     }
 
     private void AddVisibleItems(NavigationViewItem item, int level, List<NavigationViewItem> list)

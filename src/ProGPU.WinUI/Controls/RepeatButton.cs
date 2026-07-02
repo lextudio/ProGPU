@@ -5,7 +5,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
 using System;
 using System.Numerics;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using ProGPU.Layout;
@@ -89,10 +88,6 @@ public class RepeatButton : Button
 
     private void TriggerClick()
     {
-        var field = typeof(Button).GetField("Click", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        if (field != null && field.GetValue(this) is EventHandler handler)
-        {
-            handler.Invoke(this, EventArgs.Empty);
-        }
+        OnClick();
     }
 }

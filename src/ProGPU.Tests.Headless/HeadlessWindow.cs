@@ -20,6 +20,12 @@ public unsafe class HeadlessWindow : IDisposable
     private static HeadlessWindow? _shared;
     public static HeadlessWindow Shared => _shared ??= new HeadlessWindow(1280, 800);
 
+    public static void DisposeShared()
+    {
+        _shared?.Dispose();
+        _shared = null;
+    }
+
     [System.Runtime.InteropServices.DllImport("wgpu_native", EntryPoint = "wgpuDevicePoll")]
     private static extern bool wgpuDevicePoll(void* device, bool wait, void* wrappedSubmissionIndex);
 
@@ -40,7 +46,31 @@ public unsafe class HeadlessWindow : IDisposable
     public FrameworkElement? Content
     {
         get => _content;
-        set => _content = value;
+        set
+        {
+            if (_content != null)
+            {
+                UnloadVisualTree(_content);
+            }
+            _content = value;
+        }
+    }
+
+    private void UnloadVisualTree(Visual? visual)
+    {
+        if (visual == null) return;
+        if (visual is FrameworkElement fe)
+        {
+            fe.FireUnloaded();
+        }
+        if (visual is ContainerVisual container)
+        {
+            var children = container.Children;
+            for (int i = 0; i < children.Count; i++)
+            {
+                UnloadVisualTree(children[i]);
+            }
+        }
     }
 
     public uint Width => _width;
@@ -84,7 +114,8 @@ public unsafe class HeadlessWindow : IDisposable
                 _height,
                 TextureFormat.Rgba8Unorm,
                 TextureUsage.RenderAttachment | TextureUsage.CopySrc,
-                "Headless Offscreen Target"
+                "Headless Offscreen Target",
+                alphaMode: GpuTextureAlphaMode.Premultiplied
             );
 
             // Dispose old readback buffer
@@ -277,6 +308,6 @@ public unsafe class HeadlessWindow : IDisposable
 
     ~HeadlessWindow()
     {
-        Dispose();
+        // Do not call Dispose() or native WebGPU release APIs during finalization.
     }
 }

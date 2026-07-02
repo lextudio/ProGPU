@@ -14,6 +14,8 @@ using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
+using System.Collections.Concurrent;
+using System.Globalization;
 
 namespace Microsoft.UI.Xaml.Controls;
 
@@ -34,8 +36,17 @@ public class DataGridColumn
     }
 }
 
+public interface IDataGridValueProvider
+{
+    bool TryGetDataGridValue(string propertyName, out object? value);
+    bool TrySetDataGridValue(string propertyName, object? value);
+    Type? GetDataGridValueType(string propertyName);
+}
+
 public class DataGrid : Control
 {
+    private static readonly ConcurrentDictionary<DataGridValueAccessorKey, DataGridValueAccessor> s_registeredValueAccessors = new();
+
     private float _fontSize = 13f;
     private float _rowHeight = 28f;
     private float _headerHeight = 32f;
@@ -72,11 +83,6 @@ public class DataGrid : Control
         {
             Invalidate();
         }
-    }
-
-    public TtfFont? GetActiveFont()
-    {
-        return Font ?? PopupService.DefaultFont;
     }
 
     public float FontSize
@@ -151,6 +157,76 @@ public class DataGrid : Control
         }
     }
 
+    public static void RegisterValueAccessor<TItem, TValue>(
+        string propertyName,
+        Func<TItem, TValue> getter,
+        Action<TItem, TValue>? setter = null)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            throw new ArgumentException("Property name must be non-empty.", nameof(propertyName));
+        }
+        ArgumentNullException.ThrowIfNull(getter);
+
+        RegisterValueAccessor(
+            typeof(TItem),
+            propertyName,
+            typeof(TValue),
+            item => getter((TItem)item),
+            setter == null
+                ? null
+                : (item, value) => setter((TItem)item, CastRegisteredValue<TValue>(value)));
+    }
+
+    public static void RegisterValueAccessor<TItem>(
+        string propertyName,
+        Type valueType,
+        Func<TItem, object?> getter,
+        Action<TItem, object?>? setter = null)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            throw new ArgumentException("Property name must be non-empty.", nameof(propertyName));
+        }
+        ArgumentNullException.ThrowIfNull(valueType);
+        ArgumentNullException.ThrowIfNull(getter);
+
+        RegisterValueAccessor(
+            typeof(TItem),
+            propertyName,
+            valueType,
+            item => getter((TItem)item),
+            setter == null
+                ? null
+                : (item, value) => setter((TItem)item, value));
+    }
+
+    public static bool UnregisterValueAccessor<TItem>(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            return false;
+        }
+
+        return s_registeredValueAccessors.TryRemove(new DataGridValueAccessorKey(typeof(TItem), propertyName), out _);
+    }
+
+    private static void RegisterValueAccessor(
+        Type itemType,
+        string propertyName,
+        Type valueType,
+        Func<object, object?> getter,
+        Action<object, object?>? setter)
+    {
+        var key = new DataGridValueAccessorKey(itemType, propertyName);
+        s_registeredValueAccessors[key] = new DataGridValueAccessor(valueType, getter, setter);
+    }
+
+    private static TValue CastRegisteredValue<TValue>(object? value)
+    {
+        return value == null ? default! : (TValue)value;
+    }
+
     public void AddItem(object item)
     {
         _itemsSource.Add(item);
@@ -169,8 +245,230 @@ public class DataGrid : Control
     private string GetCellValue(object item, string propName)
     {
         if (CellValueBinding != null) return CellValueBinding(item, propName);
-        var prop = item.GetType().GetProperty(propName);
-        return prop?.GetValue(item)?.ToString() ?? string.Empty;
+        return TryGetCellRawValue(item, propName, out object? value)
+            ? Convert.ToString(value, CultureInfo.CurrentCulture) ?? string.Empty
+            : string.Empty;
+    }
+
+    private static bool TryGetCellRawValue(object item, string propName, out object? value)
+    {
+        if (item is IDataGridValueProvider provider)
+        {
+            return provider.TryGetDataGridValue(propName, out value);
+        }
+
+        DataGridValueAccessor accessor = GetValueAccessor(item.GetType(), propName);
+        if (!accessor.CanRead)
+        {
+            value = null;
+            return false;
+        }
+
+        value = accessor.Get(item);
+        return true;
+    }
+
+    private static Type? GetCellValueType(object item, string propName)
+    {
+        if (item is IDataGridValueProvider provider)
+        {
+            return provider.GetDataGridValueType(propName);
+        }
+
+        DataGridValueAccessor accessor = GetValueAccessor(item.GetType(), propName);
+        return accessor.ValueType;
+    }
+
+    private static bool TryGetWritableCellValueType(object item, string propName, out Type valueType)
+    {
+        Type? providerType = item is IDataGridValueProvider provider
+            ? provider.GetDataGridValueType(propName)
+            : null;
+        if (providerType != null)
+        {
+            valueType = providerType;
+            return true;
+        }
+
+        DataGridValueAccessor accessor = GetValueAccessor(item.GetType(), propName);
+        if (accessor.CanWrite && accessor.ValueType != null)
+        {
+            valueType = accessor.ValueType;
+            return true;
+        }
+
+        valueType = typeof(string);
+        return false;
+    }
+
+    private static string? ResolveWritableCellPropertyName(object item, string preferredPropertyName)
+    {
+        if (TryGetWritableCellValueType(item, preferredPropertyName, out _))
+        {
+            return preferredPropertyName;
+        }
+
+        return !preferredPropertyName.Equals("Value", StringComparison.Ordinal)
+            && TryGetWritableCellValueType(item, "Value", out _)
+                ? "Value"
+                : null;
+    }
+
+    private static bool TrySetCellRawValue(object item, string propName, object? value)
+    {
+        if (item is IDataGridValueProvider provider)
+        {
+            return provider.TrySetDataGridValue(propName, value);
+        }
+
+        DataGridValueAccessor accessor = GetValueAccessor(item.GetType(), propName);
+        if (!accessor.CanWrite)
+        {
+            return false;
+        }
+
+        accessor.Set(item, value);
+        return true;
+    }
+
+    private static bool TrySetEditedCellValue(object item, string propName, string text)
+    {
+        if (!TryGetWritableCellValueType(item, propName, out Type valueType) ||
+            !TryConvertEditedValue(text, valueType, out object? convertedValue))
+        {
+            return false;
+        }
+
+        return TrySetCellRawValue(item, propName, convertedValue);
+    }
+
+    private static bool TryConvertEditedValue(string text, Type valueType, out object? value)
+    {
+        Type targetType = Nullable.GetUnderlyingType(valueType) ?? valueType;
+        if (targetType == typeof(string))
+        {
+            value = text;
+            return true;
+        }
+
+        if (targetType == typeof(bool))
+        {
+            if (bool.TryParse(text, out bool boolValue))
+            {
+                value = boolValue;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (targetType == typeof(double))
+        {
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out double doubleValue) ||
+                double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out doubleValue))
+            {
+                value = doubleValue;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (targetType == typeof(float))
+        {
+            if (float.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out float floatValue) ||
+                float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out floatValue))
+            {
+                value = floatValue;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (targetType == typeof(int))
+        {
+            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.CurrentCulture, out int intValue) ||
+                int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out intValue))
+            {
+                value = intValue;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (targetType.IsEnum)
+        {
+            try
+            {
+                value = Enum.Parse(targetType, text, true);
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        try
+        {
+            value = Convert.ChangeType(text, targetType, CultureInfo.CurrentCulture);
+            return true;
+        }
+        catch
+        {
+            value = null;
+            return false;
+        }
+    }
+
+    private static DataGridValueAccessor GetValueAccessor(Type itemType, string propName)
+    {
+        if (string.IsNullOrWhiteSpace(propName))
+        {
+            return DataGridValueAccessor.Missing;
+        }
+
+        return s_registeredValueAccessors.TryGetValue(new DataGridValueAccessorKey(itemType, propName), out var accessor)
+            ? accessor
+            : DataGridValueAccessor.Missing;
+    }
+
+    private readonly record struct DataGridValueAccessorKey(Type ItemType, string PropertyName);
+
+    private sealed class DataGridValueAccessor
+    {
+        public static readonly DataGridValueAccessor Missing = new(null, null, null);
+
+        private readonly Func<object, object?>? _getter;
+        private readonly Action<object, object?>? _setter;
+
+        public DataGridValueAccessor(Type? valueType, Func<object, object?>? getter, Action<object, object?>? setter)
+        {
+            ValueType = valueType;
+            _getter = getter;
+            _setter = setter;
+        }
+
+        public Type? ValueType { get; }
+        public bool CanRead => _getter != null;
+        public bool CanWrite => _setter != null;
+
+        public object? Get(object item)
+        {
+            return _getter!(item);
+        }
+
+        public void Set(object item, object? value)
+        {
+            _setter!(item, value);
+        }
     }
 
     public void SortItems(DataGridColumn column)
@@ -720,17 +1018,15 @@ public class DataGrid : Control
             _cellEditor = null;
         }
 
-        // Reflectively retrieve cell property type to avoid circular dependency
         Type cellType = typeof(string);
-        var typeProp = item.GetType().GetProperty("PropertyType");
-        if (typeProp != null)
+        if (TryGetCellRawValue(item, "PropertyType", out object? propertyTypeValue) &&
+            propertyTypeValue is Type providerType)
         {
-            cellType = typeProp.GetValue(item) as Type ?? typeof(string);
+            cellType = providerType;
         }
         else
         {
-            var prop = item.GetType().GetProperty(column.PropertyName);
-            if (prop != null) cellType = prop.PropertyType;
+            cellType = GetCellValueType(item, column.PropertyName) ?? typeof(string);
         }
 
         if (cellType == typeof(bool))
@@ -869,45 +1165,10 @@ public class DataGrid : Control
 
             try
             {
-                System.Reflection.PropertyInfo? prop = item.GetType().GetProperty(column.PropertyName)
-                                                     ?? item.GetType().GetProperty("Value");
-                if (prop != null && prop.CanWrite)
+                string? propertyName = ResolveWritableCellPropertyName(item, column.PropertyName);
+                if (propertyName != null)
                 {
-                    System.Type propType = prop.PropertyType;
-                    if (propType == typeof(string))
-                    {
-                        prop.SetValue(item, newValueText);
-                    }
-                    else if (propType == typeof(double))
-                    {
-                        if (double.TryParse(newValueText, out double dVal))
-                        {
-                            prop.SetValue(item, dVal);
-                        }
-                    }
-                    else if (propType == typeof(int))
-                    {
-                        if (int.TryParse(newValueText, out int iVal))
-                        {
-                            prop.SetValue(item, iVal);
-                        }
-                    }
-                    else if (propType == typeof(float))
-                    {
-                        if (float.TryParse(newValueText, out float fVal))
-                        {
-                            prop.SetValue(item, fVal);
-                        }
-                    }
-                    else if (propType.IsEnum)
-                    {
-                        try
-                        {
-                            var eval = Enum.Parse(propType, newValueText, true);
-                            prop.SetValue(item, eval);
-                        }
-                        catch {}
-                    }
+                    TrySetEditedCellValue(item, propertyName, newValueText);
                 }
             }
             catch (Exception ex)
@@ -1069,12 +1330,6 @@ public class DataGrid : Control
                     e.Handled = true;
                 }
             };
-            _textBox.TextChanged += (s, e) =>
-            {
-                var val = _textBox.Text;
-                _colorBtn.Background = GetBrushFromText(val);
-                UpdateLiveValue(val);
-            };
             Grid.SetColumn(_textBox, 0);
             AddChild(_textBox);
 
@@ -1089,6 +1344,13 @@ public class DataGrid : Control
             _colorBtn.Click += (s, e) => { ShowColorPickerPopup(); };
             Grid.SetColumn(_colorBtn, 1);
             AddChild(_colorBtn);
+
+            _textBox.TextChanged += (s, e) =>
+            {
+                var val = _textBox.Text;
+                _colorBtn.Background = GetBrushFromText(val);
+                UpdateLiveValue(val);
+            };
         }
 
         public string Value => _textBox.Text;
@@ -1127,34 +1389,31 @@ public class DataGrid : Control
             {
                 var item = _owner._itemsSource[_owner._editingRow];
                 var column = _owner.Columns[_owner._editingCol];
-                var prop = item.GetType().GetProperty(column.PropertyName) ?? item.GetType().GetProperty("Value");
-                if (prop != null && prop.CanWrite)
+                string? propertyName = ResolveWritableCellPropertyName(item, column.PropertyName);
+                if (propertyName != null &&
+                    TryGetWritableCellValueType(item, propertyName, out Type valueType))
                 {
-                    if (prop.PropertyType == typeof(Brush) || typeof(Brush).IsAssignableFrom(prop.PropertyType))
+                    if (valueType == typeof(Brush) || typeof(Brush).IsAssignableFrom(valueType))
                     {
-                        prop.SetValue(item, GetBrushFromText(val));
+                        TrySetCellRawValue(item, propertyName, GetBrushFromText(val));
                     }
-                    else if (prop.PropertyType == typeof(Vector4))
+                    else if (valueType == typeof(Vector4))
                     {
                         var brush = GetBrushFromText(val);
                         if (brush is SolidColorBrush scb)
                         {
-                            prop.SetValue(item, scb.Color);
+                            TrySetCellRawValue(item, propertyName, scb.Color);
                         }
                     }
-                    else if (prop.PropertyType == typeof(string))
+                    else if (valueType == typeof(string))
                     {
-                        prop.SetValue(item, val);
+                        TrySetCellRawValue(item, propertyName, val);
                     }
                     else
                     {
-                        try
+                        if (!TrySetEditedCellValue(item, propertyName, val))
                         {
-                            prop.SetValue(item, Convert.ChangeType(val, prop.PropertyType));
-                        }
-                        catch
-                        {
-                            prop.SetValue(item, val);
+                            TrySetCellRawValue(item, propertyName, val);
                         }
                     }
                 }

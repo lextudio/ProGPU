@@ -1,7 +1,6 @@
 using Thickness = Microsoft.UI.Xaml.Thickness;
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Numerics;
 using Silk.NET.Windowing;
 using Silk.NET.Input;
@@ -40,49 +39,20 @@ public static unsafe class MainWindowController
         AppState._offscreenCompositor = new Compositor(AppState._wgpuContext!, TextureFormat.Rgba8Unorm);
         AppState._compute = new ComputeAccelerator(AppState._wgpuContext!);
 
-        string fontPath = "/System/Library/Fonts/Supplemental/Arial.ttf";
-        if (!File.Exists(fontPath))
-        {
-            fontPath = "Arial.ttf";
-        }
-
-        if (File.Exists(fontPath))
-        {
-            Console.WriteLine($"[ProGPU.Samples] Loading System Font: {fontPath}");
-            AppState._font = new TtfFont(fontPath);
-            Microsoft.UI.Xaml.Controls.PopupService.DefaultFont = AppState._font;
-        }
-        else
-        {
-            throw new FileNotFoundException("Arial.ttf is required to execute typography.");
-        }
-
-        string timesPath = "/System/Library/Fonts/Supplemental/Times New Roman.ttf";
-        if (File.Exists(timesPath)) AppState._fontTimes = new TtfFont(timesPath);
-        else AppState._fontTimes = AppState._font;
-
-        string courierPath = "/System/Library/Fonts/Supplemental/Courier New.ttf";
-        if (File.Exists(courierPath)) AppState._fontCourier = new TtfFont(courierPath);
-        else AppState._fontCourier = AppState._font;
-
-        string georgiaPath = "/System/Library/Fonts/Supplemental/Georgia.ttf";
-        if (File.Exists(georgiaPath)) AppState._fontGeorgia = new TtfFont(georgiaPath);
-        else AppState._fontGeorgia = AppState._font;
-
-        string comicPath = "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf";
-        if (File.Exists(comicPath)) AppState._fontComic = new TtfFont(comicPath);
-        else AppState._fontComic = AppState._font;
+        SampleFontLoader.EnsureLoaded();
 
         AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc);
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasTempTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasBlurTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasShadowTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
-
-        AppState.GenerateLogItems();
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
 
         ObjModels.EnsureSamplesExist("models");
 
@@ -113,49 +83,20 @@ public static unsafe class MainWindowController
         AppState._offscreenCompositor = new Compositor(AppState._wgpuContext!, TextureFormat.Rgba8Unorm);
         AppState._compute = new ComputeAccelerator(AppState._wgpuContext!);
 
-        string fontPath = "/System/Library/Fonts/Supplemental/Arial.ttf";
-        if (!File.Exists(fontPath))
-        {
-            fontPath = "Arial.ttf";
-        }
-
-        if (File.Exists(fontPath))
-        {
-            Console.WriteLine($"[ProGPU.Samples] Loading Embedded System Font: {fontPath}");
-            AppState._font = new TtfFont(fontPath);
-            Microsoft.UI.Xaml.Controls.PopupService.DefaultFont = AppState._font;
-        }
-        else
-        {
-            throw new FileNotFoundException("Arial.ttf is required to execute typography.");
-        }
-
-        string timesPath = "/System/Library/Fonts/Supplemental/Times New Roman.ttf";
-        if (File.Exists(timesPath)) AppState._fontTimes = new TtfFont(timesPath);
-        else AppState._fontTimes = AppState._font;
-
-        string courierPath = "/System/Library/Fonts/Supplemental/Courier New.ttf";
-        if (File.Exists(courierPath)) AppState._fontCourier = new TtfFont(courierPath);
-        else AppState._fontCourier = AppState._font;
-
-        string georgiaPath = "/System/Library/Fonts/Supplemental/Georgia.ttf";
-        if (File.Exists(georgiaPath)) AppState._fontGeorgia = new TtfFont(georgiaPath);
-        else AppState._fontGeorgia = AppState._font;
-
-        string comicPath = "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf";
-        if (File.Exists(comicPath)) AppState._fontComic = new TtfFont(comicPath);
-        else AppState._fontComic = AppState._font;
+        SampleFontLoader.EnsureLoaded("[ProGPU.Samples.Embedded]");
 
         AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc);
+            TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasTempTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasBlurTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
         AppState._canvasShadowTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.StorageBinding);
-
-        AppState.GenerateLogItems();
+            TextureUsage.TextureBinding | TextureUsage.StorageBinding,
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
 
         BuildSceneGraph();
 
@@ -326,45 +267,55 @@ public static unsafe class MainWindowController
             VerticalAlignment = VerticalAlignment.Stretch
         };
 
-        // Persistent page visual trees
-        var basicInputItem = new NavigationViewItem("Basic Input", "🖱", BasicInputPage.Create());
-        var chartShowcaseItem = new NavigationViewItem("GPU Charting", "📊", ChartShowcasePage.Create());
-        var panelsItem = new NavigationViewItem("Layout Panels", "🔲", LayoutPanelsPage.Create());
-        var textItem = new NavigationViewItem("Text & Documents", "📄", TextDocumentsPage.Create());
-        var markdownPlaygroundItem = new NavigationViewItem("Markdown Playground", "📝", MarkdownPage.Create());
-        var dataItem = new NavigationViewItem("Data Virtualization", "📊", DataVirtualizationPage.Create());
-        var virtualizationControlsItem = new NavigationViewItem("Virtualization Controls", "🎛️", VirtualizationControlsPage.Create());
-        var frameworkEffectsItem = new NavigationViewItem("Framework Effects", "✨", FrameworkEffectsPage.Create());
+        static NavigationViewItem PageItem(string text, string icon, Func<FrameworkElement?> createPage)
+            => new(text, icon, createPage);
 
-        var computeItem = new NavigationViewItem("Compute FX", "⚙", ComputeFxPage.Create());
-        var motionAnimationsItem = new NavigationViewItem("Motion & Animations", "🎬", MotionAnimationsPage.Create());
-        var advancedItem = new NavigationViewItem("Advanced Controls", "🛠", AdvancedControlsPage.Create());
-        var keyboardParityItem = new NavigationViewItem("Keyboard & Focus", "⌨️", KeyboardParityPage.Create());
-        var themeShowcaseItem = new NavigationViewItem("Theme Showcase", "🎨", ThemeShowcasePage.Create());
-        var compositorItem = new NavigationViewItem("Compositor API", "🎨", CompositorShowcasePage.Create());
-        var splitViewItem = new NavigationViewItem("SplitView Layout", "🪟", SplitViewShowcasePage.Create());
-        var imageRepeatItem = new NavigationViewItem("Image & Buttons", "🖼️", ImageRepeatShowcasePage.Create());
-        var drawingContextItem = new NavigationViewItem("Drawing Context", "📐", SamplePagePresenter.CreateDrawingContextShowcaseView());
-        var fileStorageItem = new NavigationViewItem("File Storage", "📁", SamplePagePresenter.CreateFileStorageShowcaseView());
-        var stylesShowcaseItem = new NavigationViewItem("Styles Showcase", "💅", SamplePagePresenter.CreateStylesShowcaseView());
-        var motionMarkItem = new NavigationViewItem("MotionMark Showcase", "🏁", SamplePagePresenter.CreateMotionMarkShowcaseView());
-        var scriptsItem = new NavigationViewItem("Typography & Scripts", "🔤", SamplePagePresenter.CreateTypographyScriptsView());
-        var textInputItem = new NavigationViewItem("Interactive Input", "⌨️", SamplePagePresenter.CreateInteractiveInputView());
-        var lolsItem = new NavigationViewItem("LOL/s Benchmark", "💥", LolsPage.Create());
-        var radioButtonItem = new NavigationViewItem("Radio Button", "🔘", RadioButtonPage.Create());
-        var ratingControlItem = new NavigationViewItem("Rating Control", "⭐", RatingControlPage.Create());
-        var passwordBoxItem = new NavigationViewItem("Password Box", "🔒", PasswordBoxPage.Create());
-        var dxfViewerItem = new NavigationViewItem("DXF CAD Viewer", "📐", DxfViewerPage.Create());
-        var visualDesignerItem = new NavigationViewItem("Visual Designer", "📐", VisualDesignerPage.Create());
-        var pictureCachingItem = new NavigationViewItem("Picture Caching", "🖼️", PictureShowcasePage.Create());
-        var fontGlyphBrowserItem = new NavigationViewItem("Font Glyph Browser", "🔤", FontGlyphBrowserPage.Create());
-        var mesh3DViewerItem = new NavigationViewItem("3D Mesh Viewer", "🧊", Mesh3DViewerPage.Create());
+        // Page visual trees are created on first selection to keep startup focused on the default page.
+        var basicInputItem = PageItem("Basic Input", "🖱", BasicInputPage.Create);
+        var chartShowcaseItem = PageItem("GPU Charting", "📊", ChartShowcasePage.Create);
+        var panelsItem = PageItem("Layout Panels", "🔲", LayoutPanelsPage.Create);
+        var textItem = PageItem("Text & Documents", "📄", TextDocumentsPage.Create);
+        var markdownPlaygroundItem = PageItem("Markdown Playground", "📝", MarkdownPage.Create);
+        var dataItem = PageItem("Data Virtualization", "📊", DataVirtualizationPage.Create);
+        var virtualizationControlsItem = PageItem("Virtualization Controls", "🎛️", VirtualizationControlsPage.Create);
+        var frameworkEffectsItem = PageItem("Framework Effects", "✨", FrameworkEffectsPage.Create);
+        var imageEffectsItem = PageItem("Image Effects", "🖼️", ImageEffectsPage.Create);
+        var gdiShowcaseItem = PageItem("GDI Shim Showcase", "🎨", GdiShowcasePage.Create);
+        var glyphRunShowcaseItem = PageItem("Glyph Run Showcase", "🔤", GlyphRunShowcasePage.Create);
+        var wpfShowcaseItem = PageItem("WPF Shim Showcase", "📐", WpfShowcasePage.Create);
 
-        var wrapPanelItem = new NavigationViewItem("Wrap Panel", "🔲", WrapPanelPage.Create());
-        var dockPanelItem = new NavigationViewItem("Dock Panel", "🪟", DockPanelPage.Create());
-        var gridSplitterItem = new NavigationViewItem("Grid Splitter", "↔️", GridSplitterPage.Create());
-        var colorPickerItem = new NavigationViewItem("Color Picker", "🎨", ColorPickerPage.Create());
-        var vectorShapesItem = new NavigationViewItem("Vector Shapes", "📐", VectorShapesPage.Create());
+        var computeItem = PageItem("Compute FX", "⚙", ComputeFxPage.Create);
+        var motionAnimationsItem = PageItem("Motion & Animations", "🎬", MotionAnimationsPage.Create);
+        var advancedItem = PageItem("Advanced Controls", "🛠", AdvancedControlsPage.Create);
+        var keyboardParityItem = PageItem("Keyboard & Focus", "⌨️", KeyboardParityPage.Create);
+        var themeShowcaseItem = PageItem("Theme Showcase", "🎨", ThemeShowcasePage.Create);
+        var compositorItem = PageItem("Compositor API", "🎨", CompositorShowcasePage.Create);
+        var splitViewItem = PageItem("SplitView Layout", "🪟", SplitViewShowcasePage.Create);
+        var imageRepeatItem = PageItem("Image & Buttons", "🖼️", ImageRepeatShowcasePage.Create);
+        var drawingContextItem = PageItem("Drawing Context", "📐", SamplePagePresenter.CreateDrawingContextShowcaseView);
+        var fileStorageItem = PageItem("File Storage", "📁", SamplePagePresenter.CreateFileStorageShowcaseView);
+        var stylesShowcaseItem = PageItem("Styles Showcase", "💅", SamplePagePresenter.CreateStylesShowcaseView);
+        var motionMarkItem = PageItem("MotionMark Showcase", "🏁", SamplePagePresenter.CreateMotionMarkShowcaseView);
+        var scriptsItem = PageItem("Typography & Scripts", "🔤", SamplePagePresenter.CreateTypographyScriptsView);
+        var textInputItem = PageItem("Interactive Input", "⌨️", SamplePagePresenter.CreateInteractiveInputView);
+        var lolsItem = PageItem("LOL/s Benchmark", "💥", LolsPage.Create);
+        var radioButtonItem = PageItem("Radio Button", "🔘", RadioButtonPage.Create);
+        var ratingControlItem = PageItem("Rating Control", "⭐", RatingControlPage.Create);
+        var passwordBoxItem = PageItem("Password Box", "🔒", PasswordBoxPage.Create);
+        var dxfViewerItem = PageItem("DXF CAD Viewer", "📐", DxfViewerPage.Create);
+        var visualDesignerItem = PageItem("Visual Designer", "📐", VisualDesignerPage.Create);
+        var pictureCachingItem = PageItem("Picture Caching", "🖼️", PictureShowcasePage.Create);
+        var fontGlyphBrowserItem = PageItem("Font Glyph Browser", "🔤", FontGlyphBrowserPage.Create);
+        var mesh3DViewerItem = PageItem("3D Mesh Viewer", "🧊", Mesh3DViewerPage.Create);
+        var shaderToyPlaygroundItem = PageItem("ShaderToy Playground", "🔮", ShaderToyPlaygroundPage.Create);
+
+        var wrapPanelItem = PageItem("Wrap Panel", "🔲", WrapPanelPage.Create);
+        var dockPanelItem = PageItem("Dock Panel", "🪟", DockPanelPage.Create);
+        var gridSplitterItem = PageItem("Grid Splitter", "↔️", GridSplitterPage.Create);
+        var colorPickerItem = PageItem("Color Picker", "🎨", ColorPickerPage.Create);
+        var vectorShapesItem = PageItem("Vector Shapes", "📐", VectorShapesPage.Create);
+        var skiaSharpShimItem = PageItem("SkiaSharp Shim", "🦊", SkiaSharpShimPage.Create);
+        var pathOpsItem = PageItem("Path Operations", "✂️", PathOpsPage.Create);
 
         AppState._navigationView.MenuItems.Add(basicInputItem);
         AppState._navigationView.MenuItems.Add(chartShowcaseItem);
@@ -374,12 +325,18 @@ public static unsafe class MainWindowController
         AppState._navigationView.MenuItems.Add(gridSplitterItem);
         AppState._navigationView.MenuItems.Add(colorPickerItem);
         AppState._navigationView.MenuItems.Add(vectorShapesItem);
+        AppState._navigationView.MenuItems.Add(skiaSharpShimItem);
+        AppState._navigationView.MenuItems.Add(pathOpsItem);
         AppState._navigationView.MenuItems.Add(fontGlyphBrowserItem);
         AppState._navigationView.MenuItems.Add(textItem);
         AppState._navigationView.MenuItems.Add(markdownPlaygroundItem);
         AppState._navigationView.MenuItems.Add(dataItem);
         AppState._navigationView.MenuItems.Add(virtualizationControlsItem);
         AppState._navigationView.MenuItems.Add(frameworkEffectsItem);
+        AppState._navigationView.MenuItems.Add(imageEffectsItem);
+        AppState._navigationView.MenuItems.Add(gdiShowcaseItem);
+        AppState._navigationView.MenuItems.Add(glyphRunShowcaseItem);
+        AppState._navigationView.MenuItems.Add(wpfShowcaseItem);
         AppState._navigationView.MenuItems.Add(computeItem);
         AppState._navigationView.MenuItems.Add(motionAnimationsItem);
         AppState._navigationView.MenuItems.Add(advancedItem);
@@ -402,6 +359,7 @@ public static unsafe class MainWindowController
         AppState._navigationView.MenuItems.Add(visualDesignerItem);
         AppState._navigationView.MenuItems.Add(pictureCachingItem);
         AppState._navigationView.MenuItems.Add(mesh3DViewerItem);
+        AppState._navigationView.MenuItems.Add(shaderToyPlaygroundItem);
 
         AppState._navigationView.SelectionChanged += (s, e) =>
         {
@@ -418,7 +376,7 @@ public static unsafe class MainWindowController
 
         if (AppState._navigationView.SettingsItem != null)
         {
-            AppState._navigationView.SettingsItem.Page = SettingsPage.Create();
+            AppState._navigationView.SettingsItem.PageFactory = SettingsPage.Create;
         }
 
         // Select default category
@@ -549,11 +507,20 @@ public static unsafe class MainWindowController
 
         AppState._frameStopwatch.Restart();
 
-        // Update animated cogs if currently in Compute FX Showcase View
-        if (AppState._activeCategory == "Compute FX" && AppState._gearCanvasVisual != null)
+        // Update animated cogs if currently in Compute FX, Image Effects, or Image & Buttons (ImageRepeatShowcasePage)
+        if ((AppState._activeCategory == "Compute FX" || AppState._activeCategory == "Image Effects" || AppState._activeCategory == "Image & Buttons") && AppState._gearCanvasVisual != null)
         {
-            float winX = AppState._window?.Size.X ?? AppState._topLevelGrid.Size.X;
-            float winY = AppState._window?.Size.Y ?? AppState._topLevelGrid.Size.Y;
+            Vector2 logicalWindowSize = AppState._topLevelGrid.Size;
+            if ((logicalWindowSize.X <= 0f || logicalWindowSize.Y <= 0f) && AppState._window != null)
+            {
+                float dpiScale = (float)DisplayScaleResolver.ResolveWindowDisplayScale(AppState._window);
+                logicalWindowSize = new Vector2(
+                    AppState._window.FramebufferSize.X / dpiScale,
+                    AppState._window.FramebufferSize.Y / dpiScale);
+            }
+
+            float winX = logicalWindowSize.X;
+            float winY = logicalWindowSize.Y;
 
             AppState._gearCanvasVisual.Measure(new Vector2(winX - 300f, winY - 140f));
             AppState._gearCanvasVisual.Arrange(new Rect(0, 0, winX - 300f, winY - 140f));

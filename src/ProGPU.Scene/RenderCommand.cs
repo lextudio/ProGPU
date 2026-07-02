@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Backend;
@@ -36,7 +37,35 @@ public enum RenderCommandType
     DrawGpuLineSeries,
     DrawGpuScatterSeries,
     DrawPicture, // New: Skia-like SKPicture command
-    DrawExtension
+    DrawExtension,
+    PushGeometryClip,
+    PopGeometryClip,
+    PushOpacityMask,
+    PopOpacityMask,
+    PushBlendMode,
+    PopBlendMode,
+    DrawGlyphRun
+}
+
+public enum TextureSamplingMode
+{
+    Linear,
+    Nearest,
+    Cubic
+}
+
+public enum TextRenderingMode
+{
+    Grayscale,
+    Aliased,
+    ClearType
+}
+
+public enum TextHintingMode
+{
+    Auto,
+    Fixed,
+    Animated
 }
 
 public struct Line3D
@@ -121,13 +150,189 @@ public interface IRenderDataProvider
     ReadOnlySpan<float> GetFloats(int offset, int count);
 }
 
+public sealed class RenderCommandGeometryCache
+{
+    private int _dashedStrokeSignature;
+    private PathGeometry? _dashedStrokePath;
+    private Pen? _undashedStrokePen;
+
+    private RenderCommandGeometryCache(
+        PathGeometry? strokePath,
+        PathGeometry? fillPath,
+        PathGeometry? secondaryFillPath)
+    {
+        StrokePath = strokePath;
+        FillPath = fillPath;
+        SecondaryFillPath = secondaryFillPath;
+    }
+
+    public PathGeometry? StrokePath { get; }
+    public PathGeometry? FillPath { get; }
+    public PathGeometry? SecondaryFillPath { get; }
+
+    public static RenderCommandGeometryCache ForPath(PathGeometry path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        return new RenderCommandGeometryCache(path, path, null);
+    }
+
+    public static RenderCommandGeometryCache ForStrokePath(PathGeometry path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        return new RenderCommandGeometryCache(path, null, null);
+    }
+
+    public static RenderCommandGeometryCache ForFillPath(PathGeometry path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        return new RenderCommandGeometryCache(null, path, null);
+    }
+
+    public static RenderCommandGeometryCache ForFillPaths(PathGeometry primaryPath, PathGeometry secondaryPath)
+    {
+        ArgumentNullException.ThrowIfNull(primaryPath);
+        ArgumentNullException.ThrowIfNull(secondaryPath);
+        return new RenderCommandGeometryCache(null, primaryPath, secondaryPath);
+    }
+
+    public bool TryGetDashedStrokePath(Pen pen, out PathGeometry dashedStrokePath, out Pen undashedStrokePen)
+    {
+        ArgumentNullException.ThrowIfNull(pen);
+
+        if (StrokePath == null)
+        {
+            dashedStrokePath = null!;
+            undashedStrokePen = null!;
+            return false;
+        }
+
+        int signature = ComputeDashedStrokeSignature(pen);
+        if (_dashedStrokePath != null &&
+            _undashedStrokePen != null &&
+            _dashedStrokeSignature == signature)
+        {
+            dashedStrokePath = _dashedStrokePath;
+            undashedStrokePen = _undashedStrokePen;
+            return true;
+        }
+
+        if (!Compositor.TryCreateDashedStrokePath(StrokePath, pen, out dashedStrokePath))
+        {
+            undashedStrokePen = null!;
+            return false;
+        }
+
+        undashedStrokePen = Compositor.CreateUndashedPen(pen);
+        _dashedStrokePath = dashedStrokePath;
+        _undashedStrokePen = undashedStrokePen;
+        _dashedStrokeSignature = signature;
+        return true;
+    }
+
+    public static PathGeometry CreateLinePath(Vector2 start, Vector2 end)
+    {
+        var path = new PathGeometry();
+        var figure = new PathFigure(start);
+        figure.Segments.Add(new LineSegment(end));
+        path.Figures.Add(figure);
+        return path;
+    }
+
+    public static PathGeometry CreatePolylinePath(ReadOnlySpan<Vector2> points, bool isClosed)
+    {
+        var path = new PathGeometry();
+        if (points.Length == 0)
+        {
+            return path;
+        }
+
+        var figure = new PathFigure(points[0], isClosed);
+        for (int i = 1; i < points.Length; i++)
+        {
+            figure.Segments.Add(new LineSegment(points[i]));
+        }
+
+        path.Figures.Add(figure);
+        return path;
+    }
+
+    public static PathGeometry CreateTrianglePath(Vector2 p1, Vector2 p2, Vector2 p3)
+    {
+        var path = new PathGeometry();
+        var figure = new PathFigure(p1, isClosed: true);
+        figure.Segments.Add(new LineSegment(p2));
+        figure.Segments.Add(new LineSegment(p3));
+        path.Figures.Add(figure);
+        return path;
+    }
+
+    public static PathGeometry CreateQuadraticBezierPath(Vector2 start, Vector2 control, Vector2 end)
+    {
+        var path = new PathGeometry();
+        var figure = new PathFigure(start);
+        figure.Segments.Add(new QuadraticBezierSegment(control, end));
+        path.Figures.Add(figure);
+        return path;
+    }
+
+    public static PathGeometry CreateCubicBezierPath(Vector2 start, Vector2 control1, Vector2 control2, Vector2 end)
+    {
+        var path = new PathGeometry();
+        var figure = new PathFigure(start);
+        figure.Segments.Add(new CubicBezierSegment(control1, control2, end));
+        path.Figures.Add(figure);
+        return path;
+    }
+
+    public static PathGeometry CreateSplinePath(
+        ReadOnlySpan<Vector2> controlPoints,
+        ReadOnlySpan<double> knots,
+        ReadOnlySpan<double> weights,
+        int degree,
+        bool isClosed)
+    {
+        return SplineGeometry.CreatePath(controlPoints, knots, weights, degree, isClosed);
+    }
+
+    private static int ComputeDashedStrokeSignature(Pen pen)
+    {
+        var hash = new HashCode();
+        hash.Add(pen.Brush);
+        hash.Add(pen.Thickness);
+        hash.Add(pen.LineJoin);
+        hash.Add(pen.MiterLimit);
+        hash.Add(pen.StartLineCap);
+        hash.Add(pen.EndLineCap);
+        hash.Add(pen.DashCap);
+        hash.Add(pen.DashOffset);
+
+        var dashArray = pen.DashArray;
+        if (dashArray != null)
+        {
+            hash.Add(dashArray.Length);
+            for (int i = 0; i < dashArray.Length; i++)
+            {
+                hash.Add(dashArray[i]);
+            }
+        }
+        else
+        {
+            hash.Add(0);
+        }
+
+        return hash.ToHashCode();
+    }
+}
+
 public struct RenderCommand
 {
     public RenderCommandType Type;
+    public int HitTestId;
     public Rect Rect;
     public Brush? Brush;
     public Pen? Pen;
     public PathGeometry? Path;
+    public RenderCommandGeometryCache? GeometryCache;
     
     // Typography properties
     public string? Text;
@@ -137,9 +342,21 @@ public struct RenderCommand
     public bool IsBold;
     public bool IsItalic;
     public float Rotation;
+    public TextRenderingMode TextRenderingMode;
+    public TextHintingMode TextHintingMode;
+    public bool IsTextAliased
+    {
+        readonly get => TextRenderingMode == TextRenderingMode.Aliased;
+        set => TextRenderingMode = value ? TextRenderingMode.Aliased : TextRenderingMode.Grayscale;
+    }
 
     // Texture properties
     public GpuTexture? Texture;
+    public Rect SrcRect;
+    public TextureSamplingMode TextureSamplingMode;
+
+    // Vector render options
+    public bool IsEdgeAliased;
 
     // Advanced geometries
     public Vector2 Position2;
@@ -203,6 +420,10 @@ public struct RenderCommand
     // Picture property
     public GpuPicture? Picture;
 
+    // Glyph run properties (Skia SKTextBlob compatibility)
+    public ushort[]? GlyphIndices;
+    public Vector2[]? GlyphPositions;
+
     // High performance custom drawing extension properties
     public int ExtensionId;
     public int IntParam;
@@ -210,26 +431,112 @@ public struct RenderCommand
     public object? DataParam;
 }
 
-public class GpuPicture : IRenderDataProvider
+internal sealed class RetainedResourceLease : IDisposable
+{
+    private RetainedResourceOwner? _owner;
+
+    private RetainedResourceLease(RetainedResourceOwner owner)
+    {
+        _owner = owner;
+    }
+
+    public static RetainedResourceLease Create(IDisposable resource)
+    {
+        return new RetainedResourceLease(new RetainedResourceOwner(resource));
+    }
+
+    public RetainedResourceLease AddRef()
+    {
+        var owner = _owner ?? throw new ObjectDisposedException(nameof(RetainedResourceLease));
+        owner.AddRef();
+        return new RetainedResourceLease(owner);
+    }
+
+    public void Dispose()
+    {
+        Interlocked.Exchange(ref _owner, null)?.Release();
+    }
+
+    private sealed class RetainedResourceOwner
+    {
+        private readonly IDisposable _resource;
+        private int _refCount = 1;
+        private int _disposed;
+
+        public RetainedResourceOwner(IDisposable resource)
+        {
+            _resource = resource;
+        }
+
+        public void AddRef()
+        {
+            while (true)
+            {
+                int count = Volatile.Read(ref _refCount);
+                if (count <= 0)
+                {
+                    throw new ObjectDisposedException(nameof(RetainedResourceOwner));
+                }
+
+                if (Interlocked.CompareExchange(ref _refCount, count + 1, count) == count)
+                {
+                    return;
+                }
+            }
+        }
+
+        public void Release()
+        {
+            if (Interlocked.Decrement(ref _refCount) == 0 &&
+                Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _resource.Dispose();
+            }
+        }
+    }
+}
+
+public class GpuPicture : IRenderDataProvider, IDisposable
 {
     public RenderCommand[] Commands { get; }
     public Vector2[] PointBuffer { get; }
     public double[] DoubleBuffer { get; }
     public Line3D[] Line3DBuffer { get; }
     public float[] FloatBuffer { get; }
+    private readonly RetainedResourceLease[] _retainedResources;
+    private bool _disposed;
+
+    public int RetainedResourceCount => _retainedResources.Length;
 
     public GpuPicture(
         RenderCommand[] commands,
         Vector2[] pointBuffer,
         double[] doubleBuffer,
         Line3D[] line3dBuffer,
-        float[] floatBuffer)
+        float[] floatBuffer) : this(
+            commands,
+            pointBuffer,
+            doubleBuffer,
+            line3dBuffer,
+            floatBuffer,
+            Array.Empty<RetainedResourceLease>())
+    {
+    }
+
+    internal GpuPicture(
+        RenderCommand[] commands,
+        Vector2[] pointBuffer,
+        double[] doubleBuffer,
+        Line3D[] line3dBuffer,
+        float[] floatBuffer,
+        RetainedResourceLease[] retainedResources)
     {
         Commands = commands;
         PointBuffer = pointBuffer;
         DoubleBuffer = doubleBuffer;
         Line3DBuffer = line3dBuffer;
         FloatBuffer = floatBuffer;
+        _retainedResources = retainedResources;
     }
 
     public ReadOnlySpan<Vector2> GetPoints(int offset, int count) => 
@@ -243,6 +550,25 @@ public class GpuPicture : IRenderDataProvider
 
     public ReadOnlySpan<float> GetFloats(int offset, int count) => 
         new ReadOnlySpan<float>(FloatBuffer, offset, count);
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        DisposeRetainedResources(_retainedResources);
+    }
+
+    private static void DisposeRetainedResources(RetainedResourceLease[] resources)
+    {
+        foreach (var resource in resources)
+        {
+            resource.Dispose();
+        }
+    }
 }
 
 public class GpuPictureRecorder
@@ -257,25 +583,48 @@ public class GpuPictureRecorder
 
     public GpuPicture EndRecording()
     {
-        return new GpuPicture(
+        var picture = new GpuPicture(
             _recordingContext.Commands.ToArray(),
             _recordingContext.PointBuffer.ToArray(),
             _recordingContext.DoubleBuffer.ToArray(),
             _recordingContext.Line3DBuffer.ToArray(),
-            _recordingContext.FloatBuffer.ToArray()
+            _recordingContext.FloatBuffer.ToArray(),
+            _recordingContext.CloneRetainedResources()
         );
+        _recordingContext.Clear();
+        return picture;
     }
 }
 
 public class DrawingContext : IRenderDataProvider
 {
     public List<RenderCommand> Commands { get; } = new();
+    private readonly List<RetainedResourceLease> _retainedResources = new();
 
     // Reusable continuous pools to eliminate heap array allocations
     public List<Vector2> PointBuffer { get; } = new();
     public List<double> DoubleBuffer { get; } = new();
     public List<Line3D> Line3DBuffer { get; } = new();
     public List<float> FloatBuffer { get; } = new();
+
+    public int RetainedResourceCount => _retainedResources.Count;
+
+    public void RetainResource(IDisposable resource)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        _retainedResources.Add(RetainedResourceLease.Create(resource));
+    }
+
+    internal RetainedResourceLease[] CloneRetainedResources()
+    {
+        var leases = new RetainedResourceLease[_retainedResources.Count];
+        for (int i = 0; i < leases.Length; i++)
+        {
+            leases[i] = _retainedResources[i].AddRef();
+        }
+
+        return leases;
+    }
 
     public ReadOnlySpan<Vector2> GetPoints(int offset, int count) => 
         CollectionsMarshal.AsSpan(PointBuffer).Slice(offset, count);
@@ -307,11 +656,35 @@ public class DrawingContext : IRenderDataProvider
             Type = RenderCommandType.DrawPath,
             Brush = brush,
             Pen = pen,
-            Path = path
+            Path = path,
+            GeometryCache = RenderCommandGeometryCache.ForPath(path)
         });
     }
 
-    public void DrawText(string text, TtfFont font, float fontSize, Brush brush, Vector2 position, bool isBold = false, bool isItalic = false, float rotation = 0f)
+    public void DrawPath(Brush? brush, Pen? pen, PathGeometry path, Matrix4x4 transform)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPath,
+            Brush = brush,
+            Pen = pen,
+            Path = path,
+            Transform = transform,
+            GeometryCache = RenderCommandGeometryCache.ForPath(path)
+        });
+    }
+
+    public void DrawText(
+        string text,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        bool isBold = false,
+        bool isItalic = false,
+        float rotation = 0f,
+        TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
+        TextHintingMode textHintingMode = TextHintingMode.Auto)
     {
         Commands.Add(new RenderCommand
         {
@@ -323,7 +696,69 @@ public class DrawingContext : IRenderDataProvider
             Position = position,
             IsBold = isBold,
             IsItalic = isItalic,
-            Rotation = rotation
+            Rotation = rotation,
+            TextRenderingMode = textRenderingMode,
+            TextHintingMode = textHintingMode
+        });
+    }
+
+    public void DrawText(
+        string text,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        Matrix4x4 transform,
+        bool isBold = false,
+        bool isItalic = false,
+        float rotation = 0f,
+        TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
+        TextHintingMode textHintingMode = TextHintingMode.Auto)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawText,
+            Text = text,
+            Font = font,
+            FontSize = fontSize,
+            Brush = brush,
+            Position = position,
+            Transform = transform,
+            IsBold = isBold,
+            IsItalic = isItalic,
+            Rotation = rotation,
+            TextRenderingMode = textRenderingMode,
+            TextHintingMode = textHintingMode
+        });
+    }
+
+    public void DrawGlyphRun(
+        ushort[] glyphIndices,
+        Vector2[] glyphPositions,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        Matrix4x4 transform = default,
+        bool isBold = false,
+        bool isItalic = false,
+        TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
+        TextHintingMode textHintingMode = TextHintingMode.Auto)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawGlyphRun,
+            GlyphIndices = glyphIndices,
+            GlyphPositions = glyphPositions,
+            Font = font,
+            FontSize = fontSize,
+            Brush = brush,
+            Position = position,
+            Transform = transform,
+            IsBold = isBold,
+            IsItalic = isItalic,
+            TextRenderingMode = textRenderingMode,
+            TextHintingMode = textHintingMode
         });
     }
 
@@ -333,7 +768,8 @@ public class DrawingContext : IRenderDataProvider
         {
             Type = RenderCommandType.DrawTexture,
             Rect = rect,
-            Texture = texture
+            Texture = texture,
+            TextureSamplingMode = TextureSamplingMode.Linear
         });
     }
 
@@ -365,6 +801,59 @@ public class DrawingContext : IRenderDataProvider
         Commands.Add(new RenderCommand { Type = RenderCommandType.PopOpacity });
     }
 
+    public void PushGeometryClip(PathGeometry geometry)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushGeometryClip,
+            Path = geometry
+        });
+    }
+
+    public void PushGeometryClip(PathGeometry geometry, Matrix4x4 transform)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushGeometryClip,
+            Path = geometry,
+            Transform = transform
+        });
+    }
+
+    public void PopGeometryClip()
+    {
+        Commands.Add(new RenderCommand { Type = RenderCommandType.PopGeometryClip });
+    }
+
+    public void PushOpacityMask(Brush maskBrush, Rect bounds)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushOpacityMask,
+            Brush = maskBrush,
+            Rect = bounds
+        });
+    }
+
+    public void PopOpacityMask()
+    {
+        Commands.Add(new RenderCommand { Type = RenderCommandType.PopOpacityMask });
+    }
+
+    public void PushBlendMode(GpuBlendMode blendMode)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushBlendMode,
+            IntParam = (int)blendMode
+        });
+    }
+
+    public void PopBlendMode()
+    {
+        Commands.Add(new RenderCommand { Type = RenderCommandType.PopBlendMode });
+    }
+
     public void DrawLine(Pen pen, Vector2 p1, Vector2 p2)
     {
         Commands.Add(new RenderCommand
@@ -372,7 +861,9 @@ public class DrawingContext : IRenderDataProvider
             Type = RenderCommandType.DrawLine,
             Pen = pen,
             Position = p1,
-            Position2 = p2
+            Position2 = p2,
+            GeometryCache = RenderCommandGeometryCache.ForStrokePath(
+                RenderCommandGeometryCache.CreateLinePath(p1, p2))
         });
     }
 
@@ -437,13 +928,19 @@ public class DrawingContext : IRenderDataProvider
 
     public void DrawRoundedRectangle(Brush? brush, Pen? pen, Rect rect, float radius)
     {
+        DrawRoundedRectangle(brush, pen, rect, radius, radius);
+    }
+
+    public void DrawRoundedRectangle(Brush? brush, Pen? pen, Rect rect, float radiusX, float radiusY)
+    {
         Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.DrawRoundedRect,
             Brush = brush,
             Pen = pen,
             Rect = rect,
-            RadiusX = radius
+            RadiusX = radiusX,
+            RadiusY = radiusY
         });
     }
 
@@ -460,7 +957,9 @@ public class DrawingContext : IRenderDataProvider
             Pen = pen,
             Position = p0,
             Position2 = p1,
-            Position3 = p2
+            Position3 = p2,
+            GeometryCache = RenderCommandGeometryCache.ForStrokePath(
+                RenderCommandGeometryCache.CreateQuadraticBezierPath(p0, p1, p2))
         });
     }
 
@@ -473,7 +972,9 @@ public class DrawingContext : IRenderDataProvider
             Position = p0,
             Position2 = p1,
             Position3 = p2,
-            Position4 = p3
+            Position4 = p3,
+            GeometryCache = RenderCommandGeometryCache.ForStrokePath(
+                RenderCommandGeometryCache.CreateCubicBezierPath(p0, p1, p2, p3))
         });
     }
 
@@ -485,7 +986,9 @@ public class DrawingContext : IRenderDataProvider
             Brush = brush,
             Position = p1,
             Position2 = p2,
-            Position3 = p3
+            Position3 = p3,
+            GeometryCache = RenderCommandGeometryCache.ForFillPath(
+                RenderCommandGeometryCache.CreateTrianglePath(p1, p2, p3))
         });
     }
 
@@ -498,7 +1001,10 @@ public class DrawingContext : IRenderDataProvider
             Position = p1,
             Position2 = p2,
             Position3 = p3,
-            Position4 = p4
+            Position4 = p4,
+            GeometryCache = RenderCommandGeometryCache.ForFillPaths(
+                RenderCommandGeometryCache.CreateTrianglePath(p1, p2, p3),
+                RenderCommandGeometryCache.CreateTrianglePath(p1, p3, p4))
         });
     }
 
@@ -525,7 +1031,9 @@ public class DrawingContext : IRenderDataProvider
             Pen = pen,
             PointBufferOffset = offset,
             PointBufferCount = count,
-            IsClosed = isClosed
+            IsClosed = isClosed,
+            GeometryCache = RenderCommandGeometryCache.ForStrokePath(
+                RenderCommandGeometryCache.CreatePolylinePath(points, isClosed))
         });
     }
 
@@ -577,7 +1085,9 @@ public class DrawingContext : IRenderDataProvider
             WeightBufferOffset = weightOffset,
             WeightBufferCount = weightCount,
             SplineDegree = degree,
-            IsClosed = isClosed
+            IsClosed = isClosed,
+            GeometryCache = RenderCommandGeometryCache.ForStrokePath(
+                RenderCommandGeometryCache.CreateSplinePath(controlPoints, knots, weights, degree, isClosed))
         });
     }
 
@@ -622,6 +1132,8 @@ public class DrawingContext : IRenderDataProvider
             RadiusX = thickness,
             Brush = brush,
             SeriesCacheKey = new object(),
+            Scale = Vector2.One,
+            Translate = Vector2.Zero,
             Transform = Matrix4x4.Identity
         });
     }
@@ -646,6 +1158,8 @@ public class DrawingContext : IRenderDataProvider
             RadiusX = radius,
             Brush = brush,
             SeriesCacheKey = new object(),
+            Scale = Vector2.One,
+            Translate = Vector2.Zero,
             Transform = Matrix4x4.Identity
         });
     }
@@ -788,41 +1302,11 @@ public class DrawingContext : IRenderDataProvider
         int line3dOffset = Line3DBuffer.Count;
         int floatOffset = FloatBuffer.Count;
 
-        if (translation == Vector2.Zero)
-        {
-            PointBuffer.AddRange(other.PointBuffer);
-        }
-        else
-        {
-            int required = PointBuffer.Count + other.PointBuffer.Count;
-            if (PointBuffer.Capacity < required)
-                PointBuffer.Capacity = Math.Max(required, PointBuffer.Capacity * 2);
-            for (int i = 0; i < other.PointBuffer.Count; i++)
-            {
-                PointBuffer.Add(other.PointBuffer[i] + translation);
-            }
-        }
+        PointBuffer.AddRange(other.PointBuffer);
 
         DoubleBuffer.AddRange(other.DoubleBuffer);
 
-        if (translation == Vector2.Zero)
-        {
-            Line3DBuffer.AddRange(other.Line3DBuffer);
-        }
-        else
-        {
-            var trans3D = new Vector3(translation.X, translation.Y, 0f);
-            int required = Line3DBuffer.Count + other.Line3DBuffer.Count;
-            if (Line3DBuffer.Capacity < required)
-                Line3DBuffer.Capacity = Math.Max(required, Line3DBuffer.Capacity * 2);
-            for (int i = 0; i < other.Line3DBuffer.Count; i++)
-            {
-                var l = other.Line3DBuffer[i];
-                l.Start += trans3D;
-                l.End += trans3D;
-                Line3DBuffer.Add(l);
-            }
-        }
+        Line3DBuffer.AddRange(other.Line3DBuffer);
 
         FloatBuffer.AddRange(other.FloatBuffer);
 
@@ -842,18 +1326,42 @@ public class DrawingContext : IRenderDataProvider
 
             if (translation != Vector2.Zero)
             {
-                if (adjustedCmd.Type == RenderCommandType.DrawRect || 
-                    adjustedCmd.Type == RenderCommandType.DrawTexture || 
-                    adjustedCmd.Type == RenderCommandType.DrawRoundedRect)
+                if (adjustedCmd.Type == RenderCommandType.DrawRect ||
+                    adjustedCmd.Type == RenderCommandType.DrawTexture ||
+                    adjustedCmd.Type == RenderCommandType.DrawRoundedRect ||
+                    adjustedCmd.Type == RenderCommandType.PushClip ||
+                    adjustedCmd.Type == RenderCommandType.PushOpacityMask)
                 {
-                    adjustedCmd.Rect = new Rect(adjustedCmd.Rect.Position + translation, adjustedCmd.Rect.Size);
+                    TranslateRectBackedCommand(ref adjustedCmd, translation);
+                }
+                else if (adjustedCmd.Type == RenderCommandType.PushGeometryClip ||
+                         adjustedCmd.Type == RenderCommandType.DrawPath)
+                {
+                    ComposeAppendTranslation(ref adjustedCmd, translation);
+                }
+                else if (IsGpuSeriesCommand(adjustedCmd))
+                {
+                    TranslateGpuSeriesCommand(ref adjustedCmd, translation);
+                }
+                else if (HasNonIdentityTransform(adjustedCmd))
+                {
+                    ComposeAppendTranslation(ref adjustedCmd, translation);
                 }
                 else
                 {
+                    if (adjustedCmd.Type == RenderCommandType.DrawExtension &&
+                        IsRectBackedExtensionDataParam(adjustedCmd.DataParam))
+                    {
+                        adjustedCmd.DataParam = TranslateExtensionDataParam(adjustedCmd.DataParam, translation);
+                    }
+
                     adjustedCmd.Position += translation;
                     adjustedCmd.Position2 += translation;
                     adjustedCmd.Position3 += translation;
                     adjustedCmd.Position4 += translation;
+
+                    TranslatePointBufferSlice(adjustedCmd.PointBufferOffset, adjustedCmd.PointBufferCount, translation);
+                    TranslateLine3DBufferSlice(adjustedCmd.Line3DBufferOffset, adjustedCmd.Line3DBufferCount, translation);
 
                     if (adjustedCmd.PolylinePoints != null)
                     {
@@ -865,10 +1373,142 @@ public class DrawingContext : IRenderDataProvider
                         adjustedCmd.PolylinePoints = newPoints;
                     }
                 }
+
+                adjustedCmd.GeometryCache = null;
             }
 
             Commands.Add(adjustedCmd);
         }
+
+        _retainedResources.AddRange(other.CloneRetainedResources());
+    }
+
+    private void TranslatePointBufferSlice(int offset, int count, Vector2 translation)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            PointBuffer[offset + i] += translation;
+        }
+    }
+
+    private void TranslateLine3DBufferSlice(int offset, int count, Vector2 translation)
+    {
+        var trans3D = new Vector3(translation.X, translation.Y, 0f);
+        for (int i = 0; i < count; i++)
+        {
+            var line = Line3DBuffer[offset + i];
+            line.Start += trans3D;
+            line.End += trans3D;
+            Line3DBuffer[offset + i] = line;
+        }
+    }
+
+    private static void TranslateRectBackedCommand(ref RenderCommand command, Vector2 translation)
+    {
+        if (HasNonIdentityTransform(command))
+        {
+            ComposeAppendTranslation(ref command, translation);
+        }
+        else
+        {
+            command.Rect = TranslateRect(command.Rect, translation);
+        }
+    }
+
+    private static void ComposeAppendTranslation(ref RenderCommand command, Vector2 translation)
+    {
+        var translationTransform = Matrix4x4.CreateTranslation(translation.X, translation.Y, 0f);
+        var commandTransform = command.Transform == default
+            ? Matrix4x4.Identity
+            : command.Transform;
+        command.Transform = commandTransform * translationTransform;
+    }
+
+    private static bool HasNonIdentityTransform(RenderCommand command)
+    {
+        return command.Transform != default && command.Transform != Matrix4x4.Identity;
+    }
+
+    private static bool IsGpuSeriesCommand(RenderCommand command)
+    {
+        return command.Type == RenderCommandType.DrawGpuLineSeries ||
+               command.Type == RenderCommandType.DrawGpuScatterSeries ||
+               (command.Type == RenderCommandType.DrawExtension &&
+                (command.ExtensionId == CompositorBuiltInExtensions.GpuLineSeries ||
+                 command.ExtensionId == CompositorBuiltInExtensions.GpuScatterSeries));
+    }
+
+    private static void TranslateGpuSeriesCommand(ref RenderCommand command, Vector2 translation)
+    {
+        if (HasNonIdentityTransform(command))
+        {
+            ComposeAppendTranslation(ref command, translation);
+        }
+        else
+        {
+            command.Translate += translation;
+        }
+    }
+
+    private static bool IsRectBackedExtensionDataParam(object? dataParam)
+    {
+        return dataParam is ImageEffectParams or WpfShaderEffectParams or ShaderToyParams;
+    }
+
+    private static object? TranslateExtensionDataParam(object? dataParam, Vector2 translation)
+    {
+        return dataParam switch
+        {
+            ImageEffectParams imageEffect => new ImageEffectParams
+            {
+                Texture = imageEffect.Texture,
+                Rect = TranslateRect(imageEffect.Rect, translation),
+                Brightness = imageEffect.Brightness,
+                Contrast = imageEffect.Contrast,
+                Saturation = imageEffect.Saturation,
+                Grayscale = imageEffect.Grayscale,
+                Sepia = imageEffect.Sepia,
+                Invert = imageEffect.Invert,
+                BlurSigma = imageEffect.BlurSigma,
+                MaskTexture = imageEffect.MaskTexture,
+                LastError = imageEffect.LastError
+            },
+            WpfShaderEffectParams wpfShaderEffect => new WpfShaderEffectParams
+            {
+                Texture = wpfShaderEffect.Texture,
+                Rect = TranslateRect(wpfShaderEffect.Rect, translation),
+                ShaderSource = wpfShaderEffect.ShaderSource,
+                ShaderKey = wpfShaderEffect.ShaderKey,
+                Constants = wpfShaderEffect.Constants,
+                Samplers = wpfShaderEffect.Samplers,
+                SamplingMode = wpfShaderEffect.SamplingMode,
+                IsFailed = wpfShaderEffect.IsFailed,
+                LastError = wpfShaderEffect.LastError,
+                SourceTextureRegisterIndex = wpfShaderEffect.SourceTextureRegisterIndex,
+                SourceTextureOverridesSampler = wpfShaderEffect.SourceTextureOverridesSampler
+            },
+            ShaderToyParams shaderToy => new ShaderToyParams
+            {
+                Rect = TranslateRect(shaderToy.Rect, translation),
+                ShaderSource = shaderToy.ShaderSource,
+                ShaderKey = shaderToy.ShaderKey,
+                OldShaderKey = shaderToy.OldShaderKey,
+                IsFailed = shaderToy.IsFailed,
+                Resolution = shaderToy.Resolution,
+                Time = shaderToy.Time,
+                TimeDelta = shaderToy.TimeDelta,
+                Frame = shaderToy.Frame,
+                FrameRate = shaderToy.FrameRate,
+                Mouse = shaderToy.Mouse,
+                Date = shaderToy.Date
+            },
+            _ => dataParam
+        };
+    }
+
+    private static Rect TranslateRect(Rect rect, Vector2 translation)
+    {
+        return new Rect(rect.Position + translation, rect.Size);
     }
 
     public void Clear()
@@ -878,5 +1518,16 @@ public class DrawingContext : IRenderDataProvider
         DoubleBuffer.Clear();
         Line3DBuffer.Clear();
         FloatBuffer.Clear();
+        DisposeRetainedResources();
+    }
+
+    private void DisposeRetainedResources()
+    {
+        foreach (var resource in _retainedResources)
+        {
+            resource.Dispose();
+        }
+
+        _retainedResources.Clear();
     }
 }

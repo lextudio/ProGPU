@@ -177,9 +177,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         {
             public GpuBuffer RecordsBuffer { get; }
             public GpuBuffer EdgesBuffer { get; }
+#if DEBUG
+            public GpuAcisRecord[] RecordsSnapshot { get; }
+#endif
 
             public AcisStaticState(WgpuContext context, GpuAcisRecord[] records, GpuAcisEdge[] edges)
             {
+#if DEBUG
+                RecordsSnapshot = (GpuAcisRecord[])records.Clone();
+#endif
+
                 uint recordsSize = (uint)Math.Max(1, records.Length) * (uint)Marshal.SizeOf<GpuAcisRecord>();
                 RecordsBuffer = new GpuBuffer(context, recordsSize, BufferUsage.Storage | BufferUsage.CopyDst, "Static ACIS Records Buffer");
                 if (records.Length > 0) RecordsBuffer.Write(new ReadOnlySpan<GpuAcisRecord>(records));
@@ -268,7 +275,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             uint acisRecordIndex = (uint)recordsList.Count;
             recordsList.Add(new GpuAcisRecord
             {
-                Transform = cmd.Transform * transform,
+                Transform = transform,
                 Color = penSolidColor,
                 StartEdge = startEdge,
                 EdgeCount = edgeCount,
@@ -365,7 +372,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     shaderModule,
                     vertexBufferLayouts: layouts,
                     topology: PrimitiveTopology.TriangleList,
-                    targetFormat: isOffscreen ? TextureFormat.Rgba8Unorm : compositor.Context.SwapChainFormat,
+                    targetFormat: compositor.RenderFormat,
                     sampleCount: isOffscreen ? 1u : 4u
                 );
 

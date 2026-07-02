@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using System.Reflection;
 using System.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -657,79 +656,19 @@ public class DesignerHost : Grid
     public void AddControlToCanvas(string controlType, float defaultX = 100f, float defaultY = 100f)
     {
         SaveUndoState();
-        Type? type = null;
-        string[] searchNamespaces = {
-            "Microsoft.UI.Xaml.Controls",
-            "Microsoft.UI.Xaml",
-            "ProGPU.WinUI.Designer"
-        };
-
-        foreach (var ns in searchNamespaces)
-        {
-            var typeName = $"{ns}.{controlType}";
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                type = assembly.GetType(typeName);
-                if (type != null) break;
-            }
-            if (type != null) break;
-        }
-
-        if (type != null && typeof(FrameworkElement).IsAssignableFrom(type))
+        if (DesignerElementRegistry.TryCreate(controlType, DesignerFont ?? PopupService.DefaultFont, out var newInstance))
         {
             try
             {
-                var newInstance = Activator.CreateInstance(type) as FrameworkElement;
-                if (newInstance != null)
-                {
-                    newInstance.IsHitTestVisible = false;
-                    Canvas.SetLeft(newInstance, defaultX);
-                    Canvas.SetTop(newInstance, defaultY);
+                Canvas.SetLeft(newInstance, defaultX);
+                Canvas.SetTop(newInstance, defaultY);
+                newInstance.Name = $"{controlType}_{_designerCanvas.DesignSurface.Children.Count + 1}";
 
-                    if (float.IsNaN(newInstance.Width) || newInstance.Width <= 0) newInstance.Width = 120f;
-                    if (float.IsNaN(newInstance.Height) || newInstance.Height <= 0) newInstance.Height = 36f;
+                _designerCanvas.DesignSurface.Children.Add(newInstance);
+                _designerCanvas.SelectElement(newInstance);
 
-                    newInstance.Name = $"{controlType}_{_designerCanvas.DesignSurface.Children.Count + 1}";
-
-                    if (newInstance is Button button)
-                    {
-                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(controlType));
-                        button.Content = richText;
-                    }
-                    else if (newInstance is TextBlock textBlock)
-                    {
-                        textBlock.Text = controlType;
-                    }
-                    else if (newInstance is CheckBox checkBox)
-                    {
-                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(controlType));
-                        checkBox.Content = richText;
-                    }
-                    else if (newInstance is RadioButton radioButton)
-                    {
-                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(controlType));
-                        radioButton.Content = richText;
-                    }
-                    else if (newInstance is ToggleSwitch toggleSwitch)
-                    {
-                        var richText = new RichTextBlock { Font = DesignerFont ?? PopupService.DefaultFont };
-                        richText.Inlines.Add(new Run(controlType));
-                        toggleSwitch.Content = richText;
-                    }
-                    else if (newInstance is ComboBox comboBox)
-                    {
-                        comboBox.PlaceholderText = controlType;
-                    }
-
-                    _designerCanvas.DesignSurface.Children.Add(newInstance);
-                    _designerCanvas.SelectElement(newInstance);
-
-                    OnCanvasModified();
-                    UpdateOutline();
-                }
+                OnCanvasModified();
+                UpdateOutline();
             }
             catch (Exception ex)
             {
@@ -1063,11 +1002,12 @@ public class DesignerHost : Grid
     {
         if (original == null) return null;
 
-        Type type = original.GetType();
         try
         {
-            var clone = Activator.CreateInstance(type) as FrameworkElement;
-            if (clone == null) return null;
+            if (!DesignerElementRegistry.TryCreateLike(original, out var clone))
+            {
+                return null;
+            }
 
             clone.Width = original.Width;
             clone.Height = original.Height;
@@ -1139,7 +1079,7 @@ public class DesignerHost : Grid
             }
 
             int suffix = 1;
-            string baseName = type.Name;
+            string baseName = original.GetType().Name;
             string candidateName = $"{baseName}_{suffix}";
 
             var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1163,11 +1103,12 @@ public class DesignerHost : Grid
     {
         if (original == null) return null;
 
-        Type type = original.GetType();
         try
         {
-            var clone = Activator.CreateInstance(type) as FrameworkElement;
-            if (clone == null) return null;
+            if (!DesignerElementRegistry.TryCreateLike(original, out var clone))
+            {
+                return null;
+            }
 
             clone.Name = original.Name;
             clone.Width = original.Width;

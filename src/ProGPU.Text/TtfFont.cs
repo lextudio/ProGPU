@@ -55,6 +55,8 @@ public class TtfFont
     private readonly Dictionary<string, (uint offset, uint length)> _tables = new();
     private uint _baseOffset = 0;
 
+    public int FaceIndex { get; }
+
     // Font parameters
     public ushort UnitsPerEm { get; private set; }
     public short Ascender { get; private set; }
@@ -105,9 +107,17 @@ public class TtfFont
     private ushort _numLayerRecords;
 
     public TtfFont(byte[] fontData)
+        : this(fontData, 0)
     {
+    }
+
+    public TtfFont(byte[] fontData, int faceIndex)
+    {
+        ArgumentNullException.ThrowIfNull(fontData);
+        ArgumentOutOfRangeException.ThrowIfNegative(faceIndex);
         _data = fontData;
-        ParseTableDirectory();
+        FaceIndex = faceIndex;
+        ParseTableDirectory(faceIndex);
         ParseHeadTable();
         ParseHheaTable();
         ParseMaxpTable();
@@ -117,6 +127,10 @@ public class TtfFont
     }
 
     public TtfFont(string filePath) : this(File.ReadAllBytes(filePath))
+    {
+    }
+
+    public TtfFont(string filePath, int faceIndex) : this(File.ReadAllBytes(filePath), faceIndex)
     {
     }
 
@@ -140,11 +154,21 @@ public class TtfFont
     }
     #endregion
 
-    private void ParseTableDirectory()
+    private void ParseTableDirectory(int faceIndex)
     {
         if (_data.Length >= 16 && _data[0] == 0x74 && _data[1] == 0x74 && _data[2] == 0x63 && _data[3] == 0x66) // "ttcf"
         {
-            _baseOffset = ReadUInt(12); // First font in the TTC collection
+            uint faceCount = ReadUInt(8);
+            if ((uint)faceIndex >= faceCount)
+            {
+                throw new ArgumentOutOfRangeException(nameof(faceIndex));
+            }
+
+            _baseOffset = ReadUInt(12 + (uint)(faceIndex * 4));
+        }
+        else if (faceIndex != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(faceIndex));
         }
 
         uint numTables = ReadUShort(_baseOffset + 4);
@@ -258,14 +282,14 @@ public class TtfFont
         if (subtableOffset == 0)
         {
             if (subtable12Offset != 0) return; // format 12 is active
-            throw new NotSupportedException("Could not find a supported Unicode cmap subtable in TTF font.");
+            return;
         }
 
         ushort format4 = ReadUShort(subtableOffset);
         if (format4 != 4)
         {
             if (subtable12Offset != 0) return; // format 12 is active
-            throw new NotSupportedException($"Only TTF Cmap Format 4 or 12 is supported. Found format {format4}.");
+            return;
         }
 
         _cmapOffset = subtableOffset;
@@ -444,7 +468,76 @@ public class TtfFont
         return 0;
     }
 
+    private readonly Dictionary<ushort, PathGeometry?> _glyphOutlineCache = new();
+    private readonly Dictionary<ushort, PathGeometry?> _flippedOutlineCache = new();
+
     public PathGeometry? GetGlyphOutline(ushort glyphIndex)
+    {
+        lock (_glyphOutlineCache)
+        {
+            if (_glyphOutlineCache.TryGetValue(glyphIndex, out var cached))
+            {
+                return cached;
+            }
+
+            var result = GetGlyphOutlineInternal(glyphIndex);
+            _glyphOutlineCache[glyphIndex] = result;
+            return result;
+        }
+    }
+
+    public PathGeometry? GetFlippedGlyphOutline(ushort glyphIndex)
+    {
+        lock (_flippedOutlineCache)
+        {
+            if (_flippedOutlineCache.TryGetValue(glyphIndex, out var cached))
+            {
+                return cached;
+            }
+
+            var rawOutline = GetGlyphOutline(glyphIndex);
+            if (rawOutline == null)
+            {
+                _flippedOutlineCache[glyphIndex] = null;
+                return null;
+            }
+
+            var flippedOutline = new PathGeometry();
+            foreach (var figure in rawOutline.Figures)
+            {
+                var startPt = new Vector2(figure.StartPoint.X, -figure.StartPoint.Y);
+                var newFigure = new PathFigure(startPt, figure.IsClosed) { IsFilled = figure.IsFilled };
+                foreach (var segment in figure.Segments)
+                {
+                    if (segment is LineSegment line)
+                    {
+                        newFigure.Segments.Add(new LineSegment(new Vector2(line.Point.X, -line.Point.Y)));
+                    }
+                    else if (segment is QuadraticBezierSegment quad)
+                    {
+                        newFigure.Segments.Add(new QuadraticBezierSegment(
+                            new Vector2(quad.ControlPoint.X, -quad.ControlPoint.Y),
+                            new Vector2(quad.Point.X, -quad.Point.Y)
+                        ));
+                    }
+                    else if (segment is CubicBezierSegment cubic)
+                    {
+                        newFigure.Segments.Add(new CubicBezierSegment(
+                            new Vector2(cubic.ControlPoint1.X, -cubic.ControlPoint1.Y),
+                            new Vector2(cubic.ControlPoint2.X, -cubic.ControlPoint2.Y),
+                            new Vector2(cubic.Point.X, -cubic.Point.Y)
+                        ));
+                    }
+                }
+                flippedOutline.Figures.Add(newFigure);
+            }
+
+            _flippedOutlineCache[glyphIndex] = flippedOutline;
+            return flippedOutline;
+        }
+    }
+
+    private PathGeometry? GetGlyphOutlineInternal(ushort glyphIndex)
     {
         uint startOffset = 0;
         uint endOffset = 0;

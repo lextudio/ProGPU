@@ -169,7 +169,8 @@ public unsafe class ProGpuHostControl : ContentControl
                 height, 
                 TextureFormat.Bgra8Unorm, 
                 TextureUsage.RenderAttachment | TextureUsage.CopySrc, 
-                "Uno Host Offscreen Target"
+                "Uno Host Offscreen Target",
+                alphaMode: GpuTextureAlphaMode.Premultiplied
             );
         }
         else

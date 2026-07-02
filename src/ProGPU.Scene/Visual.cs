@@ -15,12 +15,19 @@ public class Visual
     private float _opacity = 1.0f;
     private Matrix4x4 _transform = Matrix4x4.Identity;
     private bool _isDirty = true;
+    private long _changeVersion;
     private bool _cacheAsLayer;
+    public virtual bool HasTemplate => false;
     private Vector3 _scale = Vector3.One;
     private float _rotation = 0f;
     private Vector3 _centerPoint = Vector3.Zero;
     private Vector2 _renderTransformOrigin = new Vector2(0.5f, 0.5f);
     private readonly Dictionary<string, CompositionAnimation> _activeAnimations = new();
+    private Rect? _clipBounds;
+    private Rect? _outerClipBounds;
+    private Brush? _opacityMask;
+    private Rect? _opacityMaskBounds;
+    private int _hitTestId;
 
     private EffectBase? _effect;
     public EffectBase? Effect
@@ -30,7 +37,9 @@ public class Visual
         {
             if (_effect != value)
             {
+                _effect?.RemoveOwner(this);
                 _effect = value;
+                _effect?.AddOwner(this);
                 Invalidate();
             }
         }
@@ -125,13 +134,18 @@ public class Visual
         get => _isDirty;
         set
         {
-            _isDirty = value;
-            if (_isDirty && Parent != null)
+            if (value)
             {
-                Parent.Invalidate();
+                Invalidate();
+            }
+            else
+            {
+                _isDirty = false;
             }
         }
     }
+
+    public long ChangeVersion => _changeVersion;
 
     public bool CacheAsLayer
     {
@@ -201,11 +215,84 @@ public class Visual
     // Composition layer texture view
     public GpuTexture? LayerTexture { get; internal set; }
 
-    public Rect? ClipBounds { get; set; }
+    public int HitTestId
+    {
+        get => _hitTestId;
+        set
+        {
+            if (_hitTestId != value)
+            {
+                _hitTestId = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Rect? ClipBounds
+    {
+        get => _clipBounds;
+        set
+        {
+            if (_clipBounds != value)
+            {
+                _clipBounds = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Rect? OuterClipBounds
+    {
+        get => _outerClipBounds;
+        set
+        {
+            if (_outerClipBounds != value)
+            {
+                _outerClipBounds = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Brush? OpacityMask
+    {
+        get => _opacityMask;
+        set
+        {
+            if (_opacityMask != value)
+            {
+                _opacityMask = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Rect? OpacityMaskBounds
+    {
+        get => _opacityMaskBounds;
+        set
+        {
+            if (_opacityMaskBounds != value)
+            {
+                _opacityMaskBounds = value;
+                Invalidate();
+            }
+        }
+    }
 
     public void Invalidate()
     {
-        IsDirty = true;
+        unchecked
+        {
+            _changeVersion++;
+            if (_changeVersion < 0)
+            {
+                _changeVersion = 1;
+            }
+        }
+
+        _isDirty = true;
+        Parent?.Invalidate();
     }
 
     public virtual void OnRender(DrawingContext context)
@@ -214,6 +301,11 @@ public class Visual
     }
 
     public Matrix4x4 GetLocalTransform()
+    {
+        return GetLocalTransform(Offset);
+    }
+
+    public Matrix4x4 GetLocalTransform(Vector2 offset)
     {
         Vector3 anchor = new Vector3(Size.X * RenderTransformOrigin.X, Size.Y * RenderTransformOrigin.Y, 0f);
         if (CenterPoint != Vector3.Zero)
@@ -224,7 +316,7 @@ public class Visual
         var translationToOrigin = Matrix4x4.CreateTranslation(-anchor.X, -anchor.Y, -anchor.Z);
         var scaleMatrix = Matrix4x4.CreateScale(Scale);
         var rotationMatrix = Matrix4x4.CreateRotationZ(Rotation);
-        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(Offset.X + anchor.X, Offset.Y + anchor.Y, anchor.Z);
+        var translationToOffsetAndRestoreCenter = Matrix4x4.CreateTranslation(offset.X + anchor.X, offset.Y + anchor.Y, anchor.Z);
 
         var modelMatrix = translationToOrigin * scaleMatrix * rotationMatrix * translationToOffsetAndRestoreCenter;
         return Transform * modelMatrix;
@@ -448,11 +540,201 @@ public class DrawingVisual : Visual
 
 public abstract class EffectBase
 {
+    private readonly object _ownersLock = new();
+    private readonly List<WeakReference<Visual>> _owners = new();
+    private long _changeVersion;
+
+    public long ChangeVersion => _changeVersion;
+
+    internal void AddOwner(Visual owner)
+    {
+        lock (_ownersLock)
+        {
+            for (var i = _owners.Count - 1; i >= 0; i--)
+            {
+                if (!_owners[i].TryGetTarget(out var existing))
+                {
+                    _owners.RemoveAt(i);
+                    continue;
+                }
+
+                if (ReferenceEquals(existing, owner))
+                {
+                    return;
+                }
+            }
+
+            _owners.Add(new WeakReference<Visual>(owner));
+        }
+    }
+
+    internal void RemoveOwner(Visual owner)
+    {
+        lock (_ownersLock)
+        {
+            for (var i = _owners.Count - 1; i >= 0; i--)
+            {
+                if (!_owners[i].TryGetTarget(out var existing) || ReferenceEquals(existing, owner))
+                {
+                    _owners.RemoveAt(i);
+                }
+            }
+        }
+    }
+
+    protected void Invalidate()
+    {
+        unchecked
+        {
+            _changeVersion++;
+            if (_changeVersion < 0)
+            {
+                _changeVersion = 1;
+            }
+        }
+
+        NotifyOwners();
+    }
+
+    internal virtual int GetRenderCacheKey()
+    {
+        return HashCode.Combine(GetType(), ChangeVersion);
+    }
+
+    private void NotifyOwners()
+    {
+        List<Visual>? owners = null;
+
+        lock (_ownersLock)
+        {
+            for (var i = _owners.Count - 1; i >= 0; i--)
+            {
+                if (!_owners[i].TryGetTarget(out var owner))
+                {
+                    _owners.RemoveAt(i);
+                    continue;
+                }
+
+                owners ??= new List<Visual>();
+                owners.Add(owner);
+            }
+        }
+
+        if (owners == null)
+        {
+            return;
+        }
+
+        foreach (var owner in owners)
+        {
+            owner.Invalidate();
+        }
+    }
+}
+
+public sealed class WpfShaderEffect : EffectBase
+{
+    private float _padding;
+    private string? _failedShaderKey;
+    private string? _failedShaderSourceKey;
+
+    public WpfShaderEffect(WpfShaderEffectParams parameters)
+    {
+        Parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
+    }
+
+    public WpfShaderEffectParams Parameters { get; }
+
+    public float Padding
+    {
+        get => _padding;
+        set
+        {
+            if (_padding != value)
+            {
+                _padding = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public bool IsFailed => Parameters.IsFailed;
+
+    public string? LastError => Parameters.LastError;
+
+    internal void UpdateDrawParameters(WpfShaderEffectParams target, GpuTexture sourceTexture, Rect rect)
+    {
+        var currentShaderKey = Parameters.GetStableShaderKey();
+        var currentShaderSourceKey = Parameters.GetStableShaderSourceKey();
+        if (Parameters.IsFailed &&
+            (!string.Equals(_failedShaderKey, currentShaderKey, StringComparison.Ordinal) ||
+             !string.Equals(_failedShaderSourceKey, currentShaderSourceKey, StringComparison.Ordinal)))
+        {
+            Parameters.IsFailed = false;
+            Parameters.LastError = null;
+            _failedShaderKey = null;
+            _failedShaderSourceKey = null;
+        }
+
+        if (target.IsFailed)
+        {
+            var targetShaderKey = target.GetStableShaderKey();
+            var targetShaderSourceKey = target.GetStableShaderSourceKey();
+            if (string.Equals(targetShaderKey, currentShaderKey, StringComparison.Ordinal) &&
+                string.Equals(targetShaderSourceKey, currentShaderSourceKey, StringComparison.Ordinal))
+            {
+                Parameters.IsFailed = true;
+                Parameters.LastError = target.LastError;
+                _failedShaderKey = currentShaderKey;
+                _failedShaderSourceKey = currentShaderSourceKey;
+            }
+            else
+            {
+                target.IsFailed = false;
+                target.LastError = null;
+            }
+        }
+
+        target.Texture = sourceTexture;
+        target.Rect = rect;
+        target.ShaderSource = Parameters.ShaderSource;
+        target.ShaderKey = Parameters.ShaderKey;
+        target.Constants = Parameters.Constants;
+        target.Samplers = Parameters.Samplers;
+        target.SamplingMode = Parameters.SamplingMode;
+        target.SourceTextureRegisterIndex = Parameters.SourceTextureRegisterIndex;
+        target.IsFailed = Parameters.IsFailed;
+        target.LastError = Parameters.LastError;
+        target.SourceTextureOverridesSampler = true;
+    }
+
+    internal override int GetRenderCacheKey()
+    {
+        var hash = new HashCode();
+        hash.Add(GetType());
+        hash.Add(ChangeVersion);
+        hash.Add(Padding);
+        Parameters.AddRenderCacheKey(ref hash);
+        return hash.ToHashCode();
+    }
 }
 
 public class BlurEffect : EffectBase
 {
-    public float BlurRadius { get; set; }
+    private float _blurRadius;
+
+    public float BlurRadius
+    {
+        get => _blurRadius;
+        set
+        {
+            if (_blurRadius != value)
+            {
+                _blurRadius = value;
+                Invalidate();
+            }
+        }
+    }
 
     public BlurEffect(float blurRadius = 5f)
     {
@@ -462,9 +744,48 @@ public class BlurEffect : EffectBase
 
 public class DropShadowEffect : EffectBase
 {
-    public float BlurRadius { get; set; }
-    public Vector2 Offset { get; set; }
-    public Vector4 Color { get; set; }
+    private float _blurRadius;
+    private Vector2 _offset;
+    private Vector4 _color;
+
+    public float BlurRadius
+    {
+        get => _blurRadius;
+        set
+        {
+            if (_blurRadius != value)
+            {
+                _blurRadius = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Vector2 Offset
+    {
+        get => _offset;
+        set
+        {
+            if (_offset != value)
+            {
+                _offset = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public Vector4 Color
+    {
+        get => _color;
+        set
+        {
+            if (_color != value)
+            {
+                _color = value;
+                Invalidate();
+            }
+        }
+    }
 
     public DropShadowEffect(float blurRadius = 5f, Vector2 offset = default, Vector4 color = default)
     {
@@ -479,4 +800,3 @@ public interface ILayoutNode
 {
     void InvalidateMeasure();
 }
-
