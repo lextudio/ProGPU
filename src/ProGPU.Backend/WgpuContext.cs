@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.WebGPU;
 using Silk.NET.Windowing;
@@ -385,6 +386,11 @@ public unsafe class WgpuContext : IDisposable
         // 2. Create Surface if window is provided
         if (window != null)
         {
+            if (!CanCreateNativeSurface(window))
+            {
+                throw new InvalidOperationException("Cannot create a WebGPU surface before the native window source is loaded.");
+            }
+
             SafeLog("[WGPUCONTEXT] Creating WebGPU Surface from window\n");
             Surface = window.CreateWebGPUSurface(Wgpu, Instance);
             SafeLog($"[WGPUCONTEXT] CreateWebGPUSurface returned Surface={(nint)Surface:X}\n");
@@ -498,6 +504,16 @@ public unsafe class WgpuContext : IDisposable
             ConfigureSwapChain((uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
             SafeLog("[WGPUCONTEXT] Configuring SwapChain finished\n");
         }
+    }
+
+    private static bool CanCreateNativeSurface(IWindow window)
+    {
+        if (window is not IView view || view.Handle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        return window is INativeWindowSource { Native: not null };
     }
 
     public void ConfigureSwapChain(uint width, uint height)
