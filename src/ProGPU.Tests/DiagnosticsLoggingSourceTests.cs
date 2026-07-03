@@ -101,6 +101,23 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void VisualOwnerNotificationsUsePooledSnapshots()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Visual.cs"));
+
+        Assert.Contains("using System.Buffers;", source, StringComparison.Ordinal);
+        Assert.Contains("Visual[]? owners = null;", source, StringComparison.Ordinal);
+        Assert.Contains("owners = ArrayPool<Visual>.Shared.Rent(Math.Max(4, _owners.Count));", source, StringComparison.Ordinal);
+        Assert.Contains("Visual[] expandedOwners = ArrayPool<Visual>.Shared.Rent(owners.Length * 2);", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<Visual>.Shared.Return(owners, clearArray: true);", source, StringComparison.Ordinal);
+        Assert.Contains("owners![i].Invalidate();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("List<Visual>? owners", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("owners ??= new List<Visual>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("owners.Add(owner);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var owner in owners)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EffectExtensionCacheCleanupUsesPooledRemovalBuffers()
     {
         string helper = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "PooledRemovalBuffer.cs"));

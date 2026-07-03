@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
 using ProGPU.Backend;
@@ -603,31 +604,48 @@ public abstract class EffectBase
 
     private void NotifyOwners()
     {
-        List<Visual>? owners = null;
+        Visual[]? owners = null;
+        var ownerCount = 0;
 
-        lock (_ownersLock)
+        try
         {
-            for (var i = _owners.Count - 1; i >= 0; i--)
+            lock (_ownersLock)
             {
-                if (!_owners[i].TryGetTarget(out var owner))
+                for (var i = _owners.Count - 1; i >= 0; i--)
                 {
-                    _owners.RemoveAt(i);
-                    continue;
-                }
+                    if (!_owners[i].TryGetTarget(out var owner))
+                    {
+                        _owners.RemoveAt(i);
+                        continue;
+                    }
 
-                owners ??= new List<Visual>();
-                owners.Add(owner);
+                    if (owners == null)
+                    {
+                        owners = ArrayPool<Visual>.Shared.Rent(Math.Max(4, _owners.Count));
+                    }
+                    else if (ownerCount == owners.Length)
+                    {
+                        Visual[] expandedOwners = ArrayPool<Visual>.Shared.Rent(owners.Length * 2);
+                        Array.Copy(owners, expandedOwners, ownerCount);
+                        ArrayPool<Visual>.Shared.Return(owners, clearArray: true);
+                        owners = expandedOwners;
+                    }
+
+                    owners[ownerCount++] = owner;
+                }
+            }
+
+            for (var i = 0; i < ownerCount; i++)
+            {
+                owners![i].Invalidate();
             }
         }
-
-        if (owners == null)
+        finally
         {
-            return;
-        }
-
-        foreach (var owner in owners)
-        {
-            owner.Invalidate();
+            if (owners != null)
+            {
+                ArrayPool<Visual>.Shared.Return(owners, clearArray: true);
+            }
         }
     }
 }
