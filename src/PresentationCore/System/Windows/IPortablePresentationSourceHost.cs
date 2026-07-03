@@ -2,6 +2,8 @@ using System;
 
 namespace System.Windows;
 
+public delegate bool PortableHitTestAllBufferOverride(double x, double y, Span<object?> results, out int resultCount);
+
 public interface IPortablePresentationSourceHost : IDisposable
 {
     event EventHandler? RenderRequested;
@@ -21,6 +23,8 @@ public interface IPortablePresentationSourceHost : IDisposable
     Func<double, double, object?>? HitTestOverride { get; set; }
 
     Func<double, double, object?[]?>? HitTestAllOverride { get; set; }
+
+    PortableHitTestAllBufferOverride? HitTestAllBufferOverride { get; set; }
 
     Func<double, double, double, double, object?[]?>? HitTestBoundsOverride { get; set; }
 
