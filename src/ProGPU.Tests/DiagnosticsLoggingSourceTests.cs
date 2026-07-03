@@ -53,6 +53,9 @@ public class DiagnosticsLoggingSourceTests
 
         Assert.Contains("using System.Buffers;", source, StringComparison.Ordinal);
         Assert.Contains("private static T[] RentStackSnapshot<T>(Stack<T> stack, out int count)", source, StringComparison.Ordinal);
+        Assert.Contains("private static T[] RentListSnapshot<T>(List<T> list, out int count)", source, StringComparison.Ordinal);
+        Assert.Contains("CollectionsMarshal.SetCount(list, count)", source, StringComparison.Ordinal);
+        Assert.Contains("RuntimeHelpers.IsReferenceOrContainsReferences<T>()", source, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<T>.Shared.Rent(count)", source, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<T>.Shared.Return(snapshot)", source, StringComparison.Ordinal);
         Assert.Contains("RentStackSnapshot(_clipStack", source, StringComparison.Ordinal);
@@ -60,11 +63,24 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("RentStackSnapshot(_opacityStack", source, StringComparison.Ordinal);
         Assert.Contains("RentStackSnapshot(_blendModeStack", source, StringComparison.Ordinal);
         Assert.Contains("RentStackSnapshot(_maskStack", source, StringComparison.Ordinal);
+        Assert.Contains("RentListSnapshot(_vectorVerticesList", source, StringComparison.Ordinal);
+        Assert.Contains("RentListSnapshot(_vectorIndicesList", source, StringComparison.Ordinal);
+        Assert.Contains("RentListSnapshot(_textVerticesList", source, StringComparison.Ordinal);
+        Assert.Contains("RentListSnapshot(_drawCalls", source, StringComparison.Ordinal);
+        Assert.Contains("ReturnListSnapshot(savedVectorVertices", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipScopeIsGeometryMask.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_opacityStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_blendModeStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_maskStack.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var savedVectorVertices = _vectorVerticesList.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var dxfSavedVectorVertices = _vectorVerticesList.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var savedTextVertices = _textVerticesList.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var dxfSavedTextVertices = _textVerticesList.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var savedDrawCalls = _drawCalls.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var dxfSavedDrawCalls = _drawCalls.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var savedMaskRenderPasses = _maskRenderPasses.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();", source, StringComparison.Ordinal);
     }
 
     private static string FindRepoFile(params string[] pathParts)

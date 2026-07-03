@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.Core.Native;
 using Silk.NET.WebGPU;
@@ -2455,6 +2456,19 @@ public unsafe class Compositor : IDisposable
         return snapshot;
     }
 
+    private static T[] RentListSnapshot<T>(List<T> list, out int count)
+    {
+        count = list.Count;
+        if (count == 0)
+        {
+            return Array.Empty<T>();
+        }
+
+        var snapshot = ArrayPool<T>.Shared.Rent(count);
+        CollectionsMarshal.AsSpan(list).CopyTo(snapshot);
+        return snapshot;
+    }
+
     private static void RestoreStack<T>(Stack<T> stack, T[] snapshot, int count)
     {
         stack.Clear();
@@ -2464,14 +2478,40 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private static void RestoreList<T>(List<T> list, T[] snapshot, int count)
+    {
+        list.Clear();
+        if (count == 0)
+        {
+            return;
+        }
+
+        list.EnsureCapacity(count);
+        CollectionsMarshal.SetCount(list, count);
+        snapshot.AsSpan(0, count).CopyTo(CollectionsMarshal.AsSpan(list));
+    }
+
     private static void ReturnStackSnapshot<T>(T[] snapshot, int count)
+    {
+        ReturnSnapshot(snapshot, count);
+    }
+
+    private static void ReturnListSnapshot<T>(T[] snapshot, int count)
+    {
+        ReturnSnapshot(snapshot, count);
+    }
+
+    private static void ReturnSnapshot<T>(T[] snapshot, int count)
     {
         if (count == 0)
         {
             return;
         }
 
-        Array.Clear(snapshot, 0, count);
+        if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+        {
+            Array.Clear(snapshot, 0, count);
+        }
         ArrayPool<T>.Shared.Return(snapshot);
     }
 
@@ -6574,14 +6614,14 @@ public unsafe class Compositor : IDisposable
         _currentProjection = projection;
 
         // 2. Save and clear lists
-        var savedVectorVertices = _vectorVerticesList.ToArray();
-        var savedVectorIndices = _vectorIndicesList.ToArray();
-        var savedTextVertices = _textVerticesList.ToArray();
-        var savedTextureVertices = _textureVerticesList.ToArray();
-        var savedTextureIndices = _textureIndicesList.ToArray();
-        var savedDrawCalls = _drawCalls.ToArray();
-        var savedActiveBrushes = _activeBrushes.ToArray();
-        var savedActiveGradientStops = _activeGradientStops.ToArray();
+        var savedVectorVertices = RentListSnapshot(_vectorVerticesList, out var savedVectorVerticesCount);
+        var savedVectorIndices = RentListSnapshot(_vectorIndicesList, out var savedVectorIndicesCount);
+        var savedTextVertices = RentListSnapshot(_textVerticesList, out var savedTextVerticesCount);
+        var savedTextureVertices = RentListSnapshot(_textureVerticesList, out var savedTextureVerticesCount);
+        var savedTextureIndices = RentListSnapshot(_textureIndicesList, out var savedTextureIndicesCount);
+        var savedDrawCalls = RentListSnapshot(_drawCalls, out var savedDrawCallsCount);
+        var savedActiveBrushes = RentListSnapshot(_activeBrushes, out var savedActiveBrushesCount);
+        var savedActiveGradientStops = RentListSnapshot(_activeGradientStops, out var savedActiveGradientStopsCount);
         var savedClipStack = RentStackSnapshot(_clipStack, out var savedClipStackCount);
         var savedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var savedClipScopeIsGeometryMaskCount);
         var savedActiveClipRect = _activeClipRect;
@@ -6599,8 +6639,8 @@ public unsafe class Compositor : IDisposable
         var savedBlendModeStack = RentStackSnapshot(_blendModeStack, out var savedBlendModeStackCount);
         var savedActiveBlendMode = _activeBlendMode;
         var savedMaskStack = RentStackSnapshot(_maskStack, out var savedMaskStackCount);
-        var savedMaskRenderPasses = _maskRenderPasses.ToArray();
-        var savedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+        var savedMaskRenderPasses = RentListSnapshot(_maskRenderPasses, out var savedMaskRenderPassesCount);
+        var savedMasksToReturnToPool = RentListSnapshot(_masksToReturnToPool, out var savedMasksToReturnToPoolCount);
         var savedSuspendHitTestCacheWrites = _suspendHitTestCacheWrites;
 
         _useGpuTransformsActive = false;
@@ -6955,14 +6995,14 @@ public unsafe class Compositor : IDisposable
             }
 
             // Restore main lists and state
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(savedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(savedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-            _textureVerticesList.Clear(); _textureVerticesList.AddRange(savedTextureVertices);
-            _textureIndicesList.Clear(); _textureIndicesList.AddRange(savedTextureIndices);
-            _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
-            _activeGradientStops.Clear(); _activeGradientStops.AddRange(savedActiveGradientStops);
+            RestoreList(_vectorVerticesList, savedVectorVertices, savedVectorVerticesCount);
+            RestoreList(_vectorIndicesList, savedVectorIndices, savedVectorIndicesCount);
+            RestoreList(_textVerticesList, savedTextVertices, savedTextVerticesCount);
+            RestoreList(_textureVerticesList, savedTextureVertices, savedTextureVerticesCount);
+            RestoreList(_textureIndicesList, savedTextureIndices, savedTextureIndicesCount);
+            RestoreList(_drawCalls, savedDrawCalls, savedDrawCallsCount);
+            RestoreList(_activeBrushes, savedActiveBrushes, savedActiveBrushesCount);
+            RestoreList(_activeGradientStops, savedActiveGradientStops, savedActiveGradientStopsCount);
             RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
             RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
             _activeClipRect = savedActiveClipRect;
@@ -6975,11 +7015,9 @@ public unsafe class Compositor : IDisposable
 
             RestoreStack(_maskStack, savedMaskStack, savedMaskStackCount);
 
-            _maskRenderPasses.Clear();
-            _maskRenderPasses.AddRange(savedMaskRenderPasses);
+            RestoreList(_maskRenderPasses, savedMaskRenderPasses, savedMaskRenderPassesCount);
 
-            _masksToReturnToPool.Clear();
-            _masksToReturnToPool.AddRange(savedMasksToReturnToPool);
+            RestoreList(_masksToReturnToPool, savedMasksToReturnToPool, savedMasksToReturnToPoolCount);
 
             _pendingVectorStart = savedPendingVectorStart;
             _pendingTextStart = savedPendingTextStart;
@@ -7005,21 +7043,31 @@ public unsafe class Compositor : IDisposable
             ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
             ReturnStackSnapshot(savedBlendModeStack, savedBlendModeStackCount);
             ReturnStackSnapshot(savedMaskStack, savedMaskStackCount);
+            ReturnListSnapshot(savedVectorVertices, savedVectorVerticesCount);
+            ReturnListSnapshot(savedVectorIndices, savedVectorIndicesCount);
+            ReturnListSnapshot(savedTextVertices, savedTextVerticesCount);
+            ReturnListSnapshot(savedTextureVertices, savedTextureVerticesCount);
+            ReturnListSnapshot(savedTextureIndices, savedTextureIndicesCount);
+            ReturnListSnapshot(savedDrawCalls, savedDrawCallsCount);
+            ReturnListSnapshot(savedActiveBrushes, savedActiveBrushesCount);
+            ReturnListSnapshot(savedActiveGradientStops, savedActiveGradientStopsCount);
+            ReturnListSnapshot(savedMaskRenderPasses, savedMaskRenderPassesCount);
+            ReturnListSnapshot(savedMasksToReturnToPool, savedMasksToReturnToPoolCount);
         }
     }
 
     public DxfStaticBuffer CompileStaticDxf(List<RenderCommand> commands, float staticZoom = 1.0f)
     {
         // Save current lists and states
-        var dxfSavedVectorVertices = _vectorVerticesList.ToArray();
-        var dxfSavedVectorIndices = _vectorIndicesList.ToArray();
-        var dxfSavedTextVertices = _textVerticesList.ToArray();
-        var dxfSavedTextureVertices = _textureVerticesList.ToArray();
-        var dxfSavedTextureIndices = _textureIndicesList.ToArray();
-        var dxfSavedDrawCalls = _drawCalls.ToArray();
-        var dxfSavedActiveBrushes = _activeBrushes.ToArray();
-        var dxfSavedActiveGradientStops = _activeGradientStops.ToArray();
-        var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
+        var dxfSavedVectorVertices = RentListSnapshot(_vectorVerticesList, out var dxfSavedVectorVerticesCount);
+        var dxfSavedVectorIndices = RentListSnapshot(_vectorIndicesList, out var dxfSavedVectorIndicesCount);
+        var dxfSavedTextVertices = RentListSnapshot(_textVerticesList, out var dxfSavedTextVerticesCount);
+        var dxfSavedTextureVertices = RentListSnapshot(_textureVerticesList, out var dxfSavedTextureVerticesCount);
+        var dxfSavedTextureIndices = RentListSnapshot(_textureIndicesList, out var dxfSavedTextureIndicesCount);
+        var dxfSavedDrawCalls = RentListSnapshot(_drawCalls, out var dxfSavedDrawCallsCount);
+        var dxfSavedActiveBrushes = RentListSnapshot(_activeBrushes, out var dxfSavedActiveBrushesCount);
+        var dxfSavedActiveGradientStops = RentListSnapshot(_activeGradientStops, out var dxfSavedActiveGradientStopsCount);
+        var dxfSavedCompiledTextRecords = RentListSnapshot(_compiledTextRecords, out var dxfSavedCompiledTextRecordsCount);
 
         var dxfSavedActiveClipRect = _activeClipRect;
         var dxfSavedClipStack = RentStackSnapshot(_clipStack, out var dxfSavedClipStackCount);
@@ -7040,8 +7088,8 @@ public unsafe class Compositor : IDisposable
         var dxfSavedBlendModeStack = RentStackSnapshot(_blendModeStack, out var dxfSavedBlendModeStackCount);
         var dxfSavedActiveBlendMode = _activeBlendMode;
         var dxfSavedMaskStack = RentStackSnapshot(_maskStack, out var dxfSavedMaskStackCount);
-        var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
-        var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+        var dxfSavedMaskRenderPasses = RentListSnapshot(_maskRenderPasses, out var dxfSavedMaskRenderPassesCount);
+        var dxfSavedMasksToReturnToPool = RentListSnapshot(_masksToReturnToPool, out var dxfSavedMasksToReturnToPoolCount);
 
         // Clear for compilation
         _vectorVerticesList.Clear();
@@ -7366,15 +7414,15 @@ public unsafe class Compositor : IDisposable
             ActiveCompilationContext = null;
 
             // Restore dynamic lists and states
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(dxfSavedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(dxfSavedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(dxfSavedTextVertices);
-            _textureVerticesList.Clear(); _textureVerticesList.AddRange(dxfSavedTextureVertices);
-            _textureIndicesList.Clear(); _textureIndicesList.AddRange(dxfSavedTextureIndices);
-            _drawCalls.Clear(); _drawCalls.AddRange(dxfSavedDrawCalls);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(dxfSavedActiveBrushes);
-            _activeGradientStops.Clear(); _activeGradientStops.AddRange(dxfSavedActiveGradientStops);
-            _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
+            RestoreList(_vectorVerticesList, dxfSavedVectorVertices, dxfSavedVectorVerticesCount);
+            RestoreList(_vectorIndicesList, dxfSavedVectorIndices, dxfSavedVectorIndicesCount);
+            RestoreList(_textVerticesList, dxfSavedTextVertices, dxfSavedTextVerticesCount);
+            RestoreList(_textureVerticesList, dxfSavedTextureVertices, dxfSavedTextureVerticesCount);
+            RestoreList(_textureIndicesList, dxfSavedTextureIndices, dxfSavedTextureIndicesCount);
+            RestoreList(_drawCalls, dxfSavedDrawCalls, dxfSavedDrawCallsCount);
+            RestoreList(_activeBrushes, dxfSavedActiveBrushes, dxfSavedActiveBrushesCount);
+            RestoreList(_activeGradientStops, dxfSavedActiveGradientStops, dxfSavedActiveGradientStopsCount);
+            RestoreList(_compiledTextRecords, dxfSavedCompiledTextRecords, dxfSavedCompiledTextRecordsCount);
 
             _activeClipRect = dxfSavedActiveClipRect;
             RestoreStack(_clipStack, dxfSavedClipStack, dxfSavedClipStackCount);
@@ -7397,32 +7445,41 @@ public unsafe class Compositor : IDisposable
 
             RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
 
-            _maskRenderPasses.Clear();
-            _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
+            RestoreList(_maskRenderPasses, dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
 
-            _masksToReturnToPool.Clear();
-            _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
+            RestoreList(_masksToReturnToPool, dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
 
             ReturnStackSnapshot(dxfSavedClipStack, dxfSavedClipStackCount);
             ReturnStackSnapshot(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
             ReturnStackSnapshot(dxfSavedOpacityStack, dxfSavedOpacityStackCount);
             ReturnStackSnapshot(dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
             ReturnStackSnapshot(dxfSavedMaskStack, dxfSavedMaskStackCount);
+            ReturnListSnapshot(dxfSavedVectorVertices, dxfSavedVectorVerticesCount);
+            ReturnListSnapshot(dxfSavedVectorIndices, dxfSavedVectorIndicesCount);
+            ReturnListSnapshot(dxfSavedTextVertices, dxfSavedTextVerticesCount);
+            ReturnListSnapshot(dxfSavedTextureVertices, dxfSavedTextureVerticesCount);
+            ReturnListSnapshot(dxfSavedTextureIndices, dxfSavedTextureIndicesCount);
+            ReturnListSnapshot(dxfSavedDrawCalls, dxfSavedDrawCallsCount);
+            ReturnListSnapshot(dxfSavedActiveBrushes, dxfSavedActiveBrushesCount);
+            ReturnListSnapshot(dxfSavedActiveGradientStops, dxfSavedActiveGradientStopsCount);
+            ReturnListSnapshot(dxfSavedCompiledTextRecords, dxfSavedCompiledTextRecordsCount);
+            ReturnListSnapshot(dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
+            ReturnListSnapshot(dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
         }
     }
 
     public DxfStaticBuffer CompileStaticDxf(DrawingContext context, float staticZoom = 1.0f)
     {
         // Save current lists and states
-        var dxfSavedVectorVertices = _vectorVerticesList.ToArray();
-        var dxfSavedVectorIndices = _vectorIndicesList.ToArray();
-        var dxfSavedTextVertices = _textVerticesList.ToArray();
-        var dxfSavedTextureVertices = _textureVerticesList.ToArray();
-        var dxfSavedTextureIndices = _textureIndicesList.ToArray();
-        var dxfSavedDrawCalls = _drawCalls.ToArray();
-        var dxfSavedActiveBrushes = _activeBrushes.ToArray();
-        var dxfSavedActiveGradientStops = _activeGradientStops.ToArray();
-        var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
+        var dxfSavedVectorVertices = RentListSnapshot(_vectorVerticesList, out var dxfSavedVectorVerticesCount);
+        var dxfSavedVectorIndices = RentListSnapshot(_vectorIndicesList, out var dxfSavedVectorIndicesCount);
+        var dxfSavedTextVertices = RentListSnapshot(_textVerticesList, out var dxfSavedTextVerticesCount);
+        var dxfSavedTextureVertices = RentListSnapshot(_textureVerticesList, out var dxfSavedTextureVerticesCount);
+        var dxfSavedTextureIndices = RentListSnapshot(_textureIndicesList, out var dxfSavedTextureIndicesCount);
+        var dxfSavedDrawCalls = RentListSnapshot(_drawCalls, out var dxfSavedDrawCallsCount);
+        var dxfSavedActiveBrushes = RentListSnapshot(_activeBrushes, out var dxfSavedActiveBrushesCount);
+        var dxfSavedActiveGradientStops = RentListSnapshot(_activeGradientStops, out var dxfSavedActiveGradientStopsCount);
+        var dxfSavedCompiledTextRecords = RentListSnapshot(_compiledTextRecords, out var dxfSavedCompiledTextRecordsCount);
 
         var dxfSavedActiveClipRect = _activeClipRect;
         var dxfSavedClipStack = RentStackSnapshot(_clipStack, out var dxfSavedClipStackCount);
@@ -7443,8 +7500,8 @@ public unsafe class Compositor : IDisposable
         var dxfSavedBlendModeStack = RentStackSnapshot(_blendModeStack, out var dxfSavedBlendModeStackCount);
         var dxfSavedActiveBlendMode = _activeBlendMode;
         var dxfSavedMaskStack = RentStackSnapshot(_maskStack, out var dxfSavedMaskStackCount);
-        var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
-        var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
+        var dxfSavedMaskRenderPasses = RentListSnapshot(_maskRenderPasses, out var dxfSavedMaskRenderPassesCount);
+        var dxfSavedMasksToReturnToPool = RentListSnapshot(_masksToReturnToPool, out var dxfSavedMasksToReturnToPoolCount);
 
         // Clear for compilation
         _vectorVerticesList.Clear();
@@ -7838,15 +7895,15 @@ public unsafe class Compositor : IDisposable
             ActiveCompilationContext = null;
 
             // Restore dynamic lists and states
-            _vectorVerticesList.Clear(); _vectorVerticesList.AddRange(dxfSavedVectorVertices);
-            _vectorIndicesList.Clear(); _vectorIndicesList.AddRange(dxfSavedVectorIndices);
-            _textVerticesList.Clear(); _textVerticesList.AddRange(dxfSavedTextVertices);
-            _textureVerticesList.Clear(); _textureVerticesList.AddRange(dxfSavedTextureVertices);
-            _textureIndicesList.Clear(); _textureIndicesList.AddRange(dxfSavedTextureIndices);
-            _drawCalls.Clear(); _drawCalls.AddRange(dxfSavedDrawCalls);
-            _activeBrushes.Clear(); _activeBrushes.AddRange(dxfSavedActiveBrushes);
-            _activeGradientStops.Clear(); _activeGradientStops.AddRange(dxfSavedActiveGradientStops);
-            _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
+            RestoreList(_vectorVerticesList, dxfSavedVectorVertices, dxfSavedVectorVerticesCount);
+            RestoreList(_vectorIndicesList, dxfSavedVectorIndices, dxfSavedVectorIndicesCount);
+            RestoreList(_textVerticesList, dxfSavedTextVertices, dxfSavedTextVerticesCount);
+            RestoreList(_textureVerticesList, dxfSavedTextureVertices, dxfSavedTextureVerticesCount);
+            RestoreList(_textureIndicesList, dxfSavedTextureIndices, dxfSavedTextureIndicesCount);
+            RestoreList(_drawCalls, dxfSavedDrawCalls, dxfSavedDrawCallsCount);
+            RestoreList(_activeBrushes, dxfSavedActiveBrushes, dxfSavedActiveBrushesCount);
+            RestoreList(_activeGradientStops, dxfSavedActiveGradientStops, dxfSavedActiveGradientStopsCount);
+            RestoreList(_compiledTextRecords, dxfSavedCompiledTextRecords, dxfSavedCompiledTextRecordsCount);
 
             _activeClipRect = dxfSavedActiveClipRect;
             RestoreStack(_clipStack, dxfSavedClipStack, dxfSavedClipStackCount);
@@ -7869,24 +7926,33 @@ public unsafe class Compositor : IDisposable
 
             RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
 
-            _maskRenderPasses.Clear();
-            _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
+            RestoreList(_maskRenderPasses, dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
 
-            _masksToReturnToPool.Clear();
-            _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
+            RestoreList(_masksToReturnToPool, dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
 
             ReturnStackSnapshot(dxfSavedClipStack, dxfSavedClipStackCount);
             ReturnStackSnapshot(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
             ReturnStackSnapshot(dxfSavedOpacityStack, dxfSavedOpacityStackCount);
             ReturnStackSnapshot(dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
             ReturnStackSnapshot(dxfSavedMaskStack, dxfSavedMaskStackCount);
+            ReturnListSnapshot(dxfSavedVectorVertices, dxfSavedVectorVerticesCount);
+            ReturnListSnapshot(dxfSavedVectorIndices, dxfSavedVectorIndicesCount);
+            ReturnListSnapshot(dxfSavedTextVertices, dxfSavedTextVerticesCount);
+            ReturnListSnapshot(dxfSavedTextureVertices, dxfSavedTextureVerticesCount);
+            ReturnListSnapshot(dxfSavedTextureIndices, dxfSavedTextureIndicesCount);
+            ReturnListSnapshot(dxfSavedDrawCalls, dxfSavedDrawCallsCount);
+            ReturnListSnapshot(dxfSavedActiveBrushes, dxfSavedActiveBrushesCount);
+            ReturnListSnapshot(dxfSavedActiveGradientStops, dxfSavedActiveGradientStopsCount);
+            ReturnListSnapshot(dxfSavedCompiledTextRecords, dxfSavedCompiledTextRecordsCount);
+            ReturnListSnapshot(dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
+            ReturnListSnapshot(dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
         }
     }
 
     public void RecompileStaticText(DxfStaticBuffer staticBuffer, float staticZoom)
     {
-        var savedTextVertices = _textVerticesList.ToArray();
-        var savedDrawCalls = _drawCalls.ToArray();
+        var savedTextVertices = RentListSnapshot(_textVerticesList, out var savedTextVerticesCount);
+        var savedDrawCalls = RentListSnapshot(_drawCalls, out var savedDrawCallsCount);
         var savedPendingTextStart = _pendingTextStart;
         var savedCurrentBatchType = _currentBatchType;
         var savedActiveOpacity = _activeOpacity;
@@ -7921,11 +7987,13 @@ public unsafe class Compositor : IDisposable
             _atlas.EndBatch();
             ActiveCompilationContext = null;
 
-            _textVerticesList.Clear(); _textVerticesList.AddRange(savedTextVertices);
-            _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
+            RestoreList(_textVerticesList, savedTextVertices, savedTextVerticesCount);
+            RestoreList(_drawCalls, savedDrawCalls, savedDrawCallsCount);
             _pendingTextStart = savedPendingTextStart;
             _currentBatchType = savedCurrentBatchType;
             _activeOpacity = savedActiveOpacity;
+            ReturnListSnapshot(savedTextVertices, savedTextVerticesCount);
+            ReturnListSnapshot(savedDrawCalls, savedDrawCallsCount);
         }
     }
 
