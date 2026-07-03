@@ -5,6 +5,13 @@ public interface IPortableDrawingGroupStateSource
     bool TryGetPortableDrawingGroupState(out PortableDrawingGroupState state);
 }
 
+public interface IPortableDrawingGroupChildrenSource
+{
+    bool TryGetPortableDrawingGroupChildCount(out int count);
+
+    bool TryGetPortableDrawingGroupChild(int index, out object child);
+}
+
 public sealed class PortableDrawingGroupState
 {
     private static readonly object[] s_emptyChildren = System.Array.Empty<object>();
