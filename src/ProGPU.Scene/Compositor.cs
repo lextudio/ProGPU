@@ -661,6 +661,9 @@ public unsafe class Compositor : IDisposable
 
     private readonly List<MaskRenderPassInfo> _maskRenderPasses = new();
     private readonly List<GpuTexture> _masksToReturnToPool = new();
+    private readonly Stack<List<CompositorDrawCall>> _maskDrawCallListPool = new();
+    private const int MaxPooledMaskDrawCallLists = 64;
+    private const int MaxPooledMaskDrawCallListCapacity = 4096;
 
     public enum DrawCallType
     {
@@ -1590,7 +1593,7 @@ public unsafe class Compositor : IDisposable
         _blendModeStack.Clear();
         _activeBlendMode = GpuBlendMode.SrcOver;
         _maskStack.Clear();
-        _maskRenderPasses.Clear();
+        ReturnMaskRenderPassDrawCallLists();
         _masksToReturnToPool.Clear();
 
         var extensionFrame = BeginExtensionFrame();
@@ -2130,7 +2133,7 @@ public unsafe class Compositor : IDisposable
             _maskTexturePool.Add(tex);
         }
         _masksToReturnToPool.Clear();
-        _maskRenderPasses.Clear();
+        ReturnMaskRenderPassDrawCallLists();
 
         _frameNumber++;
         _totalTime += 1f / 60f;
@@ -2513,6 +2516,44 @@ public unsafe class Compositor : IDisposable
             Array.Clear(snapshot, 0, count);
         }
         ArrayPool<T>.Shared.Return(snapshot);
+    }
+
+    private List<CompositorDrawCall> RentMaskDrawCallList(int capacity)
+    {
+        if (_maskDrawCallListPool.Count > 0)
+        {
+            var list = _maskDrawCallListPool.Pop();
+            if (capacity > list.Capacity)
+            {
+                list.Capacity = capacity;
+            }
+
+            return list;
+        }
+
+        return new List<CompositorDrawCall>(capacity);
+    }
+
+    private void ReturnMaskDrawCallList(List<CompositorDrawCall> list)
+    {
+        list.Clear();
+        if (list.Capacity > MaxPooledMaskDrawCallListCapacity ||
+            _maskDrawCallListPool.Count >= MaxPooledMaskDrawCallLists)
+        {
+            return;
+        }
+
+        _maskDrawCallListPool.Push(list);
+    }
+
+    private void ReturnMaskRenderPassDrawCallLists()
+    {
+        foreach (var maskPass in _maskRenderPasses)
+        {
+            ReturnMaskDrawCallList(maskPass.DrawCalls);
+        }
+
+        _maskRenderPasses.Clear();
     }
 
     private void PushOpacityValue(float opacity)
@@ -5928,6 +5969,8 @@ public unsafe class Compositor : IDisposable
             }
             _maskBindGroups.Clear();
             _maskBindGroupsOffscreen.Clear();
+            ReturnMaskRenderPassDrawCallLists();
+            _maskDrawCallListPool.Clear();
 
             var pooledMaskTextures = _maskTexturePool.ToArray();
             _maskTexturePool.Clear();
@@ -6667,7 +6710,7 @@ public unsafe class Compositor : IDisposable
         _blendModeStack.Clear();
         _activeBlendMode = GpuBlendMode.SrcOver;
         _maskStack.Clear();
-        _maskRenderPasses.Clear();
+        ReturnMaskRenderPassDrawCallLists();
         _masksToReturnToPool.Clear();
 
         _pendingVectorStart = 0;
@@ -6983,7 +7026,7 @@ public unsafe class Compositor : IDisposable
             _maskTexturePool.Add(tex);
         }
         _masksToReturnToPool.Clear();
-        _maskRenderPasses.Clear();
+        ReturnMaskRenderPassDrawCallLists();
 
         EvictUnusedBindGroups();
         }
@@ -7445,6 +7488,7 @@ public unsafe class Compositor : IDisposable
 
             RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
 
+            ReturnMaskRenderPassDrawCallLists();
             RestoreList(_maskRenderPasses, dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
 
             RestoreList(_masksToReturnToPool, dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
@@ -7926,6 +7970,7 @@ public unsafe class Compositor : IDisposable
 
             RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
 
+            ReturnMaskRenderPassDrawCallLists();
             RestoreList(_maskRenderPasses, dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
 
             RestoreList(_masksToReturnToPool, dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
@@ -8824,12 +8869,13 @@ public unsafe class Compositor : IDisposable
             RestoreStateAfterMaskCompilation(savedState);
         }
 
-        var maskDrawCalls = new List<CompositorDrawCall>();
+        int maskDrawCallCount = _drawCalls.Count - preDrawCallCount;
+        var maskDrawCalls = RentMaskDrawCallList(maskDrawCallCount);
         for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
         {
             maskDrawCalls.Add(_drawCalls[i]);
         }
-        _drawCalls.RemoveRange(preDrawCallCount, _drawCalls.Count - preDrawCallCount);
+        _drawCalls.RemoveRange(preDrawCallCount, maskDrawCallCount);
 
         var maskTex = GetMaskTexture(CurrentMaskTargetPixelWidthUInt, CurrentMaskTargetPixelHeightUInt);
         var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
@@ -8866,12 +8912,13 @@ public unsafe class Compositor : IDisposable
             RestoreStateAfterMaskCompilation(savedState);
         }
 
-        var maskDrawCalls = new List<CompositorDrawCall>();
+        int maskDrawCallCount = _drawCalls.Count - preDrawCallCount;
+        var maskDrawCalls = RentMaskDrawCallList(maskDrawCallCount);
         for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
         {
             maskDrawCalls.Add(_drawCalls[i]);
         }
-        _drawCalls.RemoveRange(preDrawCallCount, _drawCalls.Count - preDrawCallCount);
+        _drawCalls.RemoveRange(preDrawCallCount, maskDrawCallCount);
 
         var maskTex = GetMaskTexture(CurrentMaskTargetPixelWidthUInt, CurrentMaskTargetPixelHeightUInt);
         var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
