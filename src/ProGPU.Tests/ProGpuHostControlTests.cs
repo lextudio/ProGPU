@@ -246,6 +246,22 @@ public class ProGpuHostControlTests
         Assert.DoesNotContain("BufferUnmap(readbackBuffer", method, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void GpuBufferReadBytesUsesContextPollingAndQueuedReadbackDisposal()
+    {
+        string source = File.ReadAllText(FindProGpuBackendSource("GpuBuffer.cs")).Replace("\r\n", "\n");
+
+        Assert.Contains("_context.PollDevice(wait: false)", source, StringComparison.Ordinal);
+        Assert.Contains("QueueTemporaryReadbackBufferDisposal(readbackBuffer)", source, StringComparison.Ordinal);
+        Assert.Contains("_context.QueueBufferDisposal((IntPtr)buffer)", source, StringComparison.Ordinal);
+        Assert.Contains("_context.CleanupPendingResources();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("wgpuDevicePoll", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BufferDestroy(readbackBuffer)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BufferRelease(readbackBuffer)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BufferDestroy(buffer)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BufferRelease(buffer)", source, StringComparison.Ordinal);
+    }
+
     private static string FindProGpuHostControlSource()
     {
         return FindProGpuSource("ProGPU.Avalonia", "ProGpuHostControl.cs");

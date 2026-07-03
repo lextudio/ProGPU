@@ -122,8 +122,7 @@ public unsafe class GpuBuffer : IDisposable
         SilkMarshal.Free((nint)encoderDesc.Label);
         if (encoder == null)
         {
-            _context.Wgpu.BufferDestroy(readbackBuffer);
-            _context.Wgpu.BufferRelease(readbackBuffer);
+            QueueTemporaryReadbackBufferDisposal(readbackBuffer);
             throw new InvalidOperationException("Failed to create command encoder for buffer readback.");
         }
 
@@ -141,8 +140,7 @@ public unsafe class GpuBuffer : IDisposable
         if (commandBuffer == null)
         {
             _context.Wgpu.CommandEncoderRelease(encoder);
-            _context.Wgpu.BufferDestroy(readbackBuffer);
-            _context.Wgpu.BufferRelease(readbackBuffer);
+            QueueTemporaryReadbackBufferDisposal(readbackBuffer);
             throw new InvalidOperationException("Failed to finish buffer readback command encoder.");
         }
 
@@ -169,7 +167,7 @@ public unsafe class GpuBuffer : IDisposable
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         while (!mapSignal.IsSet)
         {
-            wgpuDevicePoll(_context.Device, false, null);
+            _context.PollDevice(wait: false);
             System.Threading.Thread.Sleep(1);
             if (stopwatch.ElapsedMilliseconds > 5000)
             {
@@ -194,8 +192,7 @@ public unsafe class GpuBuffer : IDisposable
         _context.Wgpu.BufferUnmap(buffer);
         if (destroyAfterRead)
         {
-            _context.Wgpu.BufferDestroy(buffer);
-            _context.Wgpu.BufferRelease(buffer);
+            QueueTemporaryReadbackBufferDisposal(buffer);
         }
 
         return bytes;
@@ -205,9 +202,19 @@ public unsafe class GpuBuffer : IDisposable
     {
         if (destroyAfterRead)
         {
-            _context.Wgpu.BufferDestroy(buffer);
-            _context.Wgpu.BufferRelease(buffer);
+            QueueTemporaryReadbackBufferDisposal(buffer);
         }
+    }
+
+    private void QueueTemporaryReadbackBufferDisposal(Buffer* buffer)
+    {
+        if (buffer == null || _context.IsDisposed)
+        {
+            return;
+        }
+
+        _context.QueueBufferDisposal((IntPtr)buffer);
+        _context.CleanupPendingResources();
     }
 
     private void ValidateReadRange(uint offsetBytes, uint sizeBytes)
@@ -279,7 +286,4 @@ public unsafe class GpuBuffer : IDisposable
             catch {}
         }
     }
-
-    [DllImport("wgpu_native", EntryPoint = "wgpuDevicePoll")]
-    private static extern bool wgpuDevicePoll(Device* device, bool wait, void* wrappedSubmissionIndex);
 }
