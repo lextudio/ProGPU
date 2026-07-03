@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using Silk.NET.Core.Native;
 using Silk.NET.WebGPU;
 
@@ -1223,9 +1222,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         context.CleanupPendingResources();
     }
 
-    [System.Runtime.InteropServices.DllImport("wgpu_native", EntryPoint = "wgpuDevicePoll")]
-    private static extern unsafe bool wgpuDevicePoll(Device* device, bool wait, void* wrappedSubmissionIndex);
-
     public byte[] ReadPixels(uint mipLevel = 0)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
@@ -1235,130 +1231,53 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         ValidateMipLevel(mipLevel);
-        var wgpu = _context.Wgpu;
-        var device = _context.Device;
-        var queue = _context.Queue;
 
         uint bytesPerPixel = GetBytesPerPixel(Format);
         uint mipWidth = GetMipDimension(Width, mipLevel);
         uint mipHeight = GetMipDimension(Height, mipLevel);
         uint mipDepthOrLayers = GetMipDepthOrArrayLayers(mipLevel);
+        uint bytesPerRow = checked(mipWidth * bytesPerPixel);
+        uint bytesPerImage = checked(bytesPerRow * mipHeight);
+        byte[] unpaddedPixels = new byte[checked((int)((ulong)bytesPerImage * mipDepthOrLayers))];
 
-        // Align row pitch to 256 bytes per WebGPU requirements
-        uint bytesPerRow = mipWidth * bytesPerPixel;
-        uint alignedBytesPerRow = (bytesPerRow + 255) & ~255u;
-        uint bufferSize = alignedBytesPerRow * mipHeight * mipDepthOrLayers;
-
-        var bufferDesc = new BufferDescriptor
+        var readbackBuffer = new GpuTextureReadbackBuffer(_context);
+        try
         {
-            Usage = BufferUsage.CopyDst | BufferUsage.MapRead,
-            Size = bufferSize,
-            MappedAtCreation = false
-        };
-        var readbackBuffer = wgpu.DeviceCreateBuffer(device, &bufferDesc);
-        if (readbackBuffer == null)
-        {
-            throw new InvalidOperationException("Failed to create readback buffer for texture ReadPixels.");
-        }
-
-        // 1. Create a command encoder for the copy operation
-        var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Texture Readback Encoder") };
-        var encoder = wgpu.DeviceCreateCommandEncoder(device, &encoderDesc);
-        SilkMarshal.Free((nint)encoderDesc.Label);
-
-        // 2. Define source and destination copy descriptors
-        var source = new ImageCopyTexture
-        {
-            Texture = TexturePtr,
-            MipLevel = mipLevel,
-            Origin = new Origin3D { X = 0, Y = 0, Z = 0 },
-            Aspect = GetTextureCopyAspect(Format)
-        };
-
-        var destination = new ImageCopyBuffer
-        {
-            Buffer = readbackBuffer,
-            Layout = new TextureDataLayout
+            fixed (byte* destination = unpaddedPixels)
             {
-                Offset = 0,
-                BytesPerRow = alignedBytesPerRow,
-                RowsPerImage = mipHeight
-            }
-        };
+                bool read = readbackBuffer.TryReadTextureRows(
+                    this,
+                    mipWidth,
+                    mipHeight,
+                    mipDepthOrLayers,
+                    mipLevel,
+                    GetTextureCopyAspect(Format),
+                    destination,
+                    bytesPerRow,
+                    bytesPerImage,
+                    bytesPerPixel);
 
-        var copySize = new Extent3D
-        {
-            Width = mipWidth,
-            Height = mipHeight,
-            DepthOrArrayLayers = mipDepthOrLayers
-        };
-
-        wgpu.CommandEncoderCopyTextureToBuffer(encoder, &source, &destination, &copySize);
-
-        // 3. Submit copy command to Queue
-        var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Texture Readback Command Buffer") };
-        var cmdBuffer = wgpu.CommandEncoderFinish(encoder, &cmdDesc);
-        SilkMarshal.Free((nint)cmdDesc.Label);
-
-        wgpu.QueueSubmit(queue, 1, &cmdBuffer);
-
-        wgpu.CommandBufferRelease(cmdBuffer);
-        wgpu.CommandEncoderRelease(encoder);
-
-        // 4. Map the buffer asynchronously to copy memory to CPU
-        var mapSignal = new System.Threading.ManualResetEventSlim(false);
-        BufferMapAsyncStatus mapStatus = BufferMapAsyncStatus.ValidationError;
-
-        var onMapped = PfnBufferMapCallback.From((status, userData) =>
-        {
-            mapStatus = status;
-            mapSignal.Set();
-        });
-
-        wgpu.BufferMapAsync(readbackBuffer, MapMode.Read, 0, (nuint)bufferSize, onMapped, null);
-
-        // Poll the device to process events and fire the callback synchronously
-        var swTimeout = System.Diagnostics.Stopwatch.StartNew();
-        while (!mapSignal.IsSet)
-        {
-            wgpuDevicePoll(_context.Device, false, null);
-            System.Threading.Thread.Sleep(1);
-            if (swTimeout.ElapsedMilliseconds > 5000)
-            {
-                wgpu.BufferDestroy(readbackBuffer);
-                wgpu.BufferRelease(readbackBuffer);
-                throw new TimeoutException("WebGPU BufferMapAsync timed out after 5 seconds during texture readback.");
-            }
-        }
-
-        if (mapStatus != BufferMapAsyncStatus.Success)
-        {
-            wgpu.BufferDestroy(readbackBuffer);
-            wgpu.BufferRelease(readbackBuffer);
-            throw new InvalidOperationException($"Failed to map readback buffer. WebGPU Status: {mapStatus}");
-        }
-
-        // 5. Read out the mapped pixels, stripping the row-alignment padding
-        byte[] unpaddedPixels = new byte[mipWidth * mipHeight * mipDepthOrLayers * bytesPerPixel];
-        void* mappedPtr = wgpu.BufferGetConstMappedRange(readbackBuffer, 0, (nuint)bufferSize);
-        if (mappedPtr != null)
-        {
-            byte* srcBytes = (byte*)mappedPtr;
-            for (uint layer = 0; layer < mipDepthOrLayers; layer++)
-            {
-                for (uint y = 0; y < mipHeight; y++)
+                if (!read)
                 {
-                    long srcOffset = (layer * mipHeight * alignedBytesPerRow) + (y * alignedBytesPerRow);
-                    long dstOffset = (layer * mipHeight * bytesPerRow) + (y * bytesPerRow);
-                    System.Runtime.InteropServices.Marshal.Copy((nint)(srcBytes + srcOffset), unpaddedPixels, (int)dstOffset, (int)bytesPerRow);
+                    if (readbackBuffer.LastMapTimedOut)
+                    {
+                        throw new TimeoutException("WebGPU BufferMapAsync timed out after 5 seconds during texture readback.");
+                    }
+
+                    if (readbackBuffer.LastMapStatus != BufferMapAsyncStatus.Success)
+                    {
+                        throw new InvalidOperationException($"Failed to map readback buffer. WebGPU Status: {readbackBuffer.LastMapStatus}");
+                    }
+
+                    throw new InvalidOperationException("Failed to copy texture readback rows into the destination buffer.");
                 }
             }
         }
-
-        // 6. Always unmap the buffer and clean up
-        wgpu.BufferUnmap(readbackBuffer);
-        wgpu.BufferDestroy(readbackBuffer);
-        wgpu.BufferRelease(readbackBuffer);
+        finally
+        {
+            readbackBuffer.Dispose();
+            _context.CleanupPendingResources();
+        }
 
         return unpaddedPixels;
     }

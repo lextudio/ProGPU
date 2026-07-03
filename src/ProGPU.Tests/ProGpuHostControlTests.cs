@@ -228,6 +228,24 @@ public class ProGpuHostControlTests
         Assert.Throws<ArgumentOutOfRangeException>(() => GpuTextureReadbackBuffer.AlignBytesPerRow(1, 0));
     }
 
+    [Fact]
+    public void GpuTextureReadPixelsUsesSharedReadbackBuffer()
+    {
+        string source = File.ReadAllText(FindProGpuBackendSource("GpuTexture.cs")).Replace("\r\n", "\n");
+        string method = source[
+            source.IndexOf("public byte[] ReadPixels", StringComparison.Ordinal)..source.IndexOf(
+                "private uint GetMipDepthOrArrayLayers",
+                StringComparison.Ordinal)];
+
+        Assert.Contains("var readbackBuffer = new GpuTextureReadbackBuffer(_context);", method, StringComparison.Ordinal);
+        Assert.Contains("readbackBuffer.TryReadTextureRows(", method, StringComparison.Ordinal);
+        Assert.Contains("_context.CleanupPendingResources();", method, StringComparison.Ordinal);
+        Assert.DoesNotContain(".BufferMapAsync(", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("wgpuDevicePoll", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BufferGetConstMappedRange", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("BufferUnmap(readbackBuffer", method, StringComparison.Ordinal);
+    }
+
     private static string FindProGpuHostControlSource()
     {
         return FindProGpuSource("ProGPU.Avalonia", "ProGpuHostControl.cs");

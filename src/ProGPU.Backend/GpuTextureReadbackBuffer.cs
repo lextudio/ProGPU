@@ -26,6 +26,8 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
 
     public uint Height { get; private set; }
 
+    public uint DepthOrArrayLayers { get; private set; }
+
     public uint BytesPerPixel { get; private set; }
 
     public uint BytesPerRow { get; private set; }
@@ -55,15 +57,22 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
 
     public void EnsureCapacity(uint width, uint height, uint bytesPerPixel = 4)
     {
+        EnsureCapacity(width, height, depthOrArrayLayers: 1, bytesPerPixel);
+    }
+
+    public void EnsureCapacity(uint width, uint height, uint depthOrArrayLayers, uint bytesPerPixel = 4)
+    {
         ThrowIfContextDisposed();
 
         width = Math.Max(1u, width);
         height = Math.Max(1u, height);
+        depthOrArrayLayers = Math.Max(1u, depthOrArrayLayers);
         uint bytesPerRow = AlignBytesPerRow(width, bytesPerPixel);
-        uint bufferSize = checked(bytesPerRow * height);
+        uint bufferSize = checked(bytesPerRow * height * depthOrArrayLayers);
 
         Width = width;
         Height = height;
+        DepthOrArrayLayers = depthOrArrayLayers;
         BytesPerPixel = bytesPerPixel;
         BytesPerRow = bytesPerRow;
 
@@ -106,6 +115,42 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
             throw new ArgumentNullException(nameof(texture));
         }
 
+        width = width == 0 ? texture.Width : width;
+        height = height == 0 ? texture.Height : height;
+        uint destinationBytesPerImage = checked(destinationBytesPerRow * height);
+
+        return TryReadTextureRows(
+            texture,
+            width,
+            height,
+            depthOrArrayLayers: 1,
+            mipLevel: 0,
+            aspect: TextureAspect.All,
+            destination,
+            destinationBytesPerRow,
+            destinationBytesPerImage,
+            bytesPerPixel,
+            timeoutMilliseconds);
+    }
+
+    public bool TryReadTextureRows(
+        GpuTexture texture,
+        uint width,
+        uint height,
+        uint depthOrArrayLayers,
+        uint mipLevel,
+        TextureAspect aspect,
+        void* destination,
+        uint destinationBytesPerRow,
+        uint destinationBytesPerImage,
+        uint bytesPerPixel = 4,
+        int timeoutMilliseconds = DefaultMapTimeoutMilliseconds)
+    {
+        if (texture == null)
+        {
+            throw new ArgumentNullException(nameof(texture));
+        }
+
         if (!ReferenceEquals(texture.Context, _context))
         {
             throw new InvalidOperationException("Texture readback requires the source texture and readback buffer to use the same WebGPU context.");
@@ -121,8 +166,14 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
             throw new InvalidOperationException("Texture readback requires a texture created with CopySrc usage.");
         }
 
+        if (mipLevel >= texture.MipLevelCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(mipLevel), "Texture mip level is outside the texture mip chain.");
+        }
+
         width = width == 0 ? texture.Width : width;
         height = height == 0 ? texture.Height : height;
+        depthOrArrayLayers = depthOrArrayLayers == 0 ? texture.DepthOrArrayLayers : depthOrArrayLayers;
 
         uint rowBytes = checked(width * bytesPerPixel);
         if (rowBytes > destinationBytesPerRow)
@@ -130,14 +181,26 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
             return false;
         }
 
-        EnsureCapacity(width, height, bytesPerPixel);
+        if ((ulong)destinationBytesPerRow * height > destinationBytesPerImage)
+        {
+            return false;
+        }
+
+        EnsureCapacity(width, height, depthOrArrayLayers, bytesPerPixel);
         if (_buffer == null)
         {
             return false;
         }
 
-        CopyTextureToBuffer(texture, width, height);
-        return TryMapAndCopyRows(destination, destinationBytesPerRow, rowBytes, height, timeoutMilliseconds);
+        CopyTextureToBuffer(texture, width, height, depthOrArrayLayers, mipLevel, aspect);
+        return TryMapAndCopyRows(
+            destination,
+            destinationBytesPerRow,
+            destinationBytesPerImage,
+            rowBytes,
+            height,
+            depthOrArrayLayers,
+            timeoutMilliseconds);
     }
 
     public void Dispose()
@@ -147,7 +210,13 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private void CopyTextureToBuffer(GpuTexture texture, uint width, uint height)
+    private void CopyTextureToBuffer(
+        GpuTexture texture,
+        uint width,
+        uint height,
+        uint depthOrArrayLayers,
+        uint mipLevel,
+        TextureAspect aspect)
     {
         ThrowIfContextDisposed();
 
@@ -157,9 +226,9 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         var copySrc = new ImageCopyTexture
         {
             Texture = texture.TexturePtr,
-            MipLevel = 0,
+            MipLevel = mipLevel,
             Origin = new Origin3D { X = 0, Y = 0, Z = 0 },
-            Aspect = TextureAspect.All
+            Aspect = aspect
         };
 
         var copyDst = new ImageCopyBuffer
@@ -177,7 +246,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         {
             Width = width,
             Height = height,
-            DepthOrArrayLayers = 1
+            DepthOrArrayLayers = depthOrArrayLayers
         };
 
         _context.Wgpu.CommandEncoderCopyTextureToBuffer(encoder, &copySrc, &copyDst, &copySize);
@@ -193,8 +262,10 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
     private bool TryMapAndCopyRows(
         void* destination,
         uint destinationBytesPerRow,
+        uint destinationBytesPerImage,
         uint rowBytes,
-        uint rows,
+        uint rowsPerImage,
+        uint images,
         int timeoutMilliseconds)
     {
         LastMapStatus = BufferMapAsyncStatus.ValidationError;
@@ -244,11 +315,17 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
 
             byte* sourceBytes = (byte*)mappedPtr;
             byte* destinationBytes = (byte*)destination;
-            for (uint y = 0; y < rows; y++)
+            for (uint image = 0; image < images; image++)
             {
-                byte* sourceRow = sourceBytes + (y * BytesPerRow);
-                byte* destinationRow = destinationBytes + (y * destinationBytesPerRow);
-                System.Buffer.MemoryCopy(sourceRow, destinationRow, rowBytes, rowBytes);
+                byte* sourceImage = sourceBytes + (image * rowsPerImage * BytesPerRow);
+                byte* destinationImage = destinationBytes + (image * destinationBytesPerImage);
+
+                for (uint y = 0; y < rowsPerImage; y++)
+                {
+                    byte* sourceRow = sourceImage + (y * BytesPerRow);
+                    byte* destinationRow = destinationImage + (y * destinationBytesPerRow);
+                    System.Buffer.MemoryCopy(sourceRow, destinationRow, rowBytes, rowBytes);
+                }
             }
 
             return true;
@@ -282,6 +359,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         _buffer = null;
         Width = 0;
         Height = 0;
+        DepthOrArrayLayers = 0;
         BytesPerPixel = 0;
         BytesPerRow = 0;
         BufferSize = 0;
