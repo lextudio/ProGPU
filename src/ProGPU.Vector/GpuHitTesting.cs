@@ -578,85 +578,7 @@ public sealed class GpuHitTestIndex
         {
             int nodeIndex = Nodes.Count;
             Nodes.Add(default);
-
-            if (depth >= _maxDepth || primitiveIndices.Count <= _maxPrimitivesPerNode || min == max)
-            {
-                WriteLeaf(nodeIndex, min, max, primitiveIndices);
-                return nodeIndex;
-            }
-
-            Vector2 center = (min + max) * 0.5f;
-            var retained = new List<int>();
-            var childPrimitiveLists = new List<int>[4];
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                childPrimitiveLists[i] = [];
-            }
-
-            foreach (int primitiveIndex in primitiveIndices)
-            {
-                var primitive = _primitives[primitiveIndex];
-                int childIndex = FindContainingChild(primitive.BoundsMin, primitive.BoundsMax, min, max, center);
-                if (childIndex >= 0)
-                {
-                    childPrimitiveLists[childIndex].Add(primitiveIndex);
-                }
-                else
-                {
-                    retained.Add(primitiveIndex);
-                }
-            }
-
-            int childCount = 0;
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                if (childPrimitiveLists[i].Count > 0)
-                {
-                    childCount++;
-                }
-            }
-
-            if (childCount == 0 || childCount == 1 && retained.Count == 0 && childPrimitiveLists[FirstNonEmpty(childPrimitiveLists)].Count == primitiveIndices.Count)
-            {
-                WriteLeaf(nodeIndex, min, max, primitiveIndices);
-                return nodeIndex;
-            }
-
-            uint firstPrimitive = (uint)PrimitiveIndices.Count;
-            foreach (int retainedPrimitive in retained)
-            {
-                PrimitiveIndices.Add((uint)retainedPrimitive);
-            }
-
-            uint firstChild = (uint)Nodes.Count;
-            var childSlots = new (Vector2 Min, Vector2 Max, List<int> Primitives, int NodeIndex)[childCount];
-            int slot = 0;
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                if (childPrimitiveLists[i].Count == 0)
-                {
-                    continue;
-                }
-
-                var bounds = GetChildBounds(i, min, max, center);
-                int childNodeIndex = Nodes.Count;
-                Nodes.Add(default);
-                childSlots[slot++] = (bounds.Min, bounds.Max, childPrimitiveLists[i], childNodeIndex);
-            }
-
-            Nodes[nodeIndex] = new GpuHitTestNode(
-                min,
-                max,
-                firstChild,
-                (uint)childCount,
-                firstPrimitive,
-                (uint)retained.Count);
-
-            for (int i = 0; i < childSlots.Length; i++)
-            {
-                FillNode(childSlots[i].NodeIndex, childSlots[i].Min, childSlots[i].Max, childSlots[i].Primitives, depth + 1);
-            }
-
+            FillNode(nodeIndex, min, max, primitiveIndices, depth);
             return nodeIndex;
         }
 
@@ -669,12 +591,11 @@ public sealed class GpuHitTestIndex
             }
 
             Vector2 center = (min + max) * 0.5f;
-            var retained = new List<int>();
-            var childPrimitiveLists = new List<int>[4];
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                childPrimitiveLists[i] = [];
-            }
+            List<int>? retained = null;
+            List<int>? child0 = null;
+            List<int>? child1 = null;
+            List<int>? child2 = null;
+            List<int>? child3 = null;
 
             foreach (int primitiveIndex in primitiveIndices)
             {
@@ -682,50 +603,39 @@ public sealed class GpuHitTestIndex
                 int childIndex = FindContainingChild(primitive.BoundsMin, primitive.BoundsMax, min, max, center);
                 if (childIndex >= 0)
                 {
-                    childPrimitiveLists[childIndex].Add(primitiveIndex);
+                    AddChildPrimitive(ref child0, ref child1, ref child2, ref child3, childIndex, primitiveIndex);
                 }
                 else
                 {
+                    retained ??= [];
                     retained.Add(primitiveIndex);
                 }
             }
 
-            int childCount = 0;
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                if (childPrimitiveLists[i].Count > 0)
-                {
-                    childCount++;
-                }
-            }
-
-            if (childCount == 0 || childCount == 1 && retained.Count == 0 && childPrimitiveLists[FirstNonEmpty(childPrimitiveLists)].Count == primitiveIndices.Count)
+            int childCount = CountNonEmpty(child0, child1, child2, child3);
+            int retainedCount = retained?.Count ?? 0;
+            if (childCount == 0 || childCount == 1 && retainedCount == 0 && FirstNonEmpty(child0, child1, child2, child3)!.Count == primitiveIndices.Count)
             {
                 WriteLeaf(nodeIndex, min, max, primitiveIndices);
                 return;
             }
 
             uint firstPrimitive = (uint)PrimitiveIndices.Count;
-            foreach (int retainedPrimitive in retained)
+            if (retained != null)
             {
-                PrimitiveIndices.Add((uint)retainedPrimitive);
+                foreach (int retainedPrimitive in retained)
+                {
+                    PrimitiveIndices.Add((uint)retainedPrimitive);
+                }
             }
 
             uint firstChild = (uint)Nodes.Count;
             var childSlots = new (Vector2 Min, Vector2 Max, List<int> Primitives, int NodeIndex)[childCount];
             int slot = 0;
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                if (childPrimitiveLists[i].Count == 0)
-                {
-                    continue;
-                }
-
-                var bounds = GetChildBounds(i, min, max, center);
-                int childNodeIndex = Nodes.Count;
-                Nodes.Add(default);
-                childSlots[slot++] = (bounds.Min, bounds.Max, childPrimitiveLists[i], childNodeIndex);
-            }
+            AddChildSlot(childSlots, ref slot, 0, child0, min, max, center);
+            AddChildSlot(childSlots, ref slot, 1, child1, min, max, center);
+            AddChildSlot(childSlots, ref slot, 2, child2, min, max, center);
+            AddChildSlot(childSlots, ref slot, 3, child3, min, max, center);
 
             Nodes[nodeIndex] = new GpuHitTestNode(
                 min,
@@ -733,7 +643,7 @@ public sealed class GpuHitTestIndex
                 firstChild,
                 (uint)childCount,
                 firstPrimitive,
-                (uint)retained.Count);
+                (uint)retainedCount);
 
             for (int i = 0; i < childSlots.Length; i++)
             {
@@ -758,6 +668,55 @@ public sealed class GpuHitTestIndex
                 (uint)primitiveIndices.Count);
         }
 
+        private static void AddChildPrimitive(
+            ref List<int>? child0,
+            ref List<int>? child1,
+            ref List<int>? child2,
+            ref List<int>? child3,
+            int childIndex,
+            int primitiveIndex)
+        {
+            switch (childIndex)
+            {
+                case 0:
+                    child0 ??= [];
+                    child0.Add(primitiveIndex);
+                    break;
+                case 1:
+                    child1 ??= [];
+                    child1.Add(primitiveIndex);
+                    break;
+                case 2:
+                    child2 ??= [];
+                    child2.Add(primitiveIndex);
+                    break;
+                default:
+                    child3 ??= [];
+                    child3.Add(primitiveIndex);
+                    break;
+            }
+        }
+
+        private void AddChildSlot(
+            (Vector2 Min, Vector2 Max, List<int> Primitives, int NodeIndex)[] childSlots,
+            ref int slot,
+            int childIndex,
+            List<int>? childPrimitives,
+            Vector2 min,
+            Vector2 max,
+            Vector2 center)
+        {
+            if (childPrimitives is not { Count: > 0 })
+            {
+                return;
+            }
+
+            var bounds = GetChildBounds(childIndex, min, max, center);
+            int childNodeIndex = Nodes.Count;
+            Nodes.Add(default);
+            childSlots[slot++] = (bounds.Min, bounds.Max, childPrimitives, childNodeIndex);
+        }
+
         private static int FindContainingChild(Vector2 primitiveMin, Vector2 primitiveMax, Vector2 nodeMin, Vector2 nodeMax, Vector2 center)
         {
             for (int i = 0; i < 4; i++)
@@ -775,17 +734,21 @@ public sealed class GpuHitTestIndex
             return -1;
         }
 
-        private static int FirstNonEmpty(List<int>[] childPrimitiveLists)
+        private static int CountNonEmpty(List<int>? child0, List<int>? child1, List<int>? child2, List<int>? child3)
         {
-            for (int i = 0; i < childPrimitiveLists.Length; i++)
-            {
-                if (childPrimitiveLists[i].Count > 0)
-                {
-                    return i;
-                }
-            }
+            return (child0 is { Count: > 0 } ? 1 : 0)
+                + (child1 is { Count: > 0 } ? 1 : 0)
+                + (child2 is { Count: > 0 } ? 1 : 0)
+                + (child3 is { Count: > 0 } ? 1 : 0);
+        }
 
-            return 0;
+        private static List<int>? FirstNonEmpty(List<int>? child0, List<int>? child1, List<int>? child2, List<int>? child3)
+        {
+            return child0 is { Count: > 0 } ? child0 :
+                child1 is { Count: > 0 } ? child1 :
+                child2 is { Count: > 0 } ? child2 :
+                child3 is { Count: > 0 } ? child3 :
+                null;
         }
 
         private static (Vector2 Min, Vector2 Max) GetChildBounds(int index, Vector2 min, Vector2 max, Vector2 center)

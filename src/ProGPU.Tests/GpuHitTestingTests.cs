@@ -35,6 +35,20 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void HitTestIndexBuilderCreatesChildPrimitiveListsLazily()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "GpuHitTesting.cs")).Replace("\r\n", "\n");
+
+        Assert.Contains("List<int>? retained = null;", source, StringComparison.Ordinal);
+        Assert.Contains("List<int>? child0 = null;", source, StringComparison.Ordinal);
+        Assert.Contains("AddChildPrimitive(ref child0, ref child1, ref child2, ref child3, childIndex, primitiveIndex)", source, StringComparison.Ordinal);
+        Assert.Contains("CountNonEmpty(child0, child1, child2, child3)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var retained = new List<int>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var childPrimitiveLists = new List<int>[4];", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("childPrimitiveLists[i] = [];", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LineStrokeCachesDirectionAndLengthForGpuHitTesting()
     {
         var primitive = GpuHitTestPrimitive.LineStroke(
