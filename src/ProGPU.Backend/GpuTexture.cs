@@ -1224,6 +1224,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     public byte[] ReadPixels(uint mipLevel = 0)
     {
+        uint requiredBytes = GetReadPixelsByteCount(mipLevel);
+        byte[] unpaddedPixels = new byte[checked((int)requiredBytes)];
+        ReadPixels(unpaddedPixels, mipLevel);
+        return unpaddedPixels;
+    }
+
+    public void ReadPixels(
+        Span<byte> destination,
+        uint mipLevel = 0,
+        uint originDepthOrArrayLayer = 0,
+        uint depthOrArrayLayers = 0)
+    {
         if (_isDisposed) throw new ObjectDisposedException(nameof(GpuTexture));
         if (!Usage.HasFlag(TextureUsage.CopySrc))
         {
@@ -1236,23 +1248,46 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         uint mipWidth = GetMipDimension(Width, mipLevel);
         uint mipHeight = GetMipDimension(Height, mipLevel);
         uint mipDepthOrLayers = GetMipDepthOrArrayLayers(mipLevel);
+        if (originDepthOrArrayLayer >= mipDepthOrLayers)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(originDepthOrArrayLayer),
+                "Texture readback origin exceeds the mip depth/array-layer range.");
+        }
+
+        uint availableDepthOrLayers = mipDepthOrLayers - originDepthOrArrayLayer;
+        uint readDepthOrLayers = depthOrArrayLayers == 0 ? availableDepthOrLayers : depthOrArrayLayers;
+        if (readDepthOrLayers > availableDepthOrLayers)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(depthOrArrayLayers),
+                "Texture readback depth/array-layer range exceeds the mip bounds.");
+        }
+
         uint bytesPerRow = checked(mipWidth * bytesPerPixel);
         uint bytesPerImage = checked(bytesPerRow * mipHeight);
-        byte[] unpaddedPixels = new byte[checked((int)((ulong)bytesPerImage * mipDepthOrLayers))];
+        uint requiredBytes = checked(bytesPerImage * readDepthOrLayers);
+        if (destination.Length < requiredBytes)
+        {
+            throw new ArgumentException(
+                $"Destination span is too small ({destination.Length} bytes, expected {requiredBytes} bytes).",
+                nameof(destination));
+        }
 
         var readbackBuffer = new GpuTextureReadbackBuffer(_context);
         try
         {
-            fixed (byte* destination = unpaddedPixels)
+            fixed (byte* destinationPtr = destination)
             {
                 bool read = readbackBuffer.TryReadTextureRows(
                     this,
                     mipWidth,
                     mipHeight,
-                    mipDepthOrLayers,
+                    readDepthOrLayers,
                     mipLevel,
+                    originDepthOrArrayLayer,
                     GetTextureCopyAspect(Format),
-                    destination,
+                    destinationPtr,
                     bytesPerRow,
                     bytesPerImage,
                     bytesPerPixel);
@@ -1278,8 +1313,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             readbackBuffer.Dispose();
             _context.CleanupPendingResources();
         }
+    }
 
-        return unpaddedPixels;
+    private uint GetReadPixelsByteCount(uint mipLevel)
+    {
+        ValidateMipLevel(mipLevel);
+        uint bytesPerPixel = GetBytesPerPixel(Format);
+        uint mipWidth = GetMipDimension(Width, mipLevel);
+        uint mipHeight = GetMipDimension(Height, mipLevel);
+        uint mipDepthOrLayers = GetMipDepthOrArrayLayers(mipLevel);
+        uint bytesPerRow = checked(mipWidth * bytesPerPixel);
+        uint bytesPerImage = checked(bytesPerRow * mipHeight);
+        return checked(bytesPerImage * mipDepthOrLayers);
     }
 
     private uint GetMipDepthOrArrayLayers(uint mipLevel)

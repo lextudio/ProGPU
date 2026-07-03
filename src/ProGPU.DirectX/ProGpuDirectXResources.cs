@@ -701,16 +701,33 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
     public byte[] ReadPixels()
     {
+        var pixels = new byte[checked((int)GetTextureSizeInBytes(Descriptor))];
+        ReadPixels(pixels);
+        return pixels;
+    }
+
+    public void ReadPixels(Span<byte> destination)
+    {
         ThrowIfDisposed();
         if ((Descriptor.CpuAccess & DxCpuAccessFlags.Read) == 0)
         {
             throw new InvalidOperationException("Texture was not created with CPU read access.");
         }
 
-        if (_backendTexture is { IsDisposed: false } texture)
+        var expectedSize = GetTextureSizeInBytes(Descriptor);
+        if (destination.Length < expectedSize)
         {
-            SynchronizeAllShadowForRead(texture);
-            return _writeShadow.ToArray();
+            throw new ArgumentException(
+                $"Destination span is too small ({destination.Length} bytes, expected {expectedSize} bytes).",
+                nameof(destination));
+        }
+
+        if (_backendTexture is { IsDisposed: false } ||
+            _backendArraySliceTextures is not null)
+        {
+            SynchronizeAllShadowForRead(_backendTexture);
+            _writeShadow.AsSpan(0, checked((int)expectedSize)).CopyTo(destination);
+            return;
         }
 
         if (_cpuShadow is null)
@@ -718,7 +735,7 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
             throw new InvalidOperationException("Texture readback requires a GPU-backed texture.");
         }
 
-        return _cpuShadow.ToArray();
+        _cpuShadow.AsSpan(0, checked((int)expectedSize)).CopyTo(destination);
     }
 
     internal void GenerateMips(DxShaderResourceViewDescriptor shaderResourceView)
@@ -819,18 +836,19 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
         }
     }
 
-    private void SynchronizeAllShadowForRead(GpuTexture texture)
+    private void SynchronizeAllShadowForRead(GpuTexture? fallbackTexture)
     {
         var subresourceCount = checked(Descriptor.ArraySize * Descriptor.MipLevels);
         for (uint subresource = 0; subresource < subresourceCount; subresource++)
         {
             var subresourceInfo = GetSubresourceInfo(Descriptor, subresource);
-            var pixels = texture.ReadPixels(subresourceInfo.MipLevel);
-            var sourceOffset = checked((int)(subresourceInfo.ArraySlice * subresourceInfo.SizeInBytes));
-            pixels.AsSpan(sourceOffset, checked((int)subresourceInfo.SizeInBytes))
-                .CopyTo(_writeShadow.AsSpan(
-                    checked((int)subresourceInfo.OffsetBytes),
-                    checked((int)subresourceInfo.SizeInBytes)));
+            var backendTexture = GetBackendTexture(subresourceInfo.ArraySlice) ?? fallbackTexture;
+            if (backendTexture is not { IsDisposed: false })
+            {
+                continue;
+            }
+
+            ReadBackendSubresourceIntoWriteShadow(backendTexture, subresourceInfo);
             MarkShadowSubresourceCurrent(subresource);
         }
 
@@ -842,18 +860,14 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
 
     private void SynchronizeShadowForRead(uint subresource)
     {
-        if (_backendTexture is not { IsDisposed: false } texture)
+        var subresourceInfo = GetSubresourceInfo(Descriptor, subresource);
+        var texture = GetBackendTexture(subresourceInfo.ArraySlice);
+        if (texture is not { IsDisposed: false })
         {
             return;
         }
 
-        var subresourceInfo = GetSubresourceInfo(Descriptor, subresource);
-        var pixels = texture.ReadPixels(subresourceInfo.MipLevel);
-        var sourceOffset = checked((int)(subresourceInfo.ArraySlice * subresourceInfo.SizeInBytes));
-        pixels.AsSpan(sourceOffset, checked((int)subresourceInfo.SizeInBytes))
-            .CopyTo(_writeShadow.AsSpan(
-                checked((int)subresourceInfo.OffsetBytes),
-                checked((int)subresourceInfo.SizeInBytes)));
+        ReadBackendSubresourceIntoWriteShadow(texture, subresourceInfo);
         MarkShadowSubresourceCurrent(subresource);
         if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
         {
@@ -864,6 +878,17 @@ public sealed class ProGpuDirectXTexture2D : ProGpuDirectXResource
                     checked((int)subresourceInfo.OffsetBytes),
                     checked((int)subresourceInfo.SizeInBytes)));
         }
+    }
+
+    private void ReadBackendSubresourceIntoWriteShadow(GpuTexture texture, SubresourceInfo subresourceInfo)
+    {
+        texture.ReadPixels(
+            _writeShadow.AsSpan(
+                checked((int)subresourceInfo.OffsetBytes),
+                checked((int)subresourceInfo.SizeInBytes)),
+            subresourceInfo.MipLevel,
+            GetNativeArrayLayer(subresourceInfo.ArraySlice),
+            depthOrArrayLayers: 1);
     }
 
     public ProGpuDirectXMappedSubresource Map(
@@ -1476,16 +1501,32 @@ public sealed class ProGpuDirectXTexture3D : ProGpuDirectXResource
 
     public byte[] ReadPixels()
     {
+        var pixels = new byte[checked((int)GetTextureSizeInBytes(Descriptor))];
+        ReadPixels(pixels);
+        return pixels;
+    }
+
+    public void ReadPixels(Span<byte> destination)
+    {
         ThrowIfDisposed();
         if ((Descriptor.CpuAccess & DxCpuAccessFlags.Read) == 0)
         {
             throw new InvalidOperationException("Texture was not created with CPU read access.");
         }
 
+        var expectedSize = GetTextureSizeInBytes(Descriptor);
+        if (destination.Length < expectedSize)
+        {
+            throw new ArgumentException(
+                $"Destination span is too small ({destination.Length} bytes, expected {expectedSize} bytes).",
+                nameof(destination));
+        }
+
         if (_backendTexture is { IsDisposed: false } texture)
         {
             SynchronizeAllShadowForRead(texture);
-            return _writeShadow.ToArray();
+            _writeShadow.AsSpan(0, checked((int)expectedSize)).CopyTo(destination);
+            return;
         }
 
         if (_cpuShadow is null)
@@ -1493,7 +1534,7 @@ public sealed class ProGpuDirectXTexture3D : ProGpuDirectXResource
             throw new InvalidOperationException("Texture readback requires a GPU-backed texture.");
         }
 
-        return _cpuShadow.ToArray();
+        _cpuShadow.AsSpan(0, checked((int)expectedSize)).CopyTo(destination);
     }
 
     public ProGpuDirectXMappedSubresource Map(
@@ -1625,11 +1666,11 @@ public sealed class ProGpuDirectXTexture3D : ProGpuDirectXResource
         for (uint subresource = 0; subresource < Descriptor.MipLevels; subresource++)
         {
             var subresourceInfo = GetSubresourceInfo(Descriptor, subresource);
-            var pixels = texture.ReadPixels(subresourceInfo.MipLevel);
-            pixels.AsSpan(0, checked((int)subresourceInfo.SizeInBytes))
-                .CopyTo(_writeShadow.AsSpan(
+            texture.ReadPixels(
+                _writeShadow.AsSpan(
                     checked((int)subresourceInfo.OffsetBytes),
-                    checked((int)subresourceInfo.SizeInBytes)));
+                    checked((int)subresourceInfo.SizeInBytes)),
+                subresourceInfo.MipLevel);
         }
 
         if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
@@ -1646,11 +1687,11 @@ public sealed class ProGpuDirectXTexture3D : ProGpuDirectXResource
         }
 
         var subresourceInfo = GetSubresourceInfo(Descriptor, subresource);
-        var pixels = texture.ReadPixels(subresourceInfo.MipLevel);
-        pixels.AsSpan(0, checked((int)subresourceInfo.SizeInBytes))
-            .CopyTo(_writeShadow.AsSpan(
+        texture.ReadPixels(
+            _writeShadow.AsSpan(
                 checked((int)subresourceInfo.OffsetBytes),
-                checked((int)subresourceInfo.SizeInBytes)));
+                checked((int)subresourceInfo.SizeInBytes)),
+            subresourceInfo.MipLevel);
         if (_cpuShadow is not null && !ReferenceEquals(_cpuShadow, _writeShadow))
         {
             _writeShadow.AsSpan(

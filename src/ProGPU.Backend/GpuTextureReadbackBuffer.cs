@@ -125,6 +125,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
             height,
             depthOrArrayLayers: 1,
             mipLevel: 0,
+            originDepthOrArrayLayer: 0,
             aspect: TextureAspect.All,
             destination,
             destinationBytesPerRow,
@@ -139,6 +140,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         uint height,
         uint depthOrArrayLayers,
         uint mipLevel,
+        uint originDepthOrArrayLayer,
         TextureAspect aspect,
         void* destination,
         uint destinationBytesPerRow,
@@ -171,9 +173,28 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
             throw new ArgumentOutOfRangeException(nameof(mipLevel), "Texture mip level is outside the texture mip chain.");
         }
 
-        width = width == 0 ? texture.Width : width;
-        height = height == 0 ? texture.Height : height;
-        depthOrArrayLayers = depthOrArrayLayers == 0 ? texture.DepthOrArrayLayers : depthOrArrayLayers;
+        uint sourceWidth = GetMipDimension(texture.Width, mipLevel);
+        uint sourceHeight = GetMipDimension(texture.Height, mipLevel);
+        width = width == 0 ? sourceWidth : width;
+        height = height == 0 ? sourceHeight : height;
+        if (width > sourceWidth || height > sourceHeight)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(width),
+                "Texture readback size exceeds the source mip bounds.");
+        }
+
+        uint sourceDepthOrArrayLayers = texture.Dimension == GpuTextureDimension.Dimension3D
+            ? GetMipDimension(texture.DepthOrArrayLayers, mipLevel)
+            : texture.DepthOrArrayLayers;
+        depthOrArrayLayers = depthOrArrayLayers == 0 ? sourceDepthOrArrayLayers : depthOrArrayLayers;
+        if (originDepthOrArrayLayer >= sourceDepthOrArrayLayers ||
+            depthOrArrayLayers > sourceDepthOrArrayLayers - originDepthOrArrayLayer)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(depthOrArrayLayers),
+                "Texture readback depth/array-layer range exceeds the source texture bounds.");
+        }
 
         uint rowBytes = checked(width * bytesPerPixel);
         if (rowBytes > destinationBytesPerRow)
@@ -192,7 +213,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
             return false;
         }
 
-        CopyTextureToBuffer(texture, width, height, depthOrArrayLayers, mipLevel, aspect);
+        CopyTextureToBuffer(texture, width, height, depthOrArrayLayers, mipLevel, originDepthOrArrayLayer, aspect);
         return TryMapAndCopyRows(
             destination,
             destinationBytesPerRow,
@@ -216,6 +237,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         uint height,
         uint depthOrArrayLayers,
         uint mipLevel,
+        uint originDepthOrArrayLayer,
         TextureAspect aspect)
     {
         ThrowIfContextDisposed();
@@ -227,7 +249,7 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         {
             Texture = texture.TexturePtr,
             MipLevel = mipLevel,
-            Origin = new Origin3D { X = 0, Y = 0, Z = 0 },
+            Origin = new Origin3D { X = 0, Y = 0, Z = originDepthOrArrayLayer },
             Aspect = aspect
         };
 
@@ -257,6 +279,17 @@ public unsafe sealed class GpuTextureReadbackBuffer : IDisposable
         _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
         _context.Wgpu.CommandBufferRelease(commandBuffer);
         _context.Wgpu.CommandEncoderRelease(encoder);
+    }
+
+    private static uint GetMipDimension(uint dimension, uint mipLevel)
+    {
+        if (mipLevel >= 31)
+        {
+            return 1;
+        }
+
+        var shifted = dimension >> checked((int)mipLevel);
+        return Math.Max(1u, shifted);
     }
 
     private bool TryMapAndCopyRows(

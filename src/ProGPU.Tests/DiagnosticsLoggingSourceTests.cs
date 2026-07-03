@@ -260,6 +260,29 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("return MemoryMarshal.Cast<byte, uint>(bytes).ToArray();", deviceContext, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void DirectXTextureReadbackUsesCallerOwnedBuffers()
+    {
+        string texture = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "GpuTexture.cs"));
+        string readback = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "GpuTextureReadbackBuffer.cs"));
+        string resources = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXResources.cs"));
+
+        Assert.Contains("public void ReadPixels(\n        Span<byte> destination", texture, StringComparison.Ordinal);
+        Assert.Contains("ReadPixels(unpaddedPixels, mipLevel);", texture, StringComparison.Ordinal);
+        Assert.Contains("originDepthOrArrayLayer", texture, StringComparison.Ordinal);
+        Assert.Contains("depthOrArrayLayers: 1", resources, StringComparison.Ordinal);
+        Assert.Contains("uint sourceWidth = GetMipDimension(texture.Width, mipLevel);", readback, StringComparison.Ordinal);
+        Assert.Contains("width = width == 0 ? sourceWidth : width;", readback, StringComparison.Ordinal);
+        Assert.Contains("public void ReadPixels(Span<byte> destination)", resources, StringComparison.Ordinal);
+        Assert.Contains("texture.ReadPixels(\n            _writeShadow.AsSpan(", resources, StringComparison.Ordinal);
+        Assert.Contains("private void ReadBackendSubresourceIntoWriteShadow", resources, StringComparison.Ordinal);
+        Assert.Contains("Origin = new Origin3D { X = 0, Y = 0, Z = originDepthOrArrayLayer }", readback, StringComparison.Ordinal);
+        Assert.DoesNotContain("var pixels = texture.ReadPixels(subresourceInfo.MipLevel);", resources, StringComparison.Ordinal);
+        Assert.DoesNotContain("var sourceOffset = checked((int)(subresourceInfo.ArraySlice * subresourceInfo.SizeInBytes));", resources, StringComparison.Ordinal);
+        Assert.DoesNotContain("pixels.AsSpan(sourceOffset", resources, StringComparison.Ordinal);
+        Assert.DoesNotContain("pixels.AsSpan(0, checked((int)subresourceInfo.SizeInBytes))", resources, StringComparison.Ordinal);
+    }
+
     private static string FindRepoFile(params string[] pathParts)
     {
         for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
