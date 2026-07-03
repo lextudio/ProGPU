@@ -100,6 +100,31 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("_maskTexturePool.ToArray()", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void EffectExtensionCacheCleanupUsesPooledRemovalBuffers()
+    {
+        string helper = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "PooledRemovalBuffer.cs"));
+        string wpfShaderEffect = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "WpfShaderEffectExtensionPipeline.cs"));
+        string imageEffect = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "ImageEffectExtensionPipeline.cs"));
+
+        Assert.Contains("internal static class PooledRemovalBuffer", helper, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<T>.Shared.Rent(Math.Max(1, capacity))", helper, StringComparison.Ordinal);
+        Assert.Contains("RuntimeHelpers.IsReferenceOrContainsReferences<T>()", helper, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<T>.Shared.Return(buffer)", helper, StringComparison.Ordinal);
+
+        Assert.Contains("string[]? keysToRemove = null;", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("PooledRemovalBuffer.Add(ref keysToRemove", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("PooledRemovalBuffer.Return(keysToRemove, keysToRemoveCount)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("List<string>? keysToRemove", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("keysToRemove ??= new List<string>();", wpfShaderEffect, StringComparison.Ordinal);
+
+        Assert.Contains("Compositor.TextureCacheKey[]? keysToRemove = null;", imageEffect, StringComparison.Ordinal);
+        Assert.Contains("PooledRemovalBuffer.Add(ref keysToRemove", imageEffect, StringComparison.Ordinal);
+        Assert.Contains("PooledRemovalBuffer.Return(keysToRemove, keysToRemoveCount)", imageEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("List<Compositor.TextureCacheKey>? keysToRemove", imageEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("keysToRemove ??= new List<Compositor.TextureCacheKey>();", imageEffect, StringComparison.Ordinal);
+    }
+
     private static string FindRepoFile(params string[] pathParts)
     {
         for (DirectoryInfo? directory = new(AppContext.BaseDirectory);

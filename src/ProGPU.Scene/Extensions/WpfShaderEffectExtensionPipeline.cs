@@ -444,30 +444,34 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     public void EndFrame(Compositor compositor)
     {
         ulong frame = compositor.FrameNumber;
-        List<string>? keysToRemove = null;
 
         lock (_textureBindGroups)
         {
-            foreach (var kvp in _textureBindGroups)
+            string[]? keysToRemove = null;
+            int keysToRemoveCount = 0;
+            try
             {
-                if (frame - kvp.Value.LastUsedFrame > 120)
+                foreach (var kvp in _textureBindGroups)
                 {
-                    if (kvp.Value.BindGroupPtr != 0 && !compositor.Context.IsDisposed)
+                    if (frame - kvp.Value.LastUsedFrame > 120)
                     {
-                        QueueBindGroupRelease(compositor.Context, kvp.Value.BindGroupPtr);
-                    }
+                        if (kvp.Value.BindGroupPtr != 0 && !compositor.Context.IsDisposed)
+                        {
+                            QueueBindGroupRelease(compositor.Context, kvp.Value.BindGroupPtr);
+                        }
 
-                    keysToRemove ??= new List<string>();
-                    keysToRemove.Add(kvp.Key);
+                        PooledRemovalBuffer.Add(ref keysToRemove, ref keysToRemoveCount, _textureBindGroups.Count, kvp.Key);
+                    }
+                }
+
+                for (int i = 0; i < keysToRemoveCount; i++)
+                {
+                    _textureBindGroups.Remove(keysToRemove![i]);
                 }
             }
-
-            if (keysToRemove != null)
+            finally
             {
-                foreach (var key in keysToRemove)
-                {
-                    _textureBindGroups.Remove(key);
-                }
+                PooledRemovalBuffer.Return(keysToRemove, keysToRemoveCount);
             }
         }
     }
