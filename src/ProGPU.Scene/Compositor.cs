@@ -661,9 +661,9 @@ public unsafe class Compositor : IDisposable
 
     private readonly List<MaskRenderPassInfo> _maskRenderPasses = new();
     private readonly List<GpuTexture> _masksToReturnToPool = new();
-    private readonly Stack<List<CompositorDrawCall>> _maskDrawCallListPool = new();
-    private const int MaxPooledMaskDrawCallLists = 64;
-    private const int MaxPooledMaskDrawCallListCapacity = 4096;
+    private readonly Stack<List<CompositorDrawCall>> _drawCallListPool = new();
+    private const int MaxPooledDrawCallLists = 64;
+    private const int MaxPooledDrawCallListCapacity = 4096;
 
     public enum DrawCallType
     {
@@ -2592,11 +2592,11 @@ public unsafe class Compositor : IDisposable
         ArrayPool<T>.Shared.Return(snapshot);
     }
 
-    private List<CompositorDrawCall> RentMaskDrawCallList(int capacity)
+    private List<CompositorDrawCall> RentDrawCallList(int capacity)
     {
-        if (_maskDrawCallListPool.Count > 0)
+        if (_drawCallListPool.Count > 0)
         {
-            var list = _maskDrawCallListPool.Pop();
+            var list = _drawCallListPool.Pop();
             if (capacity > list.Capacity)
             {
                 list.Capacity = capacity;
@@ -2608,16 +2608,26 @@ public unsafe class Compositor : IDisposable
         return new List<CompositorDrawCall>(capacity);
     }
 
-    private void ReturnMaskDrawCallList(List<CompositorDrawCall> list)
+    private void ReturnDrawCallList(List<CompositorDrawCall> list)
     {
         list.Clear();
-        if (list.Capacity > MaxPooledMaskDrawCallListCapacity ||
-            _maskDrawCallListPool.Count >= MaxPooledMaskDrawCallLists)
+        if (list.Capacity > MaxPooledDrawCallListCapacity ||
+            _drawCallListPool.Count >= MaxPooledDrawCallLists)
         {
             return;
         }
 
-        _maskDrawCallListPool.Push(list);
+        _drawCallListPool.Push(list);
+    }
+
+    private List<CompositorDrawCall> RentMaskDrawCallList(int capacity)
+    {
+        return RentDrawCallList(capacity);
+    }
+
+    private void ReturnMaskDrawCallList(List<CompositorDrawCall> list)
+    {
+        ReturnDrawCallList(list);
     }
 
     private void ReturnMaskRenderPassDrawCallLists()
@@ -6044,7 +6054,7 @@ public unsafe class Compositor : IDisposable
             _maskBindGroups.Clear();
             _maskBindGroupsOffscreen.Clear();
             ReturnMaskRenderPassDrawCallLists();
-            _maskDrawCallListPool.Clear();
+            _drawCallListPool.Clear();
 
             DisposeMaskTexturePool();
 
@@ -7245,10 +7255,12 @@ public unsafe class Compositor : IDisposable
             }
         }
 
+        List<CompositorDrawCall>? staticDrawCalls = null;
         try
         {
             _atlas.BeginBatch();
-            var staticDrawCalls = new List<CompositorDrawCall>();
+            var staticDrawCallList = RentDrawCallList(commands.Count);
+            staticDrawCalls = staticDrawCallList;
             uint pendingVectorStart = 0;
             uint pendingTextStart = 0;
 
@@ -7257,7 +7269,7 @@ public unsafe class Compositor : IDisposable
                 uint vecCount = (uint)_vectorIndicesList.Count - pendingVectorStart;
                 if (vecCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall
+                    staticDrawCallList.Add(new CompositorDrawCall
                     {
                         Type = DrawCallType.Vector,
                         IndexStart = pendingVectorStart,
@@ -7269,7 +7281,7 @@ public unsafe class Compositor : IDisposable
                 uint textCount = (uint)_textVerticesList.Count - pendingTextStart;
                 if (textCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall
+                    staticDrawCallList.Add(new CompositorDrawCall
                     {
                         Type = DrawCallType.Text,
                         IndexStart = pendingTextStart,
@@ -7303,7 +7315,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.Hatch,
@@ -7325,7 +7337,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, null, localCmd.Transform, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.AcisSolid,
@@ -7365,7 +7377,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.Line3D,
@@ -7404,7 +7416,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, null, Matrix4x4.Identity, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.Spline,
@@ -7433,7 +7445,7 @@ public unsafe class Compositor : IDisposable
                                 {
                                     cmdTransform = Matrix4x4.Identity;
                                 }
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = localCmd.ExtensionId,
@@ -7498,7 +7510,7 @@ public unsafe class Compositor : IDisposable
                 _textVerticesList.ToArray(),
                 _activeBrushes.ToArray(),
                 _activeGradientStops.ToArray(),
-                staticDrawCalls.ToArray()
+                staticDrawCallList.ToArray()
             );
 
             staticBuffer.TextRecords = _compiledTextRecords.ToArray();
@@ -7578,6 +7590,10 @@ public unsafe class Compositor : IDisposable
             ReturnListSnapshot(dxfSavedCompiledTextRecords, dxfSavedCompiledTextRecordsCount);
             ReturnListSnapshot(dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
             ReturnListSnapshot(dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
+            if (staticDrawCalls != null)
+            {
+                ReturnDrawCallList(staticDrawCalls);
+            }
         }
     }
 
@@ -7658,10 +7674,12 @@ public unsafe class Compositor : IDisposable
             }
         }
 
+        List<CompositorDrawCall>? staticDrawCalls = null;
         try
         {
             _atlas.BeginBatch();
-            var staticDrawCalls = new List<CompositorDrawCall>();
+            var staticDrawCallList = RentDrawCallList(context.Commands.Count);
+            staticDrawCalls = staticDrawCallList;
             uint pendingVectorStart = 0;
             uint pendingTextStart = 0;
 
@@ -7670,7 +7688,7 @@ public unsafe class Compositor : IDisposable
                 uint vecCount = (uint)_vectorIndicesList.Count - pendingVectorStart;
                 if (vecCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall
+                    staticDrawCallList.Add(new CompositorDrawCall
                     {
                         Type = DrawCallType.Vector,
                         IndexStart = pendingVectorStart,
@@ -7682,7 +7700,7 @@ public unsafe class Compositor : IDisposable
                 uint textCount = (uint)_textVerticesList.Count - pendingTextStart;
                 if (textCount > 0)
                 {
-                    staticDrawCalls.Add(new CompositorDrawCall
+                    staticDrawCallList.Add(new CompositorDrawCall
                     {
                         Type = DrawCallType.Text,
                         IndexStart = pendingTextStart,
@@ -7716,7 +7734,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.Hatch,
@@ -7738,7 +7756,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, context, localCmd.Transform, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.AcisSolid,
@@ -7778,7 +7796,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.Line3D,
@@ -7817,7 +7835,7 @@ public unsafe class Compositor : IDisposable
                             {
                                 var localCmd = cmd;
                                 pipeline.Compile(this, context, Matrix4x4.Identity, ref localCmd);
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.Spline,
@@ -7846,7 +7864,7 @@ public unsafe class Compositor : IDisposable
                                 {
                                     cmdTransform = Matrix4x4.Identity;
                                 }
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = localCmd.ExtensionId,
@@ -7898,7 +7916,7 @@ public unsafe class Compositor : IDisposable
                                 {
                                     cmdTransform = Matrix4x4.Identity;
                                 }
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.GpuLineSeries,
@@ -7931,7 +7949,7 @@ public unsafe class Compositor : IDisposable
                                 {
                                     cmdTransform = Matrix4x4.Identity;
                                 }
-                                staticDrawCalls.Add(new CompositorDrawCall
+                                staticDrawCallList.Add(new CompositorDrawCall
                                 {
                                     Type = DrawCallType.Extension,
                                     ExtensionId = CompositorBuiltInExtensions.GpuScatterSeries,
@@ -7980,7 +7998,7 @@ public unsafe class Compositor : IDisposable
                 _textVerticesList.ToArray(),
                 _activeBrushes.ToArray(),
                 _activeGradientStops.ToArray(),
-                staticDrawCalls.ToArray()
+                staticDrawCallList.ToArray()
             );
 
             staticBuffer.TextRecords = _compiledTextRecords.ToArray();
@@ -8060,6 +8078,10 @@ public unsafe class Compositor : IDisposable
             ReturnListSnapshot(dxfSavedCompiledTextRecords, dxfSavedCompiledTextRecordsCount);
             ReturnListSnapshot(dxfSavedMaskRenderPasses, dxfSavedMaskRenderPassesCount);
             ReturnListSnapshot(dxfSavedMasksToReturnToPool, dxfSavedMasksToReturnToPoolCount);
+            if (staticDrawCalls != null)
+            {
+                ReturnDrawCallList(staticDrawCalls);
+            }
         }
     }
 

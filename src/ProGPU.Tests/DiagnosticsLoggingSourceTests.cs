@@ -68,10 +68,17 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("RentListSnapshot(_textVerticesList", source, StringComparison.Ordinal);
         Assert.Contains("RentListSnapshot(_drawCalls", source, StringComparison.Ordinal);
         Assert.Contains("ReturnListSnapshot(savedVectorVertices", source, StringComparison.Ordinal);
+        Assert.Contains("private readonly Stack<List<CompositorDrawCall>> _drawCallListPool = new();", source, StringComparison.Ordinal);
+        Assert.Contains("private List<CompositorDrawCall> RentDrawCallList(int capacity)", source, StringComparison.Ordinal);
         Assert.Contains("private List<CompositorDrawCall> RentMaskDrawCallList(int capacity)", source, StringComparison.Ordinal);
         Assert.Contains("private void ReturnMaskRenderPassDrawCallLists()", source, StringComparison.Ordinal);
         Assert.Contains("ReturnMaskRenderPassDrawCallLists();", source, StringComparison.Ordinal);
         Assert.Contains("RentMaskDrawCallList(maskDrawCallCount)", source, StringComparison.Ordinal);
+        Assert.Contains("var staticDrawCallList = RentDrawCallList(commands.Count)", source, StringComparison.Ordinal);
+        Assert.Contains("var staticDrawCallList = RentDrawCallList(context.Commands.Count)", source, StringComparison.Ordinal);
+        Assert.Contains("ReturnDrawCallList(staticDrawCalls)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var staticDrawCalls = new List<CompositorDrawCall>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_maskDrawCallListPool", source, StringComparison.Ordinal);
         Assert.Contains("private static void AddRemovalItem<T>(ref T[]? buffer, ref int count, int capacity, T item)", source, StringComparison.Ordinal);
         Assert.Contains("private static void ReturnRemovalBuffer<T>(T[]? buffer, int count)", source, StringComparison.Ordinal);
         Assert.Contains("AddRemovalItem(ref keysToRemove", source, StringComparison.Ordinal);
