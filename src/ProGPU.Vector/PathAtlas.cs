@@ -484,71 +484,81 @@ public unsafe class PathAtlas : IDisposable
 
     private void RepackActivePaths()
     {
-        var activePaths = new List<PathInfo>();
-        foreach (var kvp in _paths)
+        PathInfo[]? activePaths = null;
+        int activePathCount = 0;
+
+        try
         {
-            if (kvp.Value.LastUsedFrame == _frameNumber)
+            foreach (var kvp in _paths)
             {
-                activePaths.Add(kvp.Value);
+                if (kvp.Value.LastUsedFrame == _frameNumber)
+                {
+                    PooledRemovalBuffer.Add(ref activePaths, ref activePathCount, _paths.Count, kvp.Value);
+                }
+            }
+
+            _paths.Clear();
+            _currentX = 2;
+            _currentY = 2;
+            _currentRowHeight = 0;
+
+            byte[] clearData = new byte[_atlasSize * _atlasSize * 4];
+            _atlasTexture.WritePixels(new ReadOnlySpan<byte>(clearData));
+
+            _pendingPaths.Clear();
+
+            for (int i = 0; i < activePathCount; i++)
+            {
+                var info = activePaths![i];
+                uint gW = info.Width;
+                uint gH = info.Height;
+
+                if (_currentX + gW + 2 > _atlasSize)
+                {
+                    _currentX = 2;
+                    _currentY += _currentRowHeight + 2;
+                    _currentRowHeight = 0;
+                }
+
+                if (_currentY + gH + 2 > _atlasSize)
+                {
+                    ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Warning: Even active paths in the current frame exceed the atlas size during repack!");
+                    break;
+                }
+
+                uint posX = _currentX;
+                uint posY = _currentY;
+
+                _currentX += gW + 2;
+                _currentRowHeight = Math.Max(_currentRowHeight, gH);
+
+                float texelSize = 1.0f / _atlasSize;
+                var newInfo = new PathInfo
+                {
+                    Key = info.Key,
+                    Geometry = info.Geometry,
+                    UnscaledMinX = info.UnscaledMinX,
+                    UnscaledMinY = info.UnscaledMinY,
+                    UnscaledMaxX = info.UnscaledMaxX,
+                    UnscaledMaxY = info.UnscaledMaxY,
+                    X = posX,
+                    Y = posY,
+                    Width = gW,
+                    Height = gH,
+                    TexCoordMin = new Vector2(posX * texelSize, posY * texelSize),
+                    TexCoordMax = new Vector2((posX + gW) * texelSize, (posY + gH) * texelSize),
+                    MinX = info.MinX,
+                    MinY = info.MinY,
+                    LastUsedFrame = info.LastUsedFrame
+                };
+
+                _paths[newInfo.Key] = newInfo;
+                _pendingPaths.Add(newInfo);
             }
         }
-
-        _paths.Clear();
-        _currentX = 2;
-        _currentY = 2;
-        _currentRowHeight = 0;
-
-        byte[] clearData = new byte[_atlasSize * _atlasSize * 4];
-        _atlasTexture.WritePixels(new ReadOnlySpan<byte>(clearData));
-
-        _pendingPaths.Clear();
-
-        foreach (var info in activePaths)
+        finally
         {
-            uint gW = info.Width;
-            uint gH = info.Height;
-
-            if (_currentX + gW + 2 > _atlasSize)
-            {
-                _currentX = 2;
-                _currentY += _currentRowHeight + 2;
-                _currentRowHeight = 0;
-            }
-
-            if (_currentY + gH + 2 > _atlasSize)
-            {
-                ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Warning: Even active paths in the current frame exceed the atlas size during repack!");
-                break;
-            }
-
-            uint posX = _currentX;
-            uint posY = _currentY;
-
-            _currentX += gW + 2;
-            _currentRowHeight = Math.Max(_currentRowHeight, gH);
-
-            float texelSize = 1.0f / _atlasSize;
-            var newInfo = new PathInfo
-            {
-                Key = info.Key,
-                Geometry = info.Geometry,
-                UnscaledMinX = info.UnscaledMinX,
-                UnscaledMinY = info.UnscaledMinY,
-                UnscaledMaxX = info.UnscaledMaxX,
-                UnscaledMaxY = info.UnscaledMaxY,
-                X = posX,
-                Y = posY,
-                Width = gW,
-                Height = gH,
-                TexCoordMin = new Vector2(posX * texelSize, posY * texelSize),
-                TexCoordMax = new Vector2((posX + gW) * texelSize, (posY + gH) * texelSize),
-                MinX = info.MinX,
-                MinY = info.MinY,
-                LastUsedFrame = info.LastUsedFrame
-            };
-
-            _paths[newInfo.Key] = newInfo;
-            _pendingPaths.Add(newInfo);
+            PooledRemovalBuffer.Return(activePaths, activePathCount);
         }
     }
 

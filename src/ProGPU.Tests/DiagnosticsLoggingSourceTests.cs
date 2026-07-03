@@ -164,6 +164,10 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("ArrayPool<T>.Shared.Rent(Math.Max(1, capacity))", helper, StringComparison.Ordinal);
         Assert.Contains("RuntimeHelpers.IsReferenceOrContainsReferences<T>()", helper, StringComparison.Ordinal);
 
+        Assert.Contains("PathInfo[]? activePaths = null;", pathAtlas, StringComparison.Ordinal);
+        Assert.Contains("PooledRemovalBuffer.Add(ref activePaths", pathAtlas, StringComparison.Ordinal);
+        Assert.Contains("PooledRemovalBuffer.Return(activePaths, activePathCount)", pathAtlas, StringComparison.Ordinal);
+        Assert.DoesNotContain("var activePaths = new List<PathInfo>();", pathAtlas, StringComparison.Ordinal);
         Assert.Contains("nint[]? bindGroupsToRelease = null;", pathAtlas, StringComparison.Ordinal);
         Assert.Contains("PooledRemovalBuffer.Add(ref bindGroupsToRelease", pathAtlas, StringComparison.Ordinal);
         Assert.Contains("PooledRemovalBuffer.Return(bindGroupsToRelease, bindGroupToReleaseCount)", pathAtlas, StringComparison.Ordinal);
