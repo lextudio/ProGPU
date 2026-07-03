@@ -203,6 +203,32 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void EffectPipelineLayoutsUseStackBackedDescriptors()
+    {
+        string wpfShaderEffect = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "WpfShaderEffectExtensionPipeline.cs"));
+        string imageEffect = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "ImageEffectExtensionPipeline.cs"));
+        string shaderToy = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "ShaderToyExtensionPipeline.cs"));
+        string pipelineCache = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "RenderPipelineCache.cs"));
+
+        AssertStackBackedLayout(wpfShaderEffect);
+        AssertStackBackedLayout(imageEffect);
+        AssertStackBackedLayout(shaderToy);
+
+        Assert.Contains("ReadOnlySpan<VertexBufferLayout> vertexBufferLayouts", pipelineCache, StringComparison.Ordinal);
+        Assert.Contains("fixed (VertexBufferLayout* pLayouts = vertexBufferLayouts)", pipelineCache, StringComparison.Ordinal);
+
+        static void AssertStackBackedLayout(string source)
+        {
+            Assert.Contains("Span<VertexAttribute> attrs = stackalloc VertexAttribute[3];", source, StringComparison.Ordinal);
+            Assert.Contains("Span<VertexBufferLayout> layouts = stackalloc VertexBufferLayout[1];", source, StringComparison.Ordinal);
+            Assert.Contains("ArrayStride = (uint)Unsafe.SizeOf<VectorVertex>()", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("new VertexBufferLayout[]", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Marshal.AllocHGlobal(Marshal.SizeOf<VertexAttribute>() * 3)", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes)", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void PathAtlasCleanupUsesPooledRemovalBuffers()
     {
         string helper = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PooledRemovalBuffer.cs"));

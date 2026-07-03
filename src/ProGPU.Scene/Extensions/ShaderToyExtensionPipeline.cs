@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.WebGPU;
 using Silk.NET.Core.Native;
@@ -441,18 +442,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                         return;
                     }
 
-                    var layouts = new VertexBufferLayout[]
-                    {
-                        new VertexBufferLayout
-                        {
-                            ArrayStride = (uint)Marshal.SizeOf<VectorVertex>(),
-                            StepMode = VertexStepMode.Vertex,
-                            AttributeCount = 3,
-                            Attributes = (VertexAttribute*)Marshal.AllocHGlobal(Marshal.SizeOf<VertexAttribute>() * 3)
-                        }
-                    };
-
-                    var attrs = layouts[0].Attributes;
+                    Span<VertexAttribute> attrs = stackalloc VertexAttribute[3];
                     attrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // Position
                     attrs[1] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }; // Color
                     attrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }; // TexCoord
@@ -465,8 +455,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
                     try
                     {
-                        try
+                        Span<VertexBufferLayout> layouts = stackalloc VertexBufferLayout[1];
+                        fixed (VertexAttribute* attrsPtr = attrs)
                         {
+                            layouts[0] = new VertexBufferLayout
+                            {
+                                ArrayStride = (uint)Unsafe.SizeOf<VectorVertex>(),
+                                StepMode = VertexStepMode.Vertex,
+                                AttributeCount = 3,
+                                Attributes = attrsPtr
+                            };
+
                             activePipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
                                 pipelineKey,
                                 shaderModule,
@@ -478,10 +477,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                                 blendMode: dc.BlendMode,
                                 sourceAlphaMode: pipelineSourceAlphaMode
                             );
-                        }
-                        finally
-                        {
-                            Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
                         }
 
                         // Force dispatching of pipeline creation validation errors before unhooking the error handler.

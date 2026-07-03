@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Silk.NET.WebGPU;
 using Silk.NET.Core.Native;
@@ -424,40 +425,39 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             {
                 var shaderModule = compositor.PipelineCache.GetOrCreateShader("ImageEffectShader", ShaderCode, "ImageEffect WGSL Shader");
                 
-                var layouts = new VertexBufferLayout[]
-                {
-                    new VertexBufferLayout
-                    {
-                        ArrayStride = (uint)Marshal.SizeOf<VectorVertex>(),
-                        StepMode = VertexStepMode.Vertex,
-                        AttributeCount = 3,
-                        Attributes = (VertexAttribute*)Marshal.AllocHGlobal(Marshal.SizeOf<VertexAttribute>() * 3)
-                    }
-                };
-
-                var attrs = layouts[0].Attributes;
+                Span<VertexAttribute> attrs = stackalloc VertexAttribute[3];
                 attrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // Position
                 attrs[1] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }; // Color
                 attrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }; // TexCoord
 
-                var pipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
-                    isOffscreen
-                        ? $"ImageEffectPipeline_Offscreen_{pipelineSourceAlphaMode}_{dc.BlendMode}"
-                        : $"ImageEffectPipeline_{pipelineSourceAlphaMode}_{dc.BlendMode}",
-                    shaderModule,
-                    vertexBufferLayouts: layouts,
-                    topology: PrimitiveTopology.TriangleList,
-                    targetFormat: compositor.RenderFormat,
-                    sampleCount: isOffscreen ? 1u : 4u,
-                    pipelineLayout: isOffscreen ? _offscreenPipelineLayout : _onscreenPipelineLayout,
-                    blendMode: dc.BlendMode,
-                    sourceAlphaMode: pipelineSourceAlphaMode
-                );
+                Span<VertexBufferLayout> layouts = stackalloc VertexBufferLayout[1];
+                fixed (VertexAttribute* attrsPtr = attrs)
+                {
+                    layouts[0] = new VertexBufferLayout
+                    {
+                        ArrayStride = (uint)Unsafe.SizeOf<VectorVertex>(),
+                        StepMode = VertexStepMode.Vertex,
+                        AttributeCount = 3,
+                        Attributes = attrsPtr
+                    };
 
-                Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes);
+                    var pipeline = compositor.PipelineCache.GetOrCreateRenderPipeline(
+                        isOffscreen
+                            ? $"ImageEffectPipeline_Offscreen_{pipelineSourceAlphaMode}_{dc.BlendMode}"
+                            : $"ImageEffectPipeline_{pipelineSourceAlphaMode}_{dc.BlendMode}",
+                        shaderModule,
+                        layouts,
+                        topology: PrimitiveTopology.TriangleList,
+                        targetFormat: compositor.RenderFormat,
+                        sampleCount: isOffscreen ? 1u : 4u,
+                        pipelineLayout: isOffscreen ? _offscreenPipelineLayout : _onscreenPipelineLayout,
+                        blendMode: dc.BlendMode,
+                        sourceAlphaMode: pipelineSourceAlphaMode
+                    );
 
-                activePipelinePtr = (nint)pipeline;
-                _cachedPipelines[pipelineCacheKey] = activePipelinePtr;
+                    activePipelinePtr = (nint)pipeline;
+                    _cachedPipelines[pipelineCacheKey] = activePipelinePtr;
+                }
             }
 
             var activePipeline = (RenderPipeline*)activePipelinePtr;
