@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Silk.NET.Core.Contexts;
@@ -50,6 +51,7 @@ public unsafe class WgpuContext : IDisposable
     public readonly List<IntPtr> PendingComputePipelines = new();
     public readonly List<IntPtr> PendingSamplers = new();
     public readonly List<IntPtr> PendingShaderModules = new();
+    private readonly HashSet<IntPtr> _pendingSnapshotSeen = new();
 
     public void QueueBufferDisposal(IntPtr ptr)
     {
@@ -149,130 +151,171 @@ public unsafe class WgpuContext : IDisposable
         {
             if (_isDisposed) return;
 
-            IntPtr[] buffers;
-            IntPtr[] textures;
-            IntPtr[] views;
-            IntPtr[] bindGroups;
-            IntPtr[] layouts;
-            IntPtr[] pipeLayouts;
-            IntPtr[] renderPipes;
-            IntPtr[] computePipes;
-            IntPtr[] samplers;
-            IntPtr[] shaders;
+            PooledResourcePointerSnapshot buffers = default;
+            PooledResourcePointerSnapshot textures = default;
+            PooledResourcePointerSnapshot views = default;
+            PooledResourcePointerSnapshot bindGroups = default;
+            PooledResourcePointerSnapshot layouts = default;
+            PooledResourcePointerSnapshot pipeLayouts = default;
+            PooledResourcePointerSnapshot renderPipes = default;
+            PooledResourcePointerSnapshot computePipes = default;
+            PooledResourcePointerSnapshot samplers = default;
+            PooledResourcePointerSnapshot shaders = default;
 
-            lock (DisposalLock)
+            try
             {
-                buffers = SnapshotPendingResourcePointers(PendingBuffers);
-                PendingBuffers.Clear();
+                lock (DisposalLock)
+                {
+                    buffers = SnapshotPendingResourcePointers(PendingBuffers);
+                    PendingBuffers.Clear();
 
-                textures = SnapshotPendingResourcePointers(PendingTextures);
-                PendingTextures.Clear();
+                    textures = SnapshotPendingResourcePointers(PendingTextures);
+                    PendingTextures.Clear();
 
-                views = SnapshotPendingResourcePointers(PendingTextureViews);
-                PendingTextureViews.Clear();
+                    views = SnapshotPendingResourcePointers(PendingTextureViews);
+                    PendingTextureViews.Clear();
 
-                bindGroups = SnapshotPendingResourcePointers(PendingBindGroups);
-                PendingBindGroups.Clear();
+                    bindGroups = SnapshotPendingResourcePointers(PendingBindGroups);
+                    PendingBindGroups.Clear();
 
-                layouts = SnapshotPendingResourcePointers(PendingBindGroupLayouts);
-                PendingBindGroupLayouts.Clear();
+                    layouts = SnapshotPendingResourcePointers(PendingBindGroupLayouts);
+                    PendingBindGroupLayouts.Clear();
 
-                pipeLayouts = SnapshotPendingResourcePointers(PendingPipelineLayouts);
-                PendingPipelineLayouts.Clear();
+                    pipeLayouts = SnapshotPendingResourcePointers(PendingPipelineLayouts);
+                    PendingPipelineLayouts.Clear();
 
-                renderPipes = SnapshotPendingResourcePointers(PendingRenderPipelines);
-                PendingRenderPipelines.Clear();
+                    renderPipes = SnapshotPendingResourcePointers(PendingRenderPipelines);
+                    PendingRenderPipelines.Clear();
 
-                computePipes = SnapshotPendingResourcePointers(PendingComputePipelines);
-                PendingComputePipelines.Clear();
+                    computePipes = SnapshotPendingResourcePointers(PendingComputePipelines);
+                    PendingComputePipelines.Clear();
 
-                samplers = SnapshotPendingResourcePointers(PendingSamplers);
-                PendingSamplers.Clear();
+                    samplers = SnapshotPendingResourcePointers(PendingSamplers);
+                    PendingSamplers.Clear();
 
-                shaders = SnapshotPendingResourcePointers(PendingShaderModules);
-                PendingShaderModules.Clear();
+                    shaders = SnapshotPendingResourcePointers(PendingShaderModules);
+                    PendingShaderModules.Clear();
+                }
+
+                if (views.Length > 0 || textures.Length > 0 || buffers.Length > 0 || bindGroups.Length > 0 ||
+                    layouts.Length > 0 || pipeLayouts.Length > 0 || renderPipes.Length > 0 ||
+                    computePipes.Length > 0 || samplers.Length > 0 || shaders.Length > 0)
+                {
+                    WaitIdle();
+                }
+
+                foreach (var bg in bindGroups.Span)
+                {
+                    Wgpu.BindGroupRelease((BindGroup*)bg);
+                }
+
+                foreach (var view in views.Span)
+                {
+                    Wgpu.TextureViewRelease((TextureView*)view);
+                }
+
+                foreach (var tex in textures.Span)
+                {
+                    // Release ownership without destroying; bind groups/views may still keep
+                    // the texture alive until the backend has drained all references.
+                    Wgpu.TextureRelease((Texture*)tex);
+                }
+
+                foreach (var buf in buffers.Span)
+                {
+                    Wgpu.BufferDestroy((Silk.NET.WebGPU.Buffer*)buf);
+                    Wgpu.BufferRelease((Silk.NET.WebGPU.Buffer*)buf);
+                }
+
+                foreach (var layout in layouts.Span)
+                {
+                    Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
+                }
+
+                foreach (var pipeLayout in pipeLayouts.Span)
+                {
+                    Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
+                }
+
+                foreach (var rp in renderPipes.Span)
+                {
+                    Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
+                }
+
+                foreach (var cp in computePipes.Span)
+                {
+                    Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
+                }
+
+                foreach (var sampler in samplers.Span)
+                {
+                    Wgpu.SamplerRelease((Sampler*)sampler);
+                }
+
+                foreach (var shader in shaders.Span)
+                {
+                    Wgpu.ShaderModuleRelease((ShaderModule*)shader);
+                }
             }
-
-            if (views.Length > 0 || textures.Length > 0 || buffers.Length > 0 || bindGroups.Length > 0 || 
-                layouts.Length > 0 || pipeLayouts.Length > 0 || renderPipes.Length > 0 || 
-                computePipes.Length > 0 || samplers.Length > 0 || shaders.Length > 0)
+            finally
             {
-                WaitIdle();
-            }
-
-            foreach (var bg in bindGroups)
-            {
-                Wgpu.BindGroupRelease((BindGroup*)bg);
-            }
-
-            foreach (var view in views)
-            {
-                Wgpu.TextureViewRelease((TextureView*)view);
-            }
-
-            foreach (var tex in textures)
-            {
-                // Release ownership without destroying; bind groups/views may still keep
-                // the texture alive until the backend has drained all references.
-                Wgpu.TextureRelease((Texture*)tex);
-            }
-
-            foreach (var buf in buffers)
-            {
-                Wgpu.BufferDestroy((Silk.NET.WebGPU.Buffer*)buf);
-                Wgpu.BufferRelease((Silk.NET.WebGPU.Buffer*)buf);
-            }
-
-            foreach (var layout in layouts)
-            {
-                Wgpu.BindGroupLayoutRelease((BindGroupLayout*)layout);
-            }
-
-            foreach (var pipeLayout in pipeLayouts)
-            {
-                Wgpu.PipelineLayoutRelease((PipelineLayout*)pipeLayout);
-            }
-
-            foreach (var rp in renderPipes)
-            {
-                Wgpu.RenderPipelineRelease((RenderPipeline*)rp);
-            }
-
-            foreach (var cp in computePipes)
-            {
-                Wgpu.ComputePipelineRelease((ComputePipeline*)cp);
-            }
-
-            foreach (var sampler in samplers)
-            {
-                Wgpu.SamplerRelease((Sampler*)sampler);
-            }
-
-            foreach (var shader in shaders)
-            {
-                Wgpu.ShaderModuleRelease((ShaderModule*)shader);
+                buffers.Dispose();
+                textures.Dispose();
+                views.Dispose();
+                bindGroups.Dispose();
+                layouts.Dispose();
+                pipeLayouts.Dispose();
+                renderPipes.Dispose();
+                computePipes.Dispose();
+                samplers.Dispose();
+                shaders.Dispose();
             }
         }
     }
 
-    private static IntPtr[] SnapshotPendingResourcePointers(List<IntPtr> pending)
+    private PooledResourcePointerSnapshot SnapshotPendingResourcePointers(List<IntPtr> pending)
     {
         if (pending.Count == 0)
         {
-            return Array.Empty<IntPtr>();
+            return default;
         }
 
-        var seen = new HashSet<IntPtr>();
-        var snapshot = new List<IntPtr>(pending.Count);
+        var snapshot = ArrayPool<IntPtr>.Shared.Rent(pending.Count);
+        var count = 0;
+        _pendingSnapshotSeen.Clear();
         foreach (var ptr in pending)
         {
-            if (ptr != IntPtr.Zero && seen.Add(ptr))
+            if (ptr != IntPtr.Zero && _pendingSnapshotSeen.Add(ptr))
             {
-                snapshot.Add(ptr);
+                snapshot[count++] = ptr;
             }
         }
 
-        return snapshot.ToArray();
+        _pendingSnapshotSeen.Clear();
+        if (count == 0)
+        {
+            ArrayPool<IntPtr>.Shared.Return(snapshot);
+            return default;
+        }
+
+        return new PooledResourcePointerSnapshot(snapshot, count);
+    }
+
+    private readonly struct PooledResourcePointerSnapshot(IntPtr[]? buffer, int length) : IDisposable
+    {
+        public int Length => length;
+
+        public ReadOnlySpan<IntPtr> Span => buffer is null
+            ? ReadOnlySpan<IntPtr>.Empty
+            : buffer.AsSpan(0, length);
+
+        public void Dispose()
+        {
+            if (buffer is not null)
+            {
+                ArrayPool<IntPtr>.Shared.Return(buffer);
+            }
+        }
     }
     
     private bool _isDisposed;

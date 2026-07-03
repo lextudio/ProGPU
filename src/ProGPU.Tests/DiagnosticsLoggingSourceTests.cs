@@ -47,6 +47,26 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void WgpuContextPendingResourceCleanupUsesPooledSnapshots()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "WgpuContext.cs"));
+
+        Assert.Contains("using System.Buffers;", source, StringComparison.Ordinal);
+        Assert.Contains("private readonly HashSet<IntPtr> _pendingSnapshotSeen = new();", source, StringComparison.Ordinal);
+        Assert.Contains("PooledResourcePointerSnapshot buffers = default;", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<IntPtr>.Shared.Rent(pending.Count)", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<IntPtr>.Shared.Return(snapshot)", source, StringComparison.Ordinal);
+        Assert.Contains("private readonly struct PooledResourcePointerSnapshot", source, StringComparison.Ordinal);
+        Assert.Contains("public ReadOnlySpan<IntPtr> Span", source, StringComparison.Ordinal);
+        Assert.Contains("foreach (var bg in bindGroups.Span)", source, StringComparison.Ordinal);
+        Assert.Contains("finally\n            {\n                buffers.Dispose();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var snapshot = new List<IntPtr>(pending.Count)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("return snapshot.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var seen = new HashSet<IntPtr>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var bg in bindGroups)\n", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompositorTransientStateSnapshotsUseArrayPool()
     {
         string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Compositor.cs"));

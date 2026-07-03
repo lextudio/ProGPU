@@ -65,7 +65,7 @@ public sealed class WgpuContextTests
     {
         var method = typeof(WgpuContext).GetMethod(
             "SnapshotPendingResourcePointers",
-            BindingFlags.Static | BindingFlags.NonPublic);
+            BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
 
         var pending = new List<IntPtr>
@@ -78,9 +78,13 @@ public sealed class WgpuContextTests
             new(2)
         };
 
-        var snapshot = Assert.IsType<IntPtr[]>(method.Invoke(null, new object[] { pending }));
+        var context = new WgpuContext();
+        var snapshot = method.Invoke(context, [pending]);
+        Assert.NotNull(snapshot);
 
-        Assert.Equal(new[] { new IntPtr(1), new IntPtr(2), new IntPtr(3) }, snapshot);
+        var length = Assert.IsType<int>(snapshot.GetType().GetProperty("Length")!.GetValue(snapshot));
+        Assert.Equal(3, length);
+        Assert.IsAssignableFrom<IDisposable>(snapshot).Dispose();
     }
 
     [Fact]
