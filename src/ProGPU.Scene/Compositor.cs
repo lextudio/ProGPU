@@ -5564,10 +5564,6 @@ public unsafe class Compositor : IDisposable
             uv3 = new Vector2(0f, 1f);
         }
 
-        bool isRotated = MathF.Abs(transform.M12) > 0.0001f ||
-                         MathF.Abs(transform.M21) > 0.0001f ||
-                         transform.M11 < 0.0f ||
-                         transform.M22 < 0.0f;
         if (_activeClipRect.HasValue && !_useGpuTransformsActive)
         {
             float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
@@ -5585,8 +5581,7 @@ public unsafe class Compositor : IDisposable
                 return; // Completely clipped!
             }
 
-            if (!isRotated &&
-                !QuadClipper.TryClipAxisAlignedQuad(
+            if (!QuadClipper.TryClipAxisAlignedQuad(
                     _activeClipRect.Value,
                     ref v0,
                     ref v1,

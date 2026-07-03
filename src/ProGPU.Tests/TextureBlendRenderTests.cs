@@ -164,6 +164,53 @@ public sealed class TextureBlendRenderTests
         }
     }
 
+    [Fact]
+    public void MirroredClippedTextureCommandUploadsTrimmedQuadWithPreservedUv()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(40, 20);
+        using var texture = new GpuTexture(
+            window.Context,
+            2,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Mirrored Clipped Texture Test",
+            alphaMode: GpuTextureAlphaMode.Straight);
+        texture.WritePixels<byte>(
+        [
+            255, 0, 0, 255,
+            0, 255, 0, 255
+        ]);
+        window.Content = new MirroredClippedTextureVisual(texture);
+
+        try
+        {
+            window.Render();
+
+            var textureVertices = GetTextureVertices(window.Compositor);
+            var drawVertices = textureVertices.Skip(textureVertices.Count - 4).Take(4).ToArray();
+
+            Assert.All(drawVertices, vertex => Assert.InRange(vertex.Position.X, 20f, 40f));
+            Assert.All(drawVertices, vertex => Assert.InRange(vertex.Position.Y, 0f, 20f));
+            Assert.Equal(0f, drawVertices.Min(static vertex => vertex.TexCoord.X), 3);
+            Assert.Equal(0.5f, drawVertices.Max(static vertex => vertex.TexCoord.X), 3);
+
+            var pixels = window.ReadPixels();
+            var outside = ReadPixel(pixels, window.Width, x: 10, y: 10);
+            var inside = ReadPixel(pixels, window.Width, x: 30, y: 10);
+
+            Assert.Equal(new RgbaPixel(0, 0, 0, 255), outside);
+            Assert.True(
+                inside.R > 180 && inside.G < 80 && inside.B < 80,
+                $"Expected mirrored clipped UVs to sample the red texel, got RGBA({inside.R}, {inside.G}, {inside.B}, {inside.A}).");
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)
     {
         var index = ((y * (int)width) + x) * 4;
@@ -228,6 +275,36 @@ public sealed class TextureBlendRenderTests
                 Texture = _texture,
                 Rect = new Rect(0f, 0f, 40f, 20f),
                 SrcRect = new Rect(1f, 0f, 2f, 1f),
+                TextureSamplingMode = TextureSamplingMode.Nearest
+            });
+            context.PopClip();
+        }
+    }
+
+    private sealed class MirroredClippedTextureVisual : FrameworkElement
+    {
+        private readonly GpuTexture _texture;
+
+        public MirroredClippedTextureVisual(GpuTexture texture)
+        {
+            _texture = texture;
+            Width = 40f;
+            Height = 20f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(0f, 0f, 0f, 1f)),
+                null,
+                new Rect(0f, 0f, 40f, 20f));
+            context.PushClip(new Rect(20f, 0f, 20f, 20f));
+            context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawTexture,
+                Texture = _texture,
+                Rect = new Rect(0f, 0f, 40f, 20f),
+                Transform = Matrix4x4.CreateScale(-1f, 1f, 1f) * Matrix4x4.CreateTranslation(40f, 0f, 0f),
                 TextureSamplingMode = TextureSamplingMode.Nearest
             });
             context.PopClip();
