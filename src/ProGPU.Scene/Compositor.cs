@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -1611,39 +1612,39 @@ public unsafe class Compositor : IDisposable
         if (externalLayers != null && externalLayers.Count > 0)
         {
             var savedActiveClipRect = _activeClipRect;
-            var savedClipStack = _clipStack.ToArray();
-            var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+            var savedClipStack = RentStackSnapshot(_clipStack, out var savedClipStackCount);
+            var savedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var savedClipScopeIsGeometryMaskCount);
             var savedActiveOpacity = _activeOpacity;
-            var savedOpacityStack = _opacityStack.ToArray();
+            var savedOpacityStack = RentStackSnapshot(_opacityStack, out var savedOpacityStackCount);
 
-            for (int i = 0; i < externalLayers.Count; i++)
+            try
             {
-                _activeClipRect = null;
-                _clipStack.Clear();
-                _clipScopeIsGeometryMask.Clear();
-                _activeOpacity = 1.0f;
-                _opacityStack.Clear();
+                for (int i = 0; i < externalLayers.Count; i++)
+                {
+                    _activeClipRect = null;
+                    _clipStack.Clear();
+                    _clipScopeIsGeometryMask.Clear();
+                    _activeOpacity = 1.0f;
+                    _opacityStack.Clear();
 
-                var layer = externalLayers[i];
-                _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                _pendingTextStart = (uint)_textVerticesList.Count;
+                    var layer = externalLayers[i];
+                    _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                    _pendingTextStart = (uint)_textVerticesList.Count;
 
-                CompileVisualTree(layer, Matrix4x4.Identity);
-                CommitPendingDrawCalls();
+                    CompileVisualTree(layer, Matrix4x4.Identity);
+                    CommitPendingDrawCalls();
+                }
             }
-
-            _activeClipRect = savedActiveClipRect;
-            _clipStack.Clear();
-            for (int j = savedClipStack.Length - 1; j >= 0; j--)
+            finally
             {
-                _clipStack.Push(savedClipStack[j]);
-            }
-            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
-            _activeOpacity = savedActiveOpacity;
-            _opacityStack.Clear();
-            for (int j = savedOpacityStack.Length - 1; j >= 0; j--)
-            {
-                _opacityStack.Push(savedOpacityStack[j]);
+                _activeClipRect = savedActiveClipRect;
+                RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
+                RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+                _activeOpacity = savedActiveOpacity;
+                RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+                ReturnStackSnapshot(savedClipStack, savedClipStackCount);
+                ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+                ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
             }
         }
 
@@ -1652,35 +1653,35 @@ public unsafe class Compositor : IDisposable
         if (activeToolTip != null)
         {
             var savedActiveClipRect = _activeClipRect;
-            var savedClipStack = _clipStack.ToArray();
-            var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+            var savedClipStack = RentStackSnapshot(_clipStack, out var savedClipStackCount);
+            var savedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var savedClipScopeIsGeometryMaskCount);
             var savedActiveOpacity = _activeOpacity;
-            var savedOpacityStack = _opacityStack.ToArray();
+            var savedOpacityStack = RentStackSnapshot(_opacityStack, out var savedOpacityStackCount);
 
-            _activeClipRect = null;
-            _clipStack.Clear();
-            _clipScopeIsGeometryMask.Clear();
-            _activeOpacity = 1.0f;
-            _opacityStack.Clear();
-
-            _pendingVectorStart = (uint)_vectorIndicesList.Count;
-            _pendingTextStart = (uint)_textVerticesList.Count;
-
-            CompileVisualTree(activeToolTip, Matrix4x4.Identity);
-            CommitPendingDrawCalls();
-
-            _activeClipRect = savedActiveClipRect;
-            _clipStack.Clear();
-            for (int j = savedClipStack.Length - 1; j >= 0; j--)
+            try
             {
-                _clipStack.Push(savedClipStack[j]);
+                _activeClipRect = null;
+                _clipStack.Clear();
+                _clipScopeIsGeometryMask.Clear();
+                _activeOpacity = 1.0f;
+                _opacityStack.Clear();
+
+                _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                _pendingTextStart = (uint)_textVerticesList.Count;
+
+                CompileVisualTree(activeToolTip, Matrix4x4.Identity);
+                CommitPendingDrawCalls();
             }
-            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
-            _activeOpacity = savedActiveOpacity;
-            _opacityStack.Clear();
-            for (int j = savedOpacityStack.Length - 1; j >= 0; j--)
+            finally
             {
-                _opacityStack.Push(savedOpacityStack[j]);
+                _activeClipRect = savedActiveClipRect;
+                RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
+                RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+                _activeOpacity = savedActiveOpacity;
+                RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+                ReturnStackSnapshot(savedClipStack, savedClipStackCount);
+                ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+                ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
             }
         }
 
@@ -1690,119 +1691,119 @@ public unsafe class Compositor : IDisposable
         if (RenderDiagnostics != null)
         {
             var savedActiveClipRect = _activeClipRect;
-            var savedClipStack = _clipStack.ToArray();
-            var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+            var savedClipStack = RentStackSnapshot(_clipStack, out var savedClipStackCount);
+            var savedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var savedClipScopeIsGeometryMaskCount);
             var savedActiveOpacity = _activeOpacity;
-            var savedOpacityStack = _opacityStack.ToArray();
+            var savedOpacityStack = RentStackSnapshot(_opacityStack, out var savedOpacityStackCount);
 
-            _activeClipRect = null;
-            _clipStack.Clear();
-            _clipScopeIsGeometryMask.Clear();
-            _activeOpacity = 1.0f;
-            _opacityStack.Clear();
-
-            _pendingVectorStart = (uint)_vectorIndicesList.Count;
-            _pendingTextStart = (uint)_textVerticesList.Count;
-
-            var diagContext = new DrawingContext();
-            RenderDiagnostics(diagContext, width, height);
-            foreach (var cmd in diagContext.Commands)
+            try
             {
-                var activeTransform = Matrix4x4.Identity;
-                switch (cmd.Type)
+                _activeClipRect = null;
+                _clipStack.Clear();
+                _clipScopeIsGeometryMask.Clear();
+                _activeOpacity = 1.0f;
+                _opacityStack.Clear();
+
+                _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                _pendingTextStart = (uint)_textVerticesList.Count;
+
+                var diagContext = new DrawingContext();
+                RenderDiagnostics(diagContext, width, height);
+                foreach (var cmd in diagContext.Commands)
                 {
-                    case RenderCommandType.DrawRect:
-                        CompileRectCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawPath:
-                        CompilePathCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawHatch:
-                        CompileHatchCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawAcisSolid:
-                        CompileAcisCommand(diagContext, cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawText:
-                        CompileTextCommand(cmd, null, activeTransform);
-                        break;
-                    case RenderCommandType.DrawTexture:
-                        CompileTextureCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.PushClip:
-                        PushClipRect(cmd.Rect, activeTransform);
-                        break;
-                    case RenderCommandType.PopClip:
-                        PopClipRect();
-                        break;
-                    case RenderCommandType.PushOpacity:
-                        PushOpacityValue(cmd.FontSize);
-                        break;
-                    case RenderCommandType.PopOpacity:
-                        PopOpacityValue();
-                        break;
-                    case RenderCommandType.DrawLine:
-                        CompileLineCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawLine3D:
-                        CompileLine3DCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawEllipse:
-                        CompileEllipseCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawCircle:
-                        CompileCircleCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawRoundedRect:
-                        CompileRoundedRectCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawBezier:
-                        CompileBezierCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawCubicBezier:
-                        CompileCubicBezierCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawPolyline:
-                        CompilePolylineCommand(diagContext, cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawSpline:
-                        CompileSplineCommand(diagContext, cmd, activeTransform);
-                        break;
-                    case RenderCommandType.FillTriangle:
-                        CompileFillTriangleCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.FillQuad:
-                        CompileFillQuadCommand(cmd, activeTransform);
-                        break;
-                    case RenderCommandType.DrawStaticDxf:
-                        CommitPendingDrawCalls();
-                        _drawCalls.Add(new CompositorDrawCall
-                        {
-                            Type = DrawCallType.StaticDxf,
-                            StaticBuffer = cmd.StaticBuffer,
-                            ClipRect = _activeClipRect,
-                            MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
-                            BlendMode = _activeBlendMode
-                        });
-                        _pendingVectorStart = (uint)_vectorIndicesList.Count;
-                        _pendingTextStart = (uint)_textVerticesList.Count;
-                        break;
+                    var activeTransform = Matrix4x4.Identity;
+                    switch (cmd.Type)
+                    {
+                        case RenderCommandType.DrawRect:
+                            CompileRectCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawPath:
+                            CompilePathCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawHatch:
+                            CompileHatchCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawAcisSolid:
+                            CompileAcisCommand(diagContext, cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawText:
+                            CompileTextCommand(cmd, null, activeTransform);
+                            break;
+                        case RenderCommandType.DrawTexture:
+                            CompileTextureCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.PushClip:
+                            PushClipRect(cmd.Rect, activeTransform);
+                            break;
+                        case RenderCommandType.PopClip:
+                            PopClipRect();
+                            break;
+                        case RenderCommandType.PushOpacity:
+                            PushOpacityValue(cmd.FontSize);
+                            break;
+                        case RenderCommandType.PopOpacity:
+                            PopOpacityValue();
+                            break;
+                        case RenderCommandType.DrawLine:
+                            CompileLineCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawLine3D:
+                            CompileLine3DCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawEllipse:
+                            CompileEllipseCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawCircle:
+                            CompileCircleCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawRoundedRect:
+                            CompileRoundedRectCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawBezier:
+                            CompileBezierCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawCubicBezier:
+                            CompileCubicBezierCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawPolyline:
+                            CompilePolylineCommand(diagContext, cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawSpline:
+                            CompileSplineCommand(diagContext, cmd, activeTransform);
+                            break;
+                        case RenderCommandType.FillTriangle:
+                            CompileFillTriangleCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.FillQuad:
+                            CompileFillQuadCommand(cmd, activeTransform);
+                            break;
+                        case RenderCommandType.DrawStaticDxf:
+                            CommitPendingDrawCalls();
+                            _drawCalls.Add(new CompositorDrawCall
+                            {
+                                Type = DrawCallType.StaticDxf,
+                                StaticBuffer = cmd.StaticBuffer,
+                                ClipRect = _activeClipRect,
+                                MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
+                                BlendMode = _activeBlendMode
+                            });
+                            _pendingVectorStart = (uint)_vectorIndicesList.Count;
+                            _pendingTextStart = (uint)_textVerticesList.Count;
+                            break;
+                    }
                 }
+                CommitPendingDrawCalls();
             }
-            CommitPendingDrawCalls();
-
-            _activeClipRect = savedActiveClipRect;
-            _clipStack.Clear();
-            for (int j = savedClipStack.Length - 1; j >= 0; j--)
+            finally
             {
-                _clipStack.Push(savedClipStack[j]);
-            }
-            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
-            _activeOpacity = savedActiveOpacity;
-            _opacityStack.Clear();
-            for (int j = savedOpacityStack.Length - 1; j >= 0; j--)
-            {
-                _opacityStack.Push(savedOpacityStack[j]);
+                _activeClipRect = savedActiveClipRect;
+                RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
+                RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+                _activeOpacity = savedActiveOpacity;
+                RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+                ReturnStackSnapshot(savedClipStack, savedClipStackCount);
+                ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+                ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
             }
         }
 
@@ -2436,13 +2437,42 @@ public unsafe class Compositor : IDisposable
         return MathF.Abs(transform.M12) <= epsilon && MathF.Abs(transform.M21) <= epsilon;
     }
 
-    private void RestoreClipScopeStack(bool[] savedClipScopeIsGeometryMask)
+    private void RestoreClipScopeStack(bool[] savedClipScopeIsGeometryMask, int count)
     {
-        _clipScopeIsGeometryMask.Clear();
-        for (int i = savedClipScopeIsGeometryMask.Length - 1; i >= 0; i--)
+        RestoreStack(_clipScopeIsGeometryMask, savedClipScopeIsGeometryMask, count);
+    }
+
+    private static T[] RentStackSnapshot<T>(Stack<T> stack, out int count)
+    {
+        count = stack.Count;
+        if (count == 0)
         {
-            _clipScopeIsGeometryMask.Push(savedClipScopeIsGeometryMask[i]);
+            return Array.Empty<T>();
         }
+
+        var snapshot = ArrayPool<T>.Shared.Rent(count);
+        stack.CopyTo(snapshot, 0);
+        return snapshot;
+    }
+
+    private static void RestoreStack<T>(Stack<T> stack, T[] snapshot, int count)
+    {
+        stack.Clear();
+        for (int i = count - 1; i >= 0; i--)
+        {
+            stack.Push(snapshot[i]);
+        }
+    }
+
+    private static void ReturnStackSnapshot<T>(T[] snapshot, int count)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
+        Array.Clear(snapshot, 0, count);
+        ArrayPool<T>.Shared.Return(snapshot);
     }
 
     private void PushOpacityValue(float opacity)
@@ -6552,10 +6582,10 @@ public unsafe class Compositor : IDisposable
         var savedDrawCalls = _drawCalls.ToArray();
         var savedActiveBrushes = _activeBrushes.ToArray();
         var savedActiveGradientStops = _activeGradientStops.ToArray();
-        var savedClipStack = _clipStack.ToArray();
-        var savedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+        var savedClipStack = RentStackSnapshot(_clipStack, out var savedClipStackCount);
+        var savedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var savedClipScopeIsGeometryMaskCount);
         var savedActiveClipRect = _activeClipRect;
-        var savedOpacityStack = _opacityStack.ToArray();
+        var savedOpacityStack = RentStackSnapshot(_opacityStack, out var savedOpacityStackCount);
         var savedActiveOpacity = _activeOpacity;
         var savedPendingVectorStart = _pendingVectorStart;
         var savedPendingTextStart = _pendingTextStart;
@@ -6566,9 +6596,9 @@ public unsafe class Compositor : IDisposable
         var savedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
         var savedGpuTransformsCameraView = _gpuTransformsCameraView;
 
-        var savedBlendModeStack = _blendModeStack.ToArray();
+        var savedBlendModeStack = RentStackSnapshot(_blendModeStack, out var savedBlendModeStackCount);
         var savedActiveBlendMode = _activeBlendMode;
-        var savedMaskStack = _maskStack.ToArray();
+        var savedMaskStack = RentStackSnapshot(_maskStack, out var savedMaskStackCount);
         var savedMaskRenderPasses = _maskRenderPasses.ToArray();
         var savedMasksToReturnToPool = _masksToReturnToPool.ToArray();
         var savedSuspendHitTestCacheWrites = _suspendHitTestCacheWrites;
@@ -6933,33 +6963,17 @@ public unsafe class Compositor : IDisposable
             _drawCalls.Clear(); _drawCalls.AddRange(savedDrawCalls);
             _activeBrushes.Clear(); _activeBrushes.AddRange(savedActiveBrushes);
             _activeGradientStops.Clear(); _activeGradientStops.AddRange(savedActiveGradientStops);
-            _clipStack.Clear();
-            for (int i = savedClipStack.Length - 1; i >= 0; i--)
-            {
-                _clipStack.Push(savedClipStack[i]);
-            }
-            RestoreClipScopeStack(savedClipScopeIsGeometryMask);
+            RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
+            RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
             _activeClipRect = savedActiveClipRect;
 
-            _opacityStack.Clear();
-            for (int i = savedOpacityStack.Length - 1; i >= 0; i--)
-            {
-                _opacityStack.Push(savedOpacityStack[i]);
-            }
+            RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
             _activeOpacity = savedActiveOpacity;
 
-            _blendModeStack.Clear();
-            for (int i = savedBlendModeStack.Length - 1; i >= 0; i--)
-            {
-                _blendModeStack.Push(savedBlendModeStack[i]);
-            }
+            RestoreStack(_blendModeStack, savedBlendModeStack, savedBlendModeStackCount);
             _activeBlendMode = savedActiveBlendMode;
 
-            _maskStack.Clear();
-            for (int i = savedMaskStack.Length - 1; i >= 0; i--)
-            {
-                _maskStack.Push(savedMaskStack[i]);
-            }
+            RestoreStack(_maskStack, savedMaskStack, savedMaskStackCount);
 
             _maskRenderPasses.Clear();
             _maskRenderPasses.AddRange(savedMaskRenderPasses);
@@ -6985,6 +6999,12 @@ public unsafe class Compositor : IDisposable
             _explicitRenderTargetViewport = savedExplicitRenderTargetViewport;
             _explicitDpiScale = savedExplicitDpiScale;
             _currentProjection = savedProjection;
+
+            ReturnStackSnapshot(savedClipStack, savedClipStackCount);
+            ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
+            ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
+            ReturnStackSnapshot(savedBlendModeStack, savedBlendModeStackCount);
+            ReturnStackSnapshot(savedMaskStack, savedMaskStackCount);
         }
     }
 
@@ -7002,10 +7022,10 @@ public unsafe class Compositor : IDisposable
         var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
 
         var dxfSavedActiveClipRect = _activeClipRect;
-        var dxfSavedClipStack = _clipStack.ToArray();
-        var dxfSavedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+        var dxfSavedClipStack = RentStackSnapshot(_clipStack, out var dxfSavedClipStackCount);
+        var dxfSavedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var dxfSavedClipScopeIsGeometryMaskCount);
 
-        var dxfSavedOpacityStack = _opacityStack.ToArray();
+        var dxfSavedOpacityStack = RentStackSnapshot(_opacityStack, out var dxfSavedOpacityStackCount);
         var dxfSavedActiveOpacity = _activeOpacity;
 
         var dxfSavedPendingVectorStart = _pendingVectorStart;
@@ -7017,9 +7037,9 @@ public unsafe class Compositor : IDisposable
         var dxfSavedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
         var dxfSavedGpuTransformsCameraView = _gpuTransformsCameraView;
 
-        var dxfSavedBlendModeStack = _blendModeStack.ToArray();
+        var dxfSavedBlendModeStack = RentStackSnapshot(_blendModeStack, out var dxfSavedBlendModeStackCount);
         var dxfSavedActiveBlendMode = _activeBlendMode;
-        var dxfSavedMaskStack = _maskStack.ToArray();
+        var dxfSavedMaskStack = RentStackSnapshot(_maskStack, out var dxfSavedMaskStackCount);
         var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
         var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
 
@@ -7357,18 +7377,10 @@ public unsafe class Compositor : IDisposable
             _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
 
             _activeClipRect = dxfSavedActiveClipRect;
-            _clipStack.Clear();
-            for (int i = dxfSavedClipStack.Length - 1; i >= 0; i--)
-            {
-                _clipStack.Push(dxfSavedClipStack[i]);
-            }
-            RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask);
+            RestoreStack(_clipStack, dxfSavedClipStack, dxfSavedClipStackCount);
+            RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
 
-            _opacityStack.Clear();
-            for (int i = dxfSavedOpacityStack.Length - 1; i >= 0; i--)
-            {
-                _opacityStack.Push(dxfSavedOpacityStack[i]);
-            }
+            RestoreStack(_opacityStack, dxfSavedOpacityStack, dxfSavedOpacityStackCount);
             _activeOpacity = dxfSavedActiveOpacity;
 
             _pendingVectorStart = dxfSavedPendingVectorStart;
@@ -7380,24 +7392,22 @@ public unsafe class Compositor : IDisposable
             _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
             _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
 
-            _blendModeStack.Clear();
-            for (int i = dxfSavedBlendModeStack.Length - 1; i >= 0; i--)
-            {
-                _blendModeStack.Push(dxfSavedBlendModeStack[i]);
-            }
+            RestoreStack(_blendModeStack, dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
             _activeBlendMode = dxfSavedActiveBlendMode;
 
-            _maskStack.Clear();
-            for (int i = dxfSavedMaskStack.Length - 1; i >= 0; i--)
-            {
-                _maskStack.Push(dxfSavedMaskStack[i]);
-            }
+            RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
 
             _maskRenderPasses.Clear();
             _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
 
             _masksToReturnToPool.Clear();
             _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
+
+            ReturnStackSnapshot(dxfSavedClipStack, dxfSavedClipStackCount);
+            ReturnStackSnapshot(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
+            ReturnStackSnapshot(dxfSavedOpacityStack, dxfSavedOpacityStackCount);
+            ReturnStackSnapshot(dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
+            ReturnStackSnapshot(dxfSavedMaskStack, dxfSavedMaskStackCount);
         }
     }
 
@@ -7415,10 +7425,10 @@ public unsafe class Compositor : IDisposable
         var dxfSavedCompiledTextRecords = _compiledTextRecords.ToArray();
 
         var dxfSavedActiveClipRect = _activeClipRect;
-        var dxfSavedClipStack = _clipStack.ToArray();
-        var dxfSavedClipScopeIsGeometryMask = _clipScopeIsGeometryMask.ToArray();
+        var dxfSavedClipStack = RentStackSnapshot(_clipStack, out var dxfSavedClipStackCount);
+        var dxfSavedClipScopeIsGeometryMask = RentStackSnapshot(_clipScopeIsGeometryMask, out var dxfSavedClipScopeIsGeometryMaskCount);
 
-        var dxfSavedOpacityStack = _opacityStack.ToArray();
+        var dxfSavedOpacityStack = RentStackSnapshot(_opacityStack, out var dxfSavedOpacityStackCount);
         var dxfSavedActiveOpacity = _activeOpacity;
 
         var dxfSavedPendingVectorStart = _pendingVectorStart;
@@ -7430,9 +7440,9 @@ public unsafe class Compositor : IDisposable
         var dxfSavedHasGpuTransformsInFrame = _hasGpuTransformsInFrame;
         var dxfSavedGpuTransformsCameraView = _gpuTransformsCameraView;
 
-        var dxfSavedBlendModeStack = _blendModeStack.ToArray();
+        var dxfSavedBlendModeStack = RentStackSnapshot(_blendModeStack, out var dxfSavedBlendModeStackCount);
         var dxfSavedActiveBlendMode = _activeBlendMode;
-        var dxfSavedMaskStack = _maskStack.ToArray();
+        var dxfSavedMaskStack = RentStackSnapshot(_maskStack, out var dxfSavedMaskStackCount);
         var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();
         var dxfSavedMasksToReturnToPool = _masksToReturnToPool.ToArray();
 
@@ -7839,18 +7849,10 @@ public unsafe class Compositor : IDisposable
             _compiledTextRecords.Clear(); _compiledTextRecords.AddRange(dxfSavedCompiledTextRecords);
 
             _activeClipRect = dxfSavedActiveClipRect;
-            _clipStack.Clear();
-            for (int i = dxfSavedClipStack.Length - 1; i >= 0; i--)
-            {
-                _clipStack.Push(dxfSavedClipStack[i]);
-            }
-            RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask);
+            RestoreStack(_clipStack, dxfSavedClipStack, dxfSavedClipStackCount);
+            RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
 
-            _opacityStack.Clear();
-            for (int i = dxfSavedOpacityStack.Length - 1; i >= 0; i--)
-            {
-                _opacityStack.Push(dxfSavedOpacityStack[i]);
-            }
+            RestoreStack(_opacityStack, dxfSavedOpacityStack, dxfSavedOpacityStackCount);
             _activeOpacity = dxfSavedActiveOpacity;
 
             _pendingVectorStart = dxfSavedPendingVectorStart;
@@ -7862,24 +7864,22 @@ public unsafe class Compositor : IDisposable
             _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
             _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
 
-            _blendModeStack.Clear();
-            for (int i = dxfSavedBlendModeStack.Length - 1; i >= 0; i--)
-            {
-                _blendModeStack.Push(dxfSavedBlendModeStack[i]);
-            }
+            RestoreStack(_blendModeStack, dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
             _activeBlendMode = dxfSavedActiveBlendMode;
 
-            _maskStack.Clear();
-            for (int i = dxfSavedMaskStack.Length - 1; i >= 0; i--)
-            {
-                _maskStack.Push(dxfSavedMaskStack[i]);
-            }
+            RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
 
             _maskRenderPasses.Clear();
             _maskRenderPasses.AddRange(dxfSavedMaskRenderPasses);
 
             _masksToReturnToPool.Clear();
             _masksToReturnToPool.AddRange(dxfSavedMasksToReturnToPool);
+
+            ReturnStackSnapshot(dxfSavedClipStack, dxfSavedClipStackCount);
+            ReturnStackSnapshot(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
+            ReturnStackSnapshot(dxfSavedOpacityStack, dxfSavedOpacityStackCount);
+            ReturnStackSnapshot(dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
+            ReturnStackSnapshot(dxfSavedMaskStack, dxfSavedMaskStackCount);
         }
     }
 
@@ -8820,11 +8820,15 @@ public unsafe class Compositor : IDisposable
 
     private MaskCompilationState ResetStateForMaskCompilation()
     {
+        var savedOpacityStack = RentStackSnapshot(_opacityStack, out var savedOpacityStackCount);
+        var savedBlendModeStack = RentStackSnapshot(_blendModeStack, out var savedBlendModeStackCount);
         var savedState = new MaskCompilationState(
             _activeOpacity,
-            _opacityStack.ToArray(),
+            savedOpacityStack,
+            savedOpacityStackCount,
             _activeBlendMode,
-            _blendModeStack.ToArray());
+            savedBlendModeStack,
+            savedBlendModeStackCount);
         _activeOpacity = 1.0f;
         _opacityStack.Clear();
         _activeBlendMode = GpuBlendMode.SrcOver;
@@ -8834,26 +8838,28 @@ public unsafe class Compositor : IDisposable
 
     private void RestoreStateAfterMaskCompilation(MaskCompilationState savedState)
     {
-        _activeOpacity = savedState.ActiveOpacity;
-        _opacityStack.Clear();
-        for (int i = savedState.OpacityStack.Length - 1; i >= 0; i--)
+        try
         {
-            _opacityStack.Push(savedState.OpacityStack[i]);
-        }
+            _activeOpacity = savedState.ActiveOpacity;
+            RestoreStack(_opacityStack, savedState.OpacityStack, savedState.OpacityStackCount);
 
-        _activeBlendMode = savedState.ActiveBlendMode;
-        _blendModeStack.Clear();
-        for (int i = savedState.BlendModeStack.Length - 1; i >= 0; i--)
+            _activeBlendMode = savedState.ActiveBlendMode;
+            RestoreStack(_blendModeStack, savedState.BlendModeStack, savedState.BlendModeStackCount);
+        }
+        finally
         {
-            _blendModeStack.Push(savedState.BlendModeStack[i]);
+            ReturnStackSnapshot(savedState.OpacityStack, savedState.OpacityStackCount);
+            ReturnStackSnapshot(savedState.BlendModeStack, savedState.BlendModeStackCount);
         }
     }
 
     private readonly record struct MaskCompilationState(
         float ActiveOpacity,
         float[] OpacityStack,
+        int OpacityStackCount,
         GpuBlendMode ActiveBlendMode,
-        GpuBlendMode[] BlendModeStack);
+        GpuBlendMode[] BlendModeStack,
+        int BlendModeStackCount);
 
     private void PopGeometryMask()
     {

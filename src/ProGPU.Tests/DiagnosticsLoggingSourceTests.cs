@@ -46,6 +46,27 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("Console.WriteLine(message)", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CompositorTransientStateSnapshotsUseArrayPool()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Compositor.cs"));
+
+        Assert.Contains("using System.Buffers;", source, StringComparison.Ordinal);
+        Assert.Contains("private static T[] RentStackSnapshot<T>(Stack<T> stack, out int count)", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<T>.Shared.Rent(count)", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<T>.Shared.Return(snapshot)", source, StringComparison.Ordinal);
+        Assert.Contains("RentStackSnapshot(_clipStack", source, StringComparison.Ordinal);
+        Assert.Contains("RentStackSnapshot(_clipScopeIsGeometryMask", source, StringComparison.Ordinal);
+        Assert.Contains("RentStackSnapshot(_opacityStack", source, StringComparison.Ordinal);
+        Assert.Contains("RentStackSnapshot(_blendModeStack", source, StringComparison.Ordinal);
+        Assert.Contains("RentStackSnapshot(_maskStack", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_clipStack.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_clipScopeIsGeometryMask.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_opacityStack.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_blendModeStack.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_maskStack.ToArray()", source, StringComparison.Ordinal);
+    }
+
     private static string FindRepoFile(params string[] pathParts)
     {
         for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
