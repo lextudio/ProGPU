@@ -43,9 +43,13 @@ public sealed class GpuHitTestingTests
         Assert.Contains("List<int>? child0 = null;", source, StringComparison.Ordinal);
         Assert.Contains("AddChildPrimitive(ref child0, ref child1, ref child2, ref child3, childIndex, primitiveIndex)", source, StringComparison.Ordinal);
         Assert.Contains("CountNonEmpty(child0, child1, child2, child3)", source, StringComparison.Ordinal);
+        Assert.Contains("int child0NodeIndex = AddChildNodeSlot(child0);", source, StringComparison.Ordinal);
+        Assert.Contains("FillChildNode(child0NodeIndex, 0, child0, min, max, center, depth);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var retained = new List<int>();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var childPrimitiveLists = new List<int>[4];", source, StringComparison.Ordinal);
         Assert.DoesNotContain("childPrimitiveLists[i] = [];", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new (Vector2 Min, Vector2 Max, List<int> Primitives, int NodeIndex)[childCount]", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("childSlots[slot++]", source, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -630,12 +630,10 @@ public sealed class GpuHitTestIndex
             }
 
             uint firstChild = (uint)Nodes.Count;
-            var childSlots = new (Vector2 Min, Vector2 Max, List<int> Primitives, int NodeIndex)[childCount];
-            int slot = 0;
-            AddChildSlot(childSlots, ref slot, 0, child0, min, max, center);
-            AddChildSlot(childSlots, ref slot, 1, child1, min, max, center);
-            AddChildSlot(childSlots, ref slot, 2, child2, min, max, center);
-            AddChildSlot(childSlots, ref slot, 3, child3, min, max, center);
+            int child0NodeIndex = AddChildNodeSlot(child0);
+            int child1NodeIndex = AddChildNodeSlot(child1);
+            int child2NodeIndex = AddChildNodeSlot(child2);
+            int child3NodeIndex = AddChildNodeSlot(child3);
 
             Nodes[nodeIndex] = new GpuHitTestNode(
                 min,
@@ -645,10 +643,10 @@ public sealed class GpuHitTestIndex
                 firstPrimitive,
                 (uint)retainedCount);
 
-            for (int i = 0; i < childSlots.Length; i++)
-            {
-                FillNode(childSlots[i].NodeIndex, childSlots[i].Min, childSlots[i].Max, childSlots[i].Primitives, depth + 1);
-            }
+            FillChildNode(child0NodeIndex, 0, child0, min, max, center, depth);
+            FillChildNode(child1NodeIndex, 1, child1, min, max, center, depth);
+            FillChildNode(child2NodeIndex, 2, child2, min, max, center, depth);
+            FillChildNode(child3NodeIndex, 3, child3, min, max, center, depth);
         }
 
         private void WriteLeaf(int nodeIndex, Vector2 min, Vector2 max, List<int> primitiveIndices)
@@ -697,24 +695,34 @@ public sealed class GpuHitTestIndex
             }
         }
 
-        private void AddChildSlot(
-            (Vector2 Min, Vector2 Max, List<int> Primitives, int NodeIndex)[] childSlots,
-            ref int slot,
+        private int AddChildNodeSlot(List<int>? childPrimitives)
+        {
+            if (childPrimitives is not { Count: > 0 })
+            {
+                return -1;
+            }
+
+            int childNodeIndex = Nodes.Count;
+            Nodes.Add(default);
+            return childNodeIndex;
+        }
+
+        private void FillChildNode(
+            int childNodeIndex,
             int childIndex,
             List<int>? childPrimitives,
             Vector2 min,
             Vector2 max,
-            Vector2 center)
+            Vector2 center,
+            int depth)
         {
-            if (childPrimitives is not { Count: > 0 })
+            if (childNodeIndex < 0 || childPrimitives is not { Count: > 0 })
             {
                 return;
             }
 
             var bounds = GetChildBounds(childIndex, min, max, center);
-            int childNodeIndex = Nodes.Count;
-            Nodes.Add(default);
-            childSlots[slot++] = (bounds.Min, bounds.Max, childPrimitives, childNodeIndex);
+            FillNode(childNodeIndex, bounds.Min, bounds.Max, childPrimitives, depth + 1);
         }
 
         private static int FindContainingChild(Vector2 primitiveMin, Vector2 primitiveMax, Vector2 nodeMin, Vector2 nodeMax, Vector2 center)
