@@ -91,6 +91,7 @@ public class ProGpuHostControlTests
     public void AvaloniaHostCoalescesRenderRequestsOutsidePaintCallback()
     {
         string source = File.ReadAllText(FindProGpuHostControlSource()).Replace("\r\n", "\n");
+        string sampleSource = File.ReadAllText(FindProGpuAvaloniaSampleSource()).Replace("\r\n", "\n");
         int renderIndex = source.IndexOf("public override void Render(", StringComparison.Ordinal);
         int customVisualIndex = source.IndexOf("public unsafe class ProGpuCustomVisualHandler", StringComparison.Ordinal);
 
@@ -100,6 +101,7 @@ public class ProGpuHostControlTests
         string renderMethod = source[renderIndex..customVisualIndex];
 
         Assert.Contains("private bool _renderDispatchQueued = false;", source, StringComparison.Ordinal);
+        Assert.Contains("public void RequestRender()", source, StringComparison.Ordinal);
         Assert.Contains("private void QueueRenderUpdate()", source, StringComparison.Ordinal);
         Assert.Contains("private async void ProcessQueuedRenderUpdate()", source, StringComparison.Ordinal);
         Assert.Contains("Dispatcher.UIThread.Post(ProcessQueuedRenderUpdate, DispatcherPriority.Render);", source, StringComparison.Ordinal);
@@ -107,6 +109,8 @@ public class ProGpuHostControlTests
         Assert.Contains("InvalidateMeasure();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("private async void QueueRenderUpdate()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("QueueRenderUpdate();", renderMethod, StringComparison.Ordinal);
+        Assert.Contains("ProGpuHost.RequestRender();", sampleSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProGpuHost.InvalidateVisual();", sampleSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -287,6 +291,11 @@ public class ProGpuHostControlTests
     private static string FindProGpuHostControlSource()
     {
         return FindProGpuSource("ProGPU.Avalonia", "ProGpuHostControl.cs");
+    }
+
+    private static string FindProGpuAvaloniaSampleSource()
+    {
+        return FindProGpuSource("ProGPU.Samples.Avalonia", "MainWindow.axaml.cs");
     }
 
     private static string FindProGpuBackendSource(string fileName)

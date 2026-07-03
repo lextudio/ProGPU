@@ -1177,6 +1177,11 @@ public class ProGpuHostControl : Control
 
     // --- Render Update Pipeline ---
 
+    public void RequestRender()
+    {
+        QueueRenderUpdate();
+    }
+
     private void QueueRenderUpdate()
     {
         if (!_isInitialized || WinuiRoot == null) return;

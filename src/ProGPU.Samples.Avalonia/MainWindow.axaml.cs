@@ -88,8 +88,8 @@ public partial class MainWindow : global::Avalonia.Controls.Window
             MainWindowController.OnWindowRender(delta);
         }
 
-        // Force Avalonia control repaint
-        ProGpuHost.InvalidateVisual();
+        // Request the coalesced ProGPU frame directly.
+        ProGpuHost.RequestRender();
 
         // Queue next frame
         RequestAnimationFrame(OnAnimationTick);
@@ -115,7 +115,7 @@ public partial class MainWindow : global::Avalonia.Controls.Window
 
             // Invalidate the host element layout to force sizing negotiation (Measure/Arrange)
             ProGpuHost.InvalidateMeasure();
-            ProGpuHost.InvalidateVisual();
+            ProGpuHost.RequestRender();
         }
     }
 
@@ -133,7 +133,7 @@ public partial class MainWindow : global::Avalonia.Controls.Window
         
         // 3. Trigger immediate repaint of cached and themed brushes
         ProGpuHost.WinuiRoot?.NotifyThemeChanged();
-        ProGpuHost.InvalidateVisual();
+        ProGpuHost.RequestRender();
     }
 
     private void OnPlayPauseClicked(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
