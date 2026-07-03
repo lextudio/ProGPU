@@ -72,6 +72,13 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("private void ReturnMaskRenderPassDrawCallLists()", source, StringComparison.Ordinal);
         Assert.Contains("ReturnMaskRenderPassDrawCallLists();", source, StringComparison.Ordinal);
         Assert.Contains("RentMaskDrawCallList(maskDrawCallCount)", source, StringComparison.Ordinal);
+        Assert.Contains("private static void AddRemovalItem<T>(ref T[]? buffer, ref int count, int capacity, T item)", source, StringComparison.Ordinal);
+        Assert.Contains("private static void ReturnRemovalBuffer<T>(T[]? buffer, int count)", source, StringComparison.Ordinal);
+        Assert.Contains("AddRemovalItem(ref keysToRemove", source, StringComparison.Ordinal);
+        Assert.Contains("AddRemovalItem(ref detached", source, StringComparison.Ordinal);
+        Assert.Contains("AddRemovalItem(ref stale", source, StringComparison.Ordinal);
+        Assert.Contains("private void DisposeMaskTexturePool()", source, StringComparison.Ordinal);
+        Assert.Contains("var pooledMaskTextures = RentListSnapshot(_maskTexturePool", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipScopeIsGeometryMask.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_opacityStack.ToArray()", source, StringComparison.Ordinal);
@@ -86,6 +93,11 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("var savedMaskRenderPasses = _maskRenderPasses.ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var dxfSavedMaskRenderPasses = _maskRenderPasses.ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var maskDrawCalls = new List<CompositorDrawCall>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("keysToRemove ??= new List<TextureCacheKey>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("keysToRemove ??= new List<GpuTexture>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("detached ??= new List<Visual>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("stale ??= new List<Visual>();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_maskTexturePool.ToArray()", source, StringComparison.Ordinal);
     }
 
     private static string FindRepoFile(params string[] pathParts)

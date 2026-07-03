@@ -2162,22 +2162,27 @@ public unsafe class Compositor : IDisposable
     {
         lock (_persistentTextureBindGroups)
         {
-            List<TextureCacheKey>? keysToRemove = null;
-            foreach (var kvp in _persistentTextureBindGroups)
+            TextureCacheKey[]? keysToRemove = null;
+            int keysToRemoveCount = 0;
+            try
             {
-                if (_frameNumber - kvp.Value.LastUsedFrame > 60)
+                foreach (var kvp in _persistentTextureBindGroups)
                 {
-                    QueueBindGroupRelease(kvp.Value.BindGroupPtr);
-                    keysToRemove ??= new List<TextureCacheKey>();
-                    keysToRemove.Add(kvp.Key);
+                    if (_frameNumber - kvp.Value.LastUsedFrame > 60)
+                    {
+                        QueueBindGroupRelease(kvp.Value.BindGroupPtr);
+                        AddRemovalItem(ref keysToRemove, ref keysToRemoveCount, _persistentTextureBindGroups.Count, kvp.Key);
+                    }
+                }
+
+                for (int i = 0; i < keysToRemoveCount; i++)
+                {
+                    _persistentTextureBindGroups.Remove(keysToRemove![i]);
                 }
             }
-            if (keysToRemove != null)
+            finally
             {
-                foreach (var key in keysToRemove)
-                {
-                    _persistentTextureBindGroups.Remove(key);
-                }
+                ReturnRemovalBuffer(keysToRemove, keysToRemoveCount);
             }
         }
     }
@@ -2202,25 +2207,31 @@ public unsafe class Compositor : IDisposable
 
         lock (_persistentTextureBindGroups)
         {
-            List<TextureCacheKey>? keysToRemove = null;
-            foreach (var key in _persistentTextureBindGroups.Keys)
+            TextureCacheKey[]? keysToRemove = null;
+            int keysToRemoveCount = 0;
+            try
             {
-                if (key.TextureId == textureId)
+                foreach (var key in _persistentTextureBindGroups.Keys)
                 {
-                    keysToRemove ??= new List<TextureCacheKey>();
-                    keysToRemove.Add(key);
+                    if (key.TextureId == textureId)
+                    {
+                        AddRemovalItem(ref keysToRemove, ref keysToRemoveCount, _persistentTextureBindGroups.Count, key);
+                    }
                 }
-            }
-            if (keysToRemove != null)
-            {
-                foreach (var key in keysToRemove)
+
+                for (int i = 0; i < keysToRemoveCount; i++)
                 {
+                    var key = keysToRemove![i];
                     if (_persistentTextureBindGroups.TryGetValue(key, out var cachedBg))
                     {
                         QueueBindGroupRelease(cachedBg.BindGroupPtr);
                         _persistentTextureBindGroups.Remove(key);
                     }
                 }
+            }
+            finally
+            {
+                ReturnRemovalBuffer(keysToRemove, keysToRemoveCount);
             }
         }
 
@@ -2239,30 +2250,53 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private void DisposeMaskTexturePool()
+    {
+        var pooledMaskTextures = RentListSnapshot(_maskTexturePool, out var pooledMaskTextureCount);
+        _maskTexturePool.Clear();
+
+        try
+        {
+            for (int i = 0; i < pooledMaskTextureCount; i++)
+            {
+                pooledMaskTextures[i].Dispose();
+            }
+        }
+        finally
+        {
+            ReturnListSnapshot(pooledMaskTextures, pooledMaskTextureCount);
+        }
+    }
+
     private void RemoveMaskBindGroups(Dictionary<GpuTexture, nint> cache, ulong textureId)
     {
         lock (cache)
         {
-            List<GpuTexture>? keysToRemove = null;
-            foreach (var key in cache.Keys)
+            GpuTexture[]? keysToRemove = null;
+            int keysToRemoveCount = 0;
+            try
             {
-                if (key.Id == textureId)
+                foreach (var key in cache.Keys)
                 {
-                    keysToRemove ??= new List<GpuTexture>();
-                    keysToRemove.Add(key);
+                    if (key.Id == textureId)
+                    {
+                        AddRemovalItem(ref keysToRemove, ref keysToRemoveCount, cache.Count, key);
+                    }
                 }
-            }
 
-            if (keysToRemove != null)
-            {
-                foreach (var key in keysToRemove)
+                for (int i = 0; i < keysToRemoveCount; i++)
                 {
+                    var key = keysToRemove![i];
                     if (cache.TryGetValue(key, out var bindGroupPtr))
                     {
                         QueueBindGroupRelease(bindGroupPtr);
                         cache.Remove(key);
                     }
                 }
+            }
+            finally
+            {
+                ReturnRemovalBuffer(keysToRemove, keysToRemoveCount);
             }
         }
     }
@@ -2298,19 +2332,21 @@ public unsafe class Compositor : IDisposable
     {
         if (_frameNumber % 60 == 0 && _effectTextures.Count > 0)
         {
-            List<Visual>? detached = null;
-            foreach (var fe in _effectTextures.Keys)
+            Visual[]? detached = null;
+            int detachedCount = 0;
+            try
             {
-                if (!IsAttachedToAnyActiveRoot(fe, mainRoot, externalLayers, activeToolTip))
+                foreach (var fe in _effectTextures.Keys)
                 {
-                    detached ??= new List<Visual>();
-                    detached.Add(fe);
+                    if (!IsAttachedToAnyActiveRoot(fe, mainRoot, externalLayers, activeToolTip))
+                    {
+                        AddRemovalItem(ref detached, ref detachedCount, _effectTextures.Count, fe);
+                    }
                 }
-            }
-            if (detached != null)
-            {
-                foreach (var fe in detached)
+
+                for (int i = 0; i < detachedCount; i++)
                 {
+                    var fe = detached![i];
                     if (_effectTextures.Remove(fe, out var textures))
                     {
                         textures.Source.Dispose();
@@ -2320,6 +2356,10 @@ public unsafe class Compositor : IDisposable
                     _effectCacheKeys.Remove(fe);
                     _wpfShaderEffectDrawParams.Remove(fe);
                 }
+            }
+            finally
+            {
+                ReturnRemovalBuffer(detached, detachedCount);
             }
         }
     }
@@ -2331,35 +2371,38 @@ public unsafe class Compositor : IDisposable
             return;
         }
 
-        List<Visual>? stale = null;
-        foreach (var entry in _allocatedLayerTextures)
+        Visual[]? stale = null;
+        int staleCount = 0;
+        try
         {
-            var owner = entry.Key;
-            var texture = entry.Value;
-            if (texture.IsDisposed
-                || !ReferenceEquals(owner.LayerTexture, texture)
-                || !_activeLayerTextureOwners.Contains(owner)
-                || !owner.IsVisible
-                || !owner.CacheAsLayer
-                || !IsCacheAsLayerEnabled
-                || !IsAttachedToAnyActiveRoot(owner, mainRoot, externalLayers, activeToolTip))
+            foreach (var entry in _allocatedLayerTextures)
             {
-                stale ??= new List<Visual>();
-                stale.Add(owner);
+                var owner = entry.Key;
+                var texture = entry.Value;
+                if (texture.IsDisposed
+                    || !ReferenceEquals(owner.LayerTexture, texture)
+                    || !_activeLayerTextureOwners.Contains(owner)
+                    || !owner.IsVisible
+                    || !owner.CacheAsLayer
+                    || !IsCacheAsLayerEnabled
+                    || !IsAttachedToAnyActiveRoot(owner, mainRoot, externalLayers, activeToolTip))
+                {
+                    AddRemovalItem(ref stale, ref staleCount, _allocatedLayerTextures.Count, owner);
+                }
+            }
+
+            for (int i = 0; i < staleCount; i++)
+            {
+                var owner = stale![i];
+                if (_allocatedLayerTextures.TryGetValue(owner, out var texture))
+                {
+                    ReleaseLayerTexture(owner, texture);
+                }
             }
         }
-
-        if (stale == null)
+        finally
         {
-            return;
-        }
-
-        foreach (var owner in stale)
-        {
-            if (_allocatedLayerTextures.TryGetValue(owner, out var texture))
-            {
-                ReleaseLayerTexture(owner, texture);
-            }
+            ReturnRemovalBuffer(stale, staleCount);
         }
     }
 
@@ -2502,6 +2545,37 @@ public unsafe class Compositor : IDisposable
     private static void ReturnListSnapshot<T>(T[] snapshot, int count)
     {
         ReturnSnapshot(snapshot, count);
+    }
+
+    private static void AddRemovalItem<T>(ref T[]? buffer, ref int count, int capacity, T item)
+    {
+        buffer ??= ArrayPool<T>.Shared.Rent(Math.Max(1, capacity));
+        if (count >= buffer.Length)
+        {
+            var larger = ArrayPool<T>.Shared.Rent(buffer.Length * 2);
+            buffer.AsSpan(0, count).CopyTo(larger);
+            ReturnSnapshot(buffer, count);
+            buffer = larger;
+        }
+
+        buffer[count++] = item;
+    }
+
+    private static void ReturnRemovalBuffer<T>(T[]? buffer, int count)
+    {
+        if (buffer == null)
+        {
+            return;
+        }
+
+        if (count == 0)
+        {
+            ArrayPool<T>.Shared.Return(buffer);
+        }
+        else
+        {
+            ReturnSnapshot(buffer, count);
+        }
     }
 
     private static void ReturnSnapshot<T>(T[] snapshot, int count)
@@ -5972,12 +6046,7 @@ public unsafe class Compositor : IDisposable
             ReturnMaskRenderPassDrawCallLists();
             _maskDrawCallListPool.Clear();
 
-            var pooledMaskTextures = _maskTexturePool.ToArray();
-            _maskTexturePool.Clear();
-            foreach (var tex in pooledMaskTextures)
-            {
-                tex.Dispose();
-            }
+            DisposeMaskTexturePool();
 
             _isDisposed = true;
         }
