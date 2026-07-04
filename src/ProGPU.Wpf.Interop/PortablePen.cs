@@ -7,6 +7,15 @@ public interface IPortablePenSource
     bool TryGetPortablePen(out PortablePen pen);
 }
 
+public interface IPortableDashStyleSource
+{
+    int PortableDashCount { get; }
+
+    double PortableDashOffset { get; }
+
+    double GetPortableDash(int index);
+}
+
 public enum PortablePenLineCap
 {
     Flat = 0,

@@ -17,7 +17,7 @@ public enum PenLineCap
     Triangle = 3
 }
 
-public class DashStyle
+public class DashStyle : IPortableDashStyleSource
 {
     private double[] _dashes = global::System.Array.Empty<double>();
 
@@ -39,6 +39,15 @@ public class DashStyle
     }
 
     public double Offset { get; set; }
+
+    int IPortableDashStyleSource.PortableDashCount => _dashes.Length;
+
+    double IPortableDashStyleSource.PortableDashOffset => Offset;
+
+    double IPortableDashStyleSource.GetPortableDash(int index)
+    {
+        return _dashes[index];
+    }
 }
 
 public class Pen : IPortablePenSource
