@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
@@ -3261,15 +3262,15 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             return null;
         }
 
-        var instanceArray = instanceData.ToArray();
+        var instanceSpan = CollectionsMarshal.AsSpan(instanceData);
         var instanceBuffer = _device.CreateBuffer(new DxBufferDescriptor
         {
-            SizeInBytes = checked((uint)(instanceArray.Length * sizeof(float))),
+            SizeInBytes = checked((uint)(instanceSpan.Length * sizeof(float))),
             Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
             StrideInBytes = 32,
             Label = $"SciChartColoredSpriteInstances {submittedInstanceCount}"
         });
-        instanceBuffer.Write(instanceArray);
+        instanceBuffer.Write(instanceSpan);
         return instanceBuffer;
     }
 
@@ -3364,15 +3365,15 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             return null;
         }
 
-        var vertexArray = vertexData.ToArray();
+        var vertexSpan = CollectionsMarshal.AsSpan(vertexData);
         var vertexBuffer = _device.CreateBuffer(new DxBufferDescriptor
         {
-            SizeInBytes = checked((uint)(vertexArray.Length * sizeof(float))),
+            SizeInBytes = checked((uint)(vertexSpan.Length * sizeof(float))),
             Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
             StrideInBytes = 32,
             Label = $"{label} {submittedVertexCount}"
         });
-        vertexBuffer.Write(vertexArray);
+        vertexBuffer.Write(vertexSpan);
         return vertexBuffer;
     }
 
@@ -3414,15 +3415,15 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             return null;
         }
 
-        var vertexArray = vertexData.ToArray();
+        var vertexSpan = CollectionsMarshal.AsSpan(vertexData);
         var vertexBuffer = _device.CreateBuffer(new DxBufferDescriptor
         {
-            SizeInBytes = checked((uint)(vertexArray.Length * sizeof(float))),
+            SizeInBytes = checked((uint)(vertexSpan.Length * sizeof(float))),
             Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
             StrideInBytes = 24,
             Label = $"{label} {submittedVertexCount}"
         });
-        vertexBuffer.Write(vertexArray);
+        vertexBuffer.Write(vertexSpan);
         return vertexBuffer;
     }
 

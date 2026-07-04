@@ -1083,6 +1083,20 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     [Fact]
+    public void SciChartRenderContextUploadsListBackedBatchesWithoutArrayMaterialization()
+    {
+        var source = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXSciChart.cs"));
+
+        Assert.Contains("using System.Runtime.InteropServices;", source, StringComparison.Ordinal);
+        Assert.Contains("var instanceSpan = CollectionsMarshal.AsSpan(instanceData);", source, StringComparison.Ordinal);
+        Assert.Contains("var vertexSpan = CollectionsMarshal.AsSpan(vertexData);", source, StringComparison.Ordinal);
+        Assert.Contains("instanceBuffer.Write(instanceSpan);", source, StringComparison.Ordinal);
+        Assert.Contains("vertexBuffer.Write(vertexSpan);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var instanceArray = instanceData.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var vertexArray = vertexData.ToArray();", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SciChartRenderContext3DRecordsPointCloudAndTriangleMesh()
     {
         using var device = ProGpuDirectXDevice.CreateMetadataDevice();
