@@ -875,8 +875,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     {
         var builder = new StringBuilder(isOffscreen ? "off" : "on");
         builder.Append('|').Append(sourceLayout.LayoutKey);
-        foreach (var register in sourceLayout.Registers)
+        var sourceRegisters = sourceLayout.Registers;
+        for (var i = 0; i < sourceRegisters.Length; i++)
         {
+            var register = sourceRegisters[i];
             if (parameters.TryGetSampler(register, out var texture, out var samplingMode))
             {
                 builder.Append('|')
@@ -905,8 +907,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         ReadOnlySpan<int> activeSamplerRegisters,
         out string? error)
     {
-        foreach (var register in activeSamplerRegisters)
+        for (var i = 0; i < activeSamplerRegisters.Length; i++)
         {
+            var register = activeSamplerRegisters[i];
             if (!parameters.TryGetSampler(register, out var texture, out _))
             {
                 continue;
@@ -942,8 +945,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     private static string BuildSourceLayoutKey(ReadOnlySpan<int> activeRegisters, bool includeMask)
     {
         var builder = new StringBuilder(includeMask ? "m" : "n");
-        foreach (var register in activeRegisters)
+        for (var i = 0; i < activeRegisters.Length; i++)
         {
+            var register = activeRegisters[i];
             builder.Append('_').Append(register);
         }
 

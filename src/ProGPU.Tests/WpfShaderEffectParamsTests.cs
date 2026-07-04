@@ -212,6 +212,10 @@ public class WpfShaderEffectParamsTests
         Assert.Contains("Span<int> activeRegisters = stackalloc int[WpfShaderEffectParams.MaxSamplerRegisterCount];", source, StringComparison.Ordinal);
         Assert.Contains("var activeRegisterCount = CollectActiveSamplerRegisters(p, activeRegisters);", source, StringComparison.Ordinal);
         Assert.Contains("var activeRegisterSpan = activeRegisters[..activeRegisterCount];", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < activeSamplerRegisters.Length; i++)", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < activeRegisters.Length; i++)", source, StringComparison.Ordinal);
+        Assert.Contains("var sourceRegisters = sourceLayout.Registers;", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < sourceRegisters.Length; i++)", source, StringComparison.Ordinal);
         Assert.Contains("Registers = activeRegisters.ToArray()", source, StringComparison.Ordinal);
         Assert.Contains("Span<VertexAttribute> attrs = stackalloc VertexAttribute[3];", source, StringComparison.Ordinal);
         Assert.Contains("Span<VertexBufferLayout> layouts = stackalloc VertexBufferLayout[1];", source, StringComparison.Ordinal);
@@ -222,6 +226,9 @@ public class WpfShaderEffectParamsTests
         Assert.Contains("fixed (VertexBufferLayout* pLayouts = vertexBufferLayouts)", pipelineCache, StringComparison.Ordinal);
         Assert.DoesNotContain("private static int[] CollectActiveSamplerRegisters", source, StringComparison.Ordinal);
         Assert.DoesNotContain("return registers[..count].ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var register in activeSamplerRegisters)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var register in activeRegisters)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var register in sourceLayout.Registers)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new VertexBufferLayout[]", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Marshal.AllocHGlobal(Marshal.SizeOf<VertexAttribute>() * 3)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Marshal.FreeHGlobal((IntPtr)layouts[0].Attributes)", source, StringComparison.Ordinal);
