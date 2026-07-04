@@ -117,6 +117,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("private SmallValueStack<Rect> _clipStack;", source, StringComparison.Ordinal);
         Assert.Contains("private SmallValueStack<bool> _clipScopeIsGeometryMask;", source, StringComparison.Ordinal);
         Assert.Contains("private SmallValueStack<float> _opacityStack;", source, StringComparison.Ordinal);
+        Assert.Contains("private SmallValueStack<GpuBlendMode> _blendModeStack;", source, StringComparison.Ordinal);
         Assert.Contains("private static T[] RentStackSnapshot<T>(in SmallValueStack<T> stack, out int count)", source, StringComparison.Ordinal);
         Assert.Contains("private static void RestoreStack<T>(ref SmallValueStack<T> stack, T[] snapshot, int count)", source, StringComparison.Ordinal);
         Assert.Contains("private struct SmallValueStack<T> : IDisposable", source, StringComparison.Ordinal);
@@ -157,15 +158,20 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("RestoreStack(ref _clipScopeIsGeometryMask", source, StringComparison.Ordinal);
         Assert.Contains("RestoreStack(ref _opacityStack", source, StringComparison.Ordinal);
         Assert.Contains("_opacityStack.Dispose();", source, StringComparison.Ordinal);
+        Assert.Contains("RestoreStack(ref _blendModeStack", source, StringComparison.Ordinal);
+        Assert.Contains("_blendModeStack.Dispose();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("private readonly Stack<Rect> _clipStack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("private readonly Stack<bool> _clipScopeIsGeometryMask", source, StringComparison.Ordinal);
         Assert.DoesNotContain("private readonly Stack<float> _opacityStack", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("private readonly Stack<GpuBlendMode> _blendModeStack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new Stack<Rect>", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new Stack<bool>", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new Stack<float>", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new Stack<GpuBlendMode>", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RestoreStack(_clipStack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RestoreStack(_clipScopeIsGeometryMask", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RestoreStack(_opacityStack", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("RestoreStack(_blendModeStack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipScopeIsGeometryMask.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_opacityStack.ToArray()", source, StringComparison.Ordinal);

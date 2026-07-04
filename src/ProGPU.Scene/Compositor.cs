@@ -656,7 +656,7 @@ public unsafe class Compositor : IDisposable
     private BindGroupLayout* _maskBindGroupLayout;
     private BindGroupLayout* _maskBindGroupLayoutOffscreen;
 
-    private readonly Stack<GpuBlendMode> _blendModeStack = new();
+    private SmallValueStack<GpuBlendMode> _blendModeStack;
     private GpuBlendMode _activeBlendMode = GpuBlendMode.SrcOver;
 
     private readonly List<MaskRenderPassInfo> _maskRenderPasses = new();
@@ -6259,6 +6259,7 @@ public unsafe class Compositor : IDisposable
             _clipStack.Dispose();
             _clipScopeIsGeometryMask.Dispose();
             _opacityStack.Dispose();
+            _blendModeStack.Dispose();
 
             DisposeMaskTexturePool();
 
@@ -7336,7 +7337,7 @@ public unsafe class Compositor : IDisposable
             RestoreStack(ref _opacityStack, savedOpacityStack, savedOpacityStackCount);
             _activeOpacity = savedActiveOpacity;
 
-            RestoreStack(_blendModeStack, savedBlendModeStack, savedBlendModeStackCount);
+            RestoreStack(ref _blendModeStack, savedBlendModeStack, savedBlendModeStackCount);
             _activeBlendMode = savedActiveBlendMode;
 
             RestoreStack(_maskStack, savedMaskStack, savedMaskStackCount);
@@ -7768,7 +7769,7 @@ public unsafe class Compositor : IDisposable
             _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
             _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
 
-            RestoreStack(_blendModeStack, dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
+            RestoreStack(ref _blendModeStack, dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
             _activeBlendMode = dxfSavedActiveBlendMode;
 
             RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
@@ -8256,7 +8257,7 @@ public unsafe class Compositor : IDisposable
             _hasGpuTransformsInFrame = dxfSavedHasGpuTransformsInFrame;
             _gpuTransformsCameraView = dxfSavedGpuTransformsCameraView;
 
-            RestoreStack(_blendModeStack, dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
+            RestoreStack(ref _blendModeStack, dxfSavedBlendModeStack, dxfSavedBlendModeStackCount);
             _activeBlendMode = dxfSavedActiveBlendMode;
 
             RestoreStack(_maskStack, dxfSavedMaskStack, dxfSavedMaskStackCount);
@@ -9260,7 +9261,7 @@ public unsafe class Compositor : IDisposable
             RestoreStack(ref _opacityStack, savedState.OpacityStack, savedState.OpacityStackCount);
 
             _activeBlendMode = savedState.ActiveBlendMode;
-            RestoreStack(_blendModeStack, savedState.BlendModeStack, savedState.BlendModeStackCount);
+            RestoreStack(ref _blendModeStack, savedState.BlendModeStack, savedState.BlendModeStackCount);
         }
         finally
         {
