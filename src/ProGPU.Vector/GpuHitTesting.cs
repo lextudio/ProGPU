@@ -524,49 +524,61 @@ public sealed class GpuHitTestIndex
             throw new ArgumentOutOfRangeException(nameof(maxPrimitivesPerNode));
         }
 
-        var primitiveArray = primitives.ToArray();
-        var pathSegmentArray = pathSegments.ToArray();
-        if (primitiveArray.Length == 0)
+        if (primitives.Length == 0)
         {
             return new GpuHitTestIndex(
-                primitiveArray,
+                CopySpan(primitives),
                 [new GpuHitTestNode(Vector2.Zero, Vector2.Zero, 0, 0, 0, 0)],
                 [],
-                pathSegmentArray);
+                CopySpan(pathSegments));
         }
 
-        Vector2 min = primitiveArray[0].BoundsMin;
-        Vector2 max = primitiveArray[0].BoundsMax;
-        for (int i = 1; i < primitiveArray.Length; i++)
+        Vector2 min = primitives[0].BoundsMin;
+        Vector2 max = primitives[0].BoundsMax;
+        for (int i = 1; i < primitives.Length; i++)
         {
-            min = Vector2.Min(min, primitiveArray[i].BoundsMin);
-            max = Vector2.Max(max, primitiveArray[i].BoundsMax);
+            min = Vector2.Min(min, primitives[i].BoundsMin);
+            max = Vector2.Max(max, primitives[i].BoundsMax);
         }
 
-        var builder = new Builder(primitiveArray, maxDepth, maxPrimitivesPerNode);
+        var builder = new Builder(primitives, maxDepth, maxPrimitivesPerNode);
         builder.AddRootNode(min, max);
         return new GpuHitTestIndex(
-            primitiveArray,
+            CopySpan(primitives),
             builder.Nodes.ToArray(),
             builder.PrimitiveIndices.ToArray(),
-            pathSegmentArray);
+            CopySpan(pathSegments));
     }
 
-    private sealed class Builder
+    private static T[] CopySpan<T>(ReadOnlySpan<T> values)
     {
-        private readonly GpuHitTestPrimitive[] _primitives;
+        if (values.Length == 0)
+        {
+            return Array.Empty<T>();
+        }
+
+        var array = new T[values.Length];
+        values.CopyTo(array);
+        return array;
+    }
+
+    private ref struct Builder
+    {
+        private readonly ReadOnlySpan<GpuHitTestPrimitive> _primitives;
         private readonly int _maxDepth;
         private readonly int _maxPrimitivesPerNode;
 
-        public Builder(GpuHitTestPrimitive[] primitives, int maxDepth, int maxPrimitivesPerNode)
+        public Builder(ReadOnlySpan<GpuHitTestPrimitive> primitives, int maxDepth, int maxPrimitivesPerNode)
         {
             _primitives = primitives;
             _maxDepth = maxDepth;
             _maxPrimitivesPerNode = maxPrimitivesPerNode;
+            Nodes = [];
+            PrimitiveIndices = [];
         }
 
-        public List<GpuHitTestNode> Nodes { get; } = [];
-        public List<uint> PrimitiveIndices { get; } = [];
+        public List<GpuHitTestNode> Nodes { get; }
+        public List<uint> PrimitiveIndices { get; }
 
         public int AddRootNode(Vector2 min, Vector2 max)
         {

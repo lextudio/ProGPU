@@ -45,10 +45,18 @@ public sealed class GpuHitTestingTests
         Assert.Contains("CountNonEmpty(child0, child1, child2, child3)", source, StringComparison.Ordinal);
         Assert.Contains("int child0NodeIndex = AddChildNodeSlot(child0);", source, StringComparison.Ordinal);
         Assert.Contains("FillChildNode(child0NodeIndex, 0, child0, min, max, center, depth);", source, StringComparison.Ordinal);
+        Assert.Contains("var builder = new Builder(primitives, maxDepth, maxPrimitivesPerNode);", source, StringComparison.Ordinal);
         Assert.Contains("builder.AddRootNode(min, max);", source, StringComparison.Ordinal);
         Assert.Contains("new RootPrimitiveIndices(_primitives.Length)", source, StringComparison.Ordinal);
         Assert.Contains("new ListPrimitiveIndices(childPrimitives)", source, StringComparison.Ordinal);
+        Assert.Contains("private ref struct Builder", source, StringComparison.Ordinal);
+        Assert.Contains("private readonly ReadOnlySpan<GpuHitTestPrimitive> _primitives;", source, StringComparison.Ordinal);
+        Assert.Contains("CopySpan(primitives)", source, StringComparison.Ordinal);
+        Assert.Contains("CopySpan(pathSegments)", source, StringComparison.Ordinal);
         Assert.Contains("private readonly struct RootPrimitiveIndices", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var primitiveArray = primitives.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var pathSegmentArray = pathSegments.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new Builder(primitiveArray", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var all = new List<int>(primitiveArray.Length);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("builder.AddNode(min, max, all, depth: 0);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var retained = new List<int>();", source, StringComparison.Ordinal);
