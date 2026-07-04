@@ -2642,20 +2642,15 @@ public unsafe class Compositor : IDisposable
 
     private void PushOpacityValue(float opacity)
     {
+        _opacityStack.Push(_activeOpacity);
         _activeOpacity *= opacity;
-        _opacityStack.Push(opacity);
     }
 
     private void PopOpacityValue()
     {
         if (_opacityStack.Count > 0)
         {
-            _opacityStack.Pop();
-            _activeOpacity = 1.0f;
-            foreach (var opacity in _opacityStack)
-            {
-                _activeOpacity *= opacity;
-            }
+            _activeOpacity = _opacityStack.Pop();
         }
         else
         {

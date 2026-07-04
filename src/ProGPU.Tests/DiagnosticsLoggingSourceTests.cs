@@ -142,9 +142,12 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("AddRemovalItem(ref stale", source, StringComparison.Ordinal);
         Assert.Contains("private void DisposeMaskTexturePool()", source, StringComparison.Ordinal);
         Assert.Contains("var pooledMaskTextures = RentListSnapshot(_maskTexturePool", source, StringComparison.Ordinal);
+        Assert.Contains("_opacityStack.Push(_activeOpacity);", source, StringComparison.Ordinal);
+        Assert.Contains("_activeOpacity = _opacityStack.Pop();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipScopeIsGeometryMask.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_opacityStack.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var opacity in _opacityStack)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_blendModeStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_maskStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var savedVectorVertices = _vectorVerticesList.ToArray();", source, StringComparison.Ordinal);
