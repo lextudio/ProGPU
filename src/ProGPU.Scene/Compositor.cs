@@ -797,7 +797,7 @@ public unsafe class Compositor : IDisposable
     private readonly Stack<bool> _clipScopeIsGeometryMask = new();
     private Rect? _activeClipRect;
 
-    private readonly Stack<float> _opacityStack = new();
+    private SmallValueStack<float> _opacityStack;
     private float _activeOpacity = 1.0f;
 
     public static float DefaultTextGamma = 1.43f;
@@ -1645,7 +1645,7 @@ public unsafe class Compositor : IDisposable
                 RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
                 RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
                 _activeOpacity = savedActiveOpacity;
-                RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+                RestoreStack(ref _opacityStack, savedOpacityStack, savedOpacityStackCount);
                 ReturnStackSnapshot(savedClipStack, savedClipStackCount);
                 ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
                 ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
@@ -1682,7 +1682,7 @@ public unsafe class Compositor : IDisposable
                 RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
                 RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
                 _activeOpacity = savedActiveOpacity;
-                RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+                RestoreStack(ref _opacityStack, savedOpacityStack, savedOpacityStackCount);
                 ReturnStackSnapshot(savedClipStack, savedClipStackCount);
                 ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
                 ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
@@ -1804,7 +1804,7 @@ public unsafe class Compositor : IDisposable
                 RestoreStack(_clipStack, savedClipStack, savedClipStackCount);
                 RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
                 _activeOpacity = savedActiveOpacity;
-                RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+                RestoreStack(ref _opacityStack, savedOpacityStack, savedOpacityStackCount);
                 ReturnStackSnapshot(savedClipStack, savedClipStackCount);
                 ReturnStackSnapshot(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
                 ReturnStackSnapshot(savedOpacityStack, savedOpacityStackCount);
@@ -2524,6 +2524,28 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private static T[] RentStackSnapshot<T>(in SmallValueStack<T> stack, out int count)
+    {
+        count = stack.Count;
+        if (count == 0)
+        {
+            return Array.Empty<T>();
+        }
+
+        var snapshot = ArrayPool<T>.Shared.Rent(count);
+        stack.CopyToStackOrder(snapshot);
+        return snapshot;
+    }
+
+    private static void RestoreStack<T>(ref SmallValueStack<T> stack, T[] snapshot, int count)
+    {
+        stack.Clear();
+        for (int i = count - 1; i >= 0; i--)
+        {
+            stack.Push(snapshot[i]);
+        }
+    }
+
     private static void RestoreList<T>(List<T> list, T[] snapshot, int count)
     {
         list.Clear();
@@ -2545,6 +2567,164 @@ public unsafe class Compositor : IDisposable
     private static void ReturnListSnapshot<T>(T[] snapshot, int count)
     {
         ReturnSnapshot(snapshot, count);
+    }
+
+    private struct SmallValueStack<T> : IDisposable
+    {
+        private const int InitialArrayCapacity = 4;
+
+        private T _first;
+        private T[]? _items;
+        private int _count;
+
+        public readonly int Count => _count;
+
+        public void Push(T item)
+        {
+            if (_count == 0)
+            {
+                _first = item;
+                if (_items != null)
+                {
+                    _items[0] = item;
+                }
+
+                _count = 1;
+                return;
+            }
+
+            var items = EnsureArray(_count + 1);
+            items[_count] = item;
+            _count++;
+        }
+
+        public T Pop()
+        {
+            if (_count == 0)
+            {
+                throw new InvalidOperationException("Cannot pop an empty stack.");
+            }
+
+            _count--;
+            if (_items != null)
+            {
+                var item = _items[_count];
+                ClearSlot(_count);
+                return item;
+            }
+
+            var first = _first;
+            ClearFirst();
+            return first;
+        }
+
+        public readonly T Peek()
+        {
+            if (_count == 0)
+            {
+                throw new InvalidOperationException("Cannot peek an empty stack.");
+            }
+
+            return _items != null
+                ? _items[_count - 1]
+                : _first;
+        }
+
+        public readonly void CopyToStackOrder(T[] destination)
+        {
+            if (_count == 0)
+            {
+                return;
+            }
+
+            if (_items != null)
+            {
+                for (int i = 0, source = _count - 1; source >= 0; i++, source--)
+                {
+                    destination[i] = _items[source];
+                }
+
+                return;
+            }
+
+            destination[0] = _first;
+        }
+
+        public void Clear()
+        {
+            if (_items != null)
+            {
+                if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+                {
+                    Array.Clear(_items, 0, _count);
+                    _first = default!;
+                }
+            }
+            else
+            {
+                ClearFirst();
+            }
+
+            _count = 0;
+        }
+
+        public void Dispose()
+        {
+            var items = _items;
+            _items = null;
+            _count = 0;
+            _first = default!;
+
+            if (items != null)
+            {
+                ArrayPool<T>.Shared.Return(items, RuntimeHelpers.IsReferenceOrContainsReferences<T>());
+            }
+        }
+
+        private T[] EnsureArray(int capacity)
+        {
+            var items = _items;
+            if (items == null)
+            {
+                items = ArrayPool<T>.Shared.Rent(Math.Max(InitialArrayCapacity, capacity));
+                items[0] = _first;
+                _items = items;
+                return items;
+            }
+
+            if (capacity <= items.Length)
+            {
+                return items;
+            }
+
+            var larger = ArrayPool<T>.Shared.Rent(Math.Max(capacity, items.Length * 2));
+            Array.Copy(items, larger, _count);
+            ArrayPool<T>.Shared.Return(items, RuntimeHelpers.IsReferenceOrContainsReferences<T>());
+            _items = larger;
+            return larger;
+        }
+
+        private void ClearSlot(int index)
+        {
+            if (!RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            {
+                return;
+            }
+
+            _items![index] = default!;
+            if (_count == 0)
+            {
+                _first = default!;
+            }
+        }
+
+        private void ClearFirst()
+        {
+            if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            {
+                _first = default!;
+            }
+        }
     }
 
     private static void AddRemovalItem<T>(ref T[]? buffer, ref int count, int capacity, T item)
@@ -6076,6 +6256,7 @@ public unsafe class Compositor : IDisposable
             _maskBindGroupsOffscreen.Clear();
             ReturnMaskRenderPassDrawCallLists();
             _drawCallListPool.Clear();
+            _opacityStack.Dispose();
 
             DisposeMaskTexturePool();
 
@@ -7150,7 +7331,7 @@ public unsafe class Compositor : IDisposable
             RestoreClipScopeStack(savedClipScopeIsGeometryMask, savedClipScopeIsGeometryMaskCount);
             _activeClipRect = savedActiveClipRect;
 
-            RestoreStack(_opacityStack, savedOpacityStack, savedOpacityStackCount);
+            RestoreStack(ref _opacityStack, savedOpacityStack, savedOpacityStackCount);
             _activeOpacity = savedActiveOpacity;
 
             RestoreStack(_blendModeStack, savedBlendModeStack, savedBlendModeStackCount);
@@ -7573,7 +7754,7 @@ public unsafe class Compositor : IDisposable
             RestoreStack(_clipStack, dxfSavedClipStack, dxfSavedClipStackCount);
             RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
 
-            RestoreStack(_opacityStack, dxfSavedOpacityStack, dxfSavedOpacityStackCount);
+            RestoreStack(ref _opacityStack, dxfSavedOpacityStack, dxfSavedOpacityStackCount);
             _activeOpacity = dxfSavedActiveOpacity;
 
             _pendingVectorStart = dxfSavedPendingVectorStart;
@@ -8061,7 +8242,7 @@ public unsafe class Compositor : IDisposable
             RestoreStack(_clipStack, dxfSavedClipStack, dxfSavedClipStackCount);
             RestoreClipScopeStack(dxfSavedClipScopeIsGeometryMask, dxfSavedClipScopeIsGeometryMaskCount);
 
-            RestoreStack(_opacityStack, dxfSavedOpacityStack, dxfSavedOpacityStackCount);
+            RestoreStack(ref _opacityStack, dxfSavedOpacityStack, dxfSavedOpacityStackCount);
             _activeOpacity = dxfSavedActiveOpacity;
 
             _pendingVectorStart = dxfSavedPendingVectorStart;
@@ -9074,7 +9255,7 @@ public unsafe class Compositor : IDisposable
         try
         {
             _activeOpacity = savedState.ActiveOpacity;
-            RestoreStack(_opacityStack, savedState.OpacityStack, savedState.OpacityStackCount);
+            RestoreStack(ref _opacityStack, savedState.OpacityStack, savedState.OpacityStackCount);
 
             _activeBlendMode = savedState.ActiveBlendMode;
             RestoreStack(_blendModeStack, savedState.BlendModeStack, savedState.BlendModeStackCount);

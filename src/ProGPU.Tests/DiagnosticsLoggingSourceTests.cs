@@ -114,6 +114,11 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("RuntimeHelpers.IsReferenceOrContainsReferences<T>()", source, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<T>.Shared.Rent(count)", source, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<T>.Shared.Return(snapshot)", source, StringComparison.Ordinal);
+        Assert.Contains("private SmallValueStack<float> _opacityStack;", source, StringComparison.Ordinal);
+        Assert.Contains("private static T[] RentStackSnapshot<T>(in SmallValueStack<T> stack, out int count)", source, StringComparison.Ordinal);
+        Assert.Contains("private static void RestoreStack<T>(ref SmallValueStack<T> stack, T[] snapshot, int count)", source, StringComparison.Ordinal);
+        Assert.Contains("private struct SmallValueStack<T> : IDisposable", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<T>.Shared.Rent(Math.Max(InitialArrayCapacity, capacity))", source, StringComparison.Ordinal);
         Assert.Contains("RentStackSnapshot(_clipStack", source, StringComparison.Ordinal);
         Assert.Contains("RentStackSnapshot(_clipScopeIsGeometryMask", source, StringComparison.Ordinal);
         Assert.Contains("RentStackSnapshot(_opacityStack", source, StringComparison.Ordinal);
@@ -144,6 +149,11 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("var pooledMaskTextures = RentListSnapshot(_maskTexturePool", source, StringComparison.Ordinal);
         Assert.Contains("_opacityStack.Push(_activeOpacity);", source, StringComparison.Ordinal);
         Assert.Contains("_activeOpacity = _opacityStack.Pop();", source, StringComparison.Ordinal);
+        Assert.Contains("RestoreStack(ref _opacityStack", source, StringComparison.Ordinal);
+        Assert.Contains("_opacityStack.Dispose();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("private readonly Stack<float> _opacityStack", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new Stack<float>", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("RestoreStack(_opacityStack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipStack.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_clipScopeIsGeometryMask.ToArray()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_opacityStack.ToArray()", source, StringComparison.Ordinal);
