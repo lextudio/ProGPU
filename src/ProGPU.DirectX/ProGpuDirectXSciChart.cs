@@ -4752,8 +4752,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
 
     private static bool ContainsVisibleColor(ReadOnlySpan<int> pixelColorsArgb)
     {
-        foreach (var colorArgb in pixelColorsArgb)
+        for (var i = 0; i < pixelColorsArgb.Length; i++)
         {
+            var colorArgb = pixelColorsArgb[i];
             if (HasVisibleColor(unchecked((uint)colorArgb)))
             {
                 return true;
@@ -6396,8 +6397,9 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         var vertices = new ProGpuDirectXSciChartVertex3D[checked(columns * rows)];
         var minHeight = float.PositiveInfinity;
         var maxHeight = float.NegativeInfinity;
-        foreach (var height in heights)
+        for (var i = 0; i < heights.Length; i++)
         {
+            var height = heights[i];
             minHeight = Math.Min(minHeight, height);
             maxHeight = Math.Max(maxHeight, height);
         }

@@ -582,6 +582,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("CreateWaterfallVertices(copiedHeights", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var point in points)\n        {\n            ValidateXyzPoint(point);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var height in heights)\n        {\n            minimum = Math.Min(minimum, height);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var height in heights)\n        {\n            minHeight = Math.Min(minHeight, height);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var height in heights)\n        {\n            if (!float.IsFinite(height))", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var vertex in vertices)\n        {\n            if (!float.IsFinite(vertex.X)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var index in indices)\n        {\n            if (index >= vertexCount)", source, StringComparison.Ordinal);
@@ -643,11 +644,13 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("CopyVerticalPixelColors(pixelColorsArgb, opacity, yAxisIsFlipped, uploadColorSpan);", source, StringComparison.Ordinal);
         Assert.Contains("pixelsTexture.SetData(uploadColorSpan);", source, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<int>.Shared.Return(uploadColors);", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < pixelColorsArgb.Length; i++)\n        {\n            var colorArgb = pixelColorsArgb[i];", source, StringComparison.Ordinal);
         Assert.Contains("yCoordinates.IsEmpty ? null : CopySpan(yCoordinates)", source, StringComparison.Ordinal);
         Assert.Contains("CopySpan(pixelColorsArgb)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var copiedCoordinates = yCoordinates.ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var copiedColors = pixelColorsArgb.ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var sourceColors = pixelColorsArgb.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var colorArgb in pixelColorsArgb)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("CreateVerticalPixelVertexBuffer(\n            xLeft,\n            xRight,\n            copiedCoordinates,\n            copiedColors", source, StringComparison.Ordinal);
     }
 
