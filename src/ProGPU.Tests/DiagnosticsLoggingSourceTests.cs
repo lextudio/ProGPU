@@ -104,6 +104,7 @@ public class DiagnosticsLoggingSourceTests
         string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Compositor.cs"));
         string seriesBuffer = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "GpuSeriesBuffer.cs"));
         string acisPipeline = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "AcisSolidExtensionPipeline.cs"));
+        string hatchPipeline = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "HatchExtensionPipeline.cs"));
         string lineSeriesPipeline = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "GpuLineSeriesExtensionPipeline.cs"));
         string scatterSeriesPipeline = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Extensions", "GpuScatterSeriesExtensionPipeline.cs"));
 
@@ -169,6 +170,10 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("for (int dashIndex = 0; dashIndex < quadraticSegments.Length; dashIndex++)", source, StringComparison.Ordinal);
         Assert.Contains("for (int dashIndex = 0; dashIndex < cubicSegments.Length; dashIndex++)", source, StringComparison.Ordinal);
         Assert.Contains("for (int dashIndex = 0; dashIndex < arcSegments.Length; dashIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("var pathFigures = cmd.Path.Figures;", hatchPipeline, StringComparison.Ordinal);
+        Assert.Contains("for (int figureIndex = 0; figureIndex < pathFigures.Count; figureIndex++)", hatchPipeline, StringComparison.Ordinal);
+        Assert.Contains("var figureSegments = figure.Segments;", hatchPipeline, StringComparison.Ordinal);
+        Assert.Contains("for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)", hatchPipeline, StringComparison.Ordinal);
         Assert.DoesNotContain("var staticDrawCalls = new List<CompositorDrawCall>();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var dc in _drawCalls)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var dc in sb.DrawCalls)", source, StringComparison.Ordinal);
@@ -197,6 +202,8 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("foreach (var dashSegment in quadraticSegments)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var dashSegment in cubicSegments)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var dashSegment in arcSegments)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var figure in cmd.Path.Figures)", hatchPipeline, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var segment in figure.Segments)", hatchPipeline, StringComparison.Ordinal);
         Assert.DoesNotContain("_maskDrawCallListPool", source, StringComparison.Ordinal);
         Assert.Contains("private static void AddRemovalItem<T>(ref T[]? buffer, ref int count, int capacity, T item)", source, StringComparison.Ordinal);
         Assert.Contains("private static void ReturnRemovalBuffer<T>(T[]? buffer, int count)", source, StringComparison.Ordinal);

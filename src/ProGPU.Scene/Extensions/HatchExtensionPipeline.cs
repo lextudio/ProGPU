@@ -651,15 +651,19 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     maxY = Math.Max(maxY, p.Y);
                 }
 
-                foreach (var figure in cmd.Path.Figures)
+                var pathFigures = cmd.Path.Figures;
+                for (int figureIndex = 0; figureIndex < pathFigures.Count; figureIndex++)
                 {
+                    var figure = pathFigures[figureIndex];
                     if (figure.Segments.Count == 0) continue;
 
                     Vector2 currentPoint = figure.StartPoint;
                     UpdateBounds(currentPoint);
 
-                    foreach (var segment in figure.Segments)
+                    var figureSegments = figure.Segments;
+                    for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
                     {
+                        var segment = figureSegments[segmentIndex];
                         if (segment is LineSegment line)
                         {
                             segmentsList.Add(new GpuHatchSegment
