@@ -87,6 +87,7 @@ public sealed record ProGpuDirectXCommand
 public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
 {
     private const int MaxPipelineBindGroupCacheEntries = 512;
+    private const int WireframeSourceIndexStackByteLimit = 16 * 1024;
     private readonly ProGpuDirectXDevice _device;
     private readonly List<ProGpuDirectXCommand> _commands = new();
     private ProGpuDirectXTexture2D? _renderTarget;
@@ -2217,12 +2218,12 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 return true;
             }
 
-            var sourceIndices = ReadSourceIndices(
+            lineIndices = CreateWireframeLineIndicesFromIndexBuffer(
+                descriptor.Topology,
                 sourceIndexBuffer,
                 drawIndexed.IndexFormat,
                 drawIndexed.StartIndexLocation,
                 drawIndexed.IndexCount);
-            lineIndices = CreateWireframeLineIndices(descriptor.Topology, sourceIndices);
             if (lineIndices.Length == 0)
             {
                 return false;
@@ -2252,72 +2253,108 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
             descriptor.Topology is DxPrimitiveTopology.TriangleList or DxPrimitiveTopology.TriangleStrip;
     }
 
-    private static uint[] ReadSourceIndices(
+    private static uint[] CreateWireframeLineIndicesFromIndexBuffer(
+        DxPrimitiveTopology topology,
         ProGpuDirectXBuffer sourceIndexBuffer,
         DxIndexFormat format,
         uint startIndexLocation,
         uint indexCount)
     {
-        var bytesPerIndex = format == DxIndexFormat.UInt16 ? 2u : 4u;
-        var offsetBytes = checked(startIndexLocation * bytesPerIndex);
-        var sizeInBytes = checked(indexCount * bytesPerIndex);
-        var result = new uint[checked((int)indexCount)];
-
-        if (format == DxIndexFormat.UInt16)
-        {
-            var rentedBytes = ArrayPool<byte>.Shared.Rent(checked((int)sizeInBytes));
-            try
-            {
-                var sourceBytes = rentedBytes.AsSpan(0, checked((int)sizeInBytes));
-                sourceIndexBuffer.ReadWriteShadowBytes(sourceBytes, offsetBytes);
-                var source = MemoryMarshal.Cast<byte, ushort>(sourceBytes);
-                for (var i = 0; i < source.Length; i++)
-                {
-                    result[i] = source[i];
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(rentedBytes);
-            }
-
-            return result;
-        }
-
-        sourceIndexBuffer.ReadWriteShadowBytes(MemoryMarshal.AsBytes(result.AsSpan()), offsetBytes);
-        return result;
-    }
-
-    private static uint[] CreateWireframeLineIndicesForSequentialVertices(DxPrimitiveTopology topology, uint vertexCount)
-    {
-        if (vertexCount == 0)
-        {
-            return [];
-        }
-
-        var indices = new uint[checked((int)vertexCount)];
-        for (uint i = 0; i < vertexCount; i++)
-        {
-            indices[i] = i;
-        }
-
-        return CreateWireframeLineIndices(topology, indices);
-    }
-
-    private static uint[] CreateWireframeLineIndices(DxPrimitiveTopology topology, ReadOnlySpan<uint> sourceIndices)
-    {
-        var triangleCount = topology switch
-        {
-            DxPrimitiveTopology.TriangleList => sourceIndices.Length / 3,
-            DxPrimitiveTopology.TriangleStrip => Math.Max(0, sourceIndices.Length - 2),
-            _ => 0
-        };
+        var sourceIndexCount = checked((int)indexCount);
+        var triangleCount = GetWireframeTriangleCount(topology, sourceIndexCount);
         if (triangleCount == 0)
         {
             return [];
         }
 
         var lineIndices = new uint[checked(triangleCount * 6)];
+        var bytesPerIndex = format == DxIndexFormat.UInt16 ? 2u : 4u;
+        var offsetBytes = checked(startIndexLocation * bytesPerIndex);
+        var sizeInBytes = checked(sourceIndexCount * (int)bytesPerIndex);
+        byte[]? rentedBytes = null;
+        Span<byte> sourceBytes = sizeInBytes <= WireframeSourceIndexStackByteLimit
+            ? stackalloc byte[sizeInBytes]
+            : (rentedBytes = ArrayPool<byte>.Shared.Rent(sizeInBytes)).AsSpan(0, sizeInBytes);
+
+        try
+        {
+            sourceIndexBuffer.ReadWriteShadowBytes(sourceBytes, offsetBytes);
+            if (format == DxIndexFormat.UInt16)
+            {
+                var source = MemoryMarshal.Cast<byte, ushort>(sourceBytes);
+                WriteWireframeLineIndices(topology, source, lineIndices);
+            }
+            else
+            {
+                var source = MemoryMarshal.Cast<byte, uint>(sourceBytes);
+                WriteWireframeLineIndices(topology, source, lineIndices);
+            }
+
+            return lineIndices;
+        }
+        finally
+        {
+            if (rentedBytes != null)
+            {
+                ArrayPool<byte>.Shared.Return(rentedBytes);
+            }
+        }
+    }
+
+    private static uint[] CreateWireframeLineIndicesForSequentialVertices(DxPrimitiveTopology topology, uint vertexCount)
+    {
+        var sourceIndexCount = checked((int)vertexCount);
+        var triangleCount = GetWireframeTriangleCount(topology, sourceIndexCount);
+        if (triangleCount == 0)
+        {
+            return [];
+        }
+
+        var lineIndices = new uint[checked(triangleCount * 6)];
+        var write = 0;
+        if (topology == DxPrimitiveTopology.TriangleList)
+        {
+            for (var i = 0; i + 2 < sourceIndexCount; i += 3)
+            {
+                WriteTriangleEdges(lineIndices, ref write, (uint)i, (uint)(i + 1), (uint)(i + 2));
+            }
+        }
+        else
+        {
+            for (var i = 0; i + 2 < sourceIndexCount; i++)
+            {
+                WriteTriangleEdges(lineIndices, ref write, (uint)i, (uint)(i + 1), (uint)(i + 2));
+            }
+        }
+
+        return lineIndices;
+    }
+
+    private static int GetWireframeTriangleCount(DxPrimitiveTopology topology, int sourceIndexCount)
+    {
+        return topology switch
+        {
+            DxPrimitiveTopology.TriangleList => sourceIndexCount / 3,
+            DxPrimitiveTopology.TriangleStrip => Math.Max(0, sourceIndexCount - 2),
+            _ => 0
+        };
+    }
+
+    private static uint[] CreateWireframeLineIndices(DxPrimitiveTopology topology, ReadOnlySpan<uint> sourceIndices)
+    {
+        var triangleCount = GetWireframeTriangleCount(topology, sourceIndices.Length);
+        if (triangleCount == 0)
+        {
+            return [];
+        }
+
+        var lineIndices = new uint[checked(triangleCount * 6)];
+        WriteWireframeLineIndices(topology, sourceIndices, lineIndices);
+        return lineIndices;
+    }
+
+    private static void WriteWireframeLineIndices(DxPrimitiveTopology topology, ReadOnlySpan<uint> sourceIndices, uint[] lineIndices)
+    {
         var write = 0;
         if (topology == DxPrimitiveTopology.TriangleList)
         {
@@ -2333,8 +2370,25 @@ public sealed unsafe class ProGpuDirectXDeviceContext : IDisposable
                 WriteTriangleEdges(lineIndices, ref write, sourceIndices[i], sourceIndices[i + 1], sourceIndices[i + 2]);
             }
         }
+    }
 
-        return lineIndices;
+    private static void WriteWireframeLineIndices(DxPrimitiveTopology topology, ReadOnlySpan<ushort> sourceIndices, uint[] lineIndices)
+    {
+        var write = 0;
+        if (topology == DxPrimitiveTopology.TriangleList)
+        {
+            for (var i = 0; i + 2 < sourceIndices.Length; i += 3)
+            {
+                WriteTriangleEdges(lineIndices, ref write, sourceIndices[i], sourceIndices[i + 1], sourceIndices[i + 2]);
+            }
+        }
+        else
+        {
+            for (var i = 0; i + 2 < sourceIndices.Length; i++)
+            {
+                WriteTriangleEdges(lineIndices, ref write, sourceIndices[i], sourceIndices[i + 1], sourceIndices[i + 2]);
+            }
+        }
     }
 
     private static void WriteTriangleEdges(uint[] destination, ref int offset, uint a, uint b, uint c)

@@ -451,8 +451,18 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("var bytes = _backendBuffer.ReadBytes(offsetBytes, sizeInBytes);", resources, StringComparison.Ordinal);
 
         Assert.Contains("using System.Buffers;", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("private const int WireframeSourceIndexStackByteLimit = 16 * 1024;", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("private static uint[] CreateWireframeLineIndicesFromIndexBuffer(", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("Span<byte> sourceBytes = sizeInBytes <= WireframeSourceIndexStackByteLimit", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("stackalloc byte[sizeInBytes]", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<byte>.Shared.Rent(sizeInBytes)", deviceContext, StringComparison.Ordinal);
         Assert.Contains("sourceIndexBuffer.ReadWriteShadowBytes(sourceBytes, offsetBytes);", deviceContext, StringComparison.Ordinal);
-        Assert.Contains("sourceIndexBuffer.ReadWriteShadowBytes(MemoryMarshal.AsBytes(result.AsSpan()), offsetBytes);", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("WriteWireframeLineIndices(topology, source, lineIndices);", deviceContext, StringComparison.Ordinal);
+        Assert.Contains("WriteTriangleEdges(lineIndices, ref write, (uint)i, (uint)(i + 1), (uint)(i + 2));", deviceContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("private static uint[] ReadSourceIndices(", deviceContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("var sourceIndices = ReadSourceIndices(", deviceContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourceIndexBuffer.ReadWriteShadowBytes(MemoryMarshal.AsBytes(result.AsSpan()), offsetBytes);", deviceContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("var indices = new uint[checked((int)vertexCount)]", deviceContext, StringComparison.Ordinal);
         Assert.DoesNotContain("return MemoryMarshal.Cast<byte, uint>(bytes).ToArray();", deviceContext, StringComparison.Ordinal);
     }
 
