@@ -32,6 +32,15 @@ public sealed class GpuHitTestingTests
         Assert.Contains("stackalloc GpuHitTestResult[resultBufferElementCount]", source, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<GpuHitTestResult>.Shared.Rent(resultBufferElementCount)", source, StringComparison.Ordinal);
         Assert.Contains("deviceIndex.ResultListBuffer.Write(initialResults)", source, StringComparison.Ordinal);
+        Assert.Contains("Span<byte> bytes = stackalloc byte[ResultBufferSizeBytes];", source, StringComparison.Ordinal);
+        Assert.Contains("deviceIndex.ResultBuffer.ReadBytes(bytes);", source, StringComparison.Ordinal);
+        Assert.Contains("Span<byte> readbackBytes = readSizeBytes <= HitTestStackReadbackByteLimit", source, StringComparison.Ordinal);
+        Assert.Contains("stackalloc byte[readSizeBytes]", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<byte>.Shared.Rent(readSizeBytes)", source, StringComparison.Ordinal);
+        Assert.Contains("deviceIndex.ResultListBuffer.ReadBytes(readbackBytes);", source, StringComparison.Ordinal);
+        Assert.Contains("ArrayPool<byte>.Shared.Return(rentedReadbackBytes);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("byte[] bytes = deviceIndex.ResultBuffer.ReadBytes", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("byte[] bytes = deviceIndex.ResultListBuffer.ReadBytes", source, StringComparison.Ordinal);
     }
 
     [Fact]

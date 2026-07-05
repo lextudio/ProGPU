@@ -911,7 +911,8 @@ public sealed class GpuHitTestIndex
 public sealed class GpuHitTestDeviceIndex : IDisposable
 {
     private static readonly uint QueryBufferSize = checked((uint)Marshal.SizeOf<GpuHitTestQuery>());
-    private const uint ResultBufferSize = 32;
+    private const int ResultBufferSizeBytes = 32;
+    private const uint ResultBufferSize = ResultBufferSizeBytes;
     public const int MaxHitResultCount = 256;
 
     private bool _isDisposed;
@@ -1024,7 +1025,9 @@ public static unsafe class GpuHitTestEngine
 {
     private const uint QueryModeBoundsFlag = 0x8000_0000u;
     private const uint QueryModeEllipseRegionFlag = 0x4000_0000u;
-    private const uint ResultBufferSize = 32;
+    private const int ResultBufferSizeBytes = 32;
+    private const uint ResultBufferSize = ResultBufferSizeBytes;
+    private const int HitTestStackReadbackByteLimit = 16 * 1024;
 
     public static bool TryHitTestPoint(GpuHitTestIndex index, Vector2 point, out GpuHitTestResult result)
     {
@@ -1159,7 +1162,8 @@ public static unsafe class GpuHitTestEngine
                 context.Wgpu.CommandEncoderRelease(encoder);
                 encoder = null;
 
-                byte[] bytes = deviceIndex.ResultBuffer.ReadBytes(0, ResultBufferSize);
+                Span<byte> bytes = stackalloc byte[ResultBufferSizeBytes];
+                deviceIndex.ResultBuffer.ReadBytes(bytes);
                 result = MemoryMarshal.Read<GpuHitTestResult>(bytes);
                 return result.HasHit;
             }
@@ -1469,22 +1473,36 @@ public static unsafe class GpuHitTestEngine
                 context.Wgpu.CommandEncoderRelease(encoder);
                 encoder = null;
 
-                uint readSize = checked((uint)(initialResults.Length * resultSize));
-                byte[] bytes = deviceIndex.ResultListBuffer.ReadBytes(0, readSize);
-                summary = MemoryMarshal.Read<GpuHitTestResult>(bytes);
-                hitCount = 0;
-                for (int i = 0; i < requestedCount; i++)
+                int readSizeBytes = checked(initialResults.Length * resultSize);
+                byte[]? rentedReadbackBytes = null;
+                Span<byte> readbackBytes = readSizeBytes <= HitTestStackReadbackByteLimit
+                    ? stackalloc byte[readSizeBytes]
+                    : (rentedReadbackBytes = ArrayPool<byte>.Shared.Rent(readSizeBytes)).AsSpan(0, readSizeBytes);
+                try
                 {
-                    var result = MemoryMarshal.Read<GpuHitTestResult>(bytes.AsSpan((i + 1) * resultSize));
-                    if (!result.HasHit)
+                    deviceIndex.ResultListBuffer.ReadBytes(readbackBytes);
+                    summary = MemoryMarshal.Read<GpuHitTestResult>(readbackBytes);
+                    hitCount = 0;
+                    for (int i = 0; i < requestedCount; i++)
                     {
-                        break;
+                        var result = MemoryMarshal.Read<GpuHitTestResult>(readbackBytes[((i + 1) * resultSize)..]);
+                        if (!result.HasHit)
+                        {
+                            break;
+                        }
+
+                        results[hitCount++] = result;
                     }
 
-                    results[hitCount++] = result;
+                    return hitCount > 0;
                 }
-
-                return hitCount > 0;
+                finally
+                {
+                    if (rentedReadbackBytes != null)
+                    {
+                        ArrayPool<byte>.Shared.Return(rentedReadbackBytes);
+                    }
+                }
             }
             finally
             {
