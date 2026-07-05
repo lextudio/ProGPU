@@ -235,8 +235,10 @@ class PathGeometry
         {
             FillRule = FillRule
         };
-        foreach (var figure in Figures)
+        var figures = Figures;
+        for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
         {
+            var figure = figures[figureIndex];
             var sourceCurrentPoint = figure.StartPoint;
             var transformedFigure = new PathFigure
             {
@@ -245,8 +247,10 @@ class PathGeometry
                 IsFilled = figure.IsFilled
             };
 
-            foreach (var segment in figure.Segments)
+            var figureSegments = figure.Segments;
+            for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
             {
+                var segment = figureSegments[segmentIndex];
                 switch (segment)
                 {
                     case LineSegment line:
@@ -328,13 +332,17 @@ class PathGeometry
             hasBounds = true;
         }
 
-        foreach (var figure in Figures)
+        var figures = Figures;
+        for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
         {
+            var figure = figures[figureIndex];
             var currentPoint = figure.StartPoint;
             Update(currentPoint);
 
-            foreach (var segment in figure.Segments)
+            var figureSegments = figure.Segments;
+            for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
             {
+                var segment = figureSegments[segmentIndex];
                 switch (segment)
                 {
                     case LineSegment line:

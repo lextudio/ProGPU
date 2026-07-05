@@ -496,12 +496,20 @@ public class DiagnosticsLoggingSourceTests
     public void PathAtlasCleanupUsesPooledRemovalBuffers()
     {
         string helper = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PooledRemovalBuffer.cs"));
+        string pathGeometry = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PathGeometry.cs"));
         string pathAtlas = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PathAtlas.cs"));
         string pathOps = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PathOpGeometrySolver.cs"));
 
         Assert.Contains("internal static class PooledRemovalBuffer", helper, StringComparison.Ordinal);
         Assert.Contains("ArrayPool<T>.Shared.Rent(Math.Max(1, capacity))", helper, StringComparison.Ordinal);
         Assert.Contains("RuntimeHelpers.IsReferenceOrContainsReferences<T>()", helper, StringComparison.Ordinal);
+
+        Assert.Contains("var figures = Figures;", pathGeometry, StringComparison.Ordinal);
+        Assert.Contains("for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)", pathGeometry, StringComparison.Ordinal);
+        Assert.Contains("var figureSegments = figure.Segments;", pathGeometry, StringComparison.Ordinal);
+        Assert.Contains("for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)", pathGeometry, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var figure in Figures)", pathGeometry, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var segment in figure.Segments)", pathGeometry, StringComparison.Ordinal);
 
         Assert.Contains("PathInfo[]? activePaths = null;", pathAtlas, StringComparison.Ordinal);
         Assert.Contains("PooledRemovalBuffer.Add(ref activePaths", pathAtlas, StringComparison.Ordinal);
