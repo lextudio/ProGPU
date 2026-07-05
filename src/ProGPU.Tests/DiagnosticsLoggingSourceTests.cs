@@ -99,6 +99,37 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void RenderCommandRecordingSnapshotsUseExplicitCopies()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "RenderCommand.cs"));
+
+        Assert.Contains("CopyList(_recordingContext.Commands)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyList(_recordingContext.PointBuffer)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyList(_recordingContext.DoubleBuffer)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyList(_recordingContext.Line3DBuffer)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyList(_recordingContext.FloatBuffer)", source, StringComparison.Ordinal);
+        Assert.Contains("private static T[] CopyList<T>(List<T> values)", source, StringComparison.Ordinal);
+        Assert.Contains("for (int i = 0; i < result.Length; i++)", source, StringComparison.Ordinal);
+        Assert.Contains("result[i] = values[i];", source, StringComparison.Ordinal);
+        Assert.Contains("for (int i = 0; i < resources.Length; i++)", source, StringComparison.Ordinal);
+        Assert.Contains("resources[i].Dispose();", source, StringComparison.Ordinal);
+        Assert.Contains("var otherCommands = other.Commands;", source, StringComparison.Ordinal);
+        Assert.Contains("int otherCommandCount = otherCommands.Count;", source, StringComparison.Ordinal);
+        Assert.Contains("for (int commandIndex = 0; commandIndex < otherCommandCount; commandIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("var cmd = otherCommands[commandIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("for (int i = 0; i < _retainedResources.Count; i++)", source, StringComparison.Ordinal);
+        Assert.Contains("_retainedResources[i].Dispose();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_recordingContext.Commands.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_recordingContext.PointBuffer.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_recordingContext.DoubleBuffer.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_recordingContext.Line3DBuffer.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_recordingContext.FloatBuffer.ToArray()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var cmd in other.Commands)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var resource in resources)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var resource in _retainedResources)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompositorTransientStateSnapshotsUseArrayPool()
     {
         string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Compositor.cs"));

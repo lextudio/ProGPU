@@ -564,9 +564,9 @@ public class GpuPicture : IRenderDataProvider, IDisposable
 
     private static void DisposeRetainedResources(RetainedResourceLease[] resources)
     {
-        foreach (var resource in resources)
+        for (int i = 0; i < resources.Length; i++)
         {
-            resource.Dispose();
+            resources[i].Dispose();
         }
     }
 }
@@ -584,15 +584,31 @@ public class GpuPictureRecorder
     public GpuPicture EndRecording()
     {
         var picture = new GpuPicture(
-            _recordingContext.Commands.ToArray(),
-            _recordingContext.PointBuffer.ToArray(),
-            _recordingContext.DoubleBuffer.ToArray(),
-            _recordingContext.Line3DBuffer.ToArray(),
-            _recordingContext.FloatBuffer.ToArray(),
+            CopyList(_recordingContext.Commands),
+            CopyList(_recordingContext.PointBuffer),
+            CopyList(_recordingContext.DoubleBuffer),
+            CopyList(_recordingContext.Line3DBuffer),
+            CopyList(_recordingContext.FloatBuffer),
             _recordingContext.CloneRetainedResources()
         );
         _recordingContext.Clear();
         return picture;
+    }
+
+    private static T[] CopyList<T>(List<T> values)
+    {
+        if (values.Count == 0)
+        {
+            return Array.Empty<T>();
+        }
+
+        var result = new T[values.Count];
+        for (int i = 0; i < result.Length; i++)
+        {
+            result[i] = values[i];
+        }
+
+        return result;
     }
 }
 
@@ -1310,8 +1326,11 @@ public class DrawingContext : IRenderDataProvider
 
         FloatBuffer.AddRange(other.FloatBuffer);
 
-        foreach (var cmd in other.Commands)
+        var otherCommands = other.Commands;
+        int otherCommandCount = otherCommands.Count;
+        for (int commandIndex = 0; commandIndex < otherCommandCount; commandIndex++)
         {
+            var cmd = otherCommands[commandIndex];
             var adjustedCmd = cmd;
             if (adjustedCmd.PointBufferCount > 0)
                 adjustedCmd.PointBufferOffset += pointOffset;
@@ -1523,9 +1542,9 @@ public class DrawingContext : IRenderDataProvider
 
     private void DisposeRetainedResources()
     {
-        foreach (var resource in _retainedResources)
+        for (int i = 0; i < _retainedResources.Count; i++)
         {
-            resource.Dispose();
+            _retainedResources[i].Dispose();
         }
 
         _retainedResources.Clear();
