@@ -483,6 +483,12 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("InsertSortedUniqueInputSlot(inputSlots, ref inputSlotCount", pipelines, StringComparison.Ordinal);
         Assert.Contains("private static void InsertSortedUniqueInputSlot(Span<uint> slots, ref int slotCount, uint inputSlot)", pipelines, StringComparison.Ordinal);
         Assert.Contains("for (var shift = slotCount; shift > i; shift--)", pipelines, StringComparison.Ordinal);
+        Assert.Contains("private static IReadOnlyList<DxReflectedShaderBindingRequirement> CombineReflectedBindingRequirements(\n        ProGpuDirectXShader vertexShader,\n        ProGpuDirectXShader? pixelShader)", pipelines, StringComparison.Ordinal);
+        Assert.Contains("CopyReflectedBindingRequirements(vertexRequirements, requirements, ref write);", pipelines, StringComparison.Ordinal);
+        Assert.Contains("CopyReflectedBindingRequirements(pixelRequirements, requirements, ref write);", pipelines, StringComparison.Ordinal);
+        Assert.Contains("Array.Sort(requirements, CompareReflectedBindingRequirements);", pipelines, StringComparison.Ordinal);
+        Assert.Contains("private static int CompareReflectedBindingRequirements(", pipelines, StringComparison.Ordinal);
+        Assert.Contains("return vertexShader.ReflectedBindingRequirementsSupported &&", pipelines, StringComparison.Ordinal);
         Assert.DoesNotContain("private static uint[] ReadSourceIndices(", deviceContext, StringComparison.Ordinal);
         Assert.DoesNotContain("var sourceIndices = ReadSourceIndices(", deviceContext, StringComparison.Ordinal);
         Assert.DoesNotContain("sourceIndexBuffer.ReadWriteShadowBytes(MemoryMarshal.AsBytes(result.AsSpan()), offsetBytes);", deviceContext, StringComparison.Ordinal);
@@ -495,6 +501,14 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain(".Select(element => element.InputSlot)", pipelines, StringComparison.Ordinal);
         Assert.DoesNotContain(".Distinct()", pipelines, StringComparison.Ordinal);
         Assert.DoesNotContain(".OrderBy(slot => slot)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain("params ProGpuDirectXShader?[] shaders", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain(".SelectMany(shader => shader!.ReflectedBindingRequirements)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain(".OrderBy(requirement => requirement.NativeBinding)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain(".ThenBy(requirement => requirement.Stage)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain(".ThenBy(requirement => requirement.Kind)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain(".ThenBy(requirement => requirement.Slot)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain("shaders.All(shader => shader is null || shader.ReflectedBindingRequirementsSupported)", pipelines, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Where(shader => shader is { ReflectedBindingRequirementsSupported: false })", pipelines, StringComparison.Ordinal);
         Assert.DoesNotContain("return MemoryMarshal.Cast<byte, uint>(bytes).ToArray();", deviceContext, StringComparison.Ordinal);
     }
 

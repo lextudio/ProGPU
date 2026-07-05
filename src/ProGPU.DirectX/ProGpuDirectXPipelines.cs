@@ -868,29 +868,87 @@ public sealed unsafe class ProGpuDirectXGraphicsPipeline : IDisposable
     }
 
     private static IReadOnlyList<DxReflectedShaderBindingRequirement> CombineReflectedBindingRequirements(
-        params ProGpuDirectXShader?[] shaders)
+        ProGpuDirectXShader vertexShader,
+        ProGpuDirectXShader? pixelShader)
     {
-        return shaders
-            .Where(shader => shader is not null)
-            .SelectMany(shader => shader!.ReflectedBindingRequirements)
-            .OrderBy(requirement => requirement.NativeBinding)
-            .ThenBy(requirement => requirement.Stage)
-            .ThenBy(requirement => requirement.Kind)
-            .ThenBy(requirement => requirement.Slot)
-            .ToArray();
+        var vertexRequirements = vertexShader.ReflectedBindingRequirements;
+        var pixelRequirements = pixelShader?.ReflectedBindingRequirements;
+        var requirementCount = vertexRequirements.Count + (pixelRequirements?.Count ?? 0);
+        if (requirementCount == 0)
+        {
+            return Array.Empty<DxReflectedShaderBindingRequirement>();
+        }
+
+        var requirements = new DxReflectedShaderBindingRequirement[requirementCount];
+        var write = 0;
+        CopyReflectedBindingRequirements(vertexRequirements, requirements, ref write);
+        if (pixelRequirements is not null)
+        {
+            CopyReflectedBindingRequirements(pixelRequirements, requirements, ref write);
+        }
+
+        Array.Sort(requirements, CompareReflectedBindingRequirements);
+        return requirements;
     }
 
-    private static bool AreReflectedBindingRequirementsSupported(params ProGpuDirectXShader?[] shaders)
+    private static void CopyReflectedBindingRequirements(
+        IReadOnlyList<DxReflectedShaderBindingRequirement> source,
+        DxReflectedShaderBindingRequirement[] destination,
+        ref int write)
     {
-        return shaders.All(shader => shader is null || shader.ReflectedBindingRequirementsSupported);
+        for (var i = 0; i < source.Count; i++)
+        {
+            destination[write++] = source[i];
+        }
     }
 
-    private static string? GetReflectedBindingRequirementsFailureReason(params ProGpuDirectXShader?[] shaders)
+    private static int CompareReflectedBindingRequirements(
+        DxReflectedShaderBindingRequirement left,
+        DxReflectedShaderBindingRequirement right)
     {
-        return shaders
-            .Where(shader => shader is { ReflectedBindingRequirementsSupported: false })
-            .Select(shader => shader!.ReflectedBindingRequirementsFailureReason)
-            .FirstOrDefault(reason => !string.IsNullOrWhiteSpace(reason));
+        var nativeBindingComparison = left.NativeBinding.CompareTo(right.NativeBinding);
+        if (nativeBindingComparison != 0)
+        {
+            return nativeBindingComparison;
+        }
+
+        var stageComparison = left.Stage.CompareTo(right.Stage);
+        if (stageComparison != 0)
+        {
+            return stageComparison;
+        }
+
+        var kindComparison = left.Kind.CompareTo(right.Kind);
+        return kindComparison != 0
+            ? kindComparison
+            : left.Slot.CompareTo(right.Slot);
+    }
+
+    private static bool AreReflectedBindingRequirementsSupported(
+        ProGpuDirectXShader vertexShader,
+        ProGpuDirectXShader? pixelShader)
+    {
+        return vertexShader.ReflectedBindingRequirementsSupported &&
+            (pixelShader is null || pixelShader.ReflectedBindingRequirementsSupported);
+    }
+
+    private static string? GetReflectedBindingRequirementsFailureReason(
+        ProGpuDirectXShader vertexShader,
+        ProGpuDirectXShader? pixelShader)
+    {
+        if (!vertexShader.ReflectedBindingRequirementsSupported &&
+            !string.IsNullOrWhiteSpace(vertexShader.ReflectedBindingRequirementsFailureReason))
+        {
+            return vertexShader.ReflectedBindingRequirementsFailureReason;
+        }
+
+        if (pixelShader is { ReflectedBindingRequirementsSupported: false } &&
+            !string.IsNullOrWhiteSpace(pixelShader.ReflectedBindingRequirementsFailureReason))
+        {
+            return pixelShader.ReflectedBindingRequirementsFailureReason;
+        }
+
+        return null;
     }
 
     public void Dispose()
