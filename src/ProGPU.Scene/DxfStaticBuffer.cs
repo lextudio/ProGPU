@@ -287,8 +287,10 @@ public unsafe class DxfStaticBuffer : IDisposable
             GradientStopsBuffer?.Dispose();
             UniformBuffer?.Dispose();
             
-            foreach (var state in _extensionStates.Values)
+            var extensionStateEnumerator = _extensionStates.Values.GetEnumerator();
+            while (extensionStateEnumerator.MoveNext())
             {
+                var state = extensionStateEnumerator.Current;
                 if (state is IDisposable disposable)
                 {
                     disposable.Dispose();

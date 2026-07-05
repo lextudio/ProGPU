@@ -436,6 +436,9 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("UpdateTextBuffer((ReadOnlySpan<GlyphInstance>)textVertices);", dxfStaticBuffer, StringComparison.Ordinal);
         Assert.Contains("uint requiredBytes = checked((uint)textVertexCount * (uint)Marshal.SizeOf<GlyphInstance>());", dxfStaticBuffer, StringComparison.Ordinal);
         Assert.Contains("_textVertexBufferBack.Write(textVertices);", dxfStaticBuffer, StringComparison.Ordinal);
+        Assert.Contains("var extensionStateEnumerator = _extensionStates.Values.GetEnumerator();", dxfStaticBuffer, StringComparison.Ordinal);
+        Assert.Contains("while (extensionStateEnumerator.MoveNext())", dxfStaticBuffer, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var state in _extensionStates.Values)", dxfStaticBuffer, StringComparison.Ordinal);
         Assert.Contains("var layoutGlyphs = layout.Glyphs;", source, StringComparison.Ordinal);
         Assert.Contains("var layoutGlyphCount = layoutGlyphs.Count;", source, StringComparison.Ordinal);
         Assert.Contains("for (int glyphIndex = 0; glyphIndex < layoutGlyphCount; glyphIndex++)", source, StringComparison.Ordinal);
