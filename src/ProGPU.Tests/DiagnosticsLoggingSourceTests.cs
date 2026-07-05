@@ -669,6 +669,34 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void PathGeometryHitTestingUsesIndexedTraversal()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PathGeometryHitTesting.cs"));
+
+        Assert.Contains("var figures = geometry.Figures;", source, StringComparison.Ordinal);
+        Assert.Contains("var polygons = new List<Vector2[]>(Math.Max(1, figures.Count));", source, StringComparison.Ordinal);
+        Assert.Contains("for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("PathFigure figure = figures[figureIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("for (int pointIndex = 0; pointIndex < polygon.Length; pointIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("Vector2 candidate = polygon[pointIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("for (int polygonIndex = 0; polygonIndex < polygons.Count; polygonIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("Vector2[] polygon = polygons[polygonIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("var segments = figure.Segments;", source, StringComparison.Ordinal);
+        Assert.Contains("var points = new List<Vector2>(EstimateFigurePointCapacity(segments));", source, StringComparison.Ordinal);
+        Assert.Contains("for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("PathSegment segment = segments[segmentIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("private static int EstimateFigurePointCapacity(List<PathSegment> segments)", source, StringComparison.Ordinal);
+        Assert.Contains("private static Vector2[] CopyPoints(List<Vector2> points)", source, StringComparison.Ordinal);
+        Assert.Contains("result[pointIndex] = points[pointIndex];", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (PathFigure figure in geometry.Figures)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (Vector2 candidate in polygon)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (Vector2[] polygon in polygons)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (PathSegment segment in figure.Segments)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("polygon = points.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("points[^1]", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PathAtlasCleanupUsesPooledRemovalBuffers()
     {
         string helper = File.ReadAllText(FindRepoFile("src", "ProGPU.Vector", "PooledRemovalBuffer.cs"));

@@ -35,12 +35,14 @@ static class PathGeometryHitTesting
             return false;
         }
 
-        var polygons = new List<Vector2[]>();
+        var figures = geometry.Figures;
+        var polygons = new List<Vector2[]>(Math.Max(1, figures.Count));
         Vector2 min = new(float.PositiveInfinity, float.PositiveInfinity);
         Vector2 max = new(float.NegativeInfinity, float.NegativeInfinity);
 
-        foreach (PathFigure figure in geometry.Figures)
+        for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
         {
+            PathFigure figure = figures[figureIndex];
             if (!figure.IsFilled)
             {
                 continue;
@@ -57,8 +59,9 @@ static class PathGeometryHitTesting
             }
 
             polygons.Add(polygon);
-            foreach (Vector2 candidate in polygon)
+            for (int pointIndex = 0; pointIndex < polygon.Length; pointIndex++)
             {
+                Vector2 candidate = polygon[pointIndex];
                 min = Vector2.Min(min, candidate);
                 max = Vector2.Max(max, candidate);
             }
@@ -84,8 +87,9 @@ static class PathGeometryHitTesting
         int winding = 0;
         bool evenOddContains = false;
 
-        foreach (Vector2[] polygon in polygons)
+        for (int polygonIndex = 0; polygonIndex < polygons.Count; polygonIndex++)
         {
+            Vector2[] polygon = polygons[polygonIndex];
             ReadOnlySpan<Vector2> points = polygon;
             if (IsPointOnBoundary(points, point, boundaryTolerance))
             {
@@ -120,11 +124,14 @@ static class PathGeometryHitTesting
             return false;
         }
 
-        var points = new List<Vector2> { figure.StartPoint };
+        var segments = figure.Segments;
+        var points = new List<Vector2>(EstimateFigurePointCapacity(segments));
+        points.Add(figure.StartPoint);
         Vector2 currentPoint = figure.StartPoint;
 
-        foreach (PathSegment segment in figure.Segments)
+        for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
         {
+            PathSegment segment = segments[segmentIndex];
             switch (segment)
             {
                 case LineSegment line:
@@ -192,8 +199,37 @@ static class PathGeometryHitTesting
             }
         }
 
-        polygon = points.ToArray();
+        polygon = CopyPoints(points);
         return true;
+    }
+
+    private static int EstimateFigurePointCapacity(List<PathSegment> segments)
+    {
+        var capacity = 1;
+        for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
+        {
+            capacity += segments[segmentIndex] switch
+            {
+                LineSegment => 1,
+                QuadraticBezierSegment => QuadraticFlattenSegmentCount,
+                CubicBezierSegment => CubicFlattenSegmentCount,
+                ArcSegment => CubicFlattenSegmentCount,
+                _ => 1
+            };
+        }
+
+        return capacity;
+    }
+
+    private static Vector2[] CopyPoints(List<Vector2> points)
+    {
+        var result = new Vector2[points.Count];
+        for (int pointIndex = 0; pointIndex < result.Length; pointIndex++)
+        {
+            result[pointIndex] = points[pointIndex];
+        }
+
+        return result;
     }
 
     private static bool AddPoint(List<Vector2> points, Vector2 point)
@@ -203,7 +239,7 @@ static class PathGeometryHitTesting
             return false;
         }
 
-        if (points.Count == 0 || Vector2.DistanceSquared(points[^1], point) > Epsilon * Epsilon)
+        if (points.Count == 0 || Vector2.DistanceSquared(points[points.Count - 1], point) > Epsilon * Epsilon)
         {
             points.Add(point);
         }
