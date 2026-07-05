@@ -23,6 +23,8 @@ public struct TextRunGlyph
 
 public class TextLayout
 {
+    private const int DefaultLineGlyphCapacity = 16;
+
     private static readonly string[] FallbackFontPaths = new[]
     {
         "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
@@ -33,6 +35,46 @@ public class TextLayout
 
     private static readonly List<TtfFont> _fallbackFonts = new();
     private static bool _fallbacksInitialized = false;
+
+    private static int EstimateGlyphCapacity(string text)
+    {
+        var capacity = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '\n')
+            {
+                continue;
+            }
+
+            capacity++;
+            if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                i++;
+            }
+        }
+
+        return Math.Max(1, capacity);
+    }
+
+    private static int EstimateLineCapacity(string text)
+    {
+        var capacity = 1;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\n')
+            {
+                capacity++;
+            }
+        }
+
+        return capacity;
+    }
+
+    private static List<TextRunGlyph> CreateLineGlyphList(int estimatedGlyphCapacity)
+    {
+        return new List<TextRunGlyph>(Math.Min(Math.Max(1, estimatedGlyphCapacity), DefaultLineGlyphCapacity));
+    }
 
     private static void InitializeFallbacks()
     {
@@ -88,13 +130,16 @@ public class TextLayout
             return;
         }
 
+        int estimatedGlyphCapacity = EstimateGlyphCapacity(Text);
+        Glyphs.EnsureCapacity(estimatedGlyphCapacity);
+
         // Layout metric scales
         float scale = FontSize / Font.UnitsPerEm;
         float lineSpacing = (Font.Ascender - Font.Descender + Font.LineGap) * scale;
         float fontAscent = Font.Ascender * scale;
 
-        var lines = new List<List<TextRunGlyph>>();
-        var currentLine = new List<TextRunGlyph>();
+        var lines = new List<List<TextRunGlyph>>(EstimateLineCapacity(Text));
+        var currentLine = CreateLineGlyphList(estimatedGlyphCapacity);
 
         float cursorX = 0f;
         float cursorY = 0f;
@@ -120,7 +165,7 @@ public class TextLayout
             {
                 // Explicit line break
                 lines.Add(currentLine);
-                currentLine = new List<TextRunGlyph>();
+                currentLine = CreateLineGlyphList(Text.Length - i);
                 cursorX = 0f;
                 cursorY += lineSpacing;
                 prevCodePoint = 0;
@@ -190,7 +235,7 @@ public class TextLayout
                     int wrapCount = previousLineCount - wrapStartIndex;
                     var previousLine = currentLine;
 
-                    currentLine = new List<TextRunGlyph>(wrapCount + 1);
+                    currentLine = new List<TextRunGlyph>(Math.Max(wrapCount + 1, DefaultLineGlyphCapacity));
                     
                     cursorX = 0f;
                     cursorY += lineSpacing;
@@ -228,7 +273,7 @@ public class TextLayout
                 {
                     // Hard wrap (word is longer than MaxWidth)
                     lines.Add(currentLine);
-                    currentLine = new List<TextRunGlyph>();
+                    currentLine = CreateLineGlyphList(Text.Length - i);
                     cursorX = 0f;
                     cursorY += lineSpacing;
                     prevCodePoint = 0;
