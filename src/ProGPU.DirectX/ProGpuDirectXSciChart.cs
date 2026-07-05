@@ -5857,16 +5857,16 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             return;
         }
 
-        var copiedVertices = vertices.ToArray();
+        var vertexSpan = vertices;
         var light = ResolveLightDirection(lightDirection);
-        var vertexBuffer = CreateVertexBuffer(copiedVertices);
+        var vertexBuffer = CreateVertexBuffer(vertexSpan);
         var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
         var pipeline = GetPipeline(DxPrimitiveTopology.PointList, DxCullMode.None);
 
         SetDrawState(pipeline, vertexBuffer, cameraBuffer);
-        _context.Draw((uint)copiedVertices.Length);
+        _context.Draw((uint)vertexSpan.Length);
         _pointCloudDraws.Add(new ProGpuDirectXSciChartPointCloud3DDraw(
-            copiedVertices,
+            CopyVertices(vertexSpan),
             worldViewProjection,
             light,
             _clipRect));
@@ -5911,20 +5911,20 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             return;
         }
 
-        var copiedVertices = vertices.ToArray();
-        var copiedIndices = indices.ToArray();
+        var vertexSpan = vertices;
+        var indexSpan = indices;
         var light = ResolveLightDirection(lightDirection);
-        var vertexBuffer = CreateVertexBuffer(copiedVertices);
-        var indexBuffer = CreateIndexBuffer(copiedIndices);
+        var vertexBuffer = CreateVertexBuffer(vertexSpan);
+        var indexBuffer = CreateIndexBuffer(indexSpan);
         var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
         var pipeline = GetPipeline(DxPrimitiveTopology.TriangleList, cullMode);
 
         SetDrawState(pipeline, vertexBuffer, cameraBuffer);
         _context.SetIndexBuffer(indexBuffer, DxIndexFormat.UInt32);
-        _context.DrawIndexed((uint)copiedIndices.Length, indexFormat: DxIndexFormat.UInt32);
+        _context.DrawIndexed((uint)indexSpan.Length, indexFormat: DxIndexFormat.UInt32);
         _meshDraws.Add(new ProGpuDirectXSciChartMesh3DDraw(
-            copiedVertices,
-            copiedIndices,
+            CopyVertices(vertexSpan),
+            CopyIndices(indexSpan),
             worldViewProjection,
             light,
             cullMode,
@@ -5953,16 +5953,16 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             return;
         }
 
-        var copiedVertices = vertices.ToArray();
+        var vertexSpan = vertices;
         var light = ResolveLightDirection(lightDirection);
-        var vertexBuffer = CreateVertexBuffer(copiedVertices);
+        var vertexBuffer = CreateVertexBuffer(vertexSpan);
         var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
         var pipeline = GetPipeline(DxPrimitiveTopology.TriangleStrip, cullMode);
 
         SetDrawState(pipeline, vertexBuffer, cameraBuffer);
-        _context.Draw((uint)copiedVertices.Length);
+        _context.Draw((uint)vertexSpan.Length);
         _triangleStripDraws.Add(new ProGpuDirectXSciChartTriangleStrip3DDraw(
-            copiedVertices,
+            CopyVertices(vertexSpan),
             worldViewProjection,
             light,
             cullMode,
@@ -5998,8 +5998,8 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
 
         var resolvedXRange = xRange ?? new Vector2(-1f, 1f);
         var resolvedZRange = zRange ?? new Vector2(0.25f, 0.75f);
-        var copiedHeights = heights.ToArray();
-        var vertices = CreateSurfaceMeshVertices(copiedHeights, columns, rows, resolvedXRange, resolvedZRange, lowColorArgb, highColorArgb);
+        var heightSpan = heights;
+        var vertices = CreateSurfaceMeshVertices(heightSpan, columns, rows, resolvedXRange, resolvedZRange, lowColorArgb, highColorArgb);
         var indices = CreateSurfaceMeshIndices(columns, rows);
         var light = ResolveLightDirection(lightDirection);
         var vertexBuffer = CreateVertexBuffer(vertices);
@@ -6011,7 +6011,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         _context.SetIndexBuffer(indexBuffer, DxIndexFormat.UInt32);
         _context.DrawIndexed((uint)indices.Length, indexFormat: DxIndexFormat.UInt32);
         _surfaceMeshDraws.Add(new ProGpuDirectXSciChartSurfaceMesh3DDraw(
-            copiedHeights,
+            CopyHeights(heightSpan),
             columns,
             rows,
             resolvedXRange,
@@ -6052,11 +6052,11 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             return;
         }
 
-        var copiedHeights = heights.ToArray();
+        var heightSpan = heights;
         var xRange = ResolveWaterfallRange(options.XRange, columns);
-        var yRange = ResolveWaterfallHeightRange(copiedHeights, options.YRange);
+        var yRange = ResolveWaterfallHeightRange(heightSpan, options.YRange);
         var zRange = ResolveWaterfallRange(options.ZRange, rows);
-        var vertices = CreateWaterfallVertices(copiedHeights, columns, rows, options, xRange, yRange, zRange);
+        var vertices = CreateWaterfallVertices(heightSpan, columns, rows, options, xRange, yRange, zRange);
         var indices = CreateWaterfallIndices(columns, rows);
         var light = ResolveLightDirection(lightDirection);
         var vertexBuffer = CreateVertexBuffer(vertices);
@@ -6068,7 +6068,7 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         _context.SetIndexBuffer(indexBuffer, DxIndexFormat.UInt32);
         _context.DrawIndexed((uint)indices.Length, indexFormat: DxIndexFormat.UInt32);
         _waterfallDraws.Add(new ProGpuDirectXSciChartWaterfall3DDraw(
-            copiedHeights,
+            CopyHeights(heightSpan),
             columns,
             rows,
             xRange,
@@ -6153,16 +6153,16 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             return;
         }
 
-        var copiedVertices = vertices.ToArray();
+        var vertexSpan = vertices;
         var light = ResolveLightDirection(lightDirection);
-        var vertexBuffer = CreateVertexBuffer(copiedVertices);
+        var vertexBuffer = CreateVertexBuffer(vertexSpan);
         var cameraBuffer = CreateCameraBuffer(worldViewProjection, light);
         var pipeline = GetPipeline(isStrip ? DxPrimitiveTopology.LineStrip : DxPrimitiveTopology.LineList, DxCullMode.None);
 
         SetDrawState(pipeline, vertexBuffer, cameraBuffer);
-        _context.Draw((uint)copiedVertices.Length);
+        _context.Draw((uint)vertexSpan.Length);
         _lineDraws.Add(new ProGpuDirectXSciChartLine3DDraw(
-            copiedVertices,
+            CopyVertices(vertexSpan),
             isStrip,
             worldViewProjection,
             light,
@@ -6276,10 +6276,10 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
         });
     }
 
-    private ProGpuDirectXBuffer CreateVertexBuffer(IReadOnlyList<ProGpuDirectXSciChartVertex3D> vertices)
+    private ProGpuDirectXBuffer CreateVertexBuffer(ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices)
     {
-        var data = new float[checked(vertices.Count * 10)];
-        for (var i = 0; i < vertices.Count; i++)
+        var data = new float[checked(vertices.Length * 10)];
+        for (var i = 0; i < vertices.Length; i++)
         {
             var vertex = vertices[i];
             var offset = i * 10;
@@ -6298,10 +6298,31 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             SizeInBytes = checked((uint)(data.Length * sizeof(float))),
             Usage = DxBufferUsage.Vertex | DxBufferUsage.CopyDestination,
             StrideInBytes = 40,
-            Label = $"SciChart3DVertices {vertices.Count}"
+            Label = $"SciChart3DVertices {vertices.Length}"
         });
         buffer.Write(data);
         return buffer;
+    }
+
+    private static ProGpuDirectXSciChartVertex3D[] CopyVertices(ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices)
+    {
+        var copiedVertices = new ProGpuDirectXSciChartVertex3D[vertices.Length];
+        vertices.CopyTo(copiedVertices);
+        return copiedVertices;
+    }
+
+    private static uint[] CopyIndices(ReadOnlySpan<uint> indices)
+    {
+        var copiedIndices = new uint[indices.Length];
+        indices.CopyTo(copiedIndices);
+        return copiedIndices;
+    }
+
+    private static float[] CopyHeights(ReadOnlySpan<float> heights)
+    {
+        var copiedHeights = new float[heights.Length];
+        heights.CopyTo(copiedHeights);
+        return copiedHeights;
     }
 
     private ProGpuDirectXBuffer CreateIndexBuffer(ReadOnlySpan<uint> indices)

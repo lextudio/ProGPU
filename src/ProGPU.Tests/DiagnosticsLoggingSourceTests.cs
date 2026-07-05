@@ -476,6 +476,35 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void SciChart3DUploadsUseCallerSpansBeforeDurableHistoryCopies()
+    {
+        string source = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXSciChart.cs"));
+
+        Assert.Contains("var vertexSpan = vertices;", source, StringComparison.Ordinal);
+        Assert.Contains("var indexSpan = indices;", source, StringComparison.Ordinal);
+        Assert.Contains("var heightSpan = heights;", source, StringComparison.Ordinal);
+        Assert.Contains("var vertexBuffer = CreateVertexBuffer(vertexSpan);", source, StringComparison.Ordinal);
+        Assert.Contains("var indexBuffer = CreateIndexBuffer(indexSpan);", source, StringComparison.Ordinal);
+        Assert.Contains("var vertices = CreateSurfaceMeshVertices(heightSpan", source, StringComparison.Ordinal);
+        Assert.Contains("var yRange = ResolveWaterfallHeightRange(heightSpan", source, StringComparison.Ordinal);
+        Assert.Contains("var vertices = CreateWaterfallVertices(heightSpan", source, StringComparison.Ordinal);
+        Assert.Contains("private ProGpuDirectXBuffer CreateVertexBuffer(ReadOnlySpan<ProGpuDirectXSciChartVertex3D> vertices)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyVertices(vertexSpan)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyIndices(indexSpan)", source, StringComparison.Ordinal);
+        Assert.Contains("CopyHeights(heightSpan)", source, StringComparison.Ordinal);
+        Assert.Contains("vertices.CopyTo(copiedVertices);", source, StringComparison.Ordinal);
+        Assert.Contains("indices.CopyTo(copiedIndices);", source, StringComparison.Ordinal);
+        Assert.Contains("heights.CopyTo(copiedHeights);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var copiedVertices = vertices.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var copiedIndices = indices.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("var copiedHeights = heights.ToArray();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateVertexBuffer(copiedVertices", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateIndexBuffer(copiedIndices", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateSurfaceMeshVertices(copiedHeights", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateWaterfallVertices(copiedHeights", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DirectXTextureReadbackUsesCallerOwnedBuffers()
     {
         string texture = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "GpuTexture.cs"));
