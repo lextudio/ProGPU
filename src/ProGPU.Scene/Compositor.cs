@@ -5611,10 +5611,13 @@ public unsafe class Compositor : IDisposable
         var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
         color.W *= _activeOpacity;
 
-        EnsureTextVertexCapacity(layout.Glyphs.Count * (cmd.IsBold ? 2 : 1));
+        var layoutGlyphs = layout.Glyphs;
+        var layoutGlyphCount = layoutGlyphs.Count;
+        EnsureTextVertexCapacity(layoutGlyphCount * (cmd.IsBold ? 2 : 1));
 
-        foreach (var runGlyph in layout.Glyphs)
+        for (int glyphIndex = 0; glyphIndex < layoutGlyphCount; glyphIndex++)
         {
+            var runGlyph = layoutGlyphs[glyphIndex];
             var glyphFont = runGlyph.Font ?? font;
             ushort glyphIdx = glyphFont.GetGlyphIndex(runGlyph.CodePoint);
             var colorLayers = glyphFont.GetColorLayers(glyphIdx);
