@@ -538,8 +538,10 @@ public unsafe class PathAtlas : IDisposable
 
         try
         {
-            foreach (var kvp in _paths)
+            var pathEnumerator = _paths.GetEnumerator();
+            while (pathEnumerator.MoveNext())
             {
+                var kvp = pathEnumerator.Current;
                 if (kvp.Value.LastUsedFrame == _frameNumber)
                 {
                     PooledRemovalBuffer.Add(ref activePaths, ref activePathCount, _paths.Count, kvp.Value);
@@ -814,8 +816,9 @@ public unsafe class PathAtlas : IDisposable
         nint[]? layoutsToRelease = null;
         int layoutToReleaseCount = 0;
 
-        foreach (var info in _pendingPaths)
+        for (int i = 0; i < _pendingPaths.Count; i++)
         {
+            var info = _pendingPaths[i];
             if (info.Width == 0 || info.Height == 0) continue;
 
             if (!TryGetCompiledHitTestPath(
@@ -935,9 +938,9 @@ public unsafe class PathAtlas : IDisposable
     public void CleanupFrame()
     {
         _frameNumber++;
-        foreach (var buffer in _tempBuffers)
+        for (int i = 0; i < _tempBuffers.Count; i++)
         {
-            buffer.Dispose();
+            _tempBuffers[i].Dispose();
         }
         _tempBuffers.Clear();
     }
