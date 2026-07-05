@@ -265,8 +265,9 @@ internal static class ProGpuDirectXHlslTranslator
         DxShaderStage stage,
         IReadOnlyList<HlslConstantBuffer> constantBuffers)
     {
-        foreach (var constantBuffer in constantBuffers)
+        for (var constantBufferIndex = 0; constantBufferIndex < constantBuffers.Count; constantBufferIndex++)
         {
+            var constantBuffer = constantBuffers[constantBufferIndex];
             builder.Append("struct ").Append(constantBuffer.Name).Append(" {\n");
             if (constantBuffer.UsesPackedRegisterLayout)
             {
@@ -280,8 +281,9 @@ internal static class ProGpuDirectXHlslTranslator
             }
             else
             {
-                foreach (var field in constantBuffer.Fields)
+                for (var fieldIndex = 0; fieldIndex < constantBuffer.Fields.Count; fieldIndex++)
                 {
+                    var field = constantBuffer.Fields[fieldIndex];
                     builder
                         .Append("    ")
                         .Append(field.Name)
@@ -309,8 +311,9 @@ internal static class ProGpuDirectXHlslTranslator
         IReadOnlyList<HlslShaderResource> shaderResources,
         IReadOnlyDictionary<string, HlslStruct> structs)
     {
-        foreach (var resource in shaderResources)
+        for (var resourceIndex = 0; resourceIndex < shaderResources.Count; resourceIndex++)
         {
+            var resource = shaderResources[resourceIndex];
             switch (resource.Kind)
             {
                 case HlslShaderResourceKind.Texture2D:
@@ -501,8 +504,9 @@ internal static class ProGpuDirectXHlslTranslator
         bool allowDiscard)
     {
         var localTypes = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var parameter in function.Parameters)
+        for (var parameterIndex = 0; parameterIndex < function.Parameters.Count; parameterIndex++)
         {
+            var parameter = function.Parameters[parameterIndex];
             localTypes[parameter.Name] = parameter.Type;
         }
 
@@ -1080,10 +1084,12 @@ internal static class ProGpuDirectXHlslTranslator
             @"\b(?<type>float|float2|float3|float4|float2x2|float2x3|float2x4|float3x2|float3x3|float3x4|float4x2|float4x3|float4x4|uint|uint2|uint3|uint4|int|int2|int3|int4)\s*\(",
             match => $"{MapType(match.Groups["type"].Value)}(");
 
-        foreach (var constantBuffer in constantBuffers)
+        for (var constantBufferIndex = 0; constantBufferIndex < constantBuffers.Count; constantBufferIndex++)
         {
-            foreach (var field in constantBuffer.Fields)
+            var constantBuffer = constantBuffers[constantBufferIndex];
+            for (var fieldIndex = 0; fieldIndex < constantBuffer.Fields.Count; fieldIndex++)
             {
+                var field = constantBuffer.Fields[fieldIndex];
                 if (localTypes?.ContainsKey(field.Name) == true)
                 {
                     continue;
@@ -1181,7 +1187,7 @@ internal static class ProGpuDirectXHlslTranslator
         var translatedCondition = TranslateExpression(condition, constantBuffers, shaderResources, localTypes);
         if (TryGetMatchingWgslVectorSelectSize(translatedTrueValue, translatedFalseValue, out var vectorSize))
         {
-            translatedCondition = $"vec{vectorSize}<bool>({string.Join(", ", Enumerable.Repeat(translatedCondition, vectorSize))})";
+            translatedCondition = $"vec{vectorSize}<bool>({CreateRepeatedExpressionList(translatedCondition, vectorSize)})";
         }
 
         translated = string.Concat(
@@ -2013,11 +2019,10 @@ internal static class ProGpuDirectXHlslTranslator
         if (hlslIdentifier.Success)
         {
             var fieldName = hlslIdentifier.Groups["name"].Value;
-            foreach (var constantBuffer in constantBuffers)
+            for (var constantBufferIndex = 0; constantBufferIndex < constantBuffers.Count; constantBufferIndex++)
             {
-                var matchingField = constantBuffer.Fields.FirstOrDefault(candidate =>
-                    string.Equals(candidate.Name, fieldName, StringComparison.Ordinal));
-                if (matchingField is not null)
+                var constantBuffer = constantBuffers[constantBufferIndex];
+                if (TryGetConstantBufferField(constantBuffer.Fields, fieldName, out var matchingField))
                 {
                     type = matchingField.Type;
                     return true;
@@ -2033,16 +2038,15 @@ internal static class ProGpuDirectXHlslTranslator
         {
             var buffer = cbufferField.Groups["buffer"].Value;
             var field = cbufferField.Groups["field"].Value;
-            foreach (var constantBuffer in constantBuffers)
+            for (var constantBufferIndex = 0; constantBufferIndex < constantBuffers.Count; constantBufferIndex++)
             {
+                var constantBuffer = constantBuffers[constantBufferIndex];
                 if (!string.Equals(constantBuffer.VariableName, buffer, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var matchingField = constantBuffer.Fields.FirstOrDefault(candidate =>
-                    string.Equals(candidate.Name, field, StringComparison.Ordinal));
-                if (matchingField is not null)
+                if (TryGetConstantBufferField(constantBuffer.Fields, field, out var matchingField))
                 {
                     type = matchingField.Type;
                     return true;
@@ -2050,6 +2054,25 @@ internal static class ProGpuDirectXHlslTranslator
             }
         }
 
+        return false;
+    }
+
+    private static bool TryGetConstantBufferField(
+        IReadOnlyList<HlslConstantBufferField> fields,
+        string fieldName,
+        out HlslConstantBufferField field)
+    {
+        for (var fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
+        {
+            var candidate = fields[fieldIndex];
+            if (string.Equals(candidate.Name, fieldName, StringComparison.Ordinal))
+            {
+                field = candidate;
+                return true;
+            }
+        }
+
+        field = default!;
         return false;
     }
 
@@ -2444,27 +2467,67 @@ internal static class ProGpuDirectXHlslTranslator
         string buffer,
         IReadOnlyList<HlslShaderResource> shaderResources)
     {
-        return shaderResources.FirstOrDefault(resource =>
-            string.Equals(resource.Name, buffer, StringComparison.Ordinal) &&
-            resource.Kind is HlslShaderResourceKind.ByteAddressBuffer or HlslShaderResourceKind.RWByteAddressBuffer);
+        for (var resourceIndex = 0; resourceIndex < shaderResources.Count; resourceIndex++)
+        {
+            var resource = shaderResources[resourceIndex];
+            if (string.Equals(resource.Name, buffer, StringComparison.Ordinal) &&
+                resource.Kind is HlslShaderResourceKind.ByteAddressBuffer or HlslShaderResourceKind.RWByteAddressBuffer)
+            {
+                return resource;
+            }
+        }
+
+        return null;
     }
 
     private static HlslShaderResource? FindRwTexture2DResource(
         string texture,
         IReadOnlyList<HlslShaderResource> shaderResources)
     {
-        return shaderResources.FirstOrDefault(resource =>
-            resource.Kind == HlslShaderResourceKind.RWTexture2D &&
-            string.Equals(resource.Name, texture, StringComparison.Ordinal));
+        for (var resourceIndex = 0; resourceIndex < shaderResources.Count; resourceIndex++)
+        {
+            var resource = shaderResources[resourceIndex];
+            if (resource.Kind == HlslShaderResourceKind.RWTexture2D &&
+                string.Equals(resource.Name, texture, StringComparison.Ordinal))
+            {
+                return resource;
+            }
+        }
+
+        return null;
     }
 
     private static HlslShaderResource? FindTextureResource(
         string texture,
         IReadOnlyList<HlslShaderResource> shaderResources)
     {
-        return shaderResources.FirstOrDefault(resource =>
-            (resource.Kind is HlslShaderResourceKind.Texture2D or HlslShaderResourceKind.Texture2DArray or HlslShaderResourceKind.Texture3D) &&
-            string.Equals(resource.Name, texture, StringComparison.Ordinal));
+        for (var resourceIndex = 0; resourceIndex < shaderResources.Count; resourceIndex++)
+        {
+            var resource = shaderResources[resourceIndex];
+            if ((resource.Kind is HlslShaderResourceKind.Texture2D or HlslShaderResourceKind.Texture2DArray or HlslShaderResourceKind.Texture3D) &&
+                string.Equals(resource.Name, texture, StringComparison.Ordinal))
+            {
+                return resource;
+            }
+        }
+
+        return null;
+    }
+
+    private static string CreateRepeatedExpressionList(string expression, int count)
+    {
+        var builder = new StringBuilder(expression.Length * count + Math.Max(0, (count - 1) * 2));
+        for (var index = 0; index < count; index++)
+        {
+            if (index != 0)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append(expression);
+        }
+
+        return builder.ToString();
     }
 
     private static string AppendVectorMemberAccess(string expression, string member)

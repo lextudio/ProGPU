@@ -586,6 +586,11 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("private static Dictionary<string, uint> CreateUserSemanticLocationMap(IReadOnlyList<HlslField> fields)", hlslTranslator, StringComparison.Ordinal);
         Assert.Contains("private static Dictionary<string, uint> CreateParameterSemanticLocationMap(IReadOnlyList<HlslParameter> parameters)", hlslTranslator, StringComparison.Ordinal);
         Assert.Contains("private static void AddUserSemanticLocation(", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("for (var constantBufferIndex = 0; constantBufferIndex < constantBuffers.Count; constantBufferIndex++)", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("for (var fieldIndex = 0; fieldIndex < constantBuffer.Fields.Count; fieldIndex++)", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("for (var resourceIndex = 0; resourceIndex < shaderResources.Count; resourceIndex++)", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("private static bool TryGetConstantBufferField(", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("private static string CreateRepeatedExpressionList(string expression, int count)", hlslTranslator, StringComparison.Ordinal);
         Assert.Contains("var names = GetDistinctGroupValues(matches, \"name\");", frontFacingEmulation, StringComparison.Ordinal);
         Assert.Contains("for (var nameIndex = 0; nameIndex < names.Count; nameIndex++)", frontFacingEmulation, StringComparison.Ordinal);
         Assert.Contains("private static List<string> GetDistinctGroupValues(MatchCollection matches, string groupName)", frontFacingEmulation, StringComparison.Ordinal);
@@ -643,6 +648,12 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("parameters.Select(parameter =>", hlslTranslator, StringComparison.Ordinal);
         Assert.DoesNotContain(".Select(field => field.Semantic)", hlslTranslator, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var semantic in semantics", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var constantBuffer in constantBuffers)", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var field in constantBuffer.Fields)", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var resource in shaderResources)", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var parameter in function.Parameters)", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("Enumerable.Repeat", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("FirstOrDefault", hlslTranslator, StringComparison.Ordinal);
         Assert.DoesNotContain(".Select(match => match.Groups[\"name\"].Value)", frontFacingEmulation, StringComparison.Ordinal);
         Assert.DoesNotContain(".Distinct(StringComparer.Ordinal)", frontFacingEmulation, StringComparison.Ordinal);
         Assert.DoesNotContain(".ToArray();\n        var constant", frontFacingEmulation, StringComparison.Ordinal);
