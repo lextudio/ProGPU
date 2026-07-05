@@ -452,8 +452,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             int keysToRemoveCount = 0;
             try
             {
-                foreach (var kvp in _textureBindGroups)
+                var textureBindGroupEnumerator = _textureBindGroups.GetEnumerator();
+                while (textureBindGroupEnumerator.MoveNext())
                 {
+                    var kvp = textureBindGroupEnumerator.Current;
                     if (frame - kvp.Value.LastUsedFrame > 120)
                     {
                         if (kvp.Value.BindGroupPtr != 0 && !compositor.Context.IsDisposed)
@@ -645,8 +647,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             return;
         }
 
-        foreach (var resource in _pool)
+        for (int i = 0; i < _pool.Count; i++)
         {
+            var resource = _pool[i];
             if (resource.BindGroupPtr != 0)
             {
                 QueueBindGroupRelease(_contextRef, resource.BindGroupPtr);
@@ -661,8 +664,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             _effectBindGroupLayout = null;
         }
 
-        foreach (var layout in _sourceLayouts.Values)
+        var sourceLayoutEnumerator = _sourceLayouts.Values.GetEnumerator();
+        while (sourceLayoutEnumerator.MoveNext())
         {
+            var layout = sourceLayoutEnumerator.Current;
             if (layout.SourceBindGroupLayout != null)
             {
                 _contextRef.QueueBindGroupLayoutDisposal((IntPtr)layout.SourceBindGroupLayout);
@@ -682,8 +687,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
 
-        foreach (var cached in _textureBindGroups.Values)
+        var textureBindGroupValueEnumerator = _textureBindGroups.Values.GetEnumerator();
+        while (textureBindGroupValueEnumerator.MoveNext())
         {
+            var cached = textureBindGroupValueEnumerator.Current;
             if (cached.BindGroupPtr != 0)
             {
                 QueueBindGroupRelease(_contextRef, cached.BindGroupPtr);

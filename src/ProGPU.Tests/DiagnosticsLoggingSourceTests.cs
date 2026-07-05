@@ -486,10 +486,25 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("ArrayPool<T>.Shared.Return(buffer)", helper, StringComparison.Ordinal);
 
         Assert.Contains("string[]? keysToRemove = null;", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var textureBindGroupEnumerator = _textureBindGroups.GetEnumerator();", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("while (textureBindGroupEnumerator.MoveNext())", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var kvp = textureBindGroupEnumerator.Current;", wpfShaderEffect, StringComparison.Ordinal);
         Assert.Contains("PooledRemovalBuffer.Add(ref keysToRemove", wpfShaderEffect, StringComparison.Ordinal);
         Assert.Contains("PooledRemovalBuffer.Return(keysToRemove, keysToRemoveCount)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("for (int i = 0; i < _pool.Count; i++)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var resource = _pool[i];", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var sourceLayoutEnumerator = _sourceLayouts.Values.GetEnumerator();", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("while (sourceLayoutEnumerator.MoveNext())", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var layout = sourceLayoutEnumerator.Current;", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var textureBindGroupValueEnumerator = _textureBindGroups.Values.GetEnumerator();", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("while (textureBindGroupValueEnumerator.MoveNext())", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("var cached = textureBindGroupValueEnumerator.Current;", wpfShaderEffect, StringComparison.Ordinal);
         Assert.DoesNotContain("List<string>? keysToRemove", wpfShaderEffect, StringComparison.Ordinal);
         Assert.DoesNotContain("keysToRemove ??= new List<string>();", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var kvp in _textureBindGroups)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var resource in _pool)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var layout in _sourceLayouts.Values)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var cached in _textureBindGroups.Values)", wpfShaderEffect, StringComparison.Ordinal);
 
         Assert.Contains("Compositor.TextureCacheKey[]? keysToRemove = null;", imageEffect, StringComparison.Ordinal);
         Assert.Contains("PooledRemovalBuffer.Add(ref keysToRemove", imageEffect, StringComparison.Ordinal);
