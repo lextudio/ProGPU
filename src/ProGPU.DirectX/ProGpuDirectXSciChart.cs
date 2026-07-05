@@ -2639,8 +2639,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         ReadOnlySpan<ProGpuDirectXSciChartPoint> points)
     {
         var polygon = new List<ProGpuDirectXSciChartPoint>(points.Length);
-        foreach (var point in points)
+        for (var i = 0; i < points.Length; i++)
         {
+            var point = points[i];
             if (!HasFinitePoint(point))
             {
                 continue;
@@ -2679,8 +2680,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
             return false;
         }
 
-        foreach (var index in indices)
+        for (var i = 0; i < indices.Count; i++)
         {
+            var index = indices[i];
             if (index == previousIndex
                 || index == currentIndex
                 || index == nextIndex)
@@ -3109,8 +3111,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(vertices.Length * 36));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!TryGetColumnRect(source, transform, out var left, out var top, out var right, out var bottom)
                 || !HasVisibleColor(source.FillColorArgb))
             {
@@ -3134,8 +3137,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(vertices.Length * 48));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!TryGetColumnRect(source, transform, out var left, out var top, out var right, out var bottom)
                 || !HasVisibleColor(source.StrokeColorArgb))
             {
@@ -3162,8 +3166,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(vertices.Length * 36));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!TryGetRect(source, transform, anchor, out var left, out var top, out var right, out var bottom)
                 || !HasVisibleColor(source.ColorArgb))
             {
@@ -3233,8 +3238,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(vertices.Length * 48));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             var colorArgb = useStrokeColor
                 ? source.StrokeColorArgb
                 : source.FillColorArgb;
@@ -3263,8 +3269,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedInstanceCount)
     {
         var instanceData = new List<float>(checked(vertices.Length * 8));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!HasVisibleColor(source.ColorArgb)
                 || !TryGetSpriteRect(source, sprite, transform, centeredAmount, out var left, out var top, out var right, out var bottom))
             {
@@ -3303,8 +3310,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(vertices.Length * 36));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!HasVisibleColor(source.FillColorArgb)
                 || !TryGetFinancialBodyRect(source, width, transform, out var left, out var top, out var right, out var bottom))
             {
@@ -3329,8 +3337,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         out uint submittedVertexCount)
     {
         var vertexData = new List<float>(checked(vertices.Length * 60));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!HasVisibleColor(source.StrokeColorArgb)
                 || !HasFiniteFinancialVertex(source)
                 || !TryGetFinancialBodyRect(source, width, transform, out var left, out var top, out var right, out var bottom))
@@ -3360,8 +3369,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
     {
         var halfWidth = width / 2f;
         var vertexData = new List<float>(checked(vertices.Length * 36));
-        foreach (var source in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var source = vertices[i];
             if (!HasVisibleColor(source.StrokeColorArgb)
                 || !HasFiniteFinancialVertex(source))
             {
@@ -3503,8 +3513,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         float previousOffset = 0f;
         uint previousColor = 0;
 
-        foreach (var vertex in vertices)
+        for (var i = 0; i < vertices.Length; i++)
         {
+            var vertex = vertices[i];
             if (!TryGetLinePoint(vertex, transform, pen, out var x, out var y, out var offset, out var color))
             {
                 if (resetOnInvalid)
@@ -4994,8 +5005,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         var right = float.NegativeInfinity;
         var bottom = float.NegativeInfinity;
         var hasPoint = false;
-        foreach (var point in points)
+        for (var i = 0; i < points.Length; i++)
         {
+            var point = points[i];
             if (!HasFinitePoint(point))
             {
                 continue;
@@ -5023,8 +5035,9 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         var right = float.NegativeInfinity;
         var bottom = float.NegativeInfinity;
         var hasPoint = false;
-        foreach (var line in lines)
+        for (var i = 0; i < lines.Length; i++)
         {
+            var line = lines[i];
             if (!HasFiniteAreaSegment(line))
             {
                 continue;

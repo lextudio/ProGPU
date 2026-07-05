@@ -536,6 +536,12 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("var lineVertices = CreateLineVertices(pointSpan, pen.ColorArgb);", source, StringComparison.Ordinal);
         Assert.Contains("CopyPrimitivePoints(pointSpan)", source, StringComparison.Ordinal);
         Assert.Contains("points.CopyTo(copiedPoints);", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < points.Length; i++)\n        {\n            var point = points[i];", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < indices.Count; i++)\n        {\n            var index = indices[i];", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < lines.Length; i++)\n        {\n            var line = lines[i];", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var point in points)\n        {\n            if (!HasFinitePoint(point))", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var index in indices)\n        {\n            if (index == previousIndex", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var line in lines)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var copiedPoints = points[..count].ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var copiedLines = lines[..count].ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("CreatePolygonFillVertexBuffer(copiedPoints", source, StringComparison.Ordinal);
@@ -595,6 +601,10 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("CopySpan(vertexSpan)", source, StringComparison.Ordinal);
         Assert.Contains("private static T[] CopySpan<T>(ReadOnlySpan<T> values)", source, StringComparison.Ordinal);
         Assert.Contains("values.CopyTo(copiedValues);", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < vertices.Length; i++)\n        {\n            var source = vertices[i];", source, StringComparison.Ordinal);
+        Assert.Contains("for (var i = 0; i < vertices.Length; i++)\n        {\n            var vertex = vertices[i];", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var source in vertices)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var vertex in vertices)\n        {\n            if (!TryGetLinePoint", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var copiedVertices = vertices[..count].ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("var copiedVertices = vertices.Slice(startIndex, count).ToArray();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("CreateLineBatchVertexBuffer(\n            copiedVertices", source, StringComparison.Ordinal);
