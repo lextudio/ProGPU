@@ -358,7 +358,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             var resources = new SourceLayoutResources
             {
                 LayoutKey = layoutKey,
-                Registers = activeRegisters.ToArray(),
+                Registers = CopyActiveRegisters(activeRegisters),
                 IncludeMask = includeMask,
                 SourceBindGroupLayout = sourceBindGroupLayout,
                 OnscreenPipelineLayout = onscreenPipelineLayout,
@@ -940,6 +940,22 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         return count;
+    }
+
+    private static int[] CopyActiveRegisters(ReadOnlySpan<int> activeRegisters)
+    {
+        if (activeRegisters.Length == 0)
+        {
+            return Array.Empty<int>();
+        }
+
+        var registers = new int[activeRegisters.Length];
+        for (var i = 0; i < activeRegisters.Length; i++)
+        {
+            registers[i] = activeRegisters[i];
+        }
+
+        return registers;
     }
 
     private static string BuildSourceLayoutKey(ReadOnlySpan<int> activeRegisters, bool includeMask)

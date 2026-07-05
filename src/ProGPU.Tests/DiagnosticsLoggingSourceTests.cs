@@ -470,6 +470,9 @@ public class DiagnosticsLoggingSourceTests
         string pipelineCache = File.ReadAllText(FindRepoFile("src", "ProGPU.Backend", "RenderPipelineCache.cs"));
 
         AssertStackBackedLayout(wpfShaderEffect, 3, "VectorVertex");
+        Assert.Contains("Registers = CopyActiveRegisters(activeRegisters),", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.Contains("private static int[] CopyActiveRegisters(ReadOnlySpan<int> activeRegisters)", wpfShaderEffect, StringComparison.Ordinal);
+        Assert.DoesNotContain("Registers = activeRegisters.ToArray()", wpfShaderEffect, StringComparison.Ordinal);
         AssertStackBackedLayout(imageEffect, 3, "VectorVertex");
         AssertStackBackedLayout(shaderToy, 3, "VectorVertex");
         AssertStackBackedLayout(line3D, 8, "VectorVertex");
