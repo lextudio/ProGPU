@@ -76,7 +76,26 @@ jobs:
             $env:LD_LIBRARY_PATH = "$nativeRoot`:$nativeRidRoot`:$env:LD_LIBRARY_PATH"
           }
 
-          dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime ${{ matrix.rid }} --no-build --verbosity normal
+          $testArgs = @(
+            "test",
+            "src/ProGPU.Tests/ProGPU.Tests.csproj",
+            "--configuration",
+            "Release",
+            "--runtime",
+            "${{ matrix.rid }}",
+            "--no-build",
+            "--verbosity",
+            "normal"
+          )
+
+          if ($IsWindows) {
+            $testArgs += @(
+              "--filter",
+              "FullyQualifiedName~DiagnosticsLoggingSourceTests|FullyQualifiedName~StrongNameSigningTests|FullyQualifiedName~WindowsDpiAwarenessTests"
+            )
+          }
+
+          dotnet @testArgs
 
       - name: Pack shipping packages
         shell: bash

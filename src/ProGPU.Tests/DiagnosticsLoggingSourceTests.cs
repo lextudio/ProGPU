@@ -95,7 +95,14 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("dotnet build src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime ${{ matrix.rid }}", workflow, StringComparison.Ordinal);
         Assert.Contains("LD_LIBRARY_PATH", workflow, StringComparison.Ordinal);
         Assert.Contains("DYLD_LIBRARY_PATH", workflow, StringComparison.Ordinal);
-        Assert.Contains("dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime ${{ matrix.rid }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("$testArgs = @(", workflow, StringComparison.Ordinal);
+        Assert.Contains("\"test\",", workflow, StringComparison.Ordinal);
+        Assert.Contains("\"src/ProGPU.Tests/ProGPU.Tests.csproj\",", workflow, StringComparison.Ordinal);
+        Assert.Contains("\"--runtime\",", workflow, StringComparison.Ordinal);
+        Assert.Contains("\"${{ matrix.rid }}\",", workflow, StringComparison.Ordinal);
+        Assert.Contains("if ($IsWindows)", workflow, StringComparison.Ordinal);
+        Assert.Contains("\"FullyQualifiedName~DiagnosticsLoggingSourceTests|FullyQualifiedName~StrongNameSigningTests|FullyQualifiedName~WindowsDpiAwarenessTests\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet @testArgs", workflow, StringComparison.Ordinal);
         Assert.Contains("uses: actions/upload-artifact@v4", workflow, StringComparison.Ordinal);
         Assert.Contains("name: progpu-packages-${{ matrix.rid }}", workflow, StringComparison.Ordinal);
         Assert.Contains("artifacts/packages/Release/*.nupkg", workflow, StringComparison.Ordinal);
