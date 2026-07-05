@@ -170,6 +170,12 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("for (int dashIndex = 0; dashIndex < quadraticSegments.Length; dashIndex++)", source, StringComparison.Ordinal);
         Assert.Contains("for (int dashIndex = 0; dashIndex < cubicSegments.Length; dashIndex++)", source, StringComparison.Ordinal);
         Assert.Contains("for (int dashIndex = 0; dashIndex < arcSegments.Length; dashIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("for (int layerIndex = 0; layerIndex < colorLayers.Count; layerIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("var layer = colorLayers[layerIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("var layerOutlineFigures = layerOutline.Figures;", source, StringComparison.Ordinal);
+        Assert.Contains("for (int figureIndex = 0; figureIndex < layerOutlineFigures.Count; figureIndex++)", source, StringComparison.Ordinal);
+        Assert.Contains("var fig = layerOutlineFigures[figureIndex];", source, StringComparison.Ordinal);
+        Assert.Contains("var seg = figureSegments[segmentIndex];", source, StringComparison.Ordinal);
         Assert.Contains("var pathFigures = cmd.Path.Figures;", hatchPipeline, StringComparison.Ordinal);
         Assert.Contains("for (int figureIndex = 0; figureIndex < pathFigures.Count; figureIndex++)", hatchPipeline, StringComparison.Ordinal);
         Assert.Contains("var figureSegments = figure.Segments;", hatchPipeline, StringComparison.Ordinal);
@@ -202,6 +208,9 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("foreach (var dashSegment in quadraticSegments)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var dashSegment in cubicSegments)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var dashSegment in arcSegments)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var layer in colorLayers)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var fig in layerOutline.Figures)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var seg in fig.Segments)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var figure in cmd.Path.Figures)", hatchPipeline, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var segment in figure.Segments)", hatchPipeline, StringComparison.Ordinal);
         Assert.DoesNotContain("_maskDrawCallListPool", source, StringComparison.Ordinal);

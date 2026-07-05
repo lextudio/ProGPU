@@ -5621,8 +5621,9 @@ public unsafe class Compositor : IDisposable
 
             if (colorLayers != null && colorLayers.Count > 0)
             {
-                foreach (var layer in colorLayers)
+                for (int layerIndex = 0; layerIndex < colorLayers.Count; layerIndex++)
                 {
+                    var layer = colorLayers[layerIndex];
                     var layerOutline = glyphFont.GetGlyphOutline(layer.GlyphId);
                     if (layerOutline == null) continue;
 
@@ -5631,12 +5632,16 @@ public unsafe class Compositor : IDisposable
                     float x0 = runGlyph.Position.X + cmd.Position.X;
                     float y0 = runGlyph.Position.Y + cmd.Position.Y;
 
-                    foreach (var fig in layerOutline.Figures)
+                    var layerOutlineFigures = layerOutline.Figures;
+                    for (int figureIndex = 0; figureIndex < layerOutlineFigures.Count; figureIndex++)
                     {
+                        var fig = layerOutlineFigures[figureIndex];
                         Vector2 startPt = new Vector2(x0 + fig.StartPoint.X * emScale, y0 - fig.StartPoint.Y * emScale);
                         var newFig = new PathFigure(startPt) { IsClosed = fig.IsClosed, IsFilled = fig.IsFilled };
-                        foreach (var seg in fig.Segments)
+                        var figureSegments = fig.Segments;
+                        for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
                         {
+                            var seg = figureSegments[segmentIndex];
                             if (seg is LineSegment ls)
                             {
                                 newFig.Segments.Add(new LineSegment(new Vector2(x0 + ls.Point.X * emScale, y0 - ls.Point.Y * emScale)));
@@ -5815,8 +5820,9 @@ public unsafe class Compositor : IDisposable
 
             if (colorLayers != null && colorLayers.Count > 0)
             {
-                foreach (var layer in colorLayers)
+                for (int layerIndex = 0; layerIndex < colorLayers.Count; layerIndex++)
                 {
+                    var layer = colorLayers[layerIndex];
                     var layerOutline = font.GetGlyphOutline(layer.GlyphId);
                     if (layerOutline == null) continue;
 
@@ -5825,12 +5831,16 @@ public unsafe class Compositor : IDisposable
                     float x0 = position.X + cmd.Position.X;
                     float y0 = position.Y + cmd.Position.Y;
 
-                    foreach (var fig in layerOutline.Figures)
+                    var layerOutlineFigures = layerOutline.Figures;
+                    for (int figureIndex = 0; figureIndex < layerOutlineFigures.Count; figureIndex++)
                     {
+                        var fig = layerOutlineFigures[figureIndex];
                         Vector2 startPt = new Vector2(x0 + fig.StartPoint.X * emScale, y0 - fig.StartPoint.Y * emScale);
                         var newFig = new PathFigure(startPt) { IsClosed = fig.IsClosed, IsFilled = fig.IsFilled };
-                        foreach (var seg in fig.Segments)
+                        var figureSegments = fig.Segments;
+                        for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
                         {
+                            var seg = figureSegments[segmentIndex];
                             if (seg is LineSegment ls)
                             {
                                 newFig.Segments.Add(new LineSegment(new Vector2(x0 + ls.Point.X * emScale, y0 - ls.Point.Y * emScale)));
