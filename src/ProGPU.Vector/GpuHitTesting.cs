@@ -564,6 +564,8 @@ public sealed class GpuHitTestIndex
 
     private ref struct Builder
     {
+        private const int MaxPreallocatedNodeCapacity = 65_536;
+
         private readonly ReadOnlySpan<GpuHitTestPrimitive> _primitives;
         private readonly int _maxDepth;
         private readonly int _maxPrimitivesPerNode;
@@ -573,8 +575,8 @@ public sealed class GpuHitTestIndex
             _primitives = primitives;
             _maxDepth = maxDepth;
             _maxPrimitivesPerNode = maxPrimitivesPerNode;
-            Nodes = [];
-            PrimitiveIndices = [];
+            Nodes = new List<GpuHitTestNode>(EstimateNodeCapacity(primitives.Length, maxPrimitivesPerNode));
+            PrimitiveIndices = new List<uint>(primitives.Length);
         }
 
         public List<GpuHitTestNode> Nodes { get; }
@@ -616,7 +618,7 @@ public sealed class GpuHitTestIndex
                 {
                     int primitiveIndex = primitiveIndices[i];
                     var primitive = _primitives[primitiveIndex];
-                    int childIndex = FindContainingChild(primitive.BoundsMin, primitive.BoundsMax, min, max, center);
+                    int childIndex = FindContainingChild(primitive.BoundsMin, primitive.BoundsMax, center);
                     if (childIndex >= 0)
                     {
                         AddChildPrimitive(ref child0, ref child1, ref child2, ref child3, childIndex, primitiveIndex);
@@ -840,17 +842,44 @@ public sealed class GpuHitTestIndex
             }
         }
 
-        private static int FindContainingChild(Vector2 primitiveMin, Vector2 primitiveMax, Vector2 nodeMin, Vector2 nodeMax, Vector2 center)
+        private static int EstimateNodeCapacity(int primitiveCount, int maxPrimitivesPerNode)
         {
-            for (int i = 0; i < 4; i++)
+            int leafEstimate = Math.Max(1, (primitiveCount + maxPrimitivesPerNode - 1) / maxPrimitivesPerNode);
+            long estimated = 1L + ((long)leafEstimate * 2L);
+            long maxReasonable = Math.Min(((long)primitiveCount * 2L) + 1L, MaxPreallocatedNodeCapacity);
+            return (int)Math.Clamp(estimated, 1L, maxReasonable);
+        }
+
+        private static int FindContainingChild(Vector2 primitiveMin, Vector2 primitiveMax, Vector2 center)
+        {
+            bool fitsLeft = primitiveMax.X <= center.X;
+            bool fitsRight = primitiveMin.X >= center.X;
+            bool fitsTop = primitiveMax.Y <= center.Y;
+            bool fitsBottom = primitiveMin.Y >= center.Y;
+
+            if (fitsTop)
             {
-                var child = GetChildBounds(i, nodeMin, nodeMax, center);
-                if (primitiveMin.X >= child.Min.X &&
-                    primitiveMax.X <= child.Max.X &&
-                    primitiveMin.Y >= child.Min.Y &&
-                    primitiveMax.Y <= child.Max.Y)
+                if (fitsLeft)
                 {
-                    return i;
+                    return 0;
+                }
+
+                if (fitsRight)
+                {
+                    return 1;
+                }
+            }
+
+            if (fitsBottom)
+            {
+                if (fitsLeft)
+                {
+                    return 2;
+                }
+
+                if (fitsRight)
+                {
+                    return 3;
                 }
             }
 

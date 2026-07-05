@@ -376,6 +376,12 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("CountNonEmpty(in child0, in child1, in child2, in child3)", source, StringComparison.Ordinal);
         Assert.Contains("AddChildNodeSlot(in child0)", source, StringComparison.Ordinal);
         Assert.Contains("FillChildNode(child0NodeIndex, 0, in child0, min, max, center, depth);", source, StringComparison.Ordinal);
+        Assert.Contains("private const int MaxPreallocatedNodeCapacity = 65_536;", source, StringComparison.Ordinal);
+        Assert.Contains("Nodes = new List<GpuHitTestNode>(EstimateNodeCapacity(primitives.Length, maxPrimitivesPerNode));", source, StringComparison.Ordinal);
+        Assert.Contains("PrimitiveIndices = new List<uint>(primitives.Length);", source, StringComparison.Ordinal);
+        Assert.Contains("int childIndex = FindContainingChild(primitive.BoundsMin, primitive.BoundsMax, center);", source, StringComparison.Ordinal);
+        Assert.Contains("bool fitsLeft = primitiveMax.X <= center.X;", source, StringComparison.Ordinal);
+        Assert.Contains("bool fitsBottom = primitiveMin.Y >= center.Y;", source, StringComparison.Ordinal);
         Assert.Contains("retained.Dispose();", source, StringComparison.Ordinal);
         Assert.Contains("child0.Dispose();", source, StringComparison.Ordinal);
         Assert.Contains("private readonly struct RootPrimitiveIndices", source, StringComparison.Ordinal);
@@ -385,6 +391,8 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("private readonly struct ListPrimitiveIndices", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new ListPrimitiveIndices(childPrimitives)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new List<int>", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindContainingChild(primitive.BoundsMin, primitive.BoundsMax, min, max, center)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("for (int i = 0; i < 4; i++)\n            {\n                var child = GetChildBounds(i, nodeMin, nodeMax, center);", source, StringComparison.Ordinal);
     }
 
     [Fact]
