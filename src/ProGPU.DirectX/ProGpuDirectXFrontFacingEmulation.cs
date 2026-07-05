@@ -21,16 +21,14 @@ internal static class ProGpuDirectXFrontFacingEmulation
             return false;
         }
 
-        var names = matches
-            .Select(match => match.Groups["name"].Value)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var names = GetDistinctGroupValues(matches, "name");
         var constant = isFrontFacing ? "true" : "false";
         overrideSource = s_frontFacingDeclarationRegex.Replace(source, string.Empty);
         overrideSource = RemoveEmptyStructParameters(overrideSource);
 
-        foreach (var name in names)
+        for (var nameIndex = 0; nameIndex < names.Count; nameIndex++)
         {
+            var name = names[nameIndex];
             overrideSource = Regex.Replace(
                 overrideSource,
                 $@"\b[A-Za-z_]\w*\.{Regex.Escape(name)}\b",
@@ -49,19 +47,16 @@ internal static class ProGpuDirectXFrontFacingEmulation
 
     private static string RemoveEmptyStructParameters(string source)
     {
-        var emptyStructNames = s_emptyStructRegex
-            .Matches(source)
-            .Select(match => match.Groups["name"].Value)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        if (emptyStructNames.Length == 0)
+        var emptyStructNames = GetDistinctGroupValues(s_emptyStructRegex.Matches(source), "name");
+        if (emptyStructNames.Count == 0)
         {
             return source;
         }
 
         var result = s_emptyStructRegex.Replace(source, string.Empty);
-        foreach (var structName in emptyStructNames)
+        for (var structNameIndex = 0; structNameIndex < emptyStructNames.Count; structNameIndex++)
         {
+            var structName = emptyStructNames[structNameIndex];
             result = Regex.Replace(
                 result,
                 $@"(?<prefix>,\s*)?[A-Za-z_]\w*\s*:\s*{Regex.Escape(structName)}\s*(?<suffix>,\s*)?",
@@ -69,5 +64,33 @@ internal static class ProGpuDirectXFrontFacingEmulation
         }
 
         return result;
+    }
+
+    private static List<string> GetDistinctGroupValues(MatchCollection matches, string groupName)
+    {
+        var values = new List<string>(matches.Count);
+        for (var matchIndex = 0; matchIndex < matches.Count; matchIndex++)
+        {
+            var value = matches[matchIndex].Groups[groupName].Value;
+            if (!ContainsOrdinal(values, value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
+    private static bool ContainsOrdinal(IReadOnlyList<string> values, string value)
+    {
+        for (var valueIndex = 0; valueIndex < values.Count; valueIndex++)
+        {
+            if (string.Equals(values[valueIndex], value, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

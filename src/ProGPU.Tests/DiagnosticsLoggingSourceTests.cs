@@ -483,6 +483,7 @@ public class DiagnosticsLoggingSourceTests
         string pipelines = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXPipelines.cs"));
         string shaderBytecode = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXShaderBytecode.cs"));
         string hlslTranslator = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXHlslTranslator.cs"));
+        string frontFacingEmulation = File.ReadAllText(FindRepoFile("src", "ProGPU.DirectX", "ProGpuDirectXFrontFacingEmulation.cs"));
 
         Assert.Contains("public void ReadBytes(Span<byte> destination, uint offsetBytes = 0)", gpuBuffer, StringComparison.Ordinal);
         Assert.Contains("ReadBytes(bytes, offsetBytes);", gpuBuffer, StringComparison.Ordinal);
@@ -580,6 +581,14 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("var components = new List<string>(rows);", hlslTranslator, StringComparison.Ordinal);
         Assert.Contains("var vectorComponents = new List<string>((int)componentCount);", hlslTranslator, StringComparison.Ordinal);
         Assert.Contains("var arguments = new string[rawArguments.Count];", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("var semanticLocations = CreateParameterSemanticLocationMap(parameters);", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("for (var parameterIndex = 0; parameterIndex < parameters.Count; parameterIndex++)", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("private static Dictionary<string, uint> CreateUserSemanticLocationMap(IReadOnlyList<HlslField> fields)", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("private static Dictionary<string, uint> CreateParameterSemanticLocationMap(IReadOnlyList<HlslParameter> parameters)", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("private static void AddUserSemanticLocation(", hlslTranslator, StringComparison.Ordinal);
+        Assert.Contains("var names = GetDistinctGroupValues(matches, \"name\");", frontFacingEmulation, StringComparison.Ordinal);
+        Assert.Contains("for (var nameIndex = 0; nameIndex < names.Count; nameIndex++)", frontFacingEmulation, StringComparison.Ordinal);
+        Assert.Contains("private static List<string> GetDistinctGroupValues(MatchCollection matches, string groupName)", frontFacingEmulation, StringComparison.Ordinal);
         Assert.DoesNotContain("private static uint[] ReadSourceIndices(", deviceContext, StringComparison.Ordinal);
         Assert.DoesNotContain("var sourceIndices = ReadSourceIndices(", deviceContext, StringComparison.Ordinal);
         Assert.DoesNotContain("sourceIndexBuffer.ReadWriteShadowBytes(MemoryMarshal.AsBytes(result.AsSpan()), offsetBytes);", deviceContext, StringComparison.Ordinal);
@@ -630,6 +639,13 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("Enumerable.Range(0, rows)", hlslTranslator, StringComparison.Ordinal);
         Assert.DoesNotContain("Enumerable.Range(0, (int)componentCount)", hlslTranslator, StringComparison.Ordinal);
         Assert.DoesNotContain(".Select(argument => TranslateExpression(argument", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("parameters.Select(parameter => parameter.Semantic)", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("parameters.Select(parameter =>", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Select(field => field.Semantic)", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain("foreach (var semantic in semantics", hlslTranslator, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Select(match => match.Groups[\"name\"].Value)", frontFacingEmulation, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Distinct(StringComparer.Ordinal)", frontFacingEmulation, StringComparison.Ordinal);
+        Assert.DoesNotContain(".ToArray();\n        var constant", frontFacingEmulation, StringComparison.Ordinal);
         Assert.DoesNotContain("return MemoryMarshal.Cast<byte, uint>(bytes).ToArray();", deviceContext, StringComparison.Ordinal);
     }
 

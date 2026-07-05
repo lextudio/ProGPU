@@ -435,7 +435,7 @@ internal static class ProGpuDirectXHlslTranslator
     {
         foreach (var hlslStruct in structs.Values)
         {
-            var semanticLocations = CreateUserSemanticLocationMap([hlslStruct]);
+            var semanticLocations = CreateUserSemanticLocationMap(hlslStruct.Fields);
             builder.Append("struct ").Append(hlslStruct.Name).Append(" {\n");
             foreach (var field in hlslStruct.Fields)
             {
@@ -462,23 +462,34 @@ internal static class ProGpuDirectXHlslTranslator
         IReadOnlyList<HlslParameter> parameters,
         IReadOnlyDictionary<string, HlslStruct> structs)
     {
-        var semanticLocations = CreateUserSemanticLocationMap(parameters.Select(parameter => parameter.Semantic));
-        return string.Join(
-            ", ",
-            parameters.Select(parameter =>
+        var semanticLocations = CreateParameterSemanticLocationMap(parameters);
+        var builder = new StringBuilder();
+        for (var parameterIndex = 0; parameterIndex < parameters.Count; parameterIndex++)
+        {
+            if (parameterIndex != 0)
             {
-                if (structs.ContainsKey(parameter.Type))
-                {
-                    return $"{parameter.Name}: {parameter.Type}";
-                }
+                builder.Append(", ");
+            }
 
-                if (string.IsNullOrWhiteSpace(parameter.Semantic))
-                {
-                    return $"{parameter.Name}: {MapType(parameter.Type)}";
-                }
+            var parameter = parameters[parameterIndex];
+            if (structs.ContainsKey(parameter.Type))
+            {
+                builder.Append(parameter.Name).Append(": ").Append(parameter.Type);
+                continue;
+            }
 
-                return $"{GetParameterAttribute(parameter.Semantic, semanticLocations)} {parameter.Name}: {MapType(parameter.Type)}";
-            }));
+            if (!string.IsNullOrWhiteSpace(parameter.Semantic))
+            {
+                builder.Append(GetParameterAttribute(parameter.Semantic, semanticLocations)).Append(' ');
+            }
+
+            builder
+                .Append(parameter.Name)
+                .Append(": ")
+                .Append(MapType(parameter.Type));
+        }
+
+        return builder.ToString();
     }
 
     private static void AppendTranslatedBody(
@@ -2463,35 +2474,53 @@ internal static class ProGpuDirectXHlslTranslator
             : $"({expression}).{member}";
     }
 
-    private static Dictionary<string, uint> CreateUserSemanticLocationMap(IEnumerable<HlslStruct> structs)
-    {
-        return CreateUserSemanticLocationMap(
-            structs
-                .SelectMany(hlslStruct => hlslStruct.Fields)
-                .Select(field => field.Semantic));
-    }
-
-    private static Dictionary<string, uint> CreateUserSemanticLocationMap(IEnumerable<string?> semantics)
+    private static Dictionary<string, uint> CreateUserSemanticLocationMap(IReadOnlyList<HlslField> fields)
     {
         var locations = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         var baseOffsets = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         var nextLocation = 0u;
-        foreach (var semantic in semantics
-            .Where(semantic => !string.IsNullOrWhiteSpace(semantic) && !IsBuiltinSemantic(semantic!)))
+        for (var fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
         {
-            var baseName = GetUserSemanticBaseName(semantic!);
-            if (!baseOffsets.TryGetValue(baseName, out var baseOffset))
-            {
-                baseOffset = nextLocation;
-                baseOffsets[baseName] = baseOffset;
-            }
-
-            var location = baseOffset + GetSemanticIndex(semantic);
-            locations[GetUserSemanticKey(semantic!)] = location;
-            nextLocation = Math.Max(nextLocation, location + 1);
+            AddUserSemanticLocation(fields[fieldIndex].Semantic, locations, baseOffsets, ref nextLocation);
         }
 
         return locations;
+    }
+
+    private static Dictionary<string, uint> CreateParameterSemanticLocationMap(IReadOnlyList<HlslParameter> parameters)
+    {
+        var locations = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        var baseOffsets = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        var nextLocation = 0u;
+        for (var parameterIndex = 0; parameterIndex < parameters.Count; parameterIndex++)
+        {
+            AddUserSemanticLocation(parameters[parameterIndex].Semantic, locations, baseOffsets, ref nextLocation);
+        }
+
+        return locations;
+    }
+
+    private static void AddUserSemanticLocation(
+        string? semantic,
+        Dictionary<string, uint> locations,
+        Dictionary<string, uint> baseOffsets,
+        ref uint nextLocation)
+    {
+        if (string.IsNullOrWhiteSpace(semantic) || IsBuiltinSemantic(semantic))
+        {
+            return;
+        }
+
+        var baseName = GetUserSemanticBaseName(semantic);
+        if (!baseOffsets.TryGetValue(baseName, out var baseOffset))
+        {
+            baseOffset = nextLocation;
+            baseOffsets[baseName] = baseOffset;
+        }
+
+        var location = baseOffset + GetSemanticIndex(semantic);
+        locations[GetUserSemanticKey(semantic)] = location;
+        nextLocation = Math.Max(nextLocation, location + 1);
     }
 
     private static string GetFieldAttribute(string semantic, IReadOnlyDictionary<string, uint> semanticLocations)
