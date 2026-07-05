@@ -111,6 +111,16 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void NestedSubmodulesUsePublicGitHubUrlsForCiCheckout()
+    {
+        string gitmodules = ReadSource(".gitmodules");
+
+        Assert.Contains("url = https://github.com/wieslawsoltes/microsoft-ui-xaml.git", gitmodules, StringComparison.Ordinal);
+        Assert.DoesNotContain("/Users/wieslawsoltes/GitHub", gitmodules, StringComparison.Ordinal);
+        Assert.DoesNotContain("url = ../", gitmodules, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GpuHitTestingShaderChecksResultCapacityBeforeResultListRead()
     {
         string source = ReadSource("src", "ProGPU.Vector", "GpuHitTesting.cs");

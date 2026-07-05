@@ -1,4 +1,4 @@
 [submodule "microsoft-ui-xaml"]
 	path = external/microsoft-ui-xaml
-	url = /Users/wieslawsoltes/GitHub/microsoft-ui-xaml
+	url = https://github.com/wieslawsoltes/microsoft-ui-xaml.git
 	branch = winui3/main
