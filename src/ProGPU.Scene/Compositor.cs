@@ -1077,23 +1077,22 @@ public unsafe class Compositor : IDisposable
         };
         _texturePipelineLayoutOffscreen = _context.Wgpu.DeviceCreatePipelineLayout(_context.Device, &texturePipelineLayoutDescOffscreen);
 
-        var vertexAttribs = new VertexAttribute[]
-        {
-            new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // Position
-            new() { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }, // Color
-            new() { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }, // TexCoord
-            new() { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 }, // BrushIndex
-            new() { Format = VertexFormat.Float32x2, Offset = 36, ShaderLocation = 4 }, // ShapeSize
-            new() { Format = VertexFormat.Float32, Offset = 44, ShaderLocation = 5 }, // CornerRadius
-            new() { Format = VertexFormat.Float32, Offset = 48, ShaderLocation = 6 }, // StrokeThickness
-            new() { Format = VertexFormat.Float32, Offset = 52, ShaderLocation = 7 } // ShapeType
-        };
+        Span<VertexAttribute> vectorAttrs = stackalloc VertexAttribute[8];
+        vectorAttrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // Position
+        vectorAttrs[1] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }; // Color
+        vectorAttrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }; // TexCoord
+        vectorAttrs[3] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 }; // BrushIndex
+        vectorAttrs[4] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 36, ShaderLocation = 4 }; // ShapeSize
+        vectorAttrs[5] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 44, ShaderLocation = 5 }; // CornerRadius
+        vectorAttrs[6] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 48, ShaderLocation = 6 }; // StrokeThickness
+        vectorAttrs[7] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 52, ShaderLocation = 7 }; // ShapeType
 
-        fixed (VertexAttribute* attribsPtr = vertexAttribs)
+        fixed (VertexAttribute* attribsPtr = vectorAttrs)
         {
-            var layoutDesc = new VertexBufferLayout
+            Span<VertexBufferLayout> vectorVertexLayouts = stackalloc VertexBufferLayout[1];
+            vectorVertexLayouts[0] = new VertexBufferLayout
             {
-                ArrayStride = (uint)Marshal.SizeOf<VectorVertex>(),
+                ArrayStride = (uint)Unsafe.SizeOf<VectorVertex>(),
                 StepMode = VertexStepMode.Vertex,
                 AttributeCount = 8,
                 Attributes = attribsPtr
@@ -1103,33 +1102,32 @@ public unsafe class Compositor : IDisposable
             _vectorPipeline = _pipelineCache.GetOrCreateRenderPipeline(
                 "Vector",
                 vecShaderModule,
+                vectorVertexLayouts,
                 "vs_main",
                 "fs_main",
                 RenderFormat,
                 PrimitiveTopology.TriangleList,
-                new[] { layoutDesc },
                 enableBlend: true,
                 sampleCount: 4,
                 pipelineLayout: _vectorPipelineLayout
             );
 
-            var textVertexAttribs = new VertexAttribute[]
-            {
-                new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // SnappedLogicalPos
-                new() { Format = VertexFormat.Float32x2, Offset = 8, ShaderLocation = 1 }, // BasisX
-                new() { Format = VertexFormat.Float32x2, Offset = 16, ShaderLocation = 2 }, // BasisY
-                new() { Format = VertexFormat.Float32x4, Offset = 24, ShaderLocation = 3 }, // BearSize
-                new() { Format = VertexFormat.Float32x4, Offset = 40, ShaderLocation = 4 }, // TexCoords
-                new() { Format = VertexFormat.Float32x4, Offset = 56, ShaderLocation = 5 }, // Color
-                new() { Format = VertexFormat.Float32x4, Offset = 72, ShaderLocation = 6 }, // ScaleBoldItalicUseMvp
-                new() { Format = VertexFormat.Float32, Offset = 88, ShaderLocation = 7 }    // BrushIndex
-            };
+            Span<VertexAttribute> textAttrs = stackalloc VertexAttribute[8];
+            textAttrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // SnappedLogicalPos
+            textAttrs[1] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 8, ShaderLocation = 1 }; // BasisX
+            textAttrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 16, ShaderLocation = 2 }; // BasisY
+            textAttrs[3] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 24, ShaderLocation = 3 }; // BearSize
+            textAttrs[4] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 40, ShaderLocation = 4 }; // TexCoords
+            textAttrs[5] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 56, ShaderLocation = 5 }; // Color
+            textAttrs[6] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 72, ShaderLocation = 6 }; // ScaleBoldItalicUseMvp
+            textAttrs[7] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 88, ShaderLocation = 7 }; // BrushIndex
 
-            fixed (VertexAttribute* textAttribsPtr = textVertexAttribs)
+            fixed (VertexAttribute* textAttribsPtr = textAttrs)
             {
-                var textLayoutDesc = new VertexBufferLayout
+                Span<VertexBufferLayout> textVertexLayouts = stackalloc VertexBufferLayout[1];
+                textVertexLayouts[0] = new VertexBufferLayout
                 {
-                    ArrayStride = (uint)Marshal.SizeOf<GlyphInstance>(),
+                    ArrayStride = (uint)Unsafe.SizeOf<GlyphInstance>(),
                     StepMode = VertexStepMode.Instance,
                     AttributeCount = 8,
                     Attributes = textAttribsPtr
@@ -1138,11 +1136,11 @@ public unsafe class Compositor : IDisposable
                 _textPipeline = _pipelineCache.GetOrCreateRenderPipeline(
                     "Text",
                     textShaderModule,
+                    textVertexLayouts,
                     "vs_main",
                     "fs_main",
                     RenderFormat,
                     PrimitiveTopology.TriangleList,
-                    new[] { textLayoutDesc },
                     enableBlend: true,
                     sampleCount: 4,
                     pipelineLayout: _textPipelineLayout
@@ -1151,11 +1149,11 @@ public unsafe class Compositor : IDisposable
                 _textPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
                     "Text_Offscreen",
                     textShaderModule,
+                    textVertexLayouts,
                     "vs_main",
                     "fs_main",
                     RenderFormat,
                     PrimitiveTopology.TriangleList,
-                    new[] { textLayoutDesc },
                     enableBlend: true,
                     sampleCount: 1,
                     pipelineLayout: _textPipelineLayoutOffscreen
@@ -1165,11 +1163,11 @@ public unsafe class Compositor : IDisposable
             _texturePipeline = _pipelineCache.GetOrCreateRenderPipeline(
                 "Texture",
                 texShaderModule,
+                vectorVertexLayouts,
                 "vs_main",
                 "fs_main",
                 RenderFormat,
                 PrimitiveTopology.TriangleList,
-                new[] { layoutDesc },
                 enableBlend: true,
                 sampleCount: 4,
                 pipelineLayout: _texturePipelineLayout,
@@ -1179,11 +1177,11 @@ public unsafe class Compositor : IDisposable
             _vectorPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
                 "Vector_Offscreen",
                 vecShaderModule,
+                vectorVertexLayouts,
                 "vs_main",
                 "fs_main",
                 RenderFormat,
                 PrimitiveTopology.TriangleList,
-                new[] { layoutDesc },
                 enableBlend: true,
                 sampleCount: 1,
                 pipelineLayout: _vectorPipelineLayoutOffscreen
@@ -1192,11 +1190,11 @@ public unsafe class Compositor : IDisposable
             _texturePipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
                 "Texture_Offscreen",
                 texShaderModule,
+                vectorVertexLayouts,
                 "vs_main",
                 "fs_main",
                 RenderFormat,
                 PrimitiveTopology.TriangleList,
-                new[] { layoutDesc },
                 enableBlend: true,
                 sampleCount: 1,
                 pipelineLayout: _texturePipelineLayoutOffscreen,
@@ -1228,14 +1226,13 @@ public unsafe class Compositor : IDisposable
                 sampleCount: 1
             );
 
-            var scatterAttribs = new VertexAttribute[]
+            Span<VertexAttribute> scatterAttrs = stackalloc VertexAttribute[2];
+            scatterAttrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // center
+            scatterAttrs[1] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 8, ShaderLocation = 1 }; // radiusPx
+            fixed (VertexAttribute* scatterAttribsPtr = scatterAttrs)
             {
-                new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // center
-                new() { Format = VertexFormat.Float32, Offset = 8, ShaderLocation = 1 }   // radiusPx
-            };
-            fixed (VertexAttribute* scatterAttribsPtr = scatterAttribs)
-            {
-                var scatterLayoutDesc = new VertexBufferLayout
+                Span<VertexBufferLayout> scatterVertexLayouts = stackalloc VertexBufferLayout[1];
+                scatterVertexLayouts[0] = new VertexBufferLayout
                 {
                     ArrayStride = 12,
                     StepMode = VertexStepMode.Instance,
@@ -1245,11 +1242,11 @@ public unsafe class Compositor : IDisposable
                 _chartScatterPipeline = _pipelineCache.GetOrCreateRenderPipeline(
                     "ChartScatter",
                     chartScatterShaderModule,
+                    scatterVertexLayouts,
                     "vs_main",
                     "fs_main",
                     RenderFormat,
                     PrimitiveTopology.TriangleList,
-                    new[] { scatterLayoutDesc },
                     enableBlend: true,
                     sampleCount: 4
                 );
@@ -1257,11 +1254,11 @@ public unsafe class Compositor : IDisposable
                 _chartScatterPipelineOffscreen = _pipelineCache.GetOrCreateRenderPipeline(
                     "ChartScatter_Offscreen",
                     chartScatterShaderModule,
+                    scatterVertexLayouts,
                     "vs_main",
                     "fs_main",
                     RenderFormat,
                     PrimitiveTopology.TriangleList,
-                    new[] { scatterLayoutDesc },
                     enableBlend: true,
                     sampleCount: 1
                 );
@@ -9096,104 +9093,101 @@ public unsafe class Compositor : IDisposable
         TextureFormat? overrideFormat = null,
         GpuTextureAlphaMode textureAlphaMode = GpuTextureAlphaMode.Premultiplied)
     {
-        string baseName;
-        ShaderModule* shaderModule;
-        VertexBufferLayout[] layouts;
         uint sampleCount = isOffscreen ? 1u : 4u;
 
-        var vertexAttribs = new VertexAttribute[]
+        if (type == DrawCallType.Text)
         {
-            new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // Position
-            new() { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }, // Color
-            new() { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }, // TexCoord
-            new() { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 }, // BrushIndex
-            new() { Format = VertexFormat.Float32x2, Offset = 36, ShaderLocation = 4 }, // ShapeSize
-            new() { Format = VertexFormat.Float32, Offset = 44, ShaderLocation = 5 }, // CornerRadius
-            new() { Format = VertexFormat.Float32, Offset = 48, ShaderLocation = 6 }, // StrokeThickness
-            new() { Format = VertexFormat.Float32, Offset = 52, ShaderLocation = 7 } // ShapeType
-        };
+            string textBaseName = isOffscreen ? "Text_Offscreen" : "Text";
+            var textShaderModule = _pipelineCache.GetOrCreateShader("Text", Shaders.TextShader, "TextShader");
+            var textPipelineLayout = isOffscreen ? _textPipelineLayoutOffscreen : _textPipelineLayout;
 
-        fixed (VertexAttribute* attribsPtr = vertexAttribs)
-        {
-            var layoutDesc = new VertexBufferLayout
+            Span<VertexAttribute> textAttrs = stackalloc VertexAttribute[8];
+            textAttrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // SnappedLogicalPos
+            textAttrs[1] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 8, ShaderLocation = 1 }; // BasisX
+            textAttrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 16, ShaderLocation = 2 }; // BasisY
+            textAttrs[3] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 24, ShaderLocation = 3 }; // BearSize
+            textAttrs[4] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 40, ShaderLocation = 4 }; // TexCoords
+            textAttrs[5] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 56, ShaderLocation = 5 }; // Color
+            textAttrs[6] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 72, ShaderLocation = 6 }; // ScaleBoldItalicUseMvp
+            textAttrs[7] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 88, ShaderLocation = 7 }; // BrushIndex
+
+            fixed (VertexAttribute* textAttribsPtr = textAttrs)
             {
-                ArrayStride = (uint)Marshal.SizeOf<VectorVertex>(),
+                Span<VertexBufferLayout> textVertexLayouts = stackalloc VertexBufferLayout[1];
+                textVertexLayouts[0] = new VertexBufferLayout
+                {
+                    ArrayStride = (uint)Unsafe.SizeOf<GlyphInstance>(),
+                    StepMode = VertexStepMode.Instance,
+                    AttributeCount = 8,
+                    Attributes = textAttribsPtr
+                };
+
+                bool writesOpacityMask = overrideFormat == TextureFormat.R8Unorm;
+                var textFragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, GpuTextureAlphaMode.Straight, writesOpacityMask);
+                var textSourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, GpuTextureAlphaMode.Straight);
+                string textFragmentKey = textFragmentEntryPoint == "fs_main" ? string.Empty : $"_{textFragmentEntryPoint}";
+                string textPipelineKey = overrideFormat.HasValue
+                    ? $"{textBaseName}_{blendMode}_{overrideFormat.Value}{textFragmentKey}"
+                    : $"{textBaseName}_{blendMode}{textFragmentKey}";
+
+                return _pipelineCache.GetOrCreateRenderPipeline(
+                    textPipelineKey,
+                    textShaderModule,
+                    textVertexLayouts,
+                    "vs_main",
+                    textFragmentEntryPoint,
+                    overrideFormat ?? RenderFormat,
+                    PrimitiveTopology.TriangleList,
+                    enableBlend: true,
+                    enableDepthStencil: false,
+                    sampleCount: sampleCount,
+                    blendMode: blendMode,
+                    pipelineLayout: textPipelineLayout,
+                    sourceAlphaMode: textSourceAlphaMode
+                );
+            }
+        }
+
+        string baseName;
+        ShaderModule* shaderModule;
+        PipelineLayout* pipelineLayout;
+        if (type == DrawCallType.Vector)
+        {
+            baseName = isOffscreen ? "Vector_Offscreen" : "Vector";
+            shaderModule = _pipelineCache.GetOrCreateShader("Vector", Shaders.VectorShader, "VectorShader");
+            pipelineLayout = isOffscreen ? _vectorPipelineLayoutOffscreen : _vectorPipelineLayout;
+        }
+        else if (type == DrawCallType.Texture)
+        {
+            baseName = isOffscreen ? "Texture_Offscreen" : "Texture";
+            shaderModule = _pipelineCache.GetOrCreateShader("Texture", Shaders.TextureShader, "TextureShader");
+            pipelineLayout = isOffscreen ? _texturePipelineLayoutOffscreen : _texturePipelineLayout;
+        }
+        else
+        {
+            throw new ArgumentException($"Unsupported pipeline draw call type: {type}");
+        }
+
+        Span<VertexAttribute> vectorAttrs = stackalloc VertexAttribute[8];
+        vectorAttrs[0] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }; // Position
+        vectorAttrs[1] = new VertexAttribute { Format = VertexFormat.Float32x4, Offset = 8, ShaderLocation = 1 }; // Color
+        vectorAttrs[2] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 24, ShaderLocation = 2 }; // TexCoord
+        vectorAttrs[3] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 32, ShaderLocation = 3 }; // BrushIndex
+        vectorAttrs[4] = new VertexAttribute { Format = VertexFormat.Float32x2, Offset = 36, ShaderLocation = 4 }; // ShapeSize
+        vectorAttrs[5] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 44, ShaderLocation = 5 }; // CornerRadius
+        vectorAttrs[6] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 48, ShaderLocation = 6 }; // StrokeThickness
+        vectorAttrs[7] = new VertexAttribute { Format = VertexFormat.Float32, Offset = 52, ShaderLocation = 7 }; // ShapeType
+
+        fixed (VertexAttribute* attribsPtr = vectorAttrs)
+        {
+            Span<VertexBufferLayout> vertexLayouts = stackalloc VertexBufferLayout[1];
+            vertexLayouts[0] = new VertexBufferLayout
+            {
+                ArrayStride = (uint)Unsafe.SizeOf<VectorVertex>(),
                 StepMode = VertexStepMode.Vertex,
                 AttributeCount = 8,
                 Attributes = attribsPtr
             };
-            layouts = new[] { layoutDesc };
-
-            PipelineLayout* pipelineLayout = null;
-            if (type == DrawCallType.Vector)
-            {
-                baseName = isOffscreen ? "Vector_Offscreen" : "Vector";
-                shaderModule = _pipelineCache.GetOrCreateShader("Vector", Shaders.VectorShader, "VectorShader");
-                pipelineLayout = isOffscreen ? _vectorPipelineLayoutOffscreen : _vectorPipelineLayout;
-            }
-            else if (type == DrawCallType.Text)
-            {
-                baseName = isOffscreen ? "Text_Offscreen" : "Text";
-                shaderModule = _pipelineCache.GetOrCreateShader("Text", Shaders.TextShader, "TextShader");
-                pipelineLayout = isOffscreen ? _textPipelineLayoutOffscreen : _textPipelineLayout;
-
-                var textVertexAttribs = new VertexAttribute[]
-                {
-                    new() { Format = VertexFormat.Float32x2, Offset = 0, ShaderLocation = 0 }, // SnappedLogicalPos
-                    new() { Format = VertexFormat.Float32x2, Offset = 8, ShaderLocation = 1 }, // BasisX
-                    new() { Format = VertexFormat.Float32x2, Offset = 16, ShaderLocation = 2 }, // BasisY
-                    new() { Format = VertexFormat.Float32x4, Offset = 24, ShaderLocation = 3 }, // BearSize
-                    new() { Format = VertexFormat.Float32x4, Offset = 40, ShaderLocation = 4 }, // TexCoords
-                    new() { Format = VertexFormat.Float32x4, Offset = 56, ShaderLocation = 5 }, // Color
-                    new() { Format = VertexFormat.Float32x4, Offset = 72, ShaderLocation = 6 }, // ScaleBoldItalicUseMvp
-                    new() { Format = VertexFormat.Float32, Offset = 88, ShaderLocation = 7 }    // BrushIndex
-                };
-
-                fixed (VertexAttribute* textAttribsPtr = textVertexAttribs)
-                {
-                    var textLayoutDesc = new VertexBufferLayout
-                    {
-                        ArrayStride = (uint)Marshal.SizeOf<GlyphInstance>(),
-                        StepMode = VertexStepMode.Instance,
-                        AttributeCount = 8,
-                        Attributes = textAttribsPtr
-                    };
-
-                    bool writesOpacityMask = overrideFormat == TextureFormat.R8Unorm;
-                    var textFragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, GpuTextureAlphaMode.Straight, writesOpacityMask);
-                    var textSourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, GpuTextureAlphaMode.Straight);
-                    string textFragmentKey = textFragmentEntryPoint == "fs_main" ? string.Empty : $"_{textFragmentEntryPoint}";
-                    string textPipelineKey = overrideFormat.HasValue
-                        ? $"{baseName}_{blendMode}_{overrideFormat.Value}{textFragmentKey}"
-                        : $"{baseName}_{blendMode}{textFragmentKey}";
-
-                    return _pipelineCache.GetOrCreateRenderPipeline(
-                        textPipelineKey,
-                        shaderModule,
-                        "vs_main",
-                        textFragmentEntryPoint,
-                        overrideFormat ?? RenderFormat,
-                        PrimitiveTopology.TriangleList,
-                        new[] { textLayoutDesc },
-                        enableBlend: true,
-                        enableDepthStencil: false,
-                        sampleCount: sampleCount,
-                        blendMode: blendMode,
-                        pipelineLayout: pipelineLayout,
-                        sourceAlphaMode: textSourceAlphaMode
-                    );
-                }
-            }
-            else if (type == DrawCallType.Texture)
-            {
-                baseName = isOffscreen ? "Texture_Offscreen" : "Texture";
-                shaderModule = _pipelineCache.GetOrCreateShader("Texture", Shaders.TextureShader, "TextureShader");
-                pipelineLayout = isOffscreen ? _texturePipelineLayoutOffscreen : _texturePipelineLayout;
-            }
-            else
-            {
-                throw new ArgumentException($"Unsupported pipeline draw call type: {type}");
-            }
 
             bool writesMaskTarget = overrideFormat == TextureFormat.R8Unorm;
             var fragmentEntryPoint = GetFragmentEntryPoint(type, blendMode, textureAlphaMode, writesMaskTarget);
@@ -9207,11 +9201,11 @@ public unsafe class Compositor : IDisposable
             return _pipelineCache.GetOrCreateRenderPipeline(
                 pipelineKey,
                 shaderModule,
+                vertexLayouts,
                 "vs_main",
                 fragmentEntryPoint,
                 overrideFormat ?? RenderFormat,
                 PrimitiveTopology.TriangleList,
-                layouts,
                 enableBlend: true,
                 enableDepthStencil: false,
                 sampleCount: sampleCount,

@@ -784,6 +784,7 @@ public class DiagnosticsLoggingSourceTests
     [Fact]
     public void EffectPipelineLayoutsUseStackBackedDescriptors()
     {
+        string compositor = ReadSource("src", "ProGPU.Scene", "Compositor.cs");
         string wpfShaderEffect = ReadSource("src", "ProGPU.Scene", "Extensions", "WpfShaderEffectExtensionPipeline.cs");
         string imageEffect = ReadSource("src", "ProGPU.Scene", "Extensions", "ImageEffectExtensionPipeline.cs");
         string shaderToy = ReadSource("src", "ProGPU.Scene", "Extensions", "ShaderToyExtensionPipeline.cs");
@@ -793,6 +794,23 @@ public class DiagnosticsLoggingSourceTests
         string hatch = ReadSource("src", "ProGPU.Scene", "Extensions", "HatchExtensionPipeline.cs");
         string mesh3D = ReadSource("src", "ProGPU.Scene", "Extensions", "Mesh3DExtensionPipeline.cs");
         string pipelineCache = ReadSource("src", "ProGPU.Backend", "RenderPipelineCache.cs");
+
+        Assert.Contains("Span<VertexAttribute> vectorAttrs = stackalloc VertexAttribute[8];", compositor, StringComparison.Ordinal);
+        Assert.Contains("Span<VertexBufferLayout> vectorVertexLayouts = stackalloc VertexBufferLayout[1];", compositor, StringComparison.Ordinal);
+        Assert.Contains("Span<VertexAttribute> textAttrs = stackalloc VertexAttribute[8];", compositor, StringComparison.Ordinal);
+        Assert.Contains("Span<VertexBufferLayout> textVertexLayouts = stackalloc VertexBufferLayout[1];", compositor, StringComparison.Ordinal);
+        Assert.Contains("Span<VertexAttribute> scatterAttrs = stackalloc VertexAttribute[2];", compositor, StringComparison.Ordinal);
+        Assert.Contains("Span<VertexBufferLayout> scatterVertexLayouts = stackalloc VertexBufferLayout[1];", compositor, StringComparison.Ordinal);
+        Assert.Contains("Span<VertexBufferLayout> vertexLayouts = stackalloc VertexBufferLayout[1];", compositor, StringComparison.Ordinal);
+        Assert.Contains("ArrayStride = (uint)Unsafe.SizeOf<VectorVertex>()", compositor, StringComparison.Ordinal);
+        Assert.Contains("ArrayStride = (uint)Unsafe.SizeOf<GlyphInstance>()", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("var vertexAttribs = new VertexAttribute[]", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("var textVertexAttribs = new VertexAttribute[]", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("var scatterAttribs = new VertexAttribute[]", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("VertexBufferLayout[] layouts", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("new[] { layoutDesc }", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("new[] { textLayoutDesc }", compositor, StringComparison.Ordinal);
+        Assert.DoesNotContain("new[] { scatterLayoutDesc }", compositor, StringComparison.Ordinal);
 
         AssertStackBackedLayout(wpfShaderEffect, 3, "VectorVertex");
         Assert.Contains("Registers = CopyActiveRegisters(activeRegisters),", wpfShaderEffect, StringComparison.Ordinal);
