@@ -76,6 +76,8 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("<PackageVersion Condition=\"'$(PackageVersion)' == ''\">$(Version)</PackageVersion>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<AssemblyVersion Condition=\"'$(AssemblyVersion)' == ''\">0.1.0.0</AssemblyVersion>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<FileVersion Condition=\"'$(FileVersion)' == ''\">0.1.0.0</FileVersion>", directoryBuildProps, StringComparison.Ordinal);
+        Assert.Contains("<AssemblyVersion>11.0.0.0</AssemblyVersion>", windowsBaseProject, StringComparison.Ordinal);
+        Assert.Contains("<FileVersion>11.0.0.0</FileVersion>", windowsBaseProject, StringComparison.Ordinal);
         Assert.Contains("<SignAssembly Condition=\"'$(SignAssembly)' == ''\">true</SignAssembly>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<AssemblyOriginatorKeyFile Condition=\"'$(AssemblyOriginatorKeyFile)' == ''\">$(ProGPUStrongNameKeyFile)</AssemblyOriginatorKeyFile>", directoryBuildProps, StringComparison.Ordinal);
         Assert.DoesNotContain("35MSSharedLib1024.snk", windowsBaseProject, StringComparison.Ordinal);
