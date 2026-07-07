@@ -29,6 +29,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Linux WebGPU dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            libx11-xcb1 \
+            libxcb1 \
+            libxcb-randr0 \
+            libxcb-render0 \
+            libxcb-shape0 \
+            libxcb-shm0 \
+            libxcb-xfixes0 \
+            libxcb-present0 \
+            libxkbcommon0
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -50,13 +66,18 @@ jobs:
         run: ./eng/progpu-verify-docs.sh
 
       - name: Restore
-        run: dotnet restore src/ProGPU.Tests/ProGPU.Tests.csproj
+        run: dotnet restore src/ProGPU.Tests/ProGPU.Tests.csproj --runtime linux-x64
 
       - name: Build tests
-        run: dotnet build src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --no-restore -p:ContinuousIntegrationBuild=true -p:Version=${{ env.PROGPU_PACKAGE_VERSION }} -p:PackageVersion=${{ env.PROGPU_PACKAGE_VERSION }}
+        run: dotnet build src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime linux-x64 --no-restore -p:ContinuousIntegrationBuild=true -p:Version=${{ env.PROGPU_PACKAGE_VERSION }} -p:PackageVersion=${{ env.PROGPU_PACKAGE_VERSION }}
 
       - name: Test
-        run: dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --no-build --verbosity normal
+        shell: bash
+        run: |
+          native_root="${GITHUB_WORKSPACE}/src/ProGPU.Tests/bin/Release/net10.0/linux-x64"
+          native_rid_root="${native_root}/runtimes/linux-x64/native"
+          export LD_LIBRARY_PATH="${native_root}:${native_rid_root}:${LD_LIBRARY_PATH:-}"
+          dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime linux-x64 --no-build --verbosity normal
 
       - name: Pack
         run: ./eng/progpu-pack.sh

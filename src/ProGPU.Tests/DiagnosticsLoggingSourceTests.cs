@@ -119,6 +119,23 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void ReleaseWorkflowUsesLinuxRuntimeNativeWebGpuTestLaneBeforePublish()
+    {
+        string workflow = ReadSource(".github", "workflows", "release.yml");
+
+        Assert.Contains("Install Linux WebGPU dependencies", workflow, StringComparison.Ordinal);
+        Assert.Contains("libvulkan1", workflow, StringComparison.Ordinal);
+        Assert.Contains("mesa-vulkan-drivers", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet restore src/ProGPU.Tests/ProGPU.Tests.csproj --runtime linux-x64", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet build src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime linux-x64", workflow, StringComparison.Ordinal);
+        Assert.Contains("native_root=\"${GITHUB_WORKSPACE}/src/ProGPU.Tests/bin/Release/net10.0/linux-x64\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("native_rid_root=\"${native_root}/runtimes/linux-x64/native\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("export LD_LIBRARY_PATH=\"${native_root}:${native_rid_root}:${LD_LIBRARY_PATH:-}\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime linux-x64 --no-build --verbosity normal", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet nuget push artifacts/packages/Release/*.nupkg", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NestedSubmodulesUsePublicGitHubUrlsForCiCheckout()
     {
         string gitmodules = ReadSource(".gitmodules");
