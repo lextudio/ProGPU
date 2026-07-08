@@ -778,7 +778,8 @@ public unsafe class Compositor : IDisposable
         Clip = 1,
         OuterClip = 2,
         Opacity = 4,
-        OpacityMask = 8
+        OpacityMask = 8,
+        GeometryClip = 16
     }
 
     private BatchType _currentBatchType = BatchType.None;
@@ -6790,6 +6791,19 @@ public unsafe class Compositor : IDisposable
             scope |= VisualCompositeScope.OuterClip;
         }
 
+        if (node.GeometryClip != null)
+        {
+            PushGeometryMask(node.GeometryClip, compositeTransform);
+            AddHitTestStateCommand(
+                new RenderCommand
+                {
+                    Type = RenderCommandType.PushGeometryClip,
+                    Path = node.GeometryClip
+                },
+                compositeTransform);
+            scope |= VisualCompositeScope.GeometryClip;
+        }
+
         if (node.Opacity < 1.0f)
         {
             PushOpacityValue(node.Opacity);
@@ -6815,6 +6829,17 @@ public unsafe class Compositor : IDisposable
         if ((scope & VisualCompositeScope.Opacity) != 0)
         {
             PopOpacityValue();
+        }
+
+        if ((scope & VisualCompositeScope.GeometryClip) != 0)
+        {
+            AddHitTestStateCommand(
+                new RenderCommand
+                {
+                    Type = RenderCommandType.PopGeometryClip
+                },
+                Matrix4x4.Identity);
+            PopGeometryMask();
         }
 
         if ((scope & VisualCompositeScope.OuterClip) != 0)

@@ -26,6 +26,7 @@ public class Visual
     private readonly Dictionary<string, CompositionAnimation> _activeAnimations = new(StringComparer.OrdinalIgnoreCase);
     private Rect? _clipBounds;
     private Rect? _outerClipBounds;
+    private PathGeometry? _geometryClip;
     private Brush? _opacityMask;
     private Rect? _opacityMaskBounds;
     private int _hitTestId;
@@ -250,6 +251,19 @@ public class Visual
             if (_outerClipBounds != value)
             {
                 _outerClipBounds = value;
+                Invalidate();
+            }
+        }
+    }
+
+    public PathGeometry? GeometryClip
+    {
+        get => _geometryClip;
+        set
+        {
+            if (!ReferenceEquals(_geometryClip, value))
+            {
+                _geometryClip = value;
                 Invalidate();
             }
         }
