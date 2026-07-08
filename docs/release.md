@@ -20,6 +20,7 @@ The release workflow does not pack samples, tests, diagnostic tools, or framewor
 - `ProGPU.Avalonia`
 - `ProGPU.Uno`
 - `ProGPU.Dxf`
+- `ProGPU.System.Drawing.Common`
 - `LibreWPF.Interop`
 
 ## Local Package Build

@@ -16,6 +16,7 @@ progpu_package_ids=(
   ProGPU.Avalonia
   ProGPU.Uno
   ProGPU.Dxf
+  ProGPU.System.Drawing.Common
   LibreWPF.Interop
 )
 
@@ -35,6 +36,7 @@ progpu_package_projects=(
   src/ProGPU.Avalonia/ProGPU.Avalonia.csproj
   src/ProGPU.Uno/ProGPU.Uno.csproj
   src/ProGPU.Dxf/ProGPU.Dxf.csproj
+  src/System.Drawing.Common/System.Drawing.Common.csproj
   src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj
 )
 
@@ -54,6 +56,7 @@ progpu_package_purposes=(
   "Avalonia integration and compositor backend adapter."
   "Uno/WinUI integration and compositor backend adapter."
   "DXF import/rendering support for ProGPU vector scenes."
+  "ProGPU-backed portable System.Drawing.Common compatibility shim for LibreWinForms and GDI-style callers."
   "LibreWPF portable interop contracts consumed by the ProGPU/Silk.NET SDK lane."
 )
 
