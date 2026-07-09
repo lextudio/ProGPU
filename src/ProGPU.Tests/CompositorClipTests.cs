@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using Microsoft.UI.Xaml;
+using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Tests.Headless;
 using ProGPU.Vector;
@@ -92,6 +93,34 @@ public sealed class CompositorClipTests
             Assert.True(
                 insideHole.X < 60f && insideHole.Y < 80f && insideHole.Z > 140f && insideHole.W == 255f,
                 $"Expected blue background inside the difference hole, found RGBA({insideHole.X}, {insideHole.Y}, {insideHole.Z}, {insideHole.W}).");
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void SourceBlendGeometryClipPreservesDestinationBetweenDisjointFigures()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(160, 80);
+        window.Content = new SourceBlendGeometryClipVisual();
+
+        try
+        {
+            window.Render();
+
+            var pixels = window.ReadPixels();
+            var left = ReadPixel(pixels, window.Width, x: 30, y: 40);
+            var gap = ReadPixel(pixels, window.Width, x: 80, y: 40);
+            var right = ReadPixel(pixels, window.Width, x: 130, y: 40);
+
+            Assert.True(left.X > 180f && left.Y < 80f && left.Z < 80f && left.W == 255f);
+            Assert.True(right.X > 180f && right.Y < 80f && right.Z < 80f && right.W == 255f);
+            Assert.True(
+                gap.X < 80f && gap.Y < 80f && gap.Z > 160f && gap.W == 255f,
+                $"Expected the clipped gap to preserve its blue destination, found RGBA({gap.X}, {gap.Y}, {gap.Z}, {gap.W}).");
         }
         finally
         {
@@ -340,6 +369,31 @@ public sealed class CompositorClipTests
             context.DrawRectangle(_background, null, new Rect(0f, 0f, 160f, 90f));
             context.PushGeometryClip(_clip);
             context.DrawRectangle(_red, null, new Rect(0f, 0f, 160f, 90f));
+            context.PopGeometryClip();
+        }
+    }
+
+    private sealed class SourceBlendGeometryClipVisual : FrameworkElement
+    {
+        private readonly SolidColorBrush _background = new(new Vector4(0.05f, 0.1f, 0.8f, 1f));
+        private readonly SolidColorBrush _foreground = new(new Vector4(1f, 0f, 0f, 1f));
+        private readonly PathGeometry _clip = new();
+
+        public SourceBlendGeometryClipVisual()
+        {
+            Width = 160f;
+            Height = 80f;
+            _clip.Figures.AddRange(PrimitivePathGeometry.CreateRectangle(10f, 15f, 40f, 50f).Figures);
+            _clip.Figures.AddRange(PrimitivePathGeometry.CreateRectangle(110f, 15f, 40f, 50f).Figures);
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawRectangle(_background, null, new Rect(0f, 0f, 160f, 80f));
+            context.PushGeometryClip(_clip);
+            context.PushBlendMode(GpuBlendMode.Src);
+            context.DrawRectangle(_foreground, null, new Rect(0f, 0f, 160f, 80f));
+            context.PopBlendMode();
             context.PopGeometryClip();
         }
     }

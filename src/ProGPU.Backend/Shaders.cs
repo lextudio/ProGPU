@@ -719,6 +719,9 @@ fn vector_fs_main(input: VertexOutput) -> vec4<f32> {
 
     let screen_uv = input.position.xy / uniforms.canvasSize;
     let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
+    if (maskAlpha <= 0.0) {
+        discard;
+    }
     return vec4<f32>(finalColor.rgb, finalColor.a * shapeAlpha * maskAlpha);
 }
 
@@ -861,6 +864,9 @@ fn text_fs_main(input: VertexOutput) -> vec4<f32> {
     let aliasedText = input.cornerRadius < 0.0;
     let screen_uv = input.position.xy / uniforms.canvasSize;
     let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
+    if (maskAlpha <= 0.0) {
+        discard;
+    }
     let gamma = abs(input.cornerRadius);
     let grayscaleAlpha = text_coverage_to_alpha(alpha, input.strokeThickness, gamma, aliasedText);
 
@@ -995,6 +1001,9 @@ fn texture_fs_main(input: VertexOutput) -> vec4<f32> {
     let rgbScale = input.color.r;
     let screen_uv = input.position.xy / uniforms.canvasSize;
     let maskAlpha = textureSample(maskTexture, maskSampler, screen_uv).r;
+    if (maskAlpha <= 0.0) {
+        discard;
+    }
     let coverage = opacity * maskAlpha;
     if (sourceIsPremultiplied) {
         return vec4<f32>(texColor.rgb * rgbScale * maskAlpha, texColor.a * coverage);
