@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>System.Drawing.Common</AssemblyName>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
     <RootNamespace>System.Drawing</RootNamespace>
     <PackageId>ProGPU.System.Drawing.Common</PackageId>
     <Description>ProGPU-backed portable System.Drawing.Common compatibility shim.</Description>
