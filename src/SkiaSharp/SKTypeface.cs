@@ -58,6 +58,12 @@ public class SKTypeface : IDisposable
     public string FamilyName { get; }
     public bool IsBold { get; }
     public bool IsItalic { get; }
+    public int FontWeight => Font.WeightClass == 0 ? (int)SKFontStyleWeight.Normal : Font.WeightClass;
+    public int FontWidth => Font.WidthClass == 0 ? (int)SKFontStyleWidth.Normal : Font.WidthClass;
+    public SKFontStyle FontStyle => new(
+        (SKFontStyleWeight)FontWeight,
+        (SKFontStyleWidth)Math.Clamp(FontWidth, (int)SKFontStyleWidth.UltraCondensed, (int)SKFontStyleWidth.UltraExpanded),
+        Font.IsItalic || IsItalic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);
 
     public SKTypeface(TtfFont font, string familyName, bool isBold = false, bool isItalic = false)
     {
@@ -104,19 +110,40 @@ public class SKTypeface : IDisposable
         }
     }
 
-    public static SKTypeface FromStream(Stream stream)
+    public static SKTypeface? FromStream(Stream stream, int index = 0)
     {
+        ArgumentNullException.ThrowIfNull(stream);
+
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
-        var font = new TtfFont(ms.ToArray());
-        return new SKTypeface(font, "StreamFont");
+        try
+        {
+            var font = new TtfFont(ms.ToArray(), index);
+            return new SKTypeface(font, font.FamilyName);
+        }
+        catch (Exception ex) when (IsInvalidFontException(ex))
+        {
+            return null;
+        }
     }
 
-    public static SKTypeface FromFile(string path)
+    public static SKTypeface? FromFile(string path, int index = 0)
     {
-        var font = new TtfFont(path);
-        return new SKTypeface(font, Path.GetFileNameWithoutExtension(path));
+        ArgumentNullException.ThrowIfNull(path);
+
+        try
+        {
+            var font = new TtfFont(path, index);
+            return new SKTypeface(font, font.FamilyName);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException || IsInvalidFontException(ex))
+        {
+            return null;
+        }
     }
+
+    private static bool IsInvalidFontException(Exception exception) =>
+        exception is FormatException or ArgumentException or OverflowException or IndexOutOfRangeException;
 
     public static SKTypeface FromFamilyName(string familyName, SKFontStyle style)
     {
@@ -186,11 +213,64 @@ public class SKTypeface : IDisposable
         return new SKFont(this, size);
     }
 
+    public bool TryGetTableData(uint tag, out byte[] data)
+    {
+        Span<char> characters = stackalloc char[4]
+        {
+            (char)((tag >> 24) & 0xff),
+            (char)((tag >> 16) & 0xff),
+            (char)((tag >> 8) & 0xff),
+            (char)(tag & 0xff)
+        };
+
+        if (Font.TryGetTable(new string(characters), out var table))
+        {
+            data = table.ToArray();
+            return true;
+        }
+
+        data = Array.Empty<byte>();
+        return false;
+    }
+
+    public SKStreamAsset OpenStream()
+    {
+        return new SKStreamAsset(Font.FontData.ToArray());
+    }
+
     public void Dispose() { }
 
     internal static TtfFont CreateFont(FontInfo font)
     {
         return new TtfFont(font.FilePath, font.FaceIndex);
+    }
+}
+
+public sealed class SKStreamAsset : SKStream
+{
+    private readonly MemoryStream _stream;
+
+    internal SKStreamAsset(byte[] data)
+    {
+        _stream = new MemoryStream(data, writable: false);
+    }
+
+    public long Length => _stream.Length;
+
+    public int Read(byte[] buffer, int size)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        return _stream.Read(buffer, 0, Math.Min(size, buffer.Length));
+    }
+
+    public int Read(byte[] buffer, long size)
+    {
+        return Read(buffer, (int)Math.Min(size, int.MaxValue));
+    }
+
+    public override void Dispose()
+    {
+        _stream.Dispose();
     }
 }
 

@@ -110,6 +110,23 @@ public class SfntFontFaceTests
     }
 
     [Fact]
+    public void TtfFontAcceptsBitmapOnlyBhedFonts()
+    {
+        byte[] fontData = BuildSfntWithTables(
+            ("bhed", BuildHeadTable(2048)),
+            ("maxp", BuildMaxpTable(3)),
+            ("cmap", BuildCmapFormat4Table()),
+            ("bloc", Array.Empty<byte>()),
+            ("bdat", Array.Empty<byte>()));
+
+        var font = new TtfFont(fontData);
+
+        Assert.Equal(2048, font.UnitsPerEm);
+        Assert.True(font.HasBitmapGlyphs);
+        Assert.False(font.HasTrueTypeOutlines);
+    }
+
+    [Fact]
     public void TtfFontBuildsScaledAndTranslatedCompositeOutline()
     {
         (byte[] loca, byte[] glyf) = BuildCompositeGlyphTables();
