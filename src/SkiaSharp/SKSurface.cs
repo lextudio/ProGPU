@@ -80,13 +80,15 @@ public class SKSurface : IDisposable
         _gpuTexture = texture;
         _ownsTexture = ownsTexture;
         _pixels = pixels;
-        _rowBytes = pixels != IntPtr.Zero ? ResolveCpuSurfaceRowBytes(width, height, rowBytes, nameof(rowBytes)) : rowBytes;
+        _rowBytes = pixels != IntPtr.Zero
+            ? ResolveCpuSurfaceRowBytes(width, height, rowBytes, colorType, nameof(rowBytes))
+            : rowBytes;
         _colorType = colorType;
         _alphaType = alphaType;
         _origin = origin;
 
         _drawingContext = new DrawingContext();
-        Canvas = new SKCanvas(_drawingContext, width, height, context);
+        Canvas = new SKCanvas(_drawingContext, width, height, context, Flush);
         _hasTextureContents = _gpuTexture != null && !_ownsTexture;
 
         if (_pixels != IntPtr.Zero && _gpuTexture != null)
@@ -145,7 +147,9 @@ public class SKSurface : IDisposable
     {
         ValidateImageInfoDimensions(info, nameof(info));
 
-        int actualRowBytes = pixels != IntPtr.Zero ? ResolveCpuSurfaceRowBytes(info.Width, info.Height, rowBytes, nameof(rowBytes)) : rowBytes;
+        int actualRowBytes = pixels != IntPtr.Zero
+            ? ResolveCpuSurfaceRowBytes(info.Width, info.Height, rowBytes, info.ColorType, nameof(rowBytes))
+            : rowBytes;
         var ctx = SKContextHelper.GetContext();
         var texture = new GpuTexture(
             ctx,
@@ -162,6 +166,17 @@ public class SKSurface : IDisposable
     public static SKSurface Create(GRContext grContext, GRBackendRenderTarget renderTarget, GRSurfaceOrigin origin, SKColorType colorType)
     {
         return Create(grContext, renderTarget, origin, colorType, new SKSurfaceProperties(SKPixelGeometry.RgbHorizontal));
+    }
+
+    public static SKSurface? Create(
+        GRContext grContext,
+        GRBackendTexture texture,
+        GRSurfaceOrigin origin,
+        SKColorType colorType)
+    {
+        ArgumentNullException.ThrowIfNull(grContext);
+        ArgumentNullException.ThrowIfNull(texture);
+        return null;
     }
 
     public static SKSurface Create(GRContext grContext, GRBackendRenderTarget renderTarget, GRSurfaceOrigin origin, SKColorType colorType, SKSurfaceProperties properties)
@@ -229,6 +244,8 @@ public class SKSurface : IDisposable
         // Skip compiling if no commands have been recorded
         if (_drawingContext.Commands.Count == 0) return;
 
+        var cpuReadbackRegions = Canvas.TakeCpuReadbackRegions();
+
         var visual = new DrawingVisual();
         visual.Size = new Vector2(_width, _height);
         if (_origin == GRSurfaceOrigin.BottomLeft)
@@ -256,24 +273,7 @@ public class SKSurface : IDisposable
             if (_pixels != IntPtr.Zero)
             {
                 byte[] readBackBytes = _gpuTexture.ReadPixels();
-
-                unsafe
-                {
-                    fixed (byte* src = readBackBytes)
-                    {
-                        byte* dst = (byte*)_pixels;
-                        for (int y = 0; y < _height; y++)
-                        {
-                            byte* srcRow = src + y * _width * 4;
-                            byte* dstRow = dst + y * _rowBytes;
-
-                            for (int x = 0; x < _width; x++)
-                            {
-                                CopyRgbaTexturePixelToSurface(srcRow, dstRow, x, _colorType, _alphaType, _gpuTexture.AlphaMode);
-                            }
-                        }
-                    }
-                }
+                CopyReadbackToCpu(readBackBytes, cpuReadbackRegions);
             }
         }
         finally
@@ -284,9 +284,62 @@ public class SKSurface : IDisposable
         }
     }
 
-    private static int ResolveCpuSurfaceRowBytes(int width, int height, int rowBytes, string parameterName)
+    private unsafe void CopyReadbackToCpu(byte[] readBackBytes, SKRect[]? regions)
     {
-        int minimumRowBytes = checked(width * 4);
+        fixed (byte* src = readBackBytes)
+        {
+            byte* dst = (byte*)_pixels;
+
+            if (regions == null)
+            {
+                CopyReadbackRegion(src, dst, 0, 0, _width, _height);
+                return;
+            }
+
+            foreach (var region in regions)
+            {
+                var left = Math.Clamp((int)MathF.Floor(region.Left), 0, _width);
+                var top = Math.Clamp((int)MathF.Floor(region.Top), 0, _height);
+                var right = Math.Clamp((int)MathF.Ceiling(region.Right), left, _width);
+                var bottom = Math.Clamp((int)MathF.Ceiling(region.Bottom), top, _height);
+                CopyReadbackRegion(src, dst, left, top, right, bottom);
+            }
+        }
+    }
+
+    private unsafe void CopyReadbackRegion(
+        byte* source,
+        byte* destination,
+        int left,
+        int top,
+        int right,
+        int bottom)
+    {
+        for (var y = top; y < bottom; y++)
+        {
+            var sourceRow = source + y * _width * 4;
+            var destinationRow = destination + y * _rowBytes;
+            for (var x = left; x < right; x++)
+            {
+                CopyRgbaTexturePixelToSurface(
+                    sourceRow,
+                    destinationRow,
+                    x,
+                    _colorType,
+                    _alphaType,
+                    _gpuTexture!.AlphaMode);
+            }
+        }
+    }
+
+    private static int ResolveCpuSurfaceRowBytes(
+        int width,
+        int height,
+        int rowBytes,
+        SKColorType colorType,
+        string parameterName)
+    {
+        int minimumRowBytes = checked(width * GetBytesPerPixel(colorType));
         int actualRowBytes = rowBytes > 0 ? rowBytes : minimumRowBytes;
         if (height > 0 && actualRowBytes < minimumRowBytes)
         {
@@ -294,6 +347,18 @@ public class SKSurface : IDisposable
         }
 
         return actualRowBytes;
+    }
+
+    private static int GetBytesPerPixel(SKColorType colorType)
+    {
+        return colorType switch
+        {
+            SKColorType.Alpha8 => 1,
+            SKColorType.Rgb565 or SKColorType.Argb4444 => 2,
+            SKColorType.RgbaF16 => 8,
+            SKColorType.RgbaF32 => 16,
+            _ => 4
+        };
     }
 
     private static void ValidateImageInfoDimensions(SKImageInfo info, string parameterName)
@@ -370,27 +435,52 @@ public class SKSurface : IDisposable
         return SKImage.FromOwnedTexture(snapshotTexture);
     }
 
+    public void Draw(SKCanvas canvas, float x, float y, SKPaint? paint)
+    {
+        ArgumentNullException.ThrowIfNull(canvas);
+        using var image = Snapshot();
+        if (paint != null)
+        {
+            canvas.DrawImage(image, x, y, paint);
+            return;
+        }
+
+        using var defaultPaint = new SKPaint();
+        canvas.DrawImage(image, x, y, defaultPaint);
+    }
+
     private static unsafe void CopyPixelToRgbaPremultiplied(byte* sourceRow, byte* destinationRow, int x, SKColorType colorType, SKAlphaType alphaType)
     {
-        int offset = x * 4;
+        int destinationOffset = x * 4;
         byte red;
         byte green;
         byte blue;
         byte alpha;
 
-        if (colorType == SKColorType.Bgra8888)
+        if (colorType == SKColorType.Rgb565)
         {
-            blue = sourceRow[offset];
-            green = sourceRow[offset + 1];
-            red = sourceRow[offset + 2];
-            alpha = sourceRow[offset + 3];
+            int sourceOffset = x * 2;
+            ushort pixel = (ushort)(sourceRow[sourceOffset] | (sourceRow[sourceOffset + 1] << 8));
+            red = (byte)(((pixel >> 11) & 0x1f) * 255 / 31);
+            green = (byte)(((pixel >> 5) & 0x3f) * 255 / 63);
+            blue = (byte)((pixel & 0x1f) * 255 / 31);
+            alpha = 255;
+        }
+        else if (colorType == SKColorType.Bgra8888)
+        {
+            int sourceOffset = x * 4;
+            blue = sourceRow[sourceOffset];
+            green = sourceRow[sourceOffset + 1];
+            red = sourceRow[sourceOffset + 2];
+            alpha = sourceRow[sourceOffset + 3];
         }
         else
         {
-            red = sourceRow[offset];
-            green = sourceRow[offset + 1];
-            blue = sourceRow[offset + 2];
-            alpha = sourceRow[offset + 3];
+            int sourceOffset = x * 4;
+            red = sourceRow[sourceOffset];
+            green = sourceRow[sourceOffset + 1];
+            blue = sourceRow[sourceOffset + 2];
+            alpha = sourceRow[sourceOffset + 3];
         }
 
         if (alphaType == SKAlphaType.Opaque)
@@ -404,19 +494,19 @@ public class SKSurface : IDisposable
             blue = PremultiplyChannel(blue, alpha);
         }
 
-        destinationRow[offset] = red;
-        destinationRow[offset + 1] = green;
-        destinationRow[offset + 2] = blue;
-        destinationRow[offset + 3] = alpha;
+        destinationRow[destinationOffset] = red;
+        destinationRow[destinationOffset + 1] = green;
+        destinationRow[destinationOffset + 2] = blue;
+        destinationRow[destinationOffset + 3] = alpha;
     }
 
     private static unsafe void CopyRgbaTexturePixelToSurface(byte* sourceRow, byte* destinationRow, int x, SKColorType colorType, SKAlphaType alphaType, GpuTextureAlphaMode sourceAlphaMode)
     {
-        int offset = x * 4;
-        byte red = sourceRow[offset];
-        byte green = sourceRow[offset + 1];
-        byte blue = sourceRow[offset + 2];
-        byte alpha = sourceRow[offset + 3];
+        int sourceOffset = x * 4;
+        byte red = sourceRow[sourceOffset];
+        byte green = sourceRow[sourceOffset + 1];
+        byte blue = sourceRow[sourceOffset + 2];
+        byte alpha = sourceRow[sourceOffset + 3];
 
         if (sourceAlphaMode == GpuTextureAlphaMode.Premultiplied &&
             (alphaType == SKAlphaType.Unpremul || alphaType == SKAlphaType.Opaque))
@@ -437,19 +527,31 @@ public class SKSurface : IDisposable
             alpha = 255;
         }
 
-        if (colorType == SKColorType.Bgra8888)
+        if (colorType == SKColorType.Rgb565)
         {
-            destinationRow[offset] = blue;
-            destinationRow[offset + 1] = green;
-            destinationRow[offset + 2] = red;
-            destinationRow[offset + 3] = alpha;
+            int destinationOffset = x * 2;
+            ushort pixel = (ushort)(
+                ((red * 31 + 127) / 255 << 11) |
+                ((green * 63 + 127) / 255 << 5) |
+                ((blue * 31 + 127) / 255));
+            destinationRow[destinationOffset] = (byte)pixel;
+            destinationRow[destinationOffset + 1] = (byte)(pixel >> 8);
+        }
+        else if (colorType == SKColorType.Bgra8888)
+        {
+            int destinationOffset = x * 4;
+            destinationRow[destinationOffset] = blue;
+            destinationRow[destinationOffset + 1] = green;
+            destinationRow[destinationOffset + 2] = red;
+            destinationRow[destinationOffset + 3] = alpha;
         }
         else
         {
-            destinationRow[offset] = red;
-            destinationRow[offset + 1] = green;
-            destinationRow[offset + 2] = blue;
-            destinationRow[offset + 3] = alpha;
+            int destinationOffset = x * 4;
+            destinationRow[destinationOffset] = red;
+            destinationRow[destinationOffset + 1] = green;
+            destinationRow[destinationOffset + 2] = blue;
+            destinationRow[destinationOffset + 3] = alpha;
         }
     }
 
