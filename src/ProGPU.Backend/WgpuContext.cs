@@ -655,12 +655,15 @@ public unsafe class WgpuContext : IDisposable
             }
         }
 
-        // Get standard composite alpha mode
-        var alphaMode = CompositeAlphaMode.Opaque;
-        if (capabilities.AlphaModeCount > 0 && capabilities.AlphaModes != null)
-        {
-            alphaMode = capabilities.AlphaModes[0];
-        }
+        ReadOnlySpan<CompositeAlphaMode> alphaModes =
+            capabilities.AlphaModeCount > 0 && capabilities.AlphaModes != null
+                ? new ReadOnlySpan<CompositeAlphaMode>(
+                    capabilities.AlphaModes,
+                    checked((int)capabilities.AlphaModeCount))
+                : ReadOnlySpan<CompositeAlphaMode>.Empty;
+        var alphaMode = ChooseCompositeAlphaMode(
+            _window?.TransparentFramebuffer == true,
+            alphaModes);
 
         ReadOnlySpan<PresentMode> presentModes = capabilities.PresentModeCount > 0 && capabilities.PresentModes != null
             ? new ReadOnlySpan<PresentMode>(capabilities.PresentModes, checked((int)capabilities.PresentModeCount))
@@ -684,6 +687,40 @@ public unsafe class WgpuContext : IDisposable
         };
 
         Wgpu.SurfaceConfigure(Surface, &config);
+    }
+
+    public static CompositeAlphaMode ChooseCompositeAlphaMode(
+        bool transparentFramebuffer,
+        ReadOnlySpan<CompositeAlphaMode> alphaModes)
+    {
+        if (alphaModes.IsEmpty)
+        {
+            return transparentFramebuffer
+                ? CompositeAlphaMode.Premultiplied
+                : CompositeAlphaMode.Opaque;
+        }
+
+        if (transparentFramebuffer)
+        {
+            if (alphaModes.Contains(CompositeAlphaMode.Premultiplied))
+            {
+                return CompositeAlphaMode.Premultiplied;
+            }
+            if (alphaModes.Contains(CompositeAlphaMode.Unpremultiplied))
+            {
+                return CompositeAlphaMode.Unpremultiplied;
+            }
+            if (alphaModes.Contains(CompositeAlphaMode.Inherit))
+            {
+                return CompositeAlphaMode.Inherit;
+            }
+        }
+        else if (alphaModes.Contains(CompositeAlphaMode.Opaque))
+        {
+            return CompositeAlphaMode.Opaque;
+        }
+
+        return alphaModes[0];
     }
 
     public static PresentMode ChoosePresentMode(bool vsync, ReadOnlySpan<PresentMode> presentModes)
