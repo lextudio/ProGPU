@@ -50,8 +50,9 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
     public override bool ApplyChrome(in NativeWindowState state)
     {
         base.ApplyChrome(state);
+        var nativeResizable = RequiresNativeResizableStyle(state);
         var functions = MotifFunctionMove | MotifFunctionClose;
-        if (state.CanResize)
+        if (nativeResizable)
         {
             functions |= MotifFunctionResize;
         }
@@ -70,11 +71,11 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
             decorations = state.Decorations switch
             {
                 NativeWindowDecorations.BorderOnly => MotifDecorationBorder |
-                    (state.CanResize ? MotifDecorationResize : 0),
+                    (nativeResizable ? MotifDecorationResize : 0),
                 NativeWindowDecorations.Full => MotifDecorationBorder |
                     MotifDecorationTitle |
                     MotifDecorationMenu |
-                    (state.CanResize ? MotifDecorationResize : 0) |
+                    (nativeResizable ? MotifDecorationResize : 0) |
                     (state.CanMinimize ? MotifDecorationMinimize : 0) |
                     (state.CanMaximize && state.CanResize ? MotifDecorationMaximize : 0),
                 _ => 0

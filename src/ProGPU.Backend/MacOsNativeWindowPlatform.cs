@@ -42,16 +42,21 @@ internal sealed class MacOsNativeWindowPlatform : GlfwNativeWindowPlatform
     public override bool ApplyChrome(in NativeWindowState state)
     {
         _state = state;
+        var nativeResizable = RequiresNativeResizableStyle(state);
         var style = SendUInt64(_nsWindow, "styleMask");
         style &= ~(StyleTitled | StyleClosable | StyleMiniaturizable | StyleResizable | StyleFullSizeContentView);
         switch (state.Decorations)
         {
             case NativeWindowDecorations.None:
-                style |= StyleFullSizeContentView;
+                style |= StyleTitled | StyleFullSizeContentView;
+                if (nativeResizable)
+                {
+                    style |= StyleResizable;
+                }
                 break;
             case NativeWindowDecorations.BorderOnly:
                 style |= StyleTitled | StyleFullSizeContentView;
-                if (state.CanResize && _enabled)
+                if (nativeResizable && _enabled)
                 {
                     style |= StyleResizable;
                 }
@@ -62,7 +67,7 @@ internal sealed class MacOsNativeWindowPlatform : GlfwNativeWindowPlatform
                 {
                     style |= StyleMiniaturizable;
                 }
-                if (state.CanResize && _enabled)
+                if (nativeResizable && _enabled)
                 {
                     style |= StyleResizable;
                 }

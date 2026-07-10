@@ -9,6 +9,7 @@ public sealed class SilkWindowController : IDisposable
     private INativeWindowPlatform? _platform;
     private NativeWindowState _state = NativeWindowState.Default;
     private DragState? _drag;
+    private bool _isApplying;
     private bool _disposed;
 
     public SilkWindowController(IWindow window)
@@ -141,6 +142,12 @@ public sealed class SilkWindowController : IDisposable
         return Apply((platform, _) => platform.SetBackdrop(backdrop));
     }
 
+    public bool PrepareForStateTransition()
+    {
+        return Apply(static (platform, state) =>
+            platform.ApplyChrome(state with { CanResize = true }));
+    }
+
     public bool BeginMove(NativeWindowPoint pointer)
     {
         ThrowIfDisposed();
@@ -256,7 +263,20 @@ public sealed class SilkWindowController : IDisposable
     private bool Apply(Func<INativeWindowPlatform, NativeWindowState, bool> action)
     {
         ThrowIfDisposed();
-        return EnsureAttached() && action(_platform!, _state);
+        if (!EnsureAttached() || _isApplying)
+        {
+            return false;
+        }
+
+        _isApplying = true;
+        try
+        {
+            return action(_platform!, _state);
+        }
+        finally
+        {
+            _isApplying = false;
+        }
     }
 
     private bool EnsureAttached()
@@ -265,6 +285,24 @@ public sealed class SilkWindowController : IDisposable
     }
 
     private void ApplyAll()
+    {
+        if (_isApplying)
+        {
+            return;
+        }
+
+        _isApplying = true;
+        try
+        {
+            ApplyAllCore();
+        }
+        finally
+        {
+            _isApplying = false;
+        }
+    }
+
+    private void ApplyAllCore()
     {
         var platform = _platform!;
         platform.SetClientAreaExtension(_state.ExtendClientArea, _state.TitleBarHeight);

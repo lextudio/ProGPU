@@ -50,8 +50,9 @@ internal unsafe class GlfwNativeWindowPlatform : INativeWindowPlatform
         }
 
         var decorated = state.Decorations != NativeWindowDecorations.None && !state.ExtendClientArea;
+        var nativeResizable = RequiresNativeResizableStyle(state);
         Glfw.SetWindowAttrib(GlfwWindow, WindowAttributeSetter.Decorated, decorated);
-        Glfw.SetWindowAttrib(GlfwWindow, WindowAttributeSetter.Resizable, state.CanResize);
+        Glfw.SetWindowAttrib(GlfwWindow, WindowAttributeSetter.Resizable, nativeResizable);
         return true;
     }
 
@@ -124,6 +125,10 @@ internal unsafe class GlfwNativeWindowPlatform : INativeWindowPlatform
         }
         return NativeWindowHandle.Empty;
     }
+
+    protected bool RequiresNativeResizableStyle(in NativeWindowState state) =>
+        state.CanResize ||
+        Window.WindowState is WindowState.Maximized or WindowState.Fullscreen;
 
     private static int NormalizeMinimum(int value) => value > 0 ? value : -1;
     private static int NormalizeMaximum(int value) => value > 0 && value < int.MaxValue ? value : -1;
