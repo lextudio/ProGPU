@@ -701,7 +701,7 @@ sealed class SfntFontFace
                (platformId == 3 && (encodingId == 1 || encodingId == 10));
     }
 
-    private static string DecodeName(ReadOnlySpan<byte> bytes, ushort platformId, ushort encodingId)
+    internal static string DecodeName(ReadOnlySpan<byte> bytes, ushort platformId, ushort encodingId)
     {
         string value;
         if (platformId == 0 || platformId == 3)
@@ -720,7 +720,7 @@ sealed class SfntFontFace
         return value.Replace("\0", string.Empty).Trim();
     }
 
-    private static int GetNameScore(ushort platformId, ushort languageId)
+    internal static int GetNameScore(ushort platformId, ushort languageId)
     {
         if (platformId == 3 && languageId == 0x0409)
         {

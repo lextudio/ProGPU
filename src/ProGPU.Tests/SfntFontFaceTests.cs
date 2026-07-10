@@ -46,6 +46,58 @@ public class SfntFontFaceTests
     }
 
     [Fact]
+    public void FontApiStreamsMetadataWithoutReadingTheWholeFontFile()
+    {
+        string file = Path.Combine(Path.GetTempPath(), $"progpu-font-{Guid.NewGuid():N}.ttf");
+        File.WriteAllBytes(file, BuildSfnt("ProGPU Sparse", "ProGPU Sparse Regular"));
+        using (var stream = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.None))
+        {
+            stream.SetLength(64L * 1024 * 1024);
+        }
+
+        try
+        {
+            long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+            FontInfo? info = FontApi.ParseFontInfo(file);
+
+            long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            Assert.NotNull(info);
+            Assert.Equal("ProGPU Sparse", info.FamilyName);
+            Assert.Equal("ProGPU Sparse Regular", info.Name);
+            Assert.True(allocatedBytes < 1024 * 1024, $"Allocated {allocatedBytes:N0} bytes.");
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void FontApiParsesEveryTrueTypeCollectionFace()
+    {
+        string file = Path.Combine(Path.GetTempPath(), $"progpu-font-{Guid.NewGuid():N}.ttc");
+        File.WriteAllBytes(file, BuildTtc(
+            ("ProGPU Mono", "ProGPU Mono Regular"),
+            ("ProGPU Mono", "ProGPU Mono Bold")));
+
+        try
+        {
+            List<FontInfo> infos = FontApi.ParseFontInfos(file);
+
+            Assert.Equal(2, infos.Count);
+            Assert.Equal("ProGPU Mono Regular", infos[0].Name);
+            Assert.Equal(0, infos[0].FaceIndex);
+            Assert.Equal("ProGPU Mono Bold", infos[1].Name);
+            Assert.Equal(1, infos[1].FaceIndex);
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
     public void LoadsTrueTypeCollectionFaces()
     {
         byte[] fontData = BuildTtc(

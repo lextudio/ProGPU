@@ -25,6 +25,16 @@ public static class FontApi
     public static List<FontInfo> GetSystemFonts()
     {
         var list = new List<FontInfo>();
+        var scannedFiles = new HashSet<string>(
+            OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+        var enumerationOptions = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = 0
+        };
 
         foreach (var dir in GetSystemFontDirectories())
         {
@@ -32,11 +42,13 @@ public static class FontApi
 
             try
             {
-                var files = Directory.GetFiles(dir, "*.*", SearchOption.AllDirectories);
-                foreach (var file in files)
+                foreach (var file in Directory.EnumerateFiles(dir, "*.*", enumerationOptions))
                 {
-                    var ext = Path.GetExtension(file).ToLowerInvariant();
-                    if (ext == ".ttf" || ext == ".ttc" || ext == ".otf")
+                    var ext = Path.GetExtension(file);
+                    if ((ext.Equals(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                         ext.Equals(".ttc", StringComparison.OrdinalIgnoreCase) ||
+                         ext.Equals(".otf", StringComparison.OrdinalIgnoreCase)) &&
+                        scannedFiles.Add(file))
                     {
                         list.AddRange(ParseFontInfos(file));
                     }
@@ -116,26 +128,9 @@ public static class FontApi
     {
         try
         {
-            var infos = new List<FontInfo>();
-            if (!SfntFontFace.TryLoadFaces(file, out IReadOnlyList<SfntFontFace> faces))
+            if (!SfntFontMetadataReader.TryReadFontInfos(file, out List<FontInfo> infos))
             {
                 return new List<FontInfo> { CreateFallbackInfo(file, 0) };
-            }
-
-            foreach (SfntFontFace face in faces)
-            {
-                string familyName = TryGetFirstName(face, SfntNameIds.PreferredFamilyName) ??
-                                    TryGetFirstName(face, SfntNameIds.FamilyName) ??
-                                    Path.GetFileNameWithoutExtension(file);
-                string fullName = TryGetFirstName(face, SfntNameIds.FullName) ?? familyName;
-
-                infos.Add(new FontInfo
-                {
-                    Name = fullName,
-                    FamilyName = familyName,
-                    FilePath = file,
-                    FaceIndex = face.FaceIndex
-                });
             }
 
             return infos;
@@ -173,11 +168,6 @@ public static class FontApi
                 "share",
                 "fonts");
         }
-    }
-
-    private static string? TryGetFirstName(SfntFontFace face, ushort nameId)
-    {
-        return face.TryGetName(nameId, out string value) ? value : null;
     }
 
     private static FontInfo CreateFallbackInfo(string file, int faceIndex)
