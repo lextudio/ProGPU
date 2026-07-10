@@ -15,6 +15,7 @@ public sealed class StrongNameSigningTests
     private static readonly Type[] PublicAssemblyAnchorTypes =
     [
         typeof(WgpuContext),
+        typeof(IProGpuSurfaceFramebuffer),
         typeof(ProGpuDirectXDevice),
         typeof(Compositor),
         typeof(TtfFont),
