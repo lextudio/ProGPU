@@ -2015,6 +2015,39 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void PictureOpacityMaskPreservesTransparentGap()
+    {
+        var recorder = new GpuPictureRecorder();
+        var maskContext = recorder.BeginRecording(new Rect(0f, 0f, 64f, 32f));
+        var opaque = new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f));
+        maskContext.DrawRectangle(opaque, null, new Rect(0f, 0f, 24f, 32f));
+        maskContext.DrawRectangle(opaque, null, new Rect(40f, 0f, 24f, 32f));
+        using var picture = recorder.EndRecording();
+
+        var window = HeadlessWindow.Shared;
+        window.Resize(64, 32);
+        window.Content = new PictureOpacityMaskVisual(picture);
+
+        try
+        {
+            window.Render();
+
+            var pixels = window.ReadPixels();
+            var left = ReadPixel(pixels, window.Width, x: 12, y: 16);
+            var gap = ReadPixel(pixels, window.Width, x: 32, y: 16);
+            var right = ReadPixel(pixels, window.Width, x: 52, y: 16);
+
+            Assert.True(left.R >= 220 && left.G <= 35 && left.B <= 35, $"Expected red at left, found {left}.");
+            Assert.True(gap.R <= 35 && gap.G <= 35 && gap.B <= 35, $"Expected transparent mask gap, found {gap}.");
+            Assert.True(right.R >= 220 && right.G <= 35 && right.B <= 35, $"Expected red at right, found {right}.");
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
     public void AppendTranslatesOpacityMaskBounds()
     {
         var source = new DrawingContext();
@@ -2029,6 +2062,31 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(RenderCommandType.PushOpacityMask, target.Commands[0].Type);
         Assert.Equal(new Rect(22f, 33f, 10f, 11f), target.Commands[0].Rect);
         Assert.Same(maskBrush, target.Commands[0].Brush);
+        Assert.Equal(RenderCommandType.PopOpacityMask, target.Commands[1].Type);
+    }
+
+    [Fact]
+    public void AppendTranslatesPictureOpacityMaskContent()
+    {
+        var recorder = new GpuPictureRecorder();
+        var pictureContext = recorder.BeginRecording(new Rect(0f, 0f, 10f, 10f));
+        pictureContext.DrawRectangle(
+            new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)),
+            null,
+            new Rect(0f, 0f, 10f, 10f));
+        using var picture = recorder.EndRecording();
+
+        var source = new DrawingContext();
+        source.PushOpacityMask(picture, new Rect(2f, 3f, 10f, 11f));
+        source.PopOpacityMask();
+
+        var target = new DrawingContext();
+        target.Append(source, new Vector2(20f, 30f));
+
+        Assert.Equal(2, target.Commands.Count);
+        Assert.Same(picture, target.Commands[0].Picture);
+        Assert.Equal(20f, target.Commands[0].Transform.M41);
+        Assert.Equal(30f, target.Commands[0].Transform.M42);
         Assert.Equal(RenderCommandType.PopOpacityMask, target.Commands[1].Type);
     }
 
@@ -3419,6 +3477,29 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)) { Opacity = 0.5f },
                 new Rect(80f, 0f, 32f, 32f));
             context.DrawRectangle(_red, null, new Rect(80f, 0f, 32f, 32f));
+            context.PopOpacityMask();
+        }
+    }
+
+    private sealed class PictureOpacityMaskVisual : FrameworkElement
+    {
+        private readonly GpuPicture _picture;
+        private readonly SolidColorBrush _background = new(new Vector4(0f, 0f, 0f, 1f));
+        private readonly SolidColorBrush _red = new(new Vector4(1f, 0f, 0f, 1f));
+
+        public PictureOpacityMaskVisual(GpuPicture picture)
+        {
+            _picture = picture;
+            Width = 64f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            var bounds = new Rect(0f, 0f, 64f, 32f);
+            context.DrawRectangle(_background, null, bounds);
+            context.PushOpacityMask(_picture, bounds);
+            context.DrawRectangle(_red, null, bounds);
             context.PopOpacityMask();
         }
     }

@@ -873,10 +873,22 @@ public class DrawingContext : IRenderDataProvider
 
     public void PushOpacityMask(Brush maskBrush, Rect bounds)
     {
+        ArgumentNullException.ThrowIfNull(maskBrush);
         Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.PushOpacityMask,
             Brush = maskBrush,
+            Rect = bounds
+        });
+    }
+
+    public void PushOpacityMask(GpuPicture maskPicture, Rect bounds)
+    {
+        ArgumentNullException.ThrowIfNull(maskPicture);
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushOpacityMask,
+            Picture = maskPicture,
             Rect = bounds
         });
     }
@@ -1414,7 +1426,11 @@ public class DrawingContext : IRenderDataProvider
 
             if (translation != Vector2.Zero)
             {
-                if (adjustedCmd.Type == RenderCommandType.DrawRect ||
+                if (adjustedCmd.Type == RenderCommandType.PushOpacityMask && adjustedCmd.Picture != null)
+                {
+                    ComposeAppendTranslation(ref adjustedCmd, translation);
+                }
+                else if (adjustedCmd.Type == RenderCommandType.DrawRect ||
                     adjustedCmd.Type == RenderCommandType.DrawTexture ||
                     adjustedCmd.Type == RenderCommandType.DrawRoundedRect ||
                     adjustedCmd.Type == RenderCommandType.PushClip ||

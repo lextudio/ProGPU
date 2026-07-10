@@ -2986,7 +2986,10 @@ public unsafe class Compositor : IDisposable
                         PopGeometryMask();
                         break;
                     case RenderCommandType.PushOpacityMask:
-                        if (cmd.Brush != null) PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
+                        if (cmd.Picture != null)
+                            PushOpacityMaskValue(cmd.Picture, cmd.Rect, activeTransform);
+                        else if (cmd.Brush != null)
+                            PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
                         break;
                     case RenderCommandType.PopOpacityMask:
                         PopOpacityMaskValue();
@@ -3112,7 +3115,7 @@ public unsafe class Compositor : IDisposable
                         CompileGpuScatterSeriesCommand(ctx, cmd, activeTransform);
                         break;
                     case RenderCommandType.DrawPicture:
-                        CompilePicture(ctx, cmd.Picture, activeTransform);
+                        CompilePicture(cmd.Picture, activeTransform);
                         break;
                     case RenderCommandType.DrawGlyphRun:
                         CompileGlyphRunCommand(cmd, activeTransform);
@@ -3182,7 +3185,7 @@ public unsafe class Compositor : IDisposable
             node.HitTestId);
     }
 
-    private void CompilePicture(DrawingContext parentContext, GpuPicture? picture, Matrix4x4 globalTransform)
+    private void CompilePicture(GpuPicture? picture, Matrix4x4 globalTransform)
     {
         if (picture == null) return;
         var commands = picture.Commands;
@@ -3237,7 +3240,10 @@ public unsafe class Compositor : IDisposable
                     PopGeometryMask();
                     break;
                 case RenderCommandType.PushOpacityMask:
-                    if (cmd.Brush != null) PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
+                    if (cmd.Picture != null)
+                        PushOpacityMaskValue(cmd.Picture, cmd.Rect, activeTransform);
+                    else if (cmd.Brush != null)
+                        PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
                     break;
                 case RenderCommandType.PopOpacityMask:
                     PopOpacityMaskValue();
@@ -3350,7 +3356,7 @@ public unsafe class Compositor : IDisposable
                     CompileGpuScatterSeriesCommand(picture, cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPicture:
-                    CompilePicture(parentContext, cmd.Picture, activeTransform);
+                    CompilePicture(cmd.Picture, activeTransform);
                     break;
                 case RenderCommandType.DrawGlyphRun:
                     CompileGlyphRunCommand(cmd, activeTransform);
@@ -8264,7 +8270,7 @@ public unsafe class Compositor : IDisposable
                         pendingTextStart = (uint)_textVerticesList.Count;
                         break;
                     case RenderCommandType.DrawPicture:
-                        CompilePicture(context, cmd.Picture, Matrix4x4.Identity);
+                        CompilePicture(cmd.Picture, Matrix4x4.Identity);
                         break;
                 }
 
@@ -9299,6 +9305,51 @@ public unsafe class Compositor : IDisposable
                 Brush = brush
             };
             CompileRectCommand(cmd, transform);
+            CommitPendingDrawCalls();
+        }
+        finally
+        {
+            RestoreStateAfterMaskCompilation(savedState);
+        }
+
+        int maskDrawCallCount = _drawCalls.Count - preDrawCallCount;
+        var maskDrawCalls = RentMaskDrawCallList(maskDrawCallCount);
+        for (int i = preDrawCallCount; i < _drawCalls.Count; i++)
+        {
+            maskDrawCalls.Add(_drawCalls[i]);
+        }
+        _drawCalls.RemoveRange(preDrawCallCount, maskDrawCallCount);
+
+        var maskTex = GetMaskTexture(CurrentMaskTargetPixelWidthUInt, CurrentMaskTargetPixelHeightUInt);
+        var prevMask = _maskStack.Count > 0 ? _maskStack.Peek() : null;
+
+        _maskRenderPasses.Add(new MaskRenderPassInfo
+        {
+            MaskTexture = maskTex,
+            PreviousMaskTexture = prevMask,
+            DrawCalls = maskDrawCalls
+        });
+
+        _maskStack.Push(maskTex);
+    }
+
+    private void PushOpacityMaskValue(GpuPicture picture, Rect bounds, Matrix4x4 transform)
+    {
+        CommitPendingDrawCalls();
+        int preDrawCallCount = _drawCalls.Count;
+        var savedState = ResetStateForMaskCompilation();
+
+        try
+        {
+            PushClipRect(bounds, transform);
+            try
+            {
+                CompilePicture(picture, transform);
+            }
+            finally
+            {
+                PopClipRect();
+            }
             CommitPendingDrawCalls();
         }
         finally
