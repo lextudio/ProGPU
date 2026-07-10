@@ -406,7 +406,9 @@ public sealed class PortableWindowActivationCallbacks
         Action<object>? dispose = null,
         Func<object, bool>? dragMove = null,
         Func<object, IntPtr>? getHandle = null,
-        Func<IntPtr, PortableWindowRegion, bool>? setWindowRegion = null)
+        Func<IntPtr, PortableWindowRegion, bool>? setWindowRegion = null,
+        Action<object>? requestDispatcherProcessing = null,
+        Action? requestSynchronousPump = null)
     {
         Activate = activate ?? throw new ArgumentNullException(nameof(activate));
         Show = show;
@@ -423,6 +425,8 @@ public sealed class PortableWindowActivationCallbacks
         DragMove = dragMove;
         GetHandle = getHandle;
         SetWindowRegion = setWindowRegion;
+        RequestDispatcherProcessing = requestDispatcherProcessing;
+        RequestSynchronousPump = requestSynchronousPump;
     }
 
     public Func<object, object?> Activate { get; }
@@ -454,6 +458,114 @@ public sealed class PortableWindowActivationCallbacks
     public Func<object, IntPtr>? GetHandle { get; }
 
     public Func<IntPtr, PortableWindowRegion, bool>? SetWindowRegion { get; }
+
+    public Action<object>? RequestDispatcherProcessing { get; }
+
+    /// <summary>
+    /// Deliberately separate from <see cref="RequestDispatcherProcessing"/>, which fires on every
+    /// dispatcher operation posted and must stay a cheap fire-and-forget wake. This one backs
+    /// exactly one caller on the WPF side - Window's modal ShowDialog wait loop - which needs to
+    /// synchronously pump one native event tick, on the same thread, because nothing else will
+    /// while it's "blocked" with no OS message queue to wait on. Takes no argument: unlike the
+    /// per-window callbacks above, a single global handler is enough, since pumping is inherently
+    /// global (every active native window gets ticked, not just one).
+    /// </summary>
+    public Action? RequestSynchronousPump { get; }
+}
+
+public sealed class PortablePopupActivationCallbacks
+{
+    public PortablePopupActivationCallbacks(
+        Func<double, double, bool, bool, object?> create,
+        Func<object, object?>? getPresentationSource = null,
+        Action<object>? show = null,
+        Action<object>? hide = null,
+        Action<object, bool, double, double, bool, double, double>? setPosition = null,
+        Action<object>? dispose = null,
+        GetScreenOriginCallback? getScreenOrigin = null,
+        GetMonitorBoundsCallback? getMonitorBounds = null)
+    {
+        Create = create ?? throw new ArgumentNullException(nameof(create));
+        GetPresentationSource = getPresentationSource;
+        Show = show;
+        Hide = hide;
+        SetPosition = setPosition;
+        Dispose = dispose;
+        GetScreenOrigin = getScreenOrigin;
+        GetMonitorBounds = getMonitorBounds;
+    }
+
+    /// <summary>(x, y, transparent, useSharedWindow) -&gt; opaque activation handle, or null on failure.</summary>
+    public Func<double, double, bool, bool, object?> Create { get; }
+
+    /// <summary>Extracts the bound (portable) PresentationSource from an activation handle.</summary>
+    public Func<object, object?>? GetPresentationSource { get; }
+
+    public Action<object>? Show { get; }
+
+    public Action<object>? Hide { get; }
+
+    /// <summary>(activation, position, x, y, size, width, height).</summary>
+    public Action<object, bool, double, double, bool, double, double>? SetPosition { get; }
+
+    public Action<object>? Dispose { get; }
+
+    /// <summary>Resolves the logical/DIP screen origin of the window hosting the given presentation source.</summary>
+    public GetScreenOriginCallback? GetScreenOrigin { get; }
+
+    /// <summary>Resolves the monitor bounds (device pixels) that contain the given screen-space point.</summary>
+    public GetMonitorBoundsCallback? GetMonitorBounds { get; }
+}
+
+/// <summary>Resolves the logical/DIP screen origin (x, y) of the window hosting the given presentation source.</summary>
+public delegate bool GetScreenOriginCallback(object presentationSource, out double x, out double y);
+
+/// <summary>Resolves the monitor bounds (left, top, width, height) in device pixels for the monitor
+/// that contains the given screen-space point.  Returns false when the platform cannot determine
+/// monitor geometry, in which case the caller falls back to default primary-screen heuristics.</summary>
+public delegate bool GetMonitorBoundsCallback(double screenX, double screenY, out double left, out double top, out double width, out double height);
+
+public interface IPortablePopupActivationServiceRegistrar
+{
+    PortableWpfServiceKey ServiceKey { get; }
+
+    void Register(PortablePopupActivationCallbacks callbacks);
+
+    void Clear();
+}
+
+/// <summary>
+/// Portable substitute for the OS-level guarantees a menu overlay needs on Win32 for free
+/// (WS_EX_NOACTIVATE/TOPMOST z-order, a single system-wide input redirect while a menu holds
+/// capture). PresentationFramework calls <see cref="Register"/> once at startup with the
+/// enter/exit callbacks for the shared transparent overlay window; it invokes them as
+/// <c>MenuBase.IsMenuMode</c> flips true/false. See librewpf/docs/menus.md, "Proposed redesign:
+/// one shared transparent overlay for all transient popups."
+/// </summary>
+public interface IPortableMenuOverlayServiceRegistrar
+{
+    PortableWpfServiceKey ServiceKey { get; }
+
+    /// <summary>
+    /// The enter callback receives the logical/DIP screen position of the menu's owning window
+    /// (<c>ownerScreenX</c>, <c>ownerScreenY</c>) so the overlay can be scoped to just the monitor
+    /// that window lives on. A single native window cannot span multiple monitors on this backend
+    /// (GLFW/macOS), so a full-virtual-desktop overlay would land on the wrong display; the owner's
+    /// position picks the correct one.
+    /// <paramref name="getPresentationSource"/> returns the shared overlay's bound (portable)
+    /// PresentationSource while menu-mode is active, or null if no overlay currently exists.
+    /// <paramref name="getScreenOrigin"/> resolves that same source's logical/DIP screen origin
+    /// (reusing the same host-registration lookup per-popup windows already register into), so a
+    /// popup being attached windowlessly onto the overlay can compute the local offset needed to
+    /// land at its intended absolute screen position.
+    /// </summary>
+    void Register(
+        Action<double, double> enterMenuMode,
+        Action exitMenuMode,
+        Func<object?> getPresentationSource,
+        GetScreenOriginCallback getScreenOrigin);
+
+    void Clear();
 }
 
 public sealed class PortableWindowInputEvent
@@ -539,6 +651,15 @@ public interface IPortableWindowActivationServiceRegistrar
 
     bool TrySetActivationState(object window, bool isActive);
 
+    // Portable substitute for WM_MOVE: real Win32 WPF never needs this notification because
+    // popup HWNDs are owned/child windows that the OS repositions automatically when the
+    // owner moves. Portable popups get their own independent native window, so nothing tells
+    // WPF the owner moved unless we synthesize it here.
+    bool TryNotifyWindowMoved(object window, double x, double y)
+    {
+        return false;
+    }
+
     bool TryBeginInvokeInput(object window, Action callback);
 
     bool TryProcessInputEvent(object window, PortableWindowInputEvent input);
@@ -578,6 +699,8 @@ public static class PortableWpfServiceRegistry
 {
     private static readonly object SyncRoot = new();
     private static readonly Dictionary<PortableWpfServiceKey, IPortableWindowActivationServiceRegistrar> WindowActivationServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortablePopupActivationServiceRegistrar> PopupActivationServices = new();
+    private static readonly Dictionary<PortableWpfServiceKey, IPortableMenuOverlayServiceRegistrar> MenuOverlayServices = new();
     private static readonly Dictionary<PortableWpfServiceKey, IPortableClipboardServiceRegistrar> ClipboardServices = new();
     private static readonly Dictionary<PortableWpfServiceKey, IPortableLauncherServiceRegistrar> LauncherServices = new();
     private static readonly Dictionary<PortableWpfServiceKey, IPortableMessageBoxServiceRegistrar> MessageBoxServices = new();
@@ -618,6 +741,56 @@ public static class PortableWpfServiceRegistry
         lock (SyncRoot)
         {
             return WindowActivationServices.TryGetValue(serviceKey, out service!);
+        }
+    }
+
+    public static IDisposable RegisterPopupActivationService(IPortablePopupActivationServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
+
+        lock (SyncRoot)
+        {
+            PopupActivationServices[service.ServiceKey] = service;
+        }
+
+        return new Registration<IPortablePopupActivationServiceRegistrar>(service, PopupActivationServices);
+    }
+
+    public static bool TryGetPopupActivationService(
+        PortableWpfServiceKey serviceKey,
+        out IPortablePopupActivationServiceRegistrar service)
+    {
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
+
+        lock (SyncRoot)
+        {
+            return PopupActivationServices.TryGetValue(serviceKey, out service!);
+        }
+    }
+
+    public static IDisposable RegisterMenuOverlayService(IPortableMenuOverlayServiceRegistrar service)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        ValidateServiceKey(service.ServiceKey, nameof(service));
+
+        lock (SyncRoot)
+        {
+            MenuOverlayServices[service.ServiceKey] = service;
+        }
+
+        return new Registration<IPortableMenuOverlayServiceRegistrar>(service, MenuOverlayServices);
+    }
+
+    public static bool TryGetMenuOverlayService(
+        PortableWpfServiceKey serviceKey,
+        out IPortableMenuOverlayServiceRegistrar service)
+    {
+        ValidateServiceKey(serviceKey, nameof(serviceKey));
+
+        lock (SyncRoot)
+        {
+            return MenuOverlayServices.TryGetValue(serviceKey, out service!);
         }
     }
 
@@ -847,6 +1020,8 @@ public static class PortableWpfServiceRegistry
             return service switch
             {
                 IPortableWindowActivationServiceRegistrar windowActivationService => windowActivationService.ServiceKey,
+                IPortablePopupActivationServiceRegistrar popupActivationService => popupActivationService.ServiceKey,
+                IPortableMenuOverlayServiceRegistrar menuOverlayService => menuOverlayService.ServiceKey,
                 IPortableClipboardServiceRegistrar clipboardService => clipboardService.ServiceKey,
                 IPortableLauncherServiceRegistrar launcherService => launcherService.ServiceKey,
                 IPortableMessageBoxServiceRegistrar messageBoxService => messageBoxService.ServiceKey,

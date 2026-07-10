@@ -31,6 +31,16 @@ public unsafe class WgpuContext : IDisposable
     public uint MaxBindGroups { get; private set; } = 4;
     public bool SupportsReadOnlyAndReadWriteStorageTextures { get; private set; }
 
+    /// <summary>
+    /// When true, <see cref="ConfigureSwapChain"/> prefers a non-opaque composite alpha mode
+    /// (Premultiplied/Unpremultiplied) if the surface's capabilities offer one, instead of always
+    /// taking whichever mode capabilities report first (usually Opaque). Set before the window's
+    /// composition target is created - a transparent-framebuffer native window (e.g. the shared
+    /// menu overlay, librewpf/docs/menus.md) still composites fully opaque on top of it otherwise,
+    /// since window-level transparency and swapchain alpha compositing are independent knobs.
+    /// </summary>
+    public bool PreferTransparentAlpha { get; set; }
+
     public static event Action<ErrorType, string>? OnWebGpuError;
 
     public static void RaiseWebGpuError(ErrorType type, string message)
@@ -671,7 +681,7 @@ public unsafe class WgpuContext : IDisposable
                     checked((int)capabilities.AlphaModeCount))
                 : ReadOnlySpan<CompositeAlphaMode>.Empty;
         var alphaMode = ChooseCompositeAlphaMode(
-            _window?.TransparentFramebuffer == true,
+            PreferTransparentAlpha || _window?.TransparentFramebuffer == true,
             alphaModes);
 
         ReadOnlySpan<PresentMode> presentModes = capabilities.PresentModeCount > 0 && capabilities.PresentModes != null
