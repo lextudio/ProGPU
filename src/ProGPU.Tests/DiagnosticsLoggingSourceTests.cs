@@ -149,6 +149,8 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("dotnet nuget push artifacts/packages/Release/*.nupkg", workflow, StringComparison.Ordinal);
         Assert.Contains("Create GitHub Release", workflow, StringComparison.Ordinal);
         Assert.Contains("GH_TOKEN: ${{ github.token }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("if [[ \"${PROGPU_PACKAGE_VERSION}\" == *-* ]]", workflow, StringComparison.Ordinal);
+        Assert.Contains("release_args+=(--prerelease)", workflow, StringComparison.Ordinal);
         Assert.Contains("gh release create \"${GITHUB_REF_NAME}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("--title \"ProGPU ${{ env.PROGPU_PACKAGE_VERSION }}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("--generate-notes", workflow, StringComparison.Ordinal);

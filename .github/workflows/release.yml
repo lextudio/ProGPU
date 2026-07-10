@@ -101,10 +101,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          release_args=()
+          if [[ "${PROGPU_PACKAGE_VERSION}" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             artifacts/packages/Release/*.nupkg \
             artifacts/packages/Release/*.snupkg \
             --repo "${GITHUB_REPOSITORY}" \
             --title "ProGPU ${{ env.PROGPU_PACKAGE_VERSION }}" \
             --generate-notes \
-            --verify-tag
+            --verify-tag \
+            "${release_args[@]}"
