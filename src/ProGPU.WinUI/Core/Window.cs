@@ -417,9 +417,9 @@ public class Window
         content.Arrange(new Rect(0, 0, logicalSize.X, logicalSize.Y));
 
         TextureView* targetView = null;
+        var surfaceTexture = new SurfaceTexture();
         if (wgpuContext.Surface != null)
         {
-            var surfaceTexture = new SurfaceTexture();
             wgpuContext.Wgpu.SurfaceGetCurrentTexture(wgpuContext.Surface, &surfaceTexture);
             
             if (surfaceTexture.Status == SurfaceGetCurrentTextureStatus.Success)
@@ -438,19 +438,32 @@ public class Window
             }
         }
 
-        if (targetView != null)
+        try
         {
-            compositor.RenderScene(
-                content,
-                (uint)MathF.Ceiling(logicalSize.X),
-                (uint)MathF.Ceiling(logicalSize.Y),
-                (uint)framebufferSize.X,
-                (uint)framebufferSize.Y,
-                dpiScale,
-                targetView);
-            
-            wgpuContext.Wgpu.SurfacePresent(wgpuContext.Surface);
-            wgpuContext.Wgpu.TextureViewRelease(targetView);
+            if (targetView != null)
+            {
+                compositor.RenderScene(
+                    content,
+                    (uint)MathF.Ceiling(logicalSize.X),
+                    (uint)MathF.Ceiling(logicalSize.Y),
+                    (uint)framebufferSize.X,
+                    (uint)framebufferSize.Y,
+                    dpiScale,
+                    targetView);
+
+                wgpuContext.Wgpu.SurfacePresent(wgpuContext.Surface);
+            }
+        }
+        finally
+        {
+            if (targetView != null)
+            {
+                wgpuContext.Wgpu.TextureViewRelease(targetView);
+            }
+            if (surfaceTexture.Texture != null)
+            {
+                wgpuContext.Wgpu.TextureRelease(surfaceTexture.Texture);
+            }
         }
     }
 

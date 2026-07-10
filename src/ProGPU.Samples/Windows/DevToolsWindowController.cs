@@ -86,9 +86,9 @@ public static unsafe class DevToolsWindowController
             }
 
             TextureView* targetView = null;
+            var surfaceTexture = new SurfaceTexture();
             if (AppState._devToolsWgpuContext.Surface != null)
             {
-                var surfaceTexture = new SurfaceTexture();
                 AppState._devToolsWgpuContext.Wgpu.SurfaceGetCurrentTexture(AppState._devToolsWgpuContext.Surface, &surfaceTexture);
                 
                 if (surfaceTexture.Status == SurfaceGetCurrentTextureStatus.Success)
@@ -107,19 +107,32 @@ public static unsafe class DevToolsWindowController
                 }
             }
 
-            if (targetView != null)
+            try
             {
-                AppState._devToolsCompositor.RenderScene(
-                    AppState._devToolsPanel,
-                    (uint)MathF.Ceiling(logicalSize.X),
-                    (uint)MathF.Ceiling(logicalSize.Y),
-                    (uint)framebufferSize.X,
-                    (uint)framebufferSize.Y,
-                    dpiScale,
-                    targetView);
-                
-                AppState._devToolsWgpuContext.Wgpu.SurfacePresent(AppState._devToolsWgpuContext.Surface);
-                AppState._devToolsWgpuContext.Wgpu.TextureViewRelease(targetView);
+                if (targetView != null)
+                {
+                    AppState._devToolsCompositor.RenderScene(
+                        AppState._devToolsPanel,
+                        (uint)MathF.Ceiling(logicalSize.X),
+                        (uint)MathF.Ceiling(logicalSize.Y),
+                        (uint)framebufferSize.X,
+                        (uint)framebufferSize.Y,
+                        dpiScale,
+                        targetView);
+
+                    AppState._devToolsWgpuContext.Wgpu.SurfacePresent(AppState._devToolsWgpuContext.Surface);
+                }
+            }
+            finally
+            {
+                if (targetView != null)
+                {
+                    AppState._devToolsWgpuContext.Wgpu.TextureViewRelease(targetView);
+                }
+                if (surfaceTexture.Texture != null)
+                {
+                    AppState._devToolsWgpuContext.Wgpu.TextureRelease(surfaceTexture.Texture);
+                }
             }
         }
         finally
