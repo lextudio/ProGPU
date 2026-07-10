@@ -119,7 +119,11 @@ public static class StrokeJoinGeometry
         if (TryIntersectLines(previousOuterPoint, incomingDirection, nextOuterPoint, outgoingDirection, out var miterPoint) &&
             Vector2.Distance(joinPoint, miterPoint) <= radius * clampedMiterLimit + Epsilon)
         {
-            return new[] { new StrokeJoinTriangle(previousOuterPoint, miterPoint, nextOuterPoint) };
+            return new[]
+            {
+                new StrokeJoinTriangle(previousOuterPoint, joinPoint, nextOuterPoint),
+                new StrokeJoinTriangle(previousOuterPoint, miterPoint, nextOuterPoint)
+            };
         }
 
         return CreateBevelJoin(previousOuterPoint, joinPoint, nextOuterPoint);

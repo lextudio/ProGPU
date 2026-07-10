@@ -93,7 +93,9 @@ public class TtfFont
     public ushort WidthClass { get; private set; } = 5;
     public bool IsItalic { get; private set; }
     public bool HasTrueTypeOutlines { get; private set; }
-    public bool HasBitmapGlyphs => _tables.ContainsKey("sbix");
+    public bool HasBitmapGlyphs =>
+        _tables.ContainsKey("sbix") ||
+        (_tables.ContainsKey("bloc") && _tables.ContainsKey("bdat"));
     public bool UsesSymbolCharacterMap => _face.UsesSymbolCharacterMap;
 
     // Font parameters
@@ -102,6 +104,7 @@ public class TtfFont
     public short Descender { get; private set; }
     public short LineGap { get; private set; }
     public ushort NumGlyphs { get; private set; }
+    public ReadOnlyMemory<byte> FontData => _data;
     private short _indexToLocFormat; // 0 = short (16-bit), 1 = long (32-bit)
 
     // hmtx metrics
@@ -206,9 +209,10 @@ public class TtfFont
             _tables[tag] = (record.Offset, record.Length);
         }
 
-        if (!_tables.ContainsKey("head") || !_tables.ContainsKey("cmap"))
+        if ((!_tables.ContainsKey("head") && !_tables.ContainsKey("bhed")) ||
+            !_tables.ContainsKey("cmap"))
         {
-            throw new FormatException("Font file is missing essential SFNT tables (head or cmap).");
+            throw new FormatException("Font file is missing essential SFNT tables (head/bhed or cmap).");
         }
 
         if (_tables.TryGetValue("loca", out var loca) && _tables.TryGetValue("glyf", out var glyf))
@@ -250,7 +254,9 @@ public class TtfFont
             }
         }
 
-        if (!IsItalic && TryGetTable("head", out var head) && head.Length >= 46)
+        if (!IsItalic &&
+            (TryGetTable("head", out var head) || TryGetTable("bhed", out head)) &&
+            head.Length >= 46)
         {
             IsItalic = (ReadUShort(head.Span, 44) & 0x0002) != 0;
         }
@@ -258,7 +264,9 @@ public class TtfFont
 
     private void ParseHeadTable()
     {
-        uint headOffset = _tables["head"].offset;
+        uint headOffset = _tables.TryGetValue("head", out var head)
+            ? head.offset
+            : _tables["bhed"].offset;
         UnitsPerEm = ReadUShort(headOffset + 18);
         _indexToLocFormat = ReadShort(headOffset + 50);
     }

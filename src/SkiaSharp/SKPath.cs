@@ -27,8 +27,38 @@ public class SKPath : IDisposable
 
     public SKPath(SKPath source)
     {
-        AddPath(source);
+        ArgumentNullException.ThrowIfNull(source);
+        PathFigure? copiedCurrentFigure = null;
+        foreach (var figure in source.Geometry.Figures)
+        {
+            var copiedFigure = CloneFigure(figure, Vector2.Zero);
+            Geometry.Figures.Add(copiedFigure);
+            if (ReferenceEquals(figure, source._currentFigure))
+            {
+                copiedCurrentFigure = copiedFigure;
+            }
+        }
+
+        _currentFigure = copiedCurrentFigure;
         FillType = source.FillType;
+    }
+
+    public static SKPath ParseSvgPathData(string pathData)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pathData);
+        var geometry = PathGeometry.Parse(pathData);
+        var path = new SKPath
+        {
+            FillType = geometry.FillRule == FillRule.EvenOdd
+                ? SKPathFillType.EvenOdd
+                : SKPathFillType.Winding
+        };
+        foreach (var figure in geometry.Figures)
+        {
+            path.Geometry.Figures.Add(figure);
+        }
+
+        return path;
     }
 
     public SKRect Bounds
@@ -41,9 +71,191 @@ public class SKPath : IDisposable
         }
     }
 
-    public SKRect TightBounds => Bounds;
+    public SKRect TightBounds
+    {
+        get
+        {
+            if (Geometry.IsCombined)
+            {
+                return Bounds;
+            }
+
+            var min = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+            var max = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+            var hasBounds = false;
+
+            void Include(Vector2 point)
+            {
+                if (!float.IsFinite(point.X) || !float.IsFinite(point.Y))
+                {
+                    return;
+                }
+
+                min = Vector2.Min(min, point);
+                max = Vector2.Max(max, point);
+                hasBounds = true;
+            }
+
+            foreach (var figure in Geometry.Figures)
+            {
+                var current = figure.StartPoint;
+                Include(current);
+
+                foreach (var segment in figure.Segments)
+                {
+                    switch (segment)
+                    {
+                        case LineSegment line:
+                            Include(line.Point);
+                            current = line.Point;
+                            break;
+
+                        case QuadraticBezierSegment quadratic:
+                            IncludeQuadraticExtrema(current, quadratic.ControlPoint, quadratic.Point, Include);
+                            Include(quadratic.Point);
+                            current = quadratic.Point;
+                            break;
+
+                        case CubicBezierSegment cubic:
+                            IncludeCubicExtrema(
+                                current,
+                                cubic.ControlPoint1,
+                                cubic.ControlPoint2,
+                                cubic.Point,
+                                Include);
+                            Include(cubic.Point);
+                            current = cubic.Point;
+                            break;
+
+                        case ArcSegment arc:
+                            if (ArcSegmentGeometry.TryGetArcBounds(current, arc, out var arcMin, out var arcMax))
+                            {
+                                Include(arcMin);
+                                Include(arcMax);
+                            }
+                            else
+                            {
+                                Include(arc.Point);
+                            }
+
+                            current = arc.Point;
+                            break;
+                    }
+                }
+            }
+
+            return hasBounds
+                ? new SKRect(min.X, min.Y, max.X, max.Y)
+                : SKRect.Empty;
+        }
+    }
 
     public bool IsEmpty => Geometry.Figures.Count == 0;
+
+    private static void IncludeQuadraticExtrema(
+        Vector2 p0,
+        Vector2 p1,
+        Vector2 p2,
+        Action<Vector2> include)
+    {
+        IncludeQuadraticAxisExtremum(p0.X, p1.X, p2.X, p0, p1, p2, include);
+        IncludeQuadraticAxisExtremum(p0.Y, p1.Y, p2.Y, p0, p1, p2, include);
+    }
+
+    private static void IncludeQuadraticAxisExtremum(
+        float v0,
+        float v1,
+        float v2,
+        Vector2 p0,
+        Vector2 p1,
+        Vector2 p2,
+        Action<Vector2> include)
+    {
+        var denominator = v0 - 2f * v1 + v2;
+        if (MathF.Abs(denominator) <= 1e-6f)
+        {
+            return;
+        }
+
+        var t = (v0 - v1) / denominator;
+        if (t > 0f && t < 1f)
+        {
+            var oneMinusT = 1f - t;
+            include(oneMinusT * oneMinusT * p0 + 2f * oneMinusT * t * p1 + t * t * p2);
+        }
+    }
+
+    private static void IncludeCubicExtrema(
+        Vector2 p0,
+        Vector2 p1,
+        Vector2 p2,
+        Vector2 p3,
+        Action<Vector2> include)
+    {
+        IncludeCubicAxisExtrema(p0.X, p1.X, p2.X, p3.X, p0, p1, p2, p3, include);
+        IncludeCubicAxisExtrema(p0.Y, p1.Y, p2.Y, p3.Y, p0, p1, p2, p3, include);
+    }
+
+    private static void IncludeCubicAxisExtrema(
+        float v0,
+        float v1,
+        float v2,
+        float v3,
+        Vector2 p0,
+        Vector2 p1,
+        Vector2 p2,
+        Vector2 p3,
+        Action<Vector2> include)
+    {
+        var a = -v0 + 3f * v1 - 3f * v2 + v3;
+        var b = 2f * (v0 - 2f * v1 + v2);
+        var c = v1 - v0;
+
+        if (MathF.Abs(a) <= 1e-6f)
+        {
+            if (MathF.Abs(b) > 1e-6f)
+            {
+                IncludeCubicAt(-c / b, p0, p1, p2, p3, include);
+            }
+
+            return;
+        }
+
+        var discriminant = b * b - 4f * a * c;
+        if (discriminant < 0f)
+        {
+            return;
+        }
+
+        var root = MathF.Sqrt(MathF.Max(0f, discriminant));
+        var denominator = 2f * a;
+        IncludeCubicAt((-b + root) / denominator, p0, p1, p2, p3, include);
+        if (root > 1e-6f)
+        {
+            IncludeCubicAt((-b - root) / denominator, p0, p1, p2, p3, include);
+        }
+    }
+
+    private static void IncludeCubicAt(
+        float t,
+        Vector2 p0,
+        Vector2 p1,
+        Vector2 p2,
+        Vector2 p3,
+        Action<Vector2> include)
+    {
+        if (t <= 0f || t >= 1f || !float.IsFinite(t))
+        {
+            return;
+        }
+
+        var oneMinusT = 1f - t;
+        include(
+            oneMinusT * oneMinusT * oneMinusT * p0 +
+            3f * oneMinusT * oneMinusT * t * p1 +
+            3f * oneMinusT * t * t * p2 +
+            t * t * t * p3);
+    }
 
     private void EnsureFigure()
     {
@@ -117,6 +329,49 @@ public class SKPath : IDisposable
         Close();
     }
 
+    public void AddOval(SKRect rect, SKPathDirection direction = SKPathDirection.Clockwise)
+    {
+        var radiusX = rect.Width / 2f;
+        var radiusY = rect.Height / 2f;
+        var centerX = rect.MidX;
+        var centerY = rect.MidY;
+        MoveTo(centerX - radiusX, centerY);
+        ArcTo(radiusX, radiusY, 0f, SKPathArcSize.Large, direction, centerX + radiusX, centerY);
+        ArcTo(radiusX, radiusY, 0f, SKPathArcSize.Large, direction, centerX - radiusX, centerY);
+        Close();
+    }
+
+    public void ConicTo(SKPoint control, SKPoint end, float weight)
+    {
+        QuadTo(control, end);
+    }
+
+    public bool Contains(float x, float y)
+    {
+        if (!PathGeometryHitTesting.TryContainsFill(
+                Geometry,
+                new Vector2(x, y),
+                0f,
+                relativeTolerance: false,
+                out var contains))
+        {
+            contains = Bounds is var bounds
+                && x >= bounds.Left
+                && x <= bounds.Right
+                && y >= bounds.Top
+                && y <= bounds.Bottom;
+        }
+
+        return FillType is SKPathFillType.InverseEvenOdd or SKPathFillType.InverseWinding
+            ? !contains
+            : contains;
+    }
+
+    public SKPathRawIterator CreateIterator(bool forceClose)
+    {
+        return new SKPathRawIterator(this, forceClose);
+    }
+
     public void AddRect(SKRect rect, SKPathDirection direction = SKPathDirection.Clockwise)
     {
         if (direction == SKPathDirection.Clockwise)
@@ -177,12 +432,7 @@ public class SKPath : IDisposable
     {
         foreach (var fig in other.Geometry.Figures)
         {
-            var newFig = new PathFigure(fig.StartPoint, fig.IsClosed) { IsFilled = fig.IsFilled };
-            foreach (var seg in fig.Segments)
-            {
-                newFig.Segments.Add(CloneSegment(seg, Vector2.Zero));
-            }
-            Geometry.Figures.Add(newFig);
+            Geometry.Figures.Add(CloneFigure(fig, Vector2.Zero));
         }
         _currentFigure = null;
     }
@@ -192,14 +442,23 @@ public class SKPath : IDisposable
         var offset = new Vector2(x, y);
         foreach (var fig in other.Geometry.Figures)
         {
-            var newFig = new PathFigure(fig.StartPoint + offset, fig.IsClosed) { IsFilled = fig.IsFilled };
-            foreach (var seg in fig.Segments)
-            {
-                newFig.Segments.Add(CloneSegment(seg, offset));
-            }
-            Geometry.Figures.Add(newFig);
+            Geometry.Figures.Add(CloneFigure(fig, offset));
         }
         _currentFigure = null;
+    }
+
+    private static PathFigure CloneFigure(PathFigure figure, Vector2 offset)
+    {
+        var copy = new PathFigure(figure.StartPoint + offset, figure.IsClosed)
+        {
+            IsFilled = figure.IsFilled
+        };
+        foreach (var segment in figure.Segments)
+        {
+            copy.Segments.Add(CloneSegment(segment, offset));
+        }
+
+        return copy;
     }
 
     public void Transform(SKMatrix matrix)
@@ -336,6 +595,7 @@ public class SKRoundRect : IDisposable
 {
     public SKRect Rect { get; private set; }
     public SKPoint[] CornerRadii { get; } = new SKPoint[4];
+    public SKPoint[] Radii => CornerRadii;
 
     public SKRoundRect()
     {
@@ -371,6 +631,29 @@ public class SKRoundRect : IDisposable
         }
     }
 
+    public void Inflate(float x, float y)
+    {
+        var rect = Rect;
+        rect.Inflate(x, y);
+        Rect = rect;
+        for (var i = 0; i < CornerRadii.Length; i++)
+        {
+            CornerRadii[i] = new SKPoint(
+                MathF.Max(0f, CornerRadii[i].X + x),
+                MathF.Max(0f, CornerRadii[i].Y + y));
+        }
+    }
+
+    public void Deflate(float x, float y)
+    {
+        Inflate(-x, -y);
+    }
+
+    public void SetEmpty()
+    {
+        SetRect(SKRect.Empty);
+    }
+
     public void Dispose() { }
 }
 
@@ -384,6 +667,8 @@ public class SKRegion : IDisposable
     public SKRectI Bounds => _bounds;
 
     public SKRegion() { }
+
+    internal IReadOnlyList<SKRectI> Rects => _rects;
 
     public bool Contains(int x, int y)
     {
@@ -445,6 +730,35 @@ public class SKRegion : IDisposable
 
         UpdateBounds();
         return !IsEmpty;
+    }
+
+    public bool Op(int left, int top, int right, int bottom, SKRegionOperation op)
+    {
+        return Op(new SKRectI(left, top, right, bottom), op);
+    }
+
+    public void SetEmpty()
+    {
+        _rects.Clear();
+        _bounds = SKRectI.Empty;
+    }
+
+    public bool Intersects(SKRectI rect)
+    {
+        foreach (var existing in _rects)
+        {
+            if (IsValid(Intersect(existing, rect)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public SKRegionRectIterator CreateRectIterator()
+    {
+        return new SKRegionRectIterator(_rects);
     }
 
     private void SetSingleRect(SKRectI rect)
@@ -710,4 +1024,148 @@ public class SKRegion : IDisposable
     }
 
     public void Dispose() { }
+}
+
+public enum SKPathVerb
+{
+    Move = 0,
+    Line = 1,
+    Quad = 2,
+    Conic = 3,
+    Cubic = 4,
+    Close = 5,
+    Done = 6
+}
+
+public sealed class SKPathRawIterator : IDisposable
+{
+    private readonly List<PathOperation> _operations = new();
+    private int _index;
+    private float _conicWeight = 1f;
+
+    internal SKPathRawIterator(SKPath path, bool forceClose)
+    {
+        foreach (var figure in path.Geometry.Figures)
+        {
+            var current = figure.StartPoint;
+            _operations.Add(new PathOperation(SKPathVerb.Move, current, default, default, default));
+            foreach (var segment in figure.Segments)
+            {
+                switch (segment)
+                {
+                    case LineSegment line:
+                        _operations.Add(new PathOperation(SKPathVerb.Line, current, line.Point, default, default));
+                        current = line.Point;
+                        break;
+                    case QuadraticBezierSegment quadratic:
+                        _operations.Add(new PathOperation(
+                            SKPathVerb.Quad,
+                            current,
+                            quadratic.ControlPoint,
+                            quadratic.Point,
+                            default));
+                        current = quadratic.Point;
+                        break;
+                    case CubicBezierSegment cubic:
+                        _operations.Add(new PathOperation(
+                            SKPathVerb.Cubic,
+                            current,
+                            cubic.ControlPoint1,
+                            cubic.ControlPoint2,
+                            cubic.Point));
+                        current = cubic.Point;
+                        break;
+                    case ArcSegment arc:
+                        var flattened = ArcSegmentGeometry.FlattenArc(current, arc, MathF.PI / 32f);
+                        for (var i = 1; i < flattened.Length; i++)
+                        {
+                            _operations.Add(new PathOperation(
+                                SKPathVerb.Line,
+                                flattened[i - 1],
+                                flattened[i],
+                                default,
+                                default));
+                        }
+
+                        current = arc.Point;
+                        break;
+                }
+            }
+
+            if (figure.IsClosed || forceClose)
+            {
+                _operations.Add(new PathOperation(SKPathVerb.Close, current, figure.StartPoint, default, default));
+            }
+        }
+    }
+
+    public SKPathVerb Next(SKPoint[] points)
+    {
+        ArgumentNullException.ThrowIfNull(points);
+        if (_index >= _operations.Count)
+        {
+            return SKPathVerb.Done;
+        }
+
+        var operation = _operations[_index++];
+        SetPoint(points, 0, operation.P0);
+        SetPoint(points, 1, operation.P1);
+        SetPoint(points, 2, operation.P2);
+        SetPoint(points, 3, operation.P3);
+        _conicWeight = 1f;
+        return operation.Verb;
+    }
+
+    public float ConicWeight() => _conicWeight;
+
+    public void Dispose()
+    {
+        _operations.Clear();
+    }
+
+    private static void SetPoint(SKPoint[] points, int index, Vector2 value)
+    {
+        if (index < points.Length)
+        {
+            points[index] = new SKPoint(value.X, value.Y);
+        }
+    }
+
+    private readonly record struct PathOperation(
+        SKPathVerb Verb,
+        Vector2 P0,
+        Vector2 P1,
+        Vector2 P2,
+        Vector2 P3);
+}
+
+public sealed class SKRegionRectIterator : IDisposable
+{
+    private readonly SKRectI[] _rects;
+    private int _index;
+
+    internal SKRegionRectIterator(IReadOnlyList<SKRectI> rects)
+    {
+        _rects = new SKRectI[rects.Count];
+        for (var i = 0; i < rects.Count; i++)
+        {
+            _rects[i] = rects[i];
+        }
+    }
+
+    public bool Next(out SKRectI rect)
+    {
+        if (_index >= _rects.Length)
+        {
+            rect = default;
+            return false;
+        }
+
+        rect = _rects[_index++];
+        return true;
+    }
+
+    public void Dispose()
+    {
+    }
 }

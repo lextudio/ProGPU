@@ -13,11 +13,17 @@ public class SKFont : IDisposable
     public bool Subpixel { get; set; } = true;
     public bool BaselineSnap { get; set; } = true;
     public bool ForceAutoHinting { get; set; } = false;
+    public bool LinearMetrics { get; set; }
+    public bool Embolden { get; set; }
+    public float ScaleX { get; set; } = 1f;
+    public float SkewX { get; set; }
 
-    public SKFont(SKTypeface typeface, float size)
+    public SKFont(SKTypeface typeface, float size = 12f, float scaleX = 1f, float skewX = 0f)
     {
         Typeface = typeface;
         Size = size;
+        ScaleX = scaleX;
+        SkewX = skewX;
     }
 
     public SKPath? GetGlyphPath(ushort glyphId)

@@ -287,6 +287,27 @@ public struct SKRect
         Right = Math.Max(Right, rect.Right);
         Bottom = Math.Max(Bottom, rect.Bottom);
     }
+
+    public void Inflate(float amount)
+    {
+        Inflate(amount, amount);
+    }
+
+    public void Inflate(float x, float y)
+    {
+        Left -= x;
+        Top -= y;
+        Right += x;
+        Bottom += y;
+    }
+
+    public void Offset(float x, float y)
+    {
+        Left += x;
+        Top += y;
+        Right += x;
+        Bottom += y;
+    }
 }
 
 public struct SKRectI
@@ -316,6 +337,10 @@ public struct SKColor
     public byte G { get; }
     public byte B { get; }
     public byte A { get; }
+    public byte Red => R;
+    public byte Green => G;
+    public byte Blue => B;
+    public byte Alpha => A;
 
     public SKColor(byte r, byte g, byte b, byte a)
     {
@@ -404,6 +429,80 @@ public struct SKMatrix
     }
 
     public static SKMatrix CreateIdentity() => Identity;
+
+    public static SKMatrix CreateTranslation(float x, float y)
+    {
+        var matrix = Identity;
+        matrix.TransX = x;
+        matrix.TransY = y;
+        return matrix;
+    }
+
+    public static SKMatrix CreateScale(float x, float y)
+    {
+        var matrix = Identity;
+        matrix.ScaleX = x;
+        matrix.ScaleY = y;
+        return matrix;
+    }
+
+    public static SKMatrix CreateScale(float x, float y, float pivotX, float pivotY)
+    {
+        return FromMatrix4x4(
+            Matrix4x4.CreateTranslation(-pivotX, -pivotY, 0f)
+            * Matrix4x4.CreateScale(x, y, 1f)
+            * Matrix4x4.CreateTranslation(pivotX, pivotY, 0f));
+    }
+
+    public static SKMatrix CreateRotationDegrees(float degrees)
+    {
+        return CreateRotationDegrees(degrees, 0f, 0f);
+    }
+
+    public static SKMatrix CreateRotationDegrees(float degrees, float pivotX, float pivotY)
+    {
+        var radians = degrees * MathF.PI / 180f;
+        return FromMatrix4x4(
+            Matrix4x4.CreateTranslation(-pivotX, -pivotY, 0f)
+            * Matrix4x4.CreateRotationZ(radians)
+            * Matrix4x4.CreateTranslation(pivotX, pivotY, 0f));
+    }
+
+    public SKMatrix PreConcat(SKMatrix matrix)
+    {
+        return FromMatrix4x4(matrix.ToMatrix4x4() * ToMatrix4x4());
+    }
+
+    public SKMatrix PostConcat(SKMatrix matrix)
+    {
+        return FromMatrix4x4(ToMatrix4x4() * matrix.ToMatrix4x4());
+    }
+
+    public static SKMatrix Concat(SKMatrix first, SKMatrix second)
+    {
+        return FromMatrix4x4(second.ToMatrix4x4() * first.ToMatrix4x4());
+    }
+
+    public static void Concat(ref SKMatrix result, SKMatrix first, SKMatrix second)
+    {
+        result = Concat(first, second);
+    }
+
+    internal static SKMatrix FromMatrix4x4(Matrix4x4 matrix)
+    {
+        return new SKMatrix
+        {
+            ScaleX = matrix.M11,
+            SkewX = matrix.M21,
+            TransX = matrix.M41,
+            SkewY = matrix.M12,
+            ScaleY = matrix.M22,
+            TransY = matrix.M42,
+            Persp0 = matrix.M14,
+            Persp1 = matrix.M24,
+            Persp2 = matrix.M44
+        };
+    }
 }
 
 public class SKMatrix44
@@ -424,6 +523,38 @@ public class SKMatrix44
     public float M31 { get; set; }
     public float M32 { get; set; }
     public float M33 { get; set; } = 1f;
+
+    public Matrix4x4 ToMatrix4x4()
+    {
+        return new Matrix4x4(
+            M00, M01, M02, M03,
+            M10, M11, M12, M13,
+            M20, M21, M22, M23,
+            M30, M31, M32, M33);
+    }
+
+    internal static SKMatrix44 FromMatrix4x4(Matrix4x4 matrix)
+    {
+        return new SKMatrix44
+        {
+            M00 = matrix.M11,
+            M01 = matrix.M12,
+            M02 = matrix.M13,
+            M03 = matrix.M14,
+            M10 = matrix.M21,
+            M11 = matrix.M22,
+            M12 = matrix.M23,
+            M13 = matrix.M24,
+            M20 = matrix.M31,
+            M21 = matrix.M32,
+            M22 = matrix.M33,
+            M23 = matrix.M34,
+            M30 = matrix.M41,
+            M31 = matrix.M42,
+            M32 = matrix.M43,
+            M33 = matrix.M44
+        };
+    }
 }
 
 public struct SKCubicResampler
@@ -479,7 +610,15 @@ public struct SKImageInfo
     public SKAlphaType AlphaType;
     public SKColorSpace? ColorSpace;
 
-    public int RowBytes => Width * 4; // Assuming 32-bit RGBA
+    public int BytesPerPixel => ColorType switch
+    {
+        SKColorType.Alpha8 => 1,
+        SKColorType.Rgb565 or SKColorType.Argb4444 => 2,
+        SKColorType.RgbaF16 => 8,
+        SKColorType.RgbaF32 => 16,
+        _ => 4
+    };
+    public int RowBytes => checked(Width * BytesPerPixel);
     public int BytesSize => RowBytes * Height;
 
     public SKImageInfo(int width, int height, SKColorType colorType = SKColorType.Rgba8888, SKAlphaType alphaType = SKAlphaType.Premul, SKColorSpace? colorSpace = null)
@@ -537,6 +676,12 @@ public class SKData : IDisposable
         }
     }
 
+    public void SaveTo(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        stream.Write(Bytes, 0, Bytes.Length);
+    }
+
     public void Dispose() { }
 }
 
@@ -548,6 +693,22 @@ public class SKCodec : IDisposable
     private SKCodec(byte[] data)
     {
         _data = data;
+        var decoded = SKEncodedImageDecoder.Decode(data);
+        Info = new SKImageInfo(decoded.Width, decoded.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+    }
+
+    public SKImageInfo Info { get; }
+
+    public SKSizeI GetScaledDimensions(float desiredScale)
+    {
+        if (!float.IsFinite(desiredScale) || desiredScale <= 0f)
+        {
+            return new SKSizeI(Info.Width, Info.Height);
+        }
+
+        return new SKSizeI(
+            Math.Max(1, (int)MathF.Round(Info.Width * MathF.Min(desiredScale, 1f))),
+            Math.Max(1, (int)MathF.Round(Info.Height * MathF.Min(desiredScale, 1f))));
     }
 
     public static SKCodec Create(SKData data)
@@ -578,13 +739,17 @@ public class SKDocument : IDisposable
     public void Dispose() { }
 }
 
-public class SKSurfaceProperties
+public class SKSurfaceProperties : IDisposable
 {
     public SKPixelGeometry PixelGeometry { get; }
 
     public SKSurfaceProperties(SKPixelGeometry pixelGeometry)
     {
         PixelGeometry = pixelGeometry;
+    }
+
+    public void Dispose()
+    {
     }
 }
 

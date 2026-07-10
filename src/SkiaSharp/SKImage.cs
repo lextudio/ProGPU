@@ -51,6 +51,46 @@ public class SKImage : IDisposable
         return new SKImage(texture, ownsTexture: true);
     }
 
+    public static SKImage FromPixels(SKImageInfo info, IntPtr pixels, int rowBytes)
+    {
+        using var bitmap = new SKBitmap();
+        bitmap.InstallPixels(info, pixels, rowBytes);
+        return FromBitmap(bitmap);
+    }
+
+    public static SKImage FromPicture(SKPicture picture, SKSizeI dimensions)
+    {
+        return FromPicture(picture, dimensions, SKMatrix.Identity);
+    }
+
+    public static SKImage FromPicture(SKPicture picture, SKSizeI dimensions, SKMatrix matrix)
+    {
+        ArgumentNullException.ThrowIfNull(picture);
+        if (dimensions.Width <= 0 || dimensions.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dimensions), "Picture image dimensions must be positive.");
+        }
+
+        using var surface = SKSurface.Create(new SKImageInfo(
+            dimensions.Width,
+            dimensions.Height,
+            SKColorType.Rgba8888,
+            SKAlphaType.Premul));
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.SetMatrix(matrix);
+        surface.Canvas.DrawPicture(picture);
+        return surface.Snapshot();
+    }
+
+    public static SKImage? FromAdoptedTexture(
+        GRContext context,
+        GRBackendTexture texture,
+        GRSurfaceOrigin origin,
+        SKColorType colorType)
+    {
+        return null;
+    }
+
     public static SKImage FromTexture(GpuTexture texture)
     {
         ArgumentNullException.ThrowIfNull(texture);
@@ -74,6 +114,33 @@ public class SKImage : IDisposable
     internal static SKImage FromOwnedTexture(GpuTexture texture)
     {
         return new SKImage(texture, ownsTexture: true);
+    }
+
+    internal SKImage CreateOwnedCopy()
+    {
+        var texture = new GpuTexture(
+            Texture.Context,
+            Texture.Width,
+            Texture.Height,
+            Texture.Format,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
+            "SKImage Shader Retained Texture",
+            alphaMode: Texture.AlphaMode);
+        texture.CopyFrom(Texture);
+        return FromOwnedTexture(texture);
+    }
+
+    public SKShader ToShader(
+        SKShaderTileMode tileModeX,
+        SKShaderTileMode tileModeY,
+        SKMatrix localMatrix)
+    {
+        return SKShader.CreateImage(CreateOwnedCopy(), tileModeX, tileModeY, localMatrix);
+    }
+
+    public SKShader ToShader(SKShaderTileMode tileModeX, SKShaderTileMode tileModeY)
+    {
+        return ToShader(tileModeX, tileModeY, SKMatrix.Identity);
     }
 
     public void ScalePixels(SKPixmap dst, SKSamplingOptions sampling)
@@ -379,6 +446,8 @@ public class SKBitmap : IDisposable
     private int _height;
     private int _rowBytes;
     private SKImageInfo _info;
+    private SKBitmapReleaseDelegate? _releaseDelegate;
+    private object? _releaseContext;
 
     public int Width => _width;
     public int Height => _height;
@@ -421,21 +490,64 @@ public class SKBitmap : IDisposable
         Marshal.Copy(zero, 0, _pixels, BytesSize);
     }
 
+    public SKBitmap(int width, int height, SKColorType colorType, SKAlphaType alphaType)
+        : this(new SKImageInfo(width, height, colorType, alphaType))
+    {
+    }
+
     public IntPtr GetPixels() => _pixels;
+
+    public IntPtr GetAddress(int x, int y)
+    {
+        if ((uint)x >= (uint)_width || (uint)y >= (uint)_height)
+        {
+            throw new ArgumentOutOfRangeException(nameof(x), "Pixel coordinates must be inside the bitmap.");
+        }
+
+        return IntPtr.Add(_pixels, checked(y * RowBytes + x * _info.BytesPerPixel));
+    }
+
+    public SKColor GetPixel(int x, int y)
+    {
+        var address = GetAddress(x, y);
+        unsafe
+        {
+            var pixel = (byte*)address;
+            if (ColorType == SKColorType.Rgb565)
+            {
+                ushort value = (ushort)(pixel[0] | (pixel[1] << 8));
+                return new SKColor(
+                    (byte)(((value >> 11) & 0x1f) * 255 / 31),
+                    (byte)(((value >> 5) & 0x3f) * 255 / 63),
+                    (byte)((value & 0x1f) * 255 / 31),
+                    255);
+            }
+
+            var alpha = pixel[3];
+            var red = ColorType == SKColorType.Bgra8888 ? pixel[2] : pixel[0];
+            var green = pixel[1];
+            var blue = ColorType == SKColorType.Bgra8888 ? pixel[0] : pixel[2];
+            if (AlphaType == SKAlphaType.Premul && alpha is > 0 and < 255)
+            {
+                red = Unpremultiply(red, alpha);
+                green = Unpremultiply(green, alpha);
+                blue = Unpremultiply(blue, alpha);
+            }
+
+            return new SKColor(red, green, blue, alpha);
+        }
+    }
 
     public void InstallPixels(SKImageInfo info, IntPtr pixels, int rowBytes)
     {
         int actualRowBytes = rowBytes > 0 ? rowBytes : info.RowBytes;
-        int minRowBytes = info.Width * 4;
+        int minRowBytes = info.RowBytes;
         if (info.Height > 0 && actualRowBytes < minRowBytes)
         {
             throw new ArgumentException("Row bytes must be large enough for one bitmap row.", nameof(rowBytes));
         }
 
-        if (_ownsPixels && _pixels != IntPtr.Zero)
-        {
-            Marshal.FreeHGlobal(_pixels);
-        }
+        ReleasePixels();
         _width = info.Width;
         _height = info.Height;
         _info = info;
@@ -444,32 +556,100 @@ public class SKBitmap : IDisposable
         _ownsPixels = false;
     }
 
+    public void InstallPixels(
+        SKImageInfo info,
+        IntPtr pixels,
+        int rowBytes,
+        SKBitmapReleaseDelegate releaseProc,
+        object context)
+    {
+        InstallPixels(info, pixels, rowBytes);
+        _releaseDelegate = releaseProc;
+        _releaseContext = context;
+    }
+
+    public void Erase(SKColor color)
+    {
+        if (_pixels == IntPtr.Zero || _width <= 0 || _height <= 0)
+        {
+            return;
+        }
+
+        var alpha = color.A;
+        var red = _info.AlphaType == SKAlphaType.Premul ? Premultiply(color.R, alpha) : color.R;
+        var green = _info.AlphaType == SKAlphaType.Premul ? Premultiply(color.G, alpha) : color.G;
+        var blue = _info.AlphaType == SKAlphaType.Premul ? Premultiply(color.B, alpha) : color.B;
+        unsafe
+        {
+            var destination = (byte*)_pixels;
+            for (var y = 0; y < _height; y++)
+            {
+                var row = destination + y * RowBytes;
+                for (var x = 0; x < _width; x++)
+                {
+                    if (_info.ColorType == SKColorType.Rgb565)
+                    {
+                        var pixel565 = row + x * 2;
+                        ushort value = PackRgb565(red, green, blue);
+                        pixel565[0] = (byte)value;
+                        pixel565[1] = (byte)(value >> 8);
+                        continue;
+                    }
+
+                    var pixel = row + x * 4;
+                    if (_info.ColorType == SKColorType.Bgra8888)
+                    {
+                        pixel[0] = blue;
+                        pixel[1] = green;
+                        pixel[2] = red;
+                    }
+                    else
+                    {
+                        pixel[0] = red;
+                        pixel[1] = green;
+                        pixel[2] = blue;
+                    }
+
+                    pixel[3] = alpha;
+                }
+            }
+        }
+    }
+
+    public void NotifyPixelsChanged()
+    {
+    }
+
     public SKBitmap Copy()
     {
         var copy = new SKBitmap(_info);
-        CopyRows(_pixels, RowBytes, copy.GetPixels(), copy.RowBytes, _width, _height);
+        CopyRows(_pixels, RowBytes, copy.GetPixels(), copy.RowBytes, _info.RowBytes, _height);
         return copy;
     }
 
     public void SetImmutable() { }
 
-    public bool CanCopyTo(SKColorType type) => type == SKColorType.Rgba8888 || type == SKColorType.Bgra8888;
+    public bool CanCopyTo(SKColorType type) =>
+        type is SKColorType.Rgba8888 or SKColorType.Bgra8888 or SKColorType.Rgb565;
 
     public static SKBitmap Decode(SKData data)
     {
-        using (var ms = new MemoryStream(data.Bytes))
-        {
-            var result = StbImageSharp.ImageResult.FromStream(ms, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
-            var bmp = new SKBitmap(new SKImageInfo(result.Width, result.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
-            Marshal.Copy(result.Data, 0, bmp.GetPixels(), result.Data.Length);
-            return bmp;
-        }
+        var result = SKEncodedImageDecoder.Decode(data.Bytes);
+        var bmp = new SKBitmap(new SKImageInfo(result.Width, result.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        Marshal.Copy(result.Pixels, 0, bmp.GetPixels(), result.Pixels.Length);
+        return bmp;
+    }
+
+    public static SKBitmap Decode(Stream? stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var data = SKData.Create(stream);
+        return Decode(data);
     }
 
     public static SKBitmap Decode(SKCodec codec, SKImageInfo info)
     {
-        using var ms = new MemoryStream(codec.EncodedBytes);
-        var result = StbImageSharp.ImageResult.FromStream(ms, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+        var result = SKEncodedImageDecoder.Decode(codec.EncodedBytes);
         var targetInfo = info.Width > 0 && info.Height > 0
             ? info
             : new SKImageInfo(result.Width, result.Height, info.ColorType, info.AlphaType, info.ColorSpace);
@@ -477,7 +657,7 @@ public class SKBitmap : IDisposable
 
         unsafe
         {
-            fixed (byte* src = result.Data)
+            fixed (byte* src = result.Pixels)
             {
                 byte* dst = (byte*)bitmap.GetPixels();
                 for (int y = 0; y < targetInfo.Height; y++)
@@ -493,13 +673,19 @@ public class SKBitmap : IDisposable
                             ? x
                             : Math.Clamp((int)((long)x * result.Width / targetInfo.Width), 0, result.Width - 1);
                         byte* srcPixel = src + (srcY * result.Width + srcX) * 4;
-                        byte* dstPixel = dstRow + x * 4;
+                        byte* dstPixel = dstRow + x * targetInfo.BytesPerPixel;
                         byte alpha = targetInfo.AlphaType == SKAlphaType.Opaque ? (byte)255 : srcPixel[3];
                         byte red = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[0], alpha) : srcPixel[0];
                         byte green = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[1], alpha) : srcPixel[1];
                         byte blue = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[2], alpha) : srcPixel[2];
 
-                        if (targetInfo.ColorType == SKColorType.Bgra8888)
+                        if (targetInfo.ColorType == SKColorType.Rgb565)
+                        {
+                            ushort value = PackRgb565(red, green, blue);
+                            dstPixel[0] = (byte)value;
+                            dstPixel[1] = (byte)(value >> 8);
+                        }
+                        else if (targetInfo.ColorType == SKColorType.Bgra8888)
                         {
                             dstPixel[0] = blue;
                             dstPixel[1] = green;
@@ -558,6 +744,12 @@ public class SKBitmap : IDisposable
         return resized;
     }
 
+    public SKData Encode(SKEncodedImageFormat format, int quality)
+    {
+        using var image = SKImage.FromBitmap(this);
+        return image.Encode(format, quality);
+    }
+
     internal byte[] CopyRgba8888Rows()
     {
         byte[] buffer = new byte[_width * _height * 4];
@@ -576,7 +768,20 @@ public class SKBitmap : IDisposable
                     byte* srcRow = src + y * RowBytes;
                     byte* dstRow = dst + y * _width * 4;
 
-                    if (ColorType == SKColorType.Bgra8888)
+                    if (ColorType == SKColorType.Rgb565)
+                    {
+                        for (int x = 0; x < _width; x++)
+                        {
+                            int srcIdx = x * 2;
+                            int dstIdx = x * 4;
+                            ushort value = (ushort)(srcRow[srcIdx] | (srcRow[srcIdx + 1] << 8));
+                            dstRow[dstIdx] = (byte)(((value >> 11) & 0x1f) * 255 / 31);
+                            dstRow[dstIdx + 1] = (byte)(((value >> 5) & 0x3f) * 255 / 63);
+                            dstRow[dstIdx + 2] = (byte)((value & 0x1f) * 255 / 31);
+                            dstRow[dstIdx + 3] = 255;
+                        }
+                    }
+                    else if (ColorType == SKColorType.Bgra8888)
                     {
                         for (int x = 0; x < _width; x++)
                         {
@@ -599,15 +804,32 @@ public class SKBitmap : IDisposable
         return buffer;
     }
 
-    private static unsafe void CopyRows(IntPtr source, int sourceRowBytes, IntPtr destination, int destinationRowBytes, int width, int height)
+    private static unsafe void CopyRows(
+        IntPtr source,
+        int sourceRowBytes,
+        IntPtr destination,
+        int destinationRowBytes,
+        int copyRowBytes,
+        int height)
     {
         byte* src = (byte*)source;
         byte* dst = (byte*)destination;
-        int rowBytes = width * 4;
         for (int y = 0; y < height; y++)
         {
-            System.Buffer.MemoryCopy(src + y * sourceRowBytes, dst + y * destinationRowBytes, destinationRowBytes, rowBytes);
+            System.Buffer.MemoryCopy(
+                src + y * sourceRowBytes,
+                dst + y * destinationRowBytes,
+                destinationRowBytes,
+                copyRowBytes);
         }
+    }
+
+    private static ushort PackRgb565(byte red, byte green, byte blue)
+    {
+        return (ushort)(
+            ((red * 31 + 127) / 255 << 11) |
+            ((green * 63 + 127) / 255 << 5) |
+            ((blue * 31 + 127) / 255));
     }
 
     private static byte Premultiply(byte color, byte alpha)
@@ -615,13 +837,38 @@ public class SKBitmap : IDisposable
         return (byte)((color * alpha + 127) / 255);
     }
 
+    private static byte Unpremultiply(byte color, byte alpha)
+    {
+        return alpha == 0
+            ? (byte)0
+            : (byte)Math.Min(255, (color * 255 + alpha / 2) / alpha);
+    }
+
     public void Dispose()
     {
-        if (_ownsPixels && _pixels != IntPtr.Zero)
+        ReleasePixels();
+    }
+
+    private void ReleasePixels()
+    {
+        if (_pixels == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (_ownsPixels)
         {
             Marshal.FreeHGlobal(_pixels);
-            _pixels = IntPtr.Zero;
         }
+        else if (_releaseDelegate != null && _releaseContext != null)
+        {
+            _releaseDelegate(_pixels, _releaseContext);
+        }
+
+        _pixels = IntPtr.Zero;
+        _ownsPixels = false;
+        _releaseDelegate = null;
+        _releaseContext = null;
     }
 }
 

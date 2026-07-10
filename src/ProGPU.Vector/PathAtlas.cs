@@ -14,12 +14,16 @@ public struct PathUniforms
 {
     public float XStart;
     public float YStart;
-    public float Scale;
+    public float ScaleX;
+    public float ScaleY;
     public uint PathIndex;
     public uint AtlasX;
     public uint AtlasY;
     public uint Width;
     public uint Height;
+    public uint Pad0;
+    public uint Pad1;
+    public uint Pad2;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -76,17 +80,38 @@ public struct GpuPathSegment
 public readonly struct PathCacheKey : IEquatable<PathCacheKey>
 {
     public int ContentHash { get; }
-    public float Scale { get; }
+    public float ScaleX { get; }
+    public float ScaleY { get; }
+    public float Scale => Math.Max(ScaleX, ScaleY);
+    public float SubpixelX { get; }
+    public float SubpixelY { get; }
 
-    public PathCacheKey(int contentHash, float scale)
+    public PathCacheKey(int contentHash, float scale, float subpixelX = 0f, float subpixelY = 0f)
+        : this(contentHash, scale, scale, subpixelX, subpixelY)
+    {
+    }
+
+    public PathCacheKey(
+        int contentHash,
+        float scaleX,
+        float scaleY,
+        float subpixelX,
+        float subpixelY)
     {
         ContentHash = contentHash;
-        Scale = scale;
+        ScaleX = scaleX;
+        ScaleY = scaleY;
+        SubpixelX = QuantizeSubpixel(subpixelX);
+        SubpixelY = QuantizeSubpixel(subpixelY);
     }
 
     public bool Equals(PathCacheKey other)
     {
-        return ContentHash == other.ContentHash && Scale.Equals(other.Scale);
+        return ContentHash == other.ContentHash &&
+               ScaleX.Equals(other.ScaleX) &&
+               ScaleY.Equals(other.ScaleY) &&
+               SubpixelX.Equals(other.SubpixelX) &&
+               SubpixelY.Equals(other.SubpixelY);
     }
 
     public override bool Equals(object? obj)
@@ -96,11 +121,23 @@ public readonly struct PathCacheKey : IEquatable<PathCacheKey>
 
     public override int GetHashCode()
     {
-        return HashCode.Combine(ContentHash, Scale);
+        return HashCode.Combine(ContentHash, ScaleX, ScaleY, SubpixelX, SubpixelY);
     }
 
     public static bool operator ==(PathCacheKey left, PathCacheKey right) => left.Equals(right);
     public static bool operator !=(PathCacheKey left, PathCacheKey right) => !left.Equals(right);
+
+    private static float QuantizeSubpixel(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            return 0f;
+        }
+
+        value -= MathF.Floor(value);
+        var quantized = MathF.Round(value * 64f) / 64f;
+        return quantized >= 1f ? 0f : quantized;
+    }
 }
 
 public interface IPathHitTestCompilationCache
@@ -699,8 +736,12 @@ public unsafe class PathAtlas : IDisposable
                     Y = posY,
                     Width = gW,
                     Height = gH,
-                    TexCoordMin = new Vector2(posX * texelSize, posY * texelSize),
-                    TexCoordMax = new Vector2((posX + gW) * texelSize, (posY + gH) * texelSize),
+                    TexCoordMin = new Vector2(
+                        (posX + info.Key.SubpixelX) * texelSize,
+                        (posY + info.Key.SubpixelY) * texelSize),
+                    TexCoordMax = new Vector2(
+                        (posX + gW + info.Key.SubpixelX) * texelSize,
+                        (posY + gH + info.Key.SubpixelY) * texelSize),
                     MinX = info.MinX,
                     MinY = info.MinY,
                     LastUsedFrame = info.LastUsedFrame
@@ -713,6 +754,55 @@ public unsafe class PathAtlas : IDisposable
         finally
         {
             PooledRemovalBuffer.Return(activePaths, activePathCount);
+        }
+    }
+
+    private void ResetCachedPaths()
+    {
+        _paths.Clear();
+        _pendingPaths.Clear();
+        _currentX = 2;
+        _currentY = 2;
+        _currentRowHeight = 0;
+        ClearAtlasTexture();
+    }
+
+    private bool HasPathsUsedInCurrentFrame()
+    {
+        foreach (var info in _paths.Values)
+        {
+            if (info.LastUsedFrame == _frameNumber)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ReserveFrameCapacity(uint anticipatedWidth, uint anticipatedHeight)
+    {
+        if (_paths.Count == 0 || anticipatedWidth == 0 || anticipatedHeight == 0)
+        {
+            return;
+        }
+
+        const uint entryPadding = 10;
+        uint entryWidth = anticipatedWidth >= _atlasSize - Math.Min(_atlasSize, entryPadding)
+            ? _atlasSize
+            : anticipatedWidth + entryPadding;
+        uint entryHeight = anticipatedHeight >= _atlasSize - Math.Min(_atlasSize, entryPadding)
+            ? _atlasSize
+            : anticipatedHeight + entryPadding;
+        uint usableWidth = _atlasSize > 4 ? _atlasSize - 4 : _atlasSize;
+        uint entriesPerRow = Math.Max(1u, usableWidth / Math.Max(1u, entryWidth + 2));
+        uint rowsNeeded = DivRoundUp(2, entriesPerRow);
+        uint nextRowY = _currentY + _currentRowHeight + 2;
+        ulong requiredEndY = (ulong)nextRowY + (ulong)rowsNeeded * (entryHeight + 2);
+
+        if (requiredEndY > _atlasSize)
+        {
+            ResetCachedPaths();
         }
     }
 
@@ -731,12 +821,26 @@ public unsafe class PathAtlas : IDisposable
         }
     }
 
-    public PathInfo GetOrCreatePath(PathGeometry path, float scale)
+    public PathInfo GetOrCreatePath(
+        PathGeometry path,
+        float scale,
+        float subpixelX = 0f,
+        float subpixelY = 0f)
+    {
+        return GetOrCreatePath(path, scale, scale, subpixelX, subpixelY);
+    }
+
+    public PathInfo GetOrCreatePath(
+        PathGeometry path,
+        float scaleX,
+        float scaleY,
+        float subpixelX,
+        float subpixelY)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(PathAtlas));
 
         int contentHash = ComputeHash(path);
-        var key = new PathCacheKey(contentHash, scale);
+        var key = new PathCacheKey(contentHash, scaleX, scaleY, subpixelX, subpixelY);
 
         if (_paths.TryGetValue(key, out var info))
         {
@@ -780,10 +884,10 @@ public unsafe class PathAtlas : IDisposable
             return info;
         }
 
-        float minX = unscaledMinX * scale;
-        float minY = unscaledMinY * scale;
-        float maxX = unscaledMaxX * scale;
-        float maxY = unscaledMaxY * scale;
+        float minX = unscaledMinX * scaleX;
+        float minY = unscaledMinY * scaleY;
+        float maxX = unscaledMaxX * scaleX;
+        float maxY = unscaledMaxY * scaleY;
 
         int padding = 4;
         xStart = (int)Math.Floor(minX) - padding;
@@ -830,8 +934,11 @@ public unsafe class PathAtlas : IDisposable
 
         if (_currentY + gH + 2 > _atlasSize)
         {
-            ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Texture Atlas is full! Repacking active paths...");
-            RepackActivePaths();
+            if (!HasPathsUsedInCurrentFrame())
+            {
+                ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Texture Atlas is full! Repacking cached paths before frame compilation...");
+                RepackActivePaths();
+            }
 
             if (_currentX + gW + 2 > _atlasSize)
             {
@@ -842,7 +949,7 @@ public unsafe class PathAtlas : IDisposable
 
             if (_currentY + gH + 2 > _atlasSize)
             {
-                ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Warning: Even active paths exceed atlas size after repack!");
+                ProGpuVectorDiagnostics.WriteLine("[PathAtlas] Warning: The current frame exceeds the atlas size; preserving existing path coordinates.");
                 info = new PathInfo
                 {
                     Key = key,
@@ -885,8 +992,12 @@ public unsafe class PathAtlas : IDisposable
             Y = posY,
             Width = gW,
             Height = gH,
-            TexCoordMin = new Vector2(posX * texelSize, posY * texelSize),
-            TexCoordMax = new Vector2((posX + gW) * texelSize, (posY + gH) * texelSize),
+            TexCoordMin = new Vector2(
+                (posX + key.SubpixelX) * texelSize,
+                (posY + key.SubpixelY) * texelSize),
+            TexCoordMax = new Vector2(
+                (posX + gW + key.SubpixelX) * texelSize,
+                (posY + gH + key.SubpixelY) * texelSize),
             MinX = xStart,
             MinY = yStart,
             LastUsedFrame = _frameNumber
@@ -940,9 +1051,10 @@ public unsafe class PathAtlas : IDisposable
             }
 
             int padding = 4;
-            float scale = info.Key.Scale;
-            float minX = info.UnscaledMinX * scale;
-            float minY = info.UnscaledMinY * scale;
+            float scaleX = info.Key.ScaleX;
+            float scaleY = info.Key.ScaleY;
+            float minX = info.UnscaledMinX * scaleX;
+            float minY = info.UnscaledMinY * scaleY;
 
             int xStart = (int)Math.Floor(minX) - padding;
             int yStart = (int)Math.Floor(minY) - padding;
@@ -967,9 +1079,10 @@ public unsafe class PathAtlas : IDisposable
 
             var uniforms = new PathUniforms
             {
-                XStart = xStart,
-                YStart = yStart,
-                Scale = scale,
+                XStart = xStart - info.Key.SubpixelX,
+                YStart = yStart - info.Key.SubpixelY,
+                ScaleX = scaleX,
+                ScaleY = scaleY,
                 PathIndex = 0,
                 AtlasX = info.X,
                 AtlasY = info.Y,
@@ -1039,8 +1152,9 @@ public unsafe class PathAtlas : IDisposable
         _pendingPaths.Clear();
     }
 
-    public void CleanupFrame()
+    public void CleanupFrame(uint anticipatedWidth = 0, uint anticipatedHeight = 0)
     {
+        ReserveFrameCapacity(anticipatedWidth, anticipatedHeight);
         _frameNumber++;
         for (int i = 0; i < _tempBuffers.Count; i++)
         {

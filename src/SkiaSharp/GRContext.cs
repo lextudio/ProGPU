@@ -26,6 +26,20 @@ public struct GRGlFramebufferInfo
     }
 }
 
+public struct GRGlTextureInfo
+{
+    public uint Target { get; set; }
+    public uint Id { get; set; }
+    public uint Format { get; set; }
+
+    public GRGlTextureInfo(uint target, uint id, uint format = 0)
+    {
+        Target = target;
+        Id = id;
+        Format = format;
+    }
+}
+
 public struct GRMtlTextureInfo
 {
     public IntPtr Texture { get; set; }
@@ -141,6 +155,11 @@ public class GRBackendRenderTarget : IDisposable
         VkImageInfo = vkImageInfo;
     }
 
+    public GRBackendRenderTarget(int width, int height, GRVkImageInfo vkImageInfo)
+        : this(width, height, (int)Math.Max(1u, vkImageInfo.SampleCount), vkImageInfo)
+    {
+    }
+
     public GRBackendRenderTarget(int width, int height, GRMtlTextureInfo mtlTextureInfo)
     {
         Width = width;
@@ -160,26 +179,47 @@ public class GRBackendRenderTarget : IDisposable
     public void Dispose() { }
 }
 
+public sealed class GRBackendTexture : IDisposable
+{
+    public GRBackendTexture(int width, int height, bool mipmapped, GRGlTextureInfo glTextureInfo)
+    {
+        Width = width;
+        Height = height;
+        Mipmapped = mipmapped;
+        GlTextureInfo = glTextureInfo;
+    }
+
+    public int Width { get; }
+    public int Height { get; }
+    public bool Mipmapped { get; }
+    public GRGlTextureInfo GlTextureInfo { get; }
+
+    public void Dispose()
+    {
+    }
+}
+
 public class GRContext : IDisposable
 {
     public WgpuContext Context { get; }
+    public int MaxRenderTargetSize => 16384;
 
     public GRContext(WgpuContext context)
     {
         Context = context;
     }
 
-    public static GRContext? CreateGl(object? interfaceObj = null, GRContextOptions? options = null)
+    public static GRContext CreateGl(object? interfaceObj = null, GRContextOptions? options = null)
     {
         return new GRContext(SKContextHelper.GetContext());
     }
 
-    public static GRContext? CreateMetal(object? backendContext, GRContextOptions? options = null)
+    public static GRContext CreateMetal(object? backendContext, GRContextOptions? options = null)
     {
         return new GRContext(SKContextHelper.GetContext());
     }
 
-    public static GRContext? CreateVulkan(object? backendContext, GRContextOptions? options = null)
+    public static GRContext CreateVulkan(object? backendContext, GRContextOptions? options = null)
     {
         return new GRContext(SKContextHelper.GetContext());
     }
@@ -197,6 +237,11 @@ public class GRContext : IDisposable
     public void AbandonContext()
     {
         // No-op
+    }
+
+    public void AbandonContext(bool releaseResources)
+    {
+        AbandonContext();
     }
 
     public void SetResourceCacheLimit(long maxResourceBytes)
