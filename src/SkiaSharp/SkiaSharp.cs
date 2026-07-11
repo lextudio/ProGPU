@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Numerics;
 using System.Threading;
@@ -582,7 +583,92 @@ public struct SKColor
         A = 255;
     }
 
+    public SKColor(uint value)
+    {
+        A = (byte)((value >> 24) & 0xFF);
+        R = (byte)((value >> 16) & 0xFF);
+        G = (byte)((value >> 8) & 0xFF);
+        B = (byte)(value & 0xFF);
+    }
+
     public static readonly SKColor Empty = new(0, 0, 0, 0);
+
+    public readonly SKColor WithRed(byte red) => new(red, G, B, A);
+    public readonly SKColor WithGreen(byte green) => new(R, green, B, A);
+    public readonly SKColor WithBlue(byte blue) => new(R, G, blue, A);
+    public readonly SKColor WithAlpha(byte alpha) => new(R, G, B, alpha);
+
+    public override readonly string ToString() => $"#{A:x2}{R:x2}{G:x2}{B:x2}";
+
+    public static SKColor Parse(string hexString)
+    {
+        if (!TryParse(hexString, out var color))
+        {
+            throw new ArgumentException("Invalid hexadecimal color string.", nameof(hexString));
+        }
+
+        return color;
+    }
+
+    public static bool TryParse(string? hexString, out SKColor color)
+    {
+        if (string.IsNullOrWhiteSpace(hexString))
+        {
+            color = Empty;
+            return false;
+        }
+
+        var value = hexString.AsSpan().Trim().TrimStart('#');
+        var length = value.Length;
+        if (length is 3 or 4)
+        {
+            byte alpha;
+            if (length == 4)
+            {
+                if (!byte.TryParse(value[..1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out alpha))
+                {
+                    color = Empty;
+                    return false;
+                }
+
+                alpha = (byte)((alpha << 4) | alpha);
+            }
+            else
+            {
+                alpha = byte.MaxValue;
+            }
+
+            if (!byte.TryParse(value.Slice(length - 3, 1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var red)
+                || !byte.TryParse(value.Slice(length - 2, 1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var green)
+                || !byte.TryParse(value.Slice(length - 1, 1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var blue))
+            {
+                color = Empty;
+                return false;
+            }
+
+            color = new SKColor(
+                (byte)((red << 4) | red),
+                (byte)((green << 4) | green),
+                (byte)((blue << 4) | blue),
+                alpha);
+            return true;
+        }
+
+        if (length is 6 or 8
+            && uint.TryParse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var packed))
+        {
+            color = new SKColor(packed);
+            if (length == 6)
+            {
+                color = color.WithAlpha(byte.MaxValue);
+            }
+
+            return true;
+        }
+
+        color = Empty;
+        return false;
+    }
 
     public static implicit operator SKColor(uint val)
     {
@@ -608,6 +694,7 @@ public static class SKColors
     public static readonly SKColor Blue = new(0, 0, 255, 255);
     public static readonly SKColor Transparent = new(0, 0, 0, 0);
     public static readonly SKColor Aqua = new(0, 255, 255, 255);
+    public static readonly SKColor Cyan = new(0, 255, 255, 255);
     public static readonly SKColor DodgerBlue = new(30, 144, 255, 255);
     public static readonly SKColor Gray = new(128, 128, 128, 255);
     public static readonly SKColor LightGray = new(211, 211, 211, 255);

@@ -42,6 +42,36 @@ public sealed class SkiaSharpPrimitiveContractTests
         Assert.Equal(3, (int)SKColorChannel.A);
     }
 
+    [Theory]
+    [InlineData("#123", 0xFF112233u)]
+    [InlineData("8123", 0x88112233u)]
+    [InlineData("#123456", 0xFF123456u)]
+    [InlineData("80123456", 0x80123456u)]
+    [InlineData("  #00FFFFFF  ", 0x00FFFFFFu)]
+    public void ColorParsingMatchesSkiaSharpHexFormats(string text, uint expected)
+    {
+        Assert.True(SKColor.TryParse(text, out var color));
+        Assert.Equal(expected, (uint)color);
+        Assert.Equal(color, SKColor.Parse(text));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("#12")]
+    [InlineData("#GGG")]
+    public void ColorParsingRejectsInvalidHexStrings(string? text)
+    {
+        Assert.False(SKColor.TryParse(text, out var color));
+        Assert.Equal((uint)SKColor.Empty, (uint)color);
+    }
+
+    [Fact]
+    public void CyanMatchesAqua()
+    {
+        Assert.Equal((uint)SKColors.Aqua, (uint)SKColors.Cyan);
+    }
+
     [Fact]
     public void TypefaceFallbackPreservesRequestedStyleMetadata()
     {
