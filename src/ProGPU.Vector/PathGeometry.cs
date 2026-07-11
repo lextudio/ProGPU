@@ -499,6 +499,7 @@ class PathGeometry
         {
             string token = tokens[index];
             char command = token[0];
+            char previousCommand = lastCommand;
 
             if (char.IsLetter(command))
             {
@@ -608,6 +609,29 @@ class PathGeometry
                     }
                     break;
 
+                case 'T': // Smooth quadratic Bezier
+                    {
+                        var to = ReadVector2(tokens, ref index);
+                        if (isRelative)
+                        {
+                            to += currentPoint;
+                        }
+
+                        var previousUpper = char.ToUpperInvariant(previousCommand);
+                        var ctrl = previousUpper is 'Q' or 'T'
+                            ? currentPoint * 2f - lastControlPoint
+                            : currentPoint;
+                        if (currentFigure == null)
+                        {
+                            currentFigure = new PathFigure(currentPoint);
+                            geometry.Figures.Add(currentFigure);
+                        }
+                        currentFigure.Segments.Add(new QuadraticBezierSegment(ctrl, to));
+                        lastControlPoint = ctrl;
+                        currentPoint = to;
+                    }
+                    break;
+
                 case 'C': // Cubic Bezier
                     {
                         var ctrl1 = ReadVector2(tokens, ref index);
@@ -620,6 +644,31 @@ class PathGeometry
                             to += currentPoint;
                         }
 
+                        if (currentFigure == null)
+                        {
+                            currentFigure = new PathFigure(currentPoint);
+                            geometry.Figures.Add(currentFigure);
+                        }
+                        currentFigure.Segments.Add(new CubicBezierSegment(ctrl1, ctrl2, to));
+                        lastControlPoint = ctrl2;
+                        currentPoint = to;
+                    }
+                    break;
+
+                case 'S': // Smooth cubic Bezier
+                    {
+                        var ctrl2 = ReadVector2(tokens, ref index);
+                        var to = ReadVector2(tokens, ref index);
+                        if (isRelative)
+                        {
+                            ctrl2 += currentPoint;
+                            to += currentPoint;
+                        }
+
+                        var previousUpper = char.ToUpperInvariant(previousCommand);
+                        var ctrl1 = previousUpper is 'C' or 'S'
+                            ? currentPoint * 2f - lastControlPoint
+                            : currentPoint;
                         if (currentFigure == null)
                         {
                             currentFigure = new PathFigure(currentPoint);
@@ -691,21 +740,48 @@ class PathGeometry
                 continue;
             }
 
-            // Parse numbers (including negative numbers and floats)
+            // SVG permits adjacent signed values and decimals such as ".5.5".
             int start = i;
-            if (text[i] == '-' || text[i] == '+') i++;
-            while (i < text.Length && (char.IsDigit(text[i]) || text[i] == '.' || text[i] == 'e' || text[i] == 'E' || (i > 0 && (text[i-1] == 'e' || text[i-1] == 'E') && (text[i] == '-' || text[i] == '+'))))
+            if (text[i] == '-' || text[i] == '+')
             {
                 i++;
             }
-            if (i > start)
+            while (i < text.Length && char.IsDigit(text[i]))
             {
-                tokens.Add(text.Substring(start, i - start));
+                i++;
             }
-            else
+            if (i < text.Length && text[i] == '.')
             {
-                i++; // Fallback to avoid infinite loops on invalid chars
+                i++;
+                while (i < text.Length && char.IsDigit(text[i]))
+                {
+                    i++;
+                }
             }
+            if (i < text.Length && (text[i] == 'e' || text[i] == 'E'))
+            {
+                var exponentStart = i++;
+                if (i < text.Length && (text[i] == '-' || text[i] == '+'))
+                {
+                    i++;
+                }
+
+                var exponentDigits = i;
+                while (i < text.Length && char.IsDigit(text[i]))
+                {
+                    i++;
+                }
+                if (exponentDigits == i)
+                {
+                    i = exponentStart;
+                }
+            }
+
+            if (i == start || (i == start + 1 && (text[start] == '-' || text[start] == '+')))
+            {
+                throw new FormatException($"Invalid path data number at '{text[start..]}'.");
+            }
+            tokens.Add(text.Substring(start, i - start));
         }
         return tokens;
     }
