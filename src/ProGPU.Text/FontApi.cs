@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 
@@ -21,8 +22,14 @@ public static class FontApi
 {
     private static readonly object s_cachedSystemFontsLock = new();
     private static List<FontInfo>? s_cachedSystemFonts;
+    private static readonly ConcurrentDictionary<(string Path, int FaceIndex), Lazy<byte[]?>> s_characterMaps = new();
 
     public static List<FontInfo> GetSystemFonts()
+    {
+        return new List<FontInfo>(GetCachedSystemFonts());
+    }
+
+    private static List<FontInfo> ScanSystemFonts()
     {
         var list = new List<FontInfo>();
         var scannedFiles = new HashSet<string>(
@@ -109,11 +116,32 @@ public static class FontApi
         return null;
     }
 
+    public static bool ContainsGlyph(FontInfo font, uint codePoint)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        if (codePoint > 0x10FFFF || string.IsNullOrWhiteSpace(font.FilePath))
+        {
+            return false;
+        }
+
+        var key = (font.FilePath, font.FaceIndex);
+        var characterMap = s_characterMaps.GetOrAdd(
+            key,
+            static value => new Lazy<byte[]?>(
+                () => SfntFontMetadataReader.TryReadCharacterMap(value.Path, value.FaceIndex, out var cmap)
+                    ? cmap
+                    : null,
+                isThreadSafe: true)).Value;
+        return characterMap is not null &&
+               SfntFontFace.TryGetGlyphIndexFromCmap(characterMap, codePoint, out var glyphIndex) &&
+               glyphIndex != 0;
+    }
+
     private static IReadOnlyList<FontInfo> GetCachedSystemFonts()
     {
         lock (s_cachedSystemFontsLock)
         {
-            s_cachedSystemFonts ??= GetSystemFonts();
+            s_cachedSystemFonts ??= ScanSystemFonts();
             return s_cachedSystemFonts;
         }
     }

@@ -74,6 +74,35 @@ public class SfntFontFaceTests
     }
 
     [Fact]
+    public void FontApiStreamsCharacterMapWithoutReadingTheWholeFontFile()
+    {
+        string file = Path.Combine(Path.GetTempPath(), $"progpu-font-{Guid.NewGuid():N}.ttf");
+        File.WriteAllBytes(file, BuildMetricsSfnt());
+        using (var stream = new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.None))
+        {
+            stream.SetLength(64L * 1024 * 1024);
+        }
+
+        try
+        {
+            var info = new FontInfo { FilePath = file, FaceIndex = 0 };
+            long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+
+            bool containsA = FontApi.ContainsGlyph(info, 'A');
+            bool containsB = FontApi.ContainsGlyph(info, 'B');
+
+            long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            Assert.True(containsA);
+            Assert.False(containsB);
+            Assert.True(allocatedBytes < 1024 * 1024, $"Allocated {allocatedBytes:N0} bytes.");
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
     public void FontApiParsesEveryTrueTypeCollectionFace()
     {
         string file = Path.Combine(Path.GetTempPath(), $"progpu-font-{Guid.NewGuid():N}.ttc");

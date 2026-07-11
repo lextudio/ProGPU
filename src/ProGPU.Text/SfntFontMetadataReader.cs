@@ -13,6 +13,7 @@ internal static class SfntFontMetadataReader
     private const int NameRecordSize = 12;
     private const int MaxFaceCount = 4096;
     private const int MaxTableCount = 4096;
+    private const int MaxCharacterMapSize = 64 * 1024 * 1024;
 
     public static bool TryReadFontInfos(string file, out List<FontInfo> infos)
     {
@@ -33,6 +34,36 @@ internal static class SfntFontMetadataReader
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or ArgumentException)
         {
             infos = new List<FontInfo>();
+            return false;
+        }
+    }
+
+    public static bool TryReadCharacterMap(string file, int faceIndex, out byte[] characterMap)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        ArgumentOutOfRangeException.ThrowIfNegative(faceIndex);
+
+        try
+        {
+            using var stream = new FileStream(
+                file,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4096,
+                FileOptions.RandomAccess);
+            uint[] faceOffsets = ReadFaceOffsets(stream);
+            if ((uint)faceIndex >= (uint)faceOffsets.Length)
+            {
+                characterMap = Array.Empty<byte>();
+                return false;
+            }
+
+            return TryReadFaceTable(stream, faceOffsets[faceIndex], "cmap", out characterMap);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or ArgumentException or OverflowException)
+        {
+            characterMap = Array.Empty<byte>();
             return false;
         }
     }
@@ -113,6 +144,43 @@ internal static class SfntFontMetadataReader
         }
 
         return default;
+    }
+
+    private static bool TryReadFaceTable(Stream stream, uint faceOffset, string tag, out byte[] table)
+    {
+        Span<byte> header = stackalloc byte[SfntHeaderSize];
+        ReadExactly(stream, faceOffset, header);
+        ushort tableCount = ReadUShort(header, 4);
+        if (tableCount > MaxTableCount)
+        {
+            throw new FormatException("SFNT face has an invalid table count.");
+        }
+
+        Span<byte> record = stackalloc byte[TableRecordSize];
+        for (var i = 0; i < tableCount; i++)
+        {
+            var recordOffset = checked((long)faceOffset + SfntHeaderSize + (long)i * TableRecordSize);
+            ReadExactly(stream, recordOffset, record);
+            if (!HasTag(record, tag))
+            {
+                continue;
+            }
+
+            uint tableOffset = ReadUInt(record, 8);
+            uint tableLength = ReadUInt(record, 12);
+            if (tableLength == 0 || tableLength > MaxCharacterMapSize)
+            {
+                table = Array.Empty<byte>();
+                return false;
+            }
+
+            table = GC.AllocateUninitializedArray<byte>(checked((int)tableLength));
+            ReadExactly(stream, tableOffset, table);
+            return true;
+        }
+
+        table = Array.Empty<byte>();
+        return false;
     }
 
     private static NameSelection ReadNameTable(Stream stream, uint tableOffset, uint tableLength)

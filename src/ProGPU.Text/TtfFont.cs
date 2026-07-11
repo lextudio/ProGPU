@@ -100,9 +100,19 @@ public class TtfFont
 
     // Font parameters
     public ushort UnitsPerEm { get; private set; }
+    public short XMin { get; private set; }
+    public short YMin { get; private set; }
+    public short XMax { get; private set; }
+    public short YMax { get; private set; }
     public short Ascender { get; private set; }
     public short Descender { get; private set; }
     public short LineGap { get; private set; }
+    public short? UnderlinePosition { get; private set; }
+    public short? UnderlineThickness { get; private set; }
+    public short? StrikeoutPosition { get; private set; }
+    public short? StrikeoutThickness { get; private set; }
+    public short? XHeight { get; private set; }
+    public short? CapHeight { get; private set; }
     public ushort NumGlyphs { get; private set; }
     public ReadOnlyMemory<byte> FontData => _data;
     private short _indexToLocFormat; // 0 = short (16-bit), 1 = long (32-bit)
@@ -152,6 +162,7 @@ public class TtfFont
         ParseHheaTable();
         ParseMaxpTable();
         ParseFontAttributes();
+        ParsePostMetrics();
         ParseColrTable();
         ParseCpalTable();
     }
@@ -252,6 +263,19 @@ public class TtfFont
                 var selection = ReadUShort(span, 62);
                 IsItalic = (selection & 0x0001) != 0 || (selection & 0x0200) != 0;
             }
+
+            if (span.Length >= 30)
+            {
+                StrikeoutThickness = ReadShort(span, 26);
+                StrikeoutPosition = ReadShort(span, 28);
+            }
+
+            var version = span.Length >= 2 ? ReadUShort(span, 0) : (ushort)0;
+            if (version >= 2 && span.Length >= 90)
+            {
+                XHeight = ReadShort(span, 86);
+                CapHeight = ReadShort(span, 88);
+            }
         }
 
         if (!IsItalic &&
@@ -262,12 +286,27 @@ public class TtfFont
         }
     }
 
+    private void ParsePostMetrics()
+    {
+        if (!TryGetTable("post", out var post) || post.Length < 12)
+        {
+            return;
+        }
+
+        UnderlinePosition = ReadShort(post.Span, 8);
+        UnderlineThickness = ReadShort(post.Span, 10);
+    }
+
     private void ParseHeadTable()
     {
         uint headOffset = _tables.TryGetValue("head", out var head)
             ? head.offset
             : _tables["bhed"].offset;
         UnitsPerEm = ReadUShort(headOffset + 18);
+        XMin = ReadShort(headOffset + 36);
+        YMin = ReadShort(headOffset + 38);
+        XMax = ReadShort(headOffset + 40);
+        YMax = ReadShort(headOffset + 42);
         _indexToLocFormat = ReadShort(headOffset + 50);
     }
 
@@ -649,6 +688,53 @@ public class TtfFont
             _flippedOutlineCache[glyphIndex] = flippedOutline;
             return flippedOutline;
         }
+    }
+
+    public bool TryGetGlyphBounds(
+        ushort glyphIndex,
+        out short xMin,
+        out short yMin,
+        out short xMax,
+        out short yMax)
+    {
+        xMin = 0;
+        yMin = 0;
+        xMax = 0;
+        yMax = 0;
+        if (!HasTrueTypeOutlines || glyphIndex >= NumGlyphs)
+        {
+            return false;
+        }
+
+        uint startOffset;
+        uint endOffset;
+        if (_indexToLocFormat == 0)
+        {
+            startOffset = (uint)(ReadUShort(_locaOffset + (uint)(glyphIndex * 2)) * 2);
+            endOffset = (uint)(ReadUShort(_locaOffset + (uint)((glyphIndex + 1) * 2)) * 2);
+        }
+        else
+        {
+            startOffset = ReadUInt(_locaOffset + (uint)(glyphIndex * 4));
+            endOffset = ReadUInt(_locaOffset + (uint)((glyphIndex + 1) * 4));
+        }
+
+        if (startOffset == endOffset)
+        {
+            return false;
+        }
+
+        var glyphOffset = _glyfOffset + startOffset;
+        if (_data.Length < 10 || glyphOffset > (uint)_data.Length - 10u)
+        {
+            return false;
+        }
+
+        xMin = ReadShort(glyphOffset + 2);
+        yMin = ReadShort(glyphOffset + 4);
+        xMax = ReadShort(glyphOffset + 6);
+        yMax = ReadShort(glyphOffset + 8);
+        return xMax > xMin && yMax > yMin;
     }
 
     private ParsedGlyph? GetGlyphOutlineInternal(ushort glyphIndex, HashSet<ushort> ancestors, int depth)

@@ -283,8 +283,22 @@ sealed class SfntFontFace
 
     public bool TryGetGlyphIndex(uint codePoint, out ushort glyphIndex)
     {
+        if (!TryGetTable("cmap", out ReadOnlyMemory<byte> cmapMemory))
+        {
+            glyphIndex = 0;
+            return false;
+        }
+
+        return TryGetGlyphIndexFromCmap(cmapMemory, codePoint, out glyphIndex);
+    }
+
+    internal static bool TryGetGlyphIndexFromCmap(
+        ReadOnlyMemory<byte> cmapMemory,
+        uint codePoint,
+        out ushort glyphIndex)
+    {
         glyphIndex = 0;
-        if (!TryFindCmapSubtables(out ReadOnlyMemory<byte> format4Memory, out ReadOnlyMemory<byte> format12Memory, out _))
+        if (!TryFindCmapSubtables(cmapMemory, out ReadOnlyMemory<byte> format4Memory, out ReadOnlyMemory<byte> format12Memory, out _))
         {
             return false;
         }
@@ -499,14 +513,26 @@ sealed class SfntFontFace
         out ReadOnlyMemory<byte> format12,
         out bool usesSymbolCharacterMap)
     {
+        if (!TryGetTable("cmap", out ReadOnlyMemory<byte> cmapMemory))
+        {
+            format4 = default;
+            format12 = default;
+            usesSymbolCharacterMap = false;
+            return false;
+        }
+
+        return TryFindCmapSubtables(cmapMemory, out format4, out format12, out usesSymbolCharacterMap);
+    }
+
+    private static bool TryFindCmapSubtables(
+        ReadOnlyMemory<byte> cmapMemory,
+        out ReadOnlyMemory<byte> format4,
+        out ReadOnlyMemory<byte> format12,
+        out bool usesSymbolCharacterMap)
+    {
         format4 = default;
         format12 = default;
         usesSymbolCharacterMap = false;
-
-        if (!TryGetTable("cmap", out ReadOnlyMemory<byte> cmapMemory))
-        {
-            return false;
-        }
 
         ReadOnlySpan<byte> cmap = cmapMemory.Span;
         if (cmap.Length < 4)
