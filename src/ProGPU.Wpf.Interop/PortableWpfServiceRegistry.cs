@@ -529,6 +529,8 @@ public interface IPortablePopupActivationServiceRegistrar
 {
     PortableWpfServiceKey ServiceKey { get; }
 
+    GetScreenOriginCallback? GetScreenOrigin { get; }
+
     void Register(PortablePopupActivationCallbacks callbacks);
 
     void Clear();
