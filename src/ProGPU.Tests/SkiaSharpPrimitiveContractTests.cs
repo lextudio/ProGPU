@@ -98,6 +98,31 @@ public sealed class SkiaSharpPrimitiveContractTests
         }
     }
 
+    [Theory]
+    [InlineData(SKFontStyleWeight.Normal, SKFontStyleSlant.Upright, 400, false)]
+    [InlineData(SKFontStyleWeight.Normal, SKFontStyleSlant.Italic, 400, true)]
+    [InlineData(SKFontStyleWeight.Bold, SKFontStyleSlant.Upright, 700, false)]
+    [InlineData(SKFontStyleWeight.Bold, SKFontStyleSlant.Italic, 700, true)]
+    public void GenericSerifSelectsRequestedMacOsFace(
+        SKFontStyleWeight weight,
+        SKFontStyleSlant slant,
+        int expectedIntrinsicWeight,
+        bool expectedIntrinsicItalic)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        using var typeface = SKTypeface.FromFamilyName(
+            "serif",
+            new SKFontStyle(weight, SKFontStyleWidth.Normal, slant));
+
+        Assert.Equal("Times", typeface.FamilyName);
+        Assert.Equal(expectedIntrinsicWeight, typeface.Font.WeightClass);
+        Assert.Equal(expectedIntrinsicItalic, typeface.Font.IsItalic);
+    }
+
     [Fact]
     public void FontMetricsKeepGlobalBoundsDistinctFromLineMetrics()
     {

@@ -112,7 +112,10 @@ public class SKTypeface : IDisposable
             if (_default == null)
             {
                 var systemFonts = FontApi.GetSystemFonts();
-                var selectedFont = FindPreferredFont(systemFonts, GetGenericFamilyPreferences(GenericFontFamily.SansSerif));
+                var selectedFont = FindPreferredFont(
+                    systemFonts,
+                    GetGenericFamilyPreferences(GenericFontFamily.SansSerif),
+                    SKFontStyle.Normal);
                 if (selectedFont == null && systemFonts.Count > 0)
                 {
                     selectedFont = systemFonts[0];
@@ -176,46 +179,26 @@ public class SKTypeface : IDisposable
         var systemFonts = FontApi.GetSystemFonts();
         if (TryGetGenericFontFamily(familyName, out var genericFamily))
         {
-            var genericFont = FindPreferredFont(systemFonts, GetGenericFamilyPreferences(genericFamily));
+            var genericFont = FindPreferredFont(
+                systemFonts,
+                GetGenericFamilyPreferences(genericFamily),
+                style);
             if (genericFont != null)
             {
                 return CreateSystemTypeface(genericFont, style);
             }
         }
 
-        FontInfo? fallback = null;
-        foreach (var font in systemFonts)
-        {
-            if (!font.FamilyName.Equals(familyName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            fallback ??= font;
-            if (!MatchesStyle(font, style))
-            {
-                continue;
-            }
-
-            try
-            {
-                return CreateSystemTypeface(font, style);
-            }
-            catch
-            {
-                // Skip and try next
-            }
-        }
-
-        if (fallback != null)
+        var familyFont = FindBestMatchingFont(systemFonts, familyName, style);
+        if (familyFont != null)
         {
             try
             {
-                return CreateSystemTypeface(fallback, style);
+                return CreateSystemTypeface(familyFont, style);
             }
             catch
             {
-                // Fall through to default.
+                // Fall through to the default typeface.
             }
         }
 
@@ -290,23 +273,74 @@ public class SKTypeface : IDisposable
         };
     }
 
-    private static FontInfo? FindPreferredFont(IReadOnlyList<FontInfo> fonts, IReadOnlyList<string> preferences)
+    private static FontInfo? FindPreferredFont(
+        IReadOnlyList<FontInfo> fonts,
+        IReadOnlyList<string> preferences,
+        SKFontStyle style)
     {
         for (var preferenceIndex = 0; preferenceIndex < preferences.Count; preferenceIndex++)
         {
-            var preference = preferences[preferenceIndex];
-            for (var fontIndex = 0; fontIndex < fonts.Count; fontIndex++)
+            var font = FindBestMatchingFont(fonts, preferences[preferenceIndex], style);
+            if (font != null)
             {
-                var font = fonts[fontIndex];
-                if (font.FamilyName.Equals(preference, StringComparison.OrdinalIgnoreCase) ||
-                    font.Name.Equals(preference, StringComparison.OrdinalIgnoreCase))
-                {
-                    return font;
-                }
+                return font;
             }
         }
 
         return null;
+    }
+
+    private static FontInfo? FindBestMatchingFont(
+        IReadOnlyList<FontInfo> fonts,
+        string familyOrFullName,
+        SKFontStyle style)
+    {
+        FontInfo? best = null;
+        var bestDistance = int.MaxValue;
+        for (var fontIndex = 0; fontIndex < fonts.Count; fontIndex++)
+        {
+            var font = fonts[fontIndex];
+            if (!font.FamilyName.Equals(familyOrFullName, StringComparison.OrdinalIgnoreCase) &&
+                !font.Name.Equals(familyOrFullName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                var distance = GetIntrinsicStyleDistance(CreateFont(font), style);
+                if (distance < bestDistance)
+                {
+                    best = font;
+                    bestDistance = distance;
+                    if (distance == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // Skip unreadable font faces.
+            }
+        }
+
+        return best;
+    }
+
+    private static int GetIntrinsicStyleDistance(TtfFont font, SKFontStyle style)
+    {
+        var actualWeight = font.WeightClass == 0
+            ? (int)SKFontStyleWeight.Normal
+            : font.WeightClass;
+        var actualWidth = font.WidthClass == 0
+            ? (int)SKFontStyleWidth.Normal
+            : font.WidthClass;
+        var wantsItalic = style.Slant != SKFontStyleSlant.Upright;
+        var slantDistance = wantsItalic == font.IsItalic ? 0 : 10_000;
+        var widthDistance = Math.Abs(actualWidth - style.Width) * 1_000;
+        var weightDistance = Math.Abs(actualWeight - style.Weight);
+        return slantDistance + widthDistance + weightDistance;
     }
 
     private static SKTypeface CreateSystemTypeface(FontInfo font, SKFontStyle style)
@@ -354,21 +388,6 @@ public class SKTypeface : IDisposable
     {
         ArgumentNullException.ThrowIfNull(data);
         return FromStream(new MemoryStream(data.Bytes, writable: false), index);
-    }
-
-    private static bool MatchesStyle(FontInfo font, SKFontStyle style)
-    {
-        var name = font.Name;
-        var wantsBold = style.Weight >= (int)SKFontStyleWeight.SemiBold;
-        var wantsItalic = style.Slant != SKFontStyleSlant.Upright;
-        var isBold = ContainsStyleToken(name, "bold") || ContainsStyleToken(name, "semibold") || ContainsStyleToken(name, "demibold") || ContainsStyleToken(name, "black");
-        var isItalic = ContainsStyleToken(name, "italic") || ContainsStyleToken(name, "oblique");
-        return wantsBold == isBold && wantsItalic == isItalic;
-    }
-
-    private static bool ContainsStyleToken(string value, string token)
-    {
-        return value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     public SKFont CreateSKFont(float size)
