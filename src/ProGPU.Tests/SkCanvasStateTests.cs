@@ -426,6 +426,28 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void SaveLayerTransformsMorphologyRadiiIntoCanvasCoordinates()
+    {
+        using var surface = SKSurface.Create(new SKImageInfo(48, 48, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var layerPaint = new SKPaint { ImageFilter = SKImageFilter.CreateDilate(1f, 1f) };
+        using var fill = new SKPaint { Color = SKColors.White, IsAntialias = false };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.Scale(2f, 3f);
+        var restoreCount = surface.Canvas.SaveLayer(layerPaint);
+        surface.Canvas.DrawRect(new SKRect(1f, 1f, 3f, 3f), fill);
+        surface.Canvas.RestoreToCount(restoreCount);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+
+        Assert.Equal((byte)255, pixels[3]);
+        Assert.Equal((byte)255, pixels[(11 * 48 + 7) * 4 + 3]);
+        Assert.Equal((byte)0, pixels[(12 * 48 + 8) * 4 + 3]);
+    }
+
+    [Fact]
     public void SaveLayerBlendImageFilterCompositesInInputColorSpaceOnGpu()
     {
         using var surface = SKSurface.Create(new SKImageInfo(4, 4, SKColorType.Rgba8888, SKAlphaType.Premul));
@@ -511,6 +533,35 @@ public sealed class SkCanvasStateTests
 
         var outsidePixel = (1 * 4 + 3) * 4;
         Assert.InRange(pixels[outsidePixel + 3], (byte)0, (byte)2);
+    }
+
+    [Fact]
+    public void SaveLayerTransformsDisplacementScaleIntoCanvasCoordinates()
+    {
+        using var surface = SKSurface.Create(new SKImageInfo(48, 48, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var displacementShader = SKShader.CreateColor(new SKColor(255, 128, 128, 255));
+        using var displacementInput = SKImageFilter.CreateShader(displacementShader, dither: false);
+        using var displacement = SKImageFilter.CreateDisplacementMapEffect(
+            SKColorChannel.R,
+            SKColorChannel.G,
+            2f,
+            displacementInput);
+        using var layerPaint = new SKPaint { ImageFilter = displacement };
+        using var fill = new SKPaint { Color = SKColors.White, IsAntialias = false };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.Scale(2f, 3f);
+        var restoreCount = surface.Canvas.SaveLayer(layerPaint);
+        surface.Canvas.DrawRect(new SKRect(1f, 1f, 3f, 3f), fill);
+        surface.Canvas.RestoreToCount(restoreCount);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+
+        Assert.Equal((byte)255, pixels[(3 * 48) * 4 + 3]);
+        Assert.Equal((byte)255, pixels[(8 * 48 + 3) * 4 + 3]);
+        Assert.Equal((byte)0, pixels[(8 * 48 + 4) * 4 + 3]);
     }
 
     [Fact]

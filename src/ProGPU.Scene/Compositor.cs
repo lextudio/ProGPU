@@ -1177,6 +1177,21 @@ public unsafe class Compositor : IDisposable
         GpuTexture destination,
         float scale,
         uint xChannel,
+        uint yChannel) =>
+        ApplyDisplacementMap(
+            source,
+            displacement,
+            destination,
+            new Vector4(scale, 0f, 0f, scale),
+            xChannel,
+            yChannel);
+
+    public void ApplyDisplacementMap(
+        GpuTexture source,
+        GpuTexture displacement,
+        GpuTexture destination,
+        Vector4 transform,
+        uint xChannel,
         uint yChannel)
     {
         lock (_context.RenderLock)
@@ -1185,7 +1200,7 @@ public unsafe class Compositor : IDisposable
                 source,
                 displacement,
                 destination,
-                scale,
+                transform,
                 xChannel,
                 yChannel);
         }

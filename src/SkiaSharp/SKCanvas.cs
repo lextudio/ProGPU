@@ -600,7 +600,8 @@ public class SKCanvas : IDisposable
                 var morphology = (SKImageFilter.MorphologyData)filter.Parameters!;
                 result = RenderMorphology(
                     input,
-                    morphology,
+                    morphology.RadiusX * GetAxisScale(filterTransform, Vector2.UnitX),
+                    morphology.RadiusY * GetAxisScale(filterTransform, Vector2.UnitY),
                     dilate: filter.Kind == SKImageFilter.FilterKind.Dilate);
                 break;
             }
@@ -651,7 +652,11 @@ public class SKCanvas : IDisposable
                     cache,
                     filterTransform,
                     preserveDisplacementColorSpace);
-                result = RenderDisplacementMap(input, displacementInput, displacement);
+                result = RenderDisplacementMap(
+                    input,
+                    displacementInput,
+                    displacement,
+                    filterTransform);
                 break;
             }
             case SKImageFilter.FilterKind.MatrixConvolution:
@@ -874,7 +879,8 @@ public class SKCanvas : IDisposable
 
     private GpuTexture RenderMorphology(
         GpuTexture input,
-        SKImageFilter.MorphologyData morphology,
+        float radiusX,
+        float radiusY,
         bool dilate)
     {
         var context = GetGpuContext();
@@ -884,8 +890,8 @@ public class SKCanvas : IDisposable
             input,
             temporary,
             destination,
-            morphology.RadiusX,
-            morphology.RadiusY,
+            radiusX,
+            radiusY,
             dilate);
         return destination;
     }
@@ -934,7 +940,8 @@ public class SKCanvas : IDisposable
     private GpuTexture RenderDisplacementMap(
         GpuTexture input,
         GpuTexture displacementInput,
-        SKImageFilter.DisplacementData displacement)
+        SKImageFilter.DisplacementData displacement,
+        Matrix4x4 filterTransform)
     {
         var context = GetGpuContext();
         var destination = CreateOwnedFilterTexture(
@@ -945,7 +952,7 @@ public class SKCanvas : IDisposable
             input,
             displacementInput,
             destination,
-            displacement.Scale,
+            CreateFilterVectorTransform(displacement.Scale, filterTransform),
             (uint)displacement.XChannel,
             (uint)displacement.YChannel);
         return destination;
@@ -2559,6 +2566,13 @@ public class SKCanvas : IDisposable
         return float.IsFinite(transformed.X) && float.IsFinite(transformed.Y)
             ? transformed
             : vector;
+    }
+
+    private static Vector4 CreateFilterVectorTransform(float scale, Matrix4x4 transform)
+    {
+        var xAxis = TransformFilterVector(new Vector2(scale, 0f), transform);
+        var yAxis = TransformFilterVector(new Vector2(0f, scale), transform);
+        return new Vector4(xAxis.X, xAxis.Y, yAxis.X, yAxis.Y);
     }
 
     private void DrawTiledImage(

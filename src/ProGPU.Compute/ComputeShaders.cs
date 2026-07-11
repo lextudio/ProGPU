@@ -174,10 +174,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     public const string DisplacementMap = """
 struct Params {
-    scale: f32,
+    transform: vec4<f32>,
     xChannel: u32,
     yChannel: u32,
-    padding: u32,
+    padding0: u32,
+    padding1: u32,
 };
 
 @group(0) @binding(0) var sourceTex: texture_2d<f32>;
@@ -223,9 +224,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         displacementSample = textureLoad(displacementTex, pixel, 0);
     }
     let displacement = straight_color(displacementSample);
-    let offset = vec2<f32>(
+    let localOffset = vec2<f32>(
         select_channel(displacement, params.xChannel) - 0.5,
-        select_channel(displacement, params.yChannel) - 0.5) * params.scale;
+        select_channel(displacement, params.yChannel) - 0.5);
+    let offset = vec2<f32>(
+        localOffset.x * params.transform.x + localOffset.y * params.transform.z,
+        localOffset.x * params.transform.y + localOffset.y * params.transform.w);
     let sourcePosition = vec2<f32>(id.xy) + offset;
     let sourcePixel = vec2<i32>(floor(sourcePosition + vec2<f32>(0.5)));
     textureStore(outputTex, pixel, load_or_transparent(sourcePixel, sourceSize));

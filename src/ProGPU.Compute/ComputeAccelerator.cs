@@ -128,21 +128,34 @@ public unsafe class ComputeAccelerator : IDisposable
         }
     }
 
-    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
     public struct DisplacementMapParams
     {
-        [FieldOffset(0)] public float Scale;
-        [FieldOffset(4)] public uint XChannel;
-        [FieldOffset(8)] public uint YChannel;
-        [FieldOffset(12)] private uint _padding;
+        [FieldOffset(0)] public Vector4 Transform;
+        [FieldOffset(16)] public uint XChannel;
+        [FieldOffset(20)] public uint YChannel;
+        [FieldOffset(24)] private uint _padding0;
+        [FieldOffset(28)] private uint _padding1;
 
         public DisplacementMapParams(float scale, uint xChannel, uint yChannel)
+            : this(new Vector4(scale, 0f, 0f, scale), xChannel, yChannel)
         {
-            Scale = float.IsFinite(scale) ? scale : 0f;
+        }
+
+        public DisplacementMapParams(Vector4 transform, uint xChannel, uint yChannel)
+        {
+            Transform = IsFinite(transform) ? transform : Vector4.Zero;
             XChannel = Math.Min(xChannel, 3u);
             YChannel = Math.Min(yChannel, 3u);
-            _padding = 0u;
+            _padding0 = 0u;
+            _padding1 = 0u;
         }
+
+        private static bool IsFinite(Vector4 value) =>
+            float.IsFinite(value.X) &&
+            float.IsFinite(value.Y) &&
+            float.IsFinite(value.Z) &&
+            float.IsFinite(value.W);
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 32)]
@@ -655,6 +668,21 @@ public unsafe class ComputeAccelerator : IDisposable
         GpuTexture destination,
         float scale,
         uint xChannel,
+        uint yChannel) =>
+        ApplyDisplacementMap(
+            source,
+            displacement,
+            destination,
+            new Vector4(scale, 0f, 0f, scale),
+            xChannel,
+            yChannel);
+
+    public void ApplyDisplacementMap(
+        GpuTexture source,
+        GpuTexture displacement,
+        GpuTexture destination,
+        Vector4 transform,
+        uint xChannel,
         uint yChannel)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
@@ -666,7 +694,7 @@ public unsafe class ComputeAccelerator : IDisposable
             (uint)Marshal.SizeOf<DisplacementMapParams>(),
             BufferUsage.Uniform | BufferUsage.CopyDst,
             "Displacement Map Params");
-        paramsBuffer.WriteSingle(new DisplacementMapParams(scale, xChannel, yChannel));
+        paramsBuffer.WriteSingle(new DisplacementMapParams(transform, xChannel, yChannel));
 
         var encoderDescriptor = new CommandEncoderDescriptor
         {
