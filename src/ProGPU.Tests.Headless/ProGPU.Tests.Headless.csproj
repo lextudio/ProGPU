@@ -28,4 +28,13 @@
     <ProjectReference Include="..\ProGPU.Transpiler\ProGPU.Transpiler.csproj" />
     <ProjectReference Include="..\System.Drawing.Common\System.Drawing.Common.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\external\microsoft-ui-xaml\src\controls\dev\Microsoft.UI.Xaml.Design\Icons\Microsoft.UI.Xaml.Controls.TreeView.bmp">
+      <LogicalName>ProGPU.Tests.Headless.ToolboxResourceType.bmp</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\external\microsoft-ui-xaml\src\controls\test\TabViewTearOutApp\small.ico">
+      <LogicalName>ProGPU.Tests.Headless.ToolboxResourceIcon.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>
