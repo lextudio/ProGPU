@@ -800,7 +800,7 @@ public unsafe class Compositor : IDisposable
     private readonly object _offscreenRenderLock = new();
     private int _offscreenRenderDepth;
     private float _totalTime = 0f;
-    private readonly Dictionary<(string Text, TtfFont Font, float Size, TextAlignment Align), TextLayout> _layoutCache = new();
+    private readonly Dictionary<(string Text, TtfFont Font, float Size, float MaxWidth, TextAlignment Align), TextLayout> _layoutCache = new();
     private enum BatchType
     {
         None,
@@ -6317,10 +6317,13 @@ public unsafe class Compositor : IDisposable
         }
         else
         {
-            var key = (cmd.Text, font, cmd.FontSize, TextAlignment.Left);
+            float maxWidth = cmd.Rect.Width > 0f && float.IsFinite(cmd.Rect.Width)
+                ? cmd.Rect.Width
+                : 10000f;
+            var key = (cmd.Text, font, cmd.FontSize, maxWidth, TextAlignment.Left);
             if (!_layoutCache.TryGetValue(key, out layout))
             {
-                layout = new TextLayout(cmd.Text, font, cmd.FontSize, 10000f, TextAlignment.Left, null);
+                layout = new TextLayout(cmd.Text, font, cmd.FontSize, maxWidth, TextAlignment.Left, null);
                 _layoutCache[key] = layout;
             }
         }

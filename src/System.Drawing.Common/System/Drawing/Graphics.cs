@@ -6,7 +6,6 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
-using Silk.NET.WebGPU;
 
 namespace System.Drawing;
 
@@ -14,6 +13,8 @@ public class Graphics : IDisposable
 {
     private readonly DrawingContext _context;
     private readonly Bitmap? _bitmap;
+    // Device/host state is immutable; public Transform APIs mutate only _transform.
+    private readonly Matrix3x2 _baseTransform;
     private Matrix _transform = new();
 
     public DrawingContext DrawingContext => _context;
@@ -39,9 +40,63 @@ public class Graphics : IDisposable
     public float DpiY => 96f;
 
     internal Graphics(DrawingContext context, Bitmap? bitmap = null)
+        : this(context, bitmap, Matrix3x2.Identity)
+    {
+    }
+
+    private Graphics(DrawingContext context, Bitmap? bitmap, Matrix3x2 baseTransform)
     {
         _context = context;
         _bitmap = bitmap;
+        _baseTransform = baseTransform;
+    }
+
+    public static Graphics FromProGpuDrawingContext(DrawingContext drawingContext)
+    {
+        ArgumentNullException.ThrowIfNull(drawingContext);
+        return new Graphics(drawingContext);
+    }
+
+    public static Graphics FromProGpuDrawingContext(
+        DrawingContext drawingContext,
+        Matrix4x4 outerTransform)
+    {
+        ArgumentNullException.ThrowIfNull(drawingContext);
+        if (!IsFinite2DAffineTransform(outerTransform))
+        {
+            throw new ArgumentException(
+                "The native drawing-context transform must be a finite 2D affine matrix.",
+                nameof(outerTransform));
+        }
+
+        return new Graphics(drawingContext, bitmap: null, baseTransform: new Matrix3x2(
+            outerTransform.M11,
+            outerTransform.M12,
+            outerTransform.M21,
+            outerTransform.M22,
+            outerTransform.M41,
+            outerTransform.M42));
+    }
+
+    private static bool IsFinite2DAffineTransform(Matrix4x4 transform)
+    {
+        const float epsilon = 0.00001f;
+        return float.IsFinite(transform.M11)
+            && float.IsFinite(transform.M12)
+            && float.IsFinite(transform.M21)
+            && float.IsFinite(transform.M22)
+            && float.IsFinite(transform.M41)
+            && float.IsFinite(transform.M42)
+            && MathF.Abs(transform.M13) <= epsilon
+            && MathF.Abs(transform.M14) <= epsilon
+            && MathF.Abs(transform.M23) <= epsilon
+            && MathF.Abs(transform.M24) <= epsilon
+            && MathF.Abs(transform.M31) <= epsilon
+            && MathF.Abs(transform.M32) <= epsilon
+            && MathF.Abs(transform.M34) <= epsilon
+            && MathF.Abs(transform.M43) <= epsilon
+            && MathF.Abs(transform.M33 - 1f) <= epsilon
+            && MathF.Abs(transform.M44 - 1f) <= epsilon;
     }
 
     public static Graphics FromImage(Image image)
@@ -86,22 +141,26 @@ public class Graphics : IDisposable
         _transform.Reset();
     }
 
+    private Matrix3x2 CombinedTransform => _transform.Value * _baseTransform;
+
     private Vector2 Tx(float x, float y)
     {
-        return Vector2.Transform(new Vector2(x, y), _transform.Value);
+        return Vector2.Transform(new Vector2(x, y), CombinedTransform);
     }
 
     private Vector2 Tx(PointF pt)
     {
-        return Vector2.Transform(new Vector2(pt.X, pt.Y), _transform.Value);
+        return Vector2.Transform(new Vector2(pt.X, pt.Y), CombinedTransform);
     }
 
     private Vector2 Tx(Vector2 pt)
     {
-        return Vector2.Transform(pt, _transform.Value);
+        return Vector2.Transform(pt, CombinedTransform);
     }
 
-    private bool HasRotationOrShear => Math.Abs(_transform.Value.M12) > 1e-5f || Math.Abs(_transform.Value.M21) > 1e-5f;
+    private bool HasRotationOrShear =>
+        Math.Abs(CombinedTransform.M12) > 1e-5f
+        || Math.Abs(CombinedTransform.M21) > 1e-5f;
 
     private Rect TxRect(RectangleF rect)
     {
@@ -116,7 +175,7 @@ public class Graphics : IDisposable
 
     private Matrix4x4 CurrentTransform4x4()
     {
-        var m32 = _transform.Value;
+        var m32 = CombinedTransform;
         return new Matrix4x4(
             m32.M11, m32.M12, 0f, 0f,
             m32.M21, m32.M22, 0f, 0f,
@@ -142,7 +201,7 @@ public class Graphics : IDisposable
         if (delta.LengthSquared() > 1e-10f)
         {
             var normal = Vector2.Normalize(new Vector2(-delta.Y, delta.X));
-            var transformedNormal = Vector2.TransformNormal(normal, _transform.Value);
+            var transformedNormal = Vector2.TransformNormal(normal, CombinedTransform);
             float scale = transformedNormal.Length();
             if (float.IsFinite(scale) && scale > 1e-5f)
             {
@@ -155,8 +214,8 @@ public class Graphics : IDisposable
 
     private float GetFallbackStrokeWidthScale()
     {
-        float xAxis = Vector2.TransformNormal(Vector2.UnitX, _transform.Value).Length();
-        float yAxis = Vector2.TransformNormal(Vector2.UnitY, _transform.Value).Length();
+        float xAxis = Vector2.TransformNormal(Vector2.UnitX, CombinedTransform).Length();
+        float yAxis = Vector2.TransformNormal(Vector2.UnitY, CombinedTransform).Length();
         float fallbackScale = (xAxis + yAxis) * 0.5f;
         return float.IsFinite(fallbackScale) && fallbackScale > 1e-5f
             ? fallbackScale
@@ -216,7 +275,20 @@ public class Graphics : IDisposable
         else
         {
             var rect = TxRect(new RectangleF(x, y, width, height));
-            _context.DrawRectangle(null, TransformPen(pen), rect);
+            var nativePen = TransformPen(pen);
+            float roundedThickness = MathF.Round(nativePen.Thickness);
+            if (roundedThickness > 0f
+                && MathF.Abs(nativePen.Thickness - roundedThickness) <= 1e-5f
+                && ((int)roundedThickness & 1) != 0)
+            {
+                // The vector shader samples at pixel centers. Align odd-width
+                // GDI strokes to those centers so a one-pixel focus rectangle
+                // covers its declared integer boundary instead of falling
+                // exactly between adjacent samples.
+                rect = new Rect(rect.X + 0.5f, rect.Y + 0.5f, rect.Width, rect.Height);
+            }
+
+            _context.DrawRectangle(null, nativePen, rect);
         }
     }
 
@@ -341,8 +413,8 @@ public class Graphics : IDisposable
             float ry = height / 2f;
             var center = Tx(x + rx, y + ry);
             var scale = new Vector2(
-                Vector2.TransformNormal(Vector2.UnitX, _transform.Value).Length(),
-                Vector2.TransformNormal(Vector2.UnitY, _transform.Value).Length()
+                Vector2.TransformNormal(Vector2.UnitX, CombinedTransform).Length(),
+                Vector2.TransformNormal(Vector2.UnitY, CombinedTransform).Length()
             );
             _context.DrawEllipse(null, TransformPen(pen), center, rx * scale.X, ry * scale.Y);
         }
@@ -366,8 +438,8 @@ public class Graphics : IDisposable
             float ry = height / 2f;
             var center = Tx(x + rx, y + ry);
             var scale = new Vector2(
-                Vector2.TransformNormal(Vector2.UnitX, _transform.Value).Length(),
-                Vector2.TransformNormal(Vector2.UnitY, _transform.Value).Length()
+                Vector2.TransformNormal(Vector2.UnitX, CombinedTransform).Length(),
+                Vector2.TransformNormal(Vector2.UnitY, CombinedTransform).Length()
             );
             _context.DrawEllipse(brush.ToProGpuBrush(), null, center, rx * scale.X, ry * scale.Y);
         }
@@ -435,7 +507,36 @@ public class Graphics : IDisposable
 
     public void DrawString(string s, Font font, Brush brush, RectangleF layoutRectangle)
     {
-        DrawString(s, font, brush, layoutRectangle.X, layoutRectangle.Y);
+        if (layoutRectangle.Width <= 0f
+            || layoutRectangle.Height <= 0f
+            || !float.IsFinite(layoutRectangle.Width)
+            || !float.IsFinite(layoutRectangle.Height))
+        {
+            DrawString(s, font, brush, layoutRectangle.X, layoutRectangle.Y);
+            return;
+        }
+
+        var isBold = (font.Style & FontStyle.Bold) != 0;
+        var isItalic = (font.Style & FontStyle.Italic) != 0;
+        var layoutBounds = new Rect(
+            layoutRectangle.X,
+            layoutRectangle.Y,
+            layoutRectangle.Width,
+            layoutRectangle.Height);
+        var transform = CurrentTransform4x4();
+
+        _context.PushClip(layoutBounds, transform);
+        _context.DrawText(
+            s,
+            font.TtfFont,
+            GetFontPixelSize(font),
+            brush.ToProGpuBrush(),
+            new Vector2(layoutRectangle.X, layoutRectangle.Y),
+            transform,
+            layoutBounds,
+            isBold,
+            isItalic);
+        _context.PopClip();
     }
 
     public SizeF MeasureString(string text, Font font)
@@ -446,7 +547,28 @@ public class Graphics : IDisposable
 
     public SizeF MeasureString(string text, Font font, SizeF layoutArea)
     {
-        return MeasureString(text, font);
+        float maxWidth = layoutArea.Width > 0f && float.IsFinite(layoutArea.Width)
+            ? layoutArea.Width
+            : float.PositiveInfinity;
+        var layout = new ProGPU.Text.TextLayout(
+            text,
+            font.TtfFont,
+            GetFontPixelSize(font),
+            maxWidth);
+
+        float measuredWidth = layout.ContentSize.X;
+        float measuredHeight = layout.ContentSize.Y;
+        if (float.IsFinite(maxWidth))
+        {
+            measuredWidth = MathF.Min(measuredWidth, maxWidth);
+        }
+
+        if (layoutArea.Height > 0f && float.IsFinite(layoutArea.Height))
+        {
+            measuredHeight = MathF.Min(measuredHeight, layoutArea.Height);
+        }
+
+        return new SizeF(measuredWidth, measuredHeight);
     }
 
     public SizeF MeasureString(string text, Font font, int width)
@@ -669,24 +791,18 @@ public class Graphics : IDisposable
 
     private GpuTexture RetainBitmapTexture(Bitmap bitmap)
     {
-        bitmap.Flush();
-        var source = bitmap.GpuTexture;
-        var targetContext = _bitmap?.GpuTexture.Context ?? GpuProvider.Context;
-        if (!ReferenceEquals(source.Context, targetContext))
+        if (ReferenceEquals(bitmap, _bitmap))
         {
-            throw new InvalidOperationException("Cannot draw a GDI Bitmap from a different WebGPU context into this Graphics target.");
+            throw new InvalidOperationException(
+                "Drawing a Bitmap into itself requires an explicit snapshot texture and is not supported by the deferred GPU path.");
         }
 
-        var retainedTexture = new GpuTexture(
-            targetContext,
-            source.Width,
-            source.Height,
-            source.Format,
-            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
-            "GDI DrawImage Retained Source Texture",
-            alphaMode: source.AlphaMode);
-        retainedTexture.CopyFrom(source);
-        _context.RetainResource(retainedTexture);
+        var targetContext = _bitmap?.GetDrawingContext() ?? GpuProvider.Context;
+        if (!_context.TryRetainTexture(bitmap, targetContext, out var retainedTexture))
+        {
+            throw new ObjectDisposedException(nameof(bitmap), "Cannot draw a disposed GDI Bitmap.");
+        }
+
         return retainedTexture;
     }
 

@@ -119,6 +119,7 @@ public class TextLayout
     public TextAlignment Alignment { get; }
 
     public List<TextRunGlyph> Glyphs { get; } = new();
+    public Vector2 ContentSize { get; private set; }
     public Vector2 MeasuredSize { get; private set; }
     public bool HasTextures { get; private set; }
 
@@ -139,6 +140,7 @@ public class TextLayout
         Glyphs.Clear();
         if (string.IsNullOrEmpty(Text))
         {
+            ContentSize = Vector2.Zero;
             MeasuredSize = Vector2.Zero;
             return;
         }
@@ -341,6 +343,7 @@ public class TextLayout
             }
         }
 
+        ContentSize = new Vector2(maxLineWidth, totalHeight);
         MeasuredSize = new Vector2(
             float.IsInfinity(MaxWidth) ? maxLineWidth : MaxWidth, 
             totalHeight
