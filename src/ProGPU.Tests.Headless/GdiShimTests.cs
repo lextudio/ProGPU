@@ -6,6 +6,7 @@ using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Reflection;
+using System.Resources;
 using System.Runtime.CompilerServices;
 using ProGPU.Backend;
 using ProGPU.Scene;
@@ -132,6 +133,7 @@ public class GdiShimTests
 
         Assert.Equal(new Size(16, 16), image.Size);
         Assert.Equal(0, image.GetPixel(0, image.Height - 1).A);
+        Assert.Equal(Color.FromArgb(255, 40, 110, 210).ToArgb(), image.GetPixel(4, 4).ToArgb());
         Assert.True(ContainsVisiblePixel(image), "The embedded toolbox bitmap should contain visible icon pixels.");
     }
 
@@ -162,6 +164,7 @@ public class GdiShimTests
 
         Assert.Equal(new Size(16, 16), small.Size);
         Assert.Equal(new Size(32, 32), large.Size);
+        Assert.Equal(Color.FromArgb(255, 40, 110, 210).ToArgb(), small.GetPixel(4, 4).ToArgb());
         Assert.True(ContainsVisiblePixel(small));
         Assert.True(ContainsVisiblePixel(large));
     }
@@ -169,16 +172,13 @@ public class GdiShimTests
     [Fact]
     public void ToolboxBitmapAttributeFileConstructorLoadsRealSmallAndLargeImages()
     {
-        const string resourceName = "ProGPU.Tests.Headless.ToolboxResourceType.bmp";
         string imagePath = Path.Combine(Path.GetTempPath(), $"progpu-toolbox-{Guid.NewGuid():N}.bmp");
         try
         {
-            using (Stream source = Assert.IsAssignableFrom<Stream>(
-                typeof(ToolboxResourceType).Assembly.GetManifestResourceStream(resourceName)))
-            using (FileStream destination = File.Create(imagePath))
-            {
-                source.CopyTo(destination);
-            }
+            var resources = new ResourceManager(typeof(ToolboxResourceType));
+            string encodedSource = Assert.IsType<string>(resources.GetObject("ToolboxResourceType.bmp"));
+            byte[] source = Convert.FromBase64String(encodedSource[(encodedSource.IndexOf(',') + 1)..]);
+            File.WriteAllBytes(imagePath, source);
 
             var attribute = new ToolboxBitmapAttribute(imagePath);
             using var small = Assert.IsType<Bitmap>(attribute.GetImage(typeof(ToolboxResourceType), large: false));

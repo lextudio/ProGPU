@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ToolboxResourceType.bmp">
+    <value>data:image/bmp;base64,Qk02AwAAAAAAADYAAAAoAAAAEAAAABAAAAABABgAAAAAAAADAAATCwAAEwsAAAAAAAAAAAAA/wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD/0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o/wD//wD//wD//wD//wD//wD/0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o/wD//wD//wD//wD//wD//wD/0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o/wD//wD//wD//wD//wD//wD//Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/wD//wD//wD//wD//wD//wD//Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/wD//wD//wD//wD//wD//wD/0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o/wD//wD//wD//wD//wD//wD//Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj10m4o0m4o0m4o/wD//wD//wD//wD//wD//wD//Pj1/Pj1/Pj1/Pj1/Pj1/Pj1/Pj10m4o0m4o0m4o/wD//wD//wD//wD//wD//wD/0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o/wD//wD//wD//wD//wD//wD/0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o0m4o/wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD//wD/</value>
+  </data>
+  <data name="ToolboxResourceIcon.ico">
+    <value>data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADSbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANJuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8+PX//Pj1//z49f/8+PX//Pj1//z49f/8+PX//Pj1//z49f/8+PX/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/Pj1//z49f/8+PX//Pj1//z49f/8+PX//Pj1//z49f/8+PX//Pj1/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANJuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8+PX//Pj1//z49f/8+PX//Pj1//z49f/8+PX/0m4o/9JuKP/Sbij/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/Pj1//z49f/8+PX//Pj1//z49f/8+PX//Pj1/9JuKP/Sbij/0m4o/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANJuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADSbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/0m4o/9JuKP/Sbij/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==</value>
+  </data>
+</root>

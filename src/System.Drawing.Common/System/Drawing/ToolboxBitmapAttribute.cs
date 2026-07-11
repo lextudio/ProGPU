@@ -1,4 +1,5 @@
 using System.IO;
+using System.Resources;
 
 namespace System.Drawing;
 
@@ -273,7 +274,55 @@ public sealed class ToolboxBitmapAttribute : Attribute
             uniqueMatch = manifestName;
         }
 
-        return uniqueMatch is null ? null : assembly.GetManifestResourceStream(uniqueMatch);
+        if (uniqueMatch is not null)
+        {
+            return assembly.GetManifestResourceStream(uniqueMatch);
+        }
+
+        // Compiled .resx files publish values inside a .resources manifest
+        // instead of exposing each image as a raw manifest stream. Portable
+        // designers use streams, byte arrays, and data-URI strings here.
+        try
+        {
+            object? value = new ResourceManager(type).GetObject(resourceName);
+            return value switch
+            {
+                byte[] bytes => new MemoryStream(bytes, writable: false),
+                Stream resourceStream => resourceStream,
+                string encodedImage => OpenEncodedResource(encodedImage),
+                _ => null
+            };
+        }
+        catch (MissingManifestResourceException)
+        {
+            return null;
+        }
+    }
+
+    private static MemoryStream? OpenEncodedResource(string value)
+    {
+        const string Marker = ";base64,";
+        if (!value.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        int markerIndex = value.IndexOf(Marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return new MemoryStream(
+                Convert.FromBase64String(value[(markerIndex + Marker.Length)..]),
+                writable: false);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
     }
 
     private static bool HasIconHeader(Stream stream)

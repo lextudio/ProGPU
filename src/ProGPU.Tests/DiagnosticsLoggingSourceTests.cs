@@ -167,6 +167,28 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void HeadlessToolboxResourcesAreSelfContainedForReleaseBuilds()
+    {
+        string project = ReadSource("src", "ProGPU.Tests.Headless", "ProGPU.Tests.Headless.csproj");
+        string resources = ReadSource("src", "ProGPU.Tests.Headless", "ToolboxResourceType.resx");
+        string toolboxBitmapAttribute = ReadSource(
+            "src",
+            "System.Drawing.Common",
+            "System",
+            "Drawing",
+            "ToolboxBitmapAttribute.cs");
+
+        Assert.DoesNotContain("external\\microsoft-ui-xaml", project, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("external/microsoft-ui-xaml", project, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<data name=\"ToolboxResourceType.bmp\">", resources, StringComparison.Ordinal);
+        Assert.Contains("<data name=\"ToolboxResourceIcon.ico\">", resources, StringComparison.Ordinal);
+        Assert.Contains("data:image/bmp;base64,", resources, StringComparison.Ordinal);
+        Assert.Contains("data:image/x-icon;base64,", resources, StringComparison.Ordinal);
+        Assert.Contains("new ResourceManager(type).GetObject(resourceName)", toolboxBitmapAttribute, StringComparison.Ordinal);
+        Assert.Contains("OpenEncodedResource(encodedImage)", toolboxBitmapAttribute, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NestedSubmodulesUsePublicGitHubUrlsForCiCheckout()
     {
         string gitmodules = ReadSource(".gitmodules");
