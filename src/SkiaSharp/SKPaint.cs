@@ -1624,9 +1624,54 @@ public class SKImageFilter : IDisposable
         float dy,
         float sigmaX,
         float sigmaY,
+        SKColor color) =>
+        CreateDropShadow(dx, dy, sigmaX, sigmaY, color, null, null);
+
+    public static SKImageFilter CreateDropShadow(
+        float dx,
+        float dy,
+        float sigmaX,
+        float sigmaY,
         SKColor color,
-        SKImageFilter? input = null) =>
-        new(FilterKind.DropShadow, new DropShadowData(dx, dy, sigmaX, sigmaY, color), input, null);
+        SKImageFilter? input) =>
+        CreateDropShadow(dx, dy, sigmaX, sigmaY, color, input, null);
+
+    public static SKImageFilter CreateDropShadow(
+        float dx,
+        float dy,
+        float sigmaX,
+        float sigmaY,
+        SKColor color,
+        SKImageFilter? input,
+        SKRect? cropRect) =>
+        new(FilterKind.DropShadow, new DropShadowData(dx, dy, sigmaX, sigmaY, color, ShadowOnly: false), input, cropRect);
+
+    public static SKImageFilter CreateDropShadowOnly(
+        float dx,
+        float dy,
+        float sigmaX,
+        float sigmaY,
+        SKColor color) =>
+        CreateDropShadowOnly(dx, dy, sigmaX, sigmaY, color, null, null);
+
+    public static SKImageFilter CreateDropShadowOnly(
+        float dx,
+        float dy,
+        float sigmaX,
+        float sigmaY,
+        SKColor color,
+        SKImageFilter? input) =>
+        CreateDropShadowOnly(dx, dy, sigmaX, sigmaY, color, input, null);
+
+    public static SKImageFilter CreateDropShadowOnly(
+        float dx,
+        float dy,
+        float sigmaX,
+        float sigmaY,
+        SKColor color,
+        SKImageFilter? input,
+        SKRect? cropRect) =>
+        new(FilterKind.DropShadow, new DropShadowData(dx, dy, sigmaX, sigmaY, color, ShadowOnly: true), input, cropRect);
 
     public static SKImageFilter CreateArithmetic(
         float k1,
@@ -1786,7 +1831,7 @@ public class SKImageFilter : IDisposable
     public void Dispose() { }
 
     internal sealed record BlurData(float SigmaX, float SigmaY, SKShaderTileMode TileMode);
-    internal sealed record DropShadowData(float Dx, float Dy, float SigmaX, float SigmaY, SKColor Color);
+    internal sealed record DropShadowData(float Dx, float Dy, float SigmaX, float SigmaY, SKColor Color, bool ShadowOnly);
     internal sealed record ArithmeticData(float K1, float K2, float K3, float K4, bool EnforcePremultipliedColor, SKImageFilter Background, SKImageFilter? Foreground);
     internal sealed record BlendModeData(SKBlendMode Mode, SKImageFilter Background, SKImageFilter? Foreground);
     internal sealed record MorphologyData(float RadiusX, float RadiusY);

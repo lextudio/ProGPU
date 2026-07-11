@@ -346,6 +346,56 @@ public sealed class SkCanvasStateTests
         Assert.Empty(GetOwnedLayerTextures(canvas));
     }
 
+    [Fact]
+    public void SaveLayerTransformsDropShadowOnlyIntoCanvasCoordinates()
+    {
+        using var surface = SKSurface.Create(new SKImageInfo(48, 48, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var layerPaint = new SKPaint
+        {
+            ImageFilter = SKImageFilter.CreateDropShadowOnly(4f, 6f, 0f, 0f, SKColors.Red)
+        };
+        using var fill = new SKPaint { Color = SKColors.White, IsAntialias = false };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.Scale(2f, 3f);
+        var restoreCount = surface.Canvas.SaveLayer(layerPaint);
+        surface.Canvas.DrawRect(new SKRect(1f, 1f, 3f, 3f), fill);
+        surface.Canvas.RestoreToCount(restoreCount);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+
+        Assert.Equal((byte)0, pixels[(3 * 48 + 2) * 4 + 3]);
+        Assert.Equal((byte)255, pixels[(21 * 48 + 10) * 4]);
+        Assert.Equal((byte)255, pixels[(21 * 48 + 10) * 4 + 3]);
+    }
+
+    [Fact]
+    public void SaveLayerKeepsTransformedDropShadowSigmaAxesIndependent()
+    {
+        using var surface = SKSurface.Create(new SKImageInfo(48, 48, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var layerPaint = new SKPaint
+        {
+            ImageFilter = SKImageFilter.CreateDropShadowOnly(0f, 0f, 1f, 0f, SKColors.Red)
+        };
+        using var fill = new SKPaint { Color = SKColors.White, IsAntialias = false };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.Scale(2f, 3f);
+        var restoreCount = surface.Canvas.SaveLayer(layerPaint);
+        surface.Canvas.DrawRect(new SKRect(1f, 1f, 3f, 3f), fill);
+        surface.Canvas.RestoreToCount(restoreCount);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+
+        Assert.InRange(pixels[(6 * 48 + 4) * 4 + 3], (byte)150, (byte)180);
+        Assert.InRange(pixels[(6 * 48 + 10) * 4 + 3], (byte)2, (byte)4);
+        Assert.Equal((byte)0, pixels[(16 * 48 + 4) * 4 + 3]);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

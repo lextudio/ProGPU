@@ -565,7 +565,10 @@ public class SKCanvas : IDisposable
             case SKImageFilter.FilterKind.DropShadow:
             {
                 var input = EvaluateOptionalInput(sourceTexture, filter.Input, cache, filterTransform, preserveSourceColorSpace);
-                result = RenderDropShadow(input, (SKImageFilter.DropShadowData)filter.Parameters!);
+                result = RenderDropShadow(
+                    input,
+                    (SKImageFilter.DropShadowData)filter.Parameters!,
+                    filterTransform);
                 break;
             }
             case SKImageFilter.FilterKind.ColorFilter:
@@ -824,29 +827,48 @@ public class SKCanvas : IDisposable
         return destination;
     }
 
-    private GpuTexture RenderDropShadow(GpuTexture input, SKImageFilter.DropShadowData shadow)
+    private GpuTexture RenderDropShadow(
+        GpuTexture input,
+        SKImageFilter.DropShadowData shadow,
+        Matrix4x4 filterTransform)
     {
-        var context = GetGpuContext();
-        var temporary = CreateOwnedFilterTexture(context, "SKImageFilter Shadow Temporary", storage: true);
-        var shadowTexture = CreateOwnedFilterTexture(context, "SKImageFilter Shadow", storage: true);
-        GetCompositorForContext(context).ApplyDropShadow(
-            input,
-            temporary,
+        var color = ToVector4(shadow.Color);
+        var shadowTexture = RenderFilterPass(
+            "SKImageFilter Shadow Color",
+            input.Width,
+            input.Height,
+            context => context.DrawImageWithEffect(
+                input,
+                new Rect(0f, 0f, input.Width, input.Height),
+                colorMatrix: new ImageEffectColorMatrix(
+                    Vector4.Zero,
+                    Vector4.Zero,
+                    Vector4.Zero,
+                    new Vector4(0f, 0f, 0f, color.W),
+                    new Vector4(color.X, color.Y, color.Z, 0f))));
+        var blurredShadow = RenderBlur(
             shadowTexture,
-            Vector2.Zero,
-            ToVector4(shadow.Color),
-            MathF.Max(shadow.SigmaX, shadow.SigmaY));
+            shadow.SigmaX * GetAxisScale(filterTransform, Vector2.UnitX),
+            shadow.SigmaY * GetAxisScale(filterTransform, Vector2.UnitY));
+        var offset = TransformFilterVector(
+            new Vector2(shadow.Dx, shadow.Dy),
+            filterTransform);
 
         return RenderFilterPass(
-            "SKImageFilter Shadow Composite",
+            shadow.ShadowOnly
+                ? "SKImageFilter Shadow Only Composite"
+                : "SKImageFilter Shadow Composite",
             input.Width,
             input.Height,
             drawing =>
             {
                 drawing.DrawTexture(
-                    shadowTexture,
-                    new Rect(shadow.Dx, shadow.Dy, shadowTexture.Width, shadowTexture.Height));
-                drawing.DrawTexture(input, new Rect(0f, 0f, input.Width, input.Height));
+                    blurredShadow,
+                    new Rect(offset.X, offset.Y, blurredShadow.Width, blurredShadow.Height));
+                if (!shadow.ShadowOnly)
+                {
+                    drawing.DrawTexture(input, new Rect(0f, 0f, input.Width, input.Height));
+                }
             });
     }
 
