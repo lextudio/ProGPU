@@ -442,9 +442,11 @@ internal sealed class RetainedResourceLease : IDisposable
         _owner = owner;
     }
 
-    public static RetainedResourceLease Create(IDisposable resource)
+    public object? Identity => _owner?.Identity;
+
+    public static RetainedResourceLease Create(IDisposable resource, object? identity = null)
     {
-        return new RetainedResourceLease(new RetainedResourceOwner(resource));
+        return new RetainedResourceLease(new RetainedResourceOwner(resource, identity));
     }
 
     public RetainedResourceLease AddRef()
@@ -465,10 +467,13 @@ internal sealed class RetainedResourceLease : IDisposable
         private int _refCount = 1;
         private int _disposed;
 
-        public RetainedResourceOwner(IDisposable resource)
+        public RetainedResourceOwner(IDisposable resource, object? identity)
         {
             _resource = resource;
+            Identity = identity;
         }
+
+        public object? Identity { get; }
 
         public void AddRef()
         {
@@ -665,6 +670,98 @@ public class DrawingContext : IRenderDataProvider
         _retainedResources.Add(RetainedResourceLease.Create(resource));
     }
 
+    /// <summary>
+    /// Retains the current texture from <paramref name="source"/> for deferred
+    /// command replay. A context keeps at most one lease for a given texture,
+    /// so repeated draws reuse both the texture and its lifetime token.
+    /// </summary>
+    public bool TryRetainTexture(
+        IProGpuTextureLeaseSource source,
+        WgpuContext requiredContext,
+        out GpuTexture texture)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(requiredContext);
+
+        bool hasCurrentTexture = source is IProGpuContextTextureLeaseSource contextSource
+            ? contextSource.TryGetGpuTexture(requiredContext, out var currentTexture)
+            : source.TryGetGpuTexture(out currentTexture);
+
+        if (hasCurrentTexture
+            && currentTexture is not null
+            && !currentTexture.IsDisposed)
+        {
+            ValidateTextureContext(currentTexture, requiredContext);
+            if (HasRetainedResourceIdentity(currentTexture))
+            {
+                texture = currentTexture;
+                return true;
+            }
+        }
+
+        bool hasTextureLease = source is IProGpuContextTextureLeaseSource contextLeaseSource
+            ? contextLeaseSource.TryAcquireGpuTextureLease(requiredContext, out var textureLease)
+            : source.TryAcquireGpuTextureLease(out textureLease);
+
+        if (!hasTextureLease)
+        {
+            texture = null!;
+            return false;
+        }
+
+        var leasedTexture = textureLease.Texture;
+        if (leasedTexture == null || leasedTexture.IsDisposed)
+        {
+            textureLease.Dispose();
+            texture = null!;
+            return false;
+        }
+
+        try
+        {
+            ValidateTextureContext(leasedTexture, requiredContext);
+        }
+        catch
+        {
+            textureLease.Dispose();
+            throw;
+        }
+
+        if (HasRetainedResourceIdentity(leasedTexture))
+        {
+            textureLease.Dispose();
+        }
+        else
+        {
+            _retainedResources.Add(RetainedResourceLease.Create(textureLease, leasedTexture));
+        }
+
+        texture = leasedTexture;
+        return true;
+    }
+
+    private bool HasRetainedResourceIdentity(object identity)
+    {
+        for (int i = 0; i < _retainedResources.Count; i++)
+        {
+            if (ReferenceEquals(_retainedResources[i].Identity, identity))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void ValidateTextureContext(GpuTexture texture, WgpuContext requiredContext)
+    {
+        if (!ReferenceEquals(texture.Context, requiredContext))
+        {
+            throw new InvalidOperationException(
+                "Cannot retain a texture from a different WebGPU context for deferred command replay.");
+        }
+    }
+
     internal RetainedResourceLease[] CloneRetainedResources()
     {
         var leases = new RetainedResourceLease[_retainedResources.Count];
@@ -793,6 +890,38 @@ public class DrawingContext : IRenderDataProvider
         Brush brush,
         Vector2 position,
         Matrix4x4 transform,
+        Rect layoutBounds,
+        bool isBold = false,
+        bool isItalic = false,
+        float rotation = 0f,
+        TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
+        TextHintingMode textHintingMode = TextHintingMode.Auto)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawText,
+            Text = text,
+            Font = font,
+            FontSize = fontSize,
+            Brush = brush,
+            Position = position,
+            Rect = layoutBounds,
+            Transform = transform,
+            IsBold = isBold,
+            IsItalic = isItalic,
+            Rotation = rotation,
+            TextRenderingMode = textRenderingMode,
+            TextHintingMode = textHintingMode
+        });
+    }
+
+    public void DrawText(
+        string text,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        Matrix4x4 transform,
         bool isBold = false,
         bool isItalic = false,
         float rotation = 0f,
@@ -881,6 +1010,16 @@ public class DrawingContext : IRenderDataProvider
         {
             Type = RenderCommandType.PushClip,
             Rect = clipRect
+        });
+    }
+
+    public void PushClip(Rect clipRect, Matrix4x4 transform)
+    {
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.PushClip,
+            Rect = clipRect,
+            Transform = transform
         });
     }
 
@@ -1387,12 +1526,7 @@ public class DrawingContext : IRenderDataProvider
     private void RetainPictureResources(GpuPicture picture)
     {
         ArgumentNullException.ThrowIfNull(picture);
-        var resources = picture.CloneRetainedResources();
-        _retainedResources.EnsureCapacity(checked(_retainedResources.Count + resources.Length));
-        for (int i = 0; i < resources.Length; i++)
-        {
-            _retainedResources.Add(resources[i]);
-        }
+        AppendRetainedResources(picture.CloneRetainedResources());
     }
 
     public void DrawExtension(
@@ -1596,7 +1730,7 @@ public class DrawingContext : IRenderDataProvider
         }
 
         var retainedResources = other.CloneRetainedResources();
-        AppendArray(_retainedResources, retainedResources);
+        AppendRetainedResources(retainedResources);
     }
 
     private static void AppendList<T>(List<T> destination, List<T> source)
@@ -1614,17 +1748,25 @@ public class DrawingContext : IRenderDataProvider
         }
     }
 
-    private static void AppendArray<T>(List<T> destination, T[] source)
+    private void AppendRetainedResources(RetainedResourceLease[] resources)
     {
-        if (source.Length == 0)
+        if (resources.Length == 0)
         {
             return;
         }
 
-        destination.EnsureCapacity(checked(destination.Count + source.Length));
-        for (int sourceIndex = 0; sourceIndex < source.Length; sourceIndex++)
+        _retainedResources.EnsureCapacity(checked(_retainedResources.Count + resources.Length));
+        for (int resourceIndex = 0; resourceIndex < resources.Length; resourceIndex++)
         {
-            destination.Add(source[sourceIndex]);
+            var resource = resources[resourceIndex];
+            var identity = resource.Identity;
+            if (identity is not null && HasRetainedResourceIdentity(identity))
+            {
+                resource.Dispose();
+                continue;
+            }
+
+            _retainedResources.Add(resource);
         }
     }
 

@@ -22,33 +22,51 @@ internal class GraphicsVisual : Visual
     }
 }
 
-public class Bitmap : Image
+public class Bitmap : Image, IProGpuContextTextureLeaseSource
 {
-    private GpuTexture _texture = null!;
+    private TextureLifetime? _textureLifetime;
     private readonly DrawingContext _recordedContext = new();
+    private readonly object _textureLifetimeLock = new();
+    private int _width;
+    private int _height;
+    private byte[]? _cpuPixels;
+    private GpuTextureAlphaMode _cpuAlphaMode = GpuTextureAlphaMode.Premultiplied;
     private bool _isDisposed;
-    private bool _hasDefinedPixels;
+    private bool _hasDefinedPixels = true;
 
-    public GpuTexture GpuTexture => _texture;
+    public GpuTexture GpuTexture
+    {
+        get
+        {
+            lock (_textureLifetimeLock)
+            {
+                ThrowIfDisposed();
+                FlushCore(requiredContext: null);
+                GpuTexture texture = _textureLifetime is { Texture.IsDisposed: false } current
+                    ? current.Texture
+                    : EnsureTextureCore(GpuProvider.Context);
+                // The public native escape hatch can mutate the texture without
+                // notifying Bitmap, so any prior CPU snapshot is no longer
+                // authoritative after it is handed out.
+                _cpuPixels = null;
+                _cpuAlphaMode = texture.AlphaMode;
+                return texture;
+            }
+        }
+    }
+
     public DrawingContext RecordedContext => _recordedContext;
 
-    public override int Width => (int)_texture.Width;
-    public override int Height => (int)_texture.Height;
+    public override int Width => _width;
+    public override int Height => _height;
 
     public Bitmap(int width, int height)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
 
-        _texture = new GpuTexture(
-            GpuProvider.Context,
-            (uint)width,
-            (uint)height,
-            TextureFormat.Rgba8Unorm,
-            TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "GDI Bitmap Backing Texture",
-            alphaMode: GpuTextureAlphaMode.Premultiplied
-        );
+        _width = width;
+        _height = height;
     }
 
     public Bitmap(int width, int height, PixelFormat format)
@@ -63,14 +81,18 @@ public class Bitmap : Image
 
         if (original is Bitmap bitmap)
         {
-            bitmap.Flush();
-            int copyWidth = Math.Min(width, bitmap.Width);
-            int copyHeight = Math.Min(height, bitmap.Height);
-            if (copyWidth > 0 && copyHeight > 0)
+            // Record a native texture draw and let the ProGPU compositor scale
+            // into this bitmap's render target. This keeps toolbox/icon resizing
+            // on the GPU and, unlike the former top-left byte copy, handles row
+            // pitch and arbitrary source/destination sizes correctly.
+            using (Graphics graphics = Graphics.FromImage(this))
             {
-                byte[] pixels = bitmap._texture.ReadPixels();
-                _texture.WritePixelsSubRect(pixels.AsSpan(), 0, 0, (uint)copyWidth, (uint)copyHeight);
-                _hasDefinedPixels = true;
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                graphics.DrawImage(
+                    bitmap,
+                    new Rectangle(0, 0, width, height),
+                    new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                    GraphicsUnit.Pixel);
             }
         }
     }
@@ -83,53 +105,42 @@ public class Bitmap : Image
     public Bitmap(string filename)
     {
         using var fs = System.IO.File.OpenRead(filename);
-        InitializeFromStream(fs, "GDI Bitmap Backing Texture from file");
+        InitializeFromStream(fs);
     }
 
     public Bitmap(System.IO.Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        InitializeFromStream(stream, "GDI Bitmap Backing Texture from stream");
+        InitializeFromStream(stream);
     }
 
     public Bitmap(Bitmap original)
     {
         ArgumentNullException.ThrowIfNull(original);
-        original.Flush();
-
-        _texture = new GpuTexture(
-            GpuProvider.Context,
-            (uint)original.Width,
-            (uint)original.Height,
-            TextureFormat.Rgba8Unorm,
-            TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            "GDI Bitmap Backing Texture copy",
-            alphaMode: original._texture.AlphaMode
-        );
-
-        _texture.WritePixels(original._texture.ReadPixels());
+        _width = original.Width;
+        _height = original.Height;
+        _cpuPixels = original.CopyPixelsForClone(out _cpuAlphaMode);
         _hasDefinedPixels = true;
     }
 
-    private void InitializeFromStream(System.IO.Stream stream, string label)
+    private void InitializeFromStream(System.IO.Stream stream)
     {
         using var skData = SkiaSharp.SKData.Create(stream);
         using var tempBitmap = SkiaSharp.SKBitmap.Decode(skData);
 
-        _texture = new GpuTexture(
-            GpuProvider.Context,
-            (uint)tempBitmap.Width,
-            (uint)tempBitmap.Height,
-            TextureFormat.Rgba8Unorm,
-            TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
-            label,
-            alphaMode: GpuTextureAlphaMode.Straight
-        );
+        if (tempBitmap is null)
+        {
+            throw new ArgumentException("The stream does not contain a supported bitmap image.", nameof(stream));
+        }
+
+        _width = tempBitmap.Width;
+        _height = tempBitmap.Height;
+        _cpuAlphaMode = GpuTextureAlphaMode.Straight;
 
         unsafe
         {
             var pixelsSpan = new ReadOnlySpan<byte>((void*)tempBitmap.GetPixels(), tempBitmap.Width * tempBitmap.Height * 4);
-            _texture.WritePixels(pixelsSpan);
+            _cpuPixels = pixelsSpan.ToArray();
         }
 
         _hasDefinedPixels = true;
@@ -149,25 +160,42 @@ public class Bitmap : Image
 
     public void Flush()
     {
+        lock (_textureLifetimeLock)
+        {
+            FlushCore(requiredContext: null);
+        }
+    }
+
+    private void FlushCore(WgpuContext? requiredContext)
+    {
         if (_isDisposed) return;
         if (_recordedContext.Commands.Count == 0) return;
 
-        NormalizeExistingContentsForPremultipliedRenderTarget();
+        // Once commands have been recorded for an existing target, their image
+        // resources belong to that target's context. Finish that generation
+        // before migrating the bitmap to a newly requested host context.
+        WgpuContext renderContext = _textureLifetime is { Texture.IsDisposed: false } current
+            ? current.Texture.Context
+            : requiredContext ?? GpuProvider.Context;
+        GpuTexture texture = EnsureTextureCore(renderContext);
+        NormalizeExistingContentsForPremultipliedRenderTarget(texture);
 
         var visual = new GraphicsVisual(_recordedContext);
         try
         {
-            GpuProvider.GetCompositor(_texture.Context).RenderOffscreen(
+            GpuProvider.GetCompositor(texture.Context).RenderOffscreen(
                 visual,
                 (uint)Width,
                 (uint)Height,
-                _texture,
+                texture,
                 padding: 0f,
                 dpiScale: 1f,
                 loadExistingContents: _hasDefinedPixels
             );
 
-            _texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+            texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+            _cpuAlphaMode = GpuTextureAlphaMode.Premultiplied;
+            _cpuPixels = null;
             _hasDefinedPixels = true;
         }
         finally
@@ -176,27 +204,302 @@ public class Bitmap : Image
         }
     }
 
+    public bool TryGetGpuTexture(out GpuTexture texture)
+    {
+        WgpuContext context;
+        try
+        {
+            context = GpuProvider.Context;
+        }
+        catch
+        {
+            texture = null!;
+            return false;
+        }
+
+        return TryGetGpuTexture(context, out texture);
+    }
+
+    public bool TryGetGpuTexture(WgpuContext requiredContext, out GpuTexture texture)
+    {
+        ArgumentNullException.ThrowIfNull(requiredContext);
+
+        lock (_textureLifetimeLock)
+        {
+            if (_isDisposed || !requiredContext.IsInitialized)
+            {
+                texture = null!;
+                return false;
+            }
+
+            FlushCore(requiredContext);
+            texture = EnsureTextureCore(requiredContext);
+            _cpuPixels = null;
+            _cpuAlphaMode = texture.AlphaMode;
+            return !texture.IsDisposed;
+        }
+    }
+
+    public bool TryAcquireGpuTextureLease(out IProGpuTextureLease lease)
+    {
+        WgpuContext context;
+        try
+        {
+            context = GpuProvider.Context;
+        }
+        catch
+        {
+            lease = null!;
+            return false;
+        }
+
+        return TryAcquireGpuTextureLease(context, out lease);
+    }
+
+    public bool TryAcquireGpuTextureLease(
+        WgpuContext requiredContext,
+        out IProGpuTextureLease lease)
+    {
+        ArgumentNullException.ThrowIfNull(requiredContext);
+
+        lock (_textureLifetimeLock)
+        {
+            if (_isDisposed || !requiredContext.IsInitialized)
+            {
+                lease = null!;
+                return false;
+            }
+
+            FlushCore(requiredContext);
+            GpuTexture texture = EnsureTextureCore(requiredContext);
+            if (_isDisposed || texture.IsDisposed)
+            {
+                lease = null!;
+                return false;
+            }
+
+            TextureLifetime lifetime = _textureLifetime!;
+            lifetime.ActiveLeaseCount++;
+            _cpuPixels = null;
+            _cpuAlphaMode = texture.AlphaMode;
+            lease = new BitmapGpuTextureLease(this, lifetime);
+            return true;
+        }
+    }
+
+    private void ReleaseGpuTextureLease(TextureLifetime lifetime)
+    {
+        lock (_textureLifetimeLock)
+        {
+            if (lifetime.ActiveLeaseCount <= 0)
+            {
+                return;
+            }
+
+            lifetime.ActiveLeaseCount--;
+            if (lifetime.ActiveLeaseCount == 0
+                && lifetime.DisposeRequested
+                && !lifetime.Texture.IsDisposed)
+            {
+                lifetime.Texture.Dispose();
+            }
+        }
+    }
+
+    private sealed class TextureLifetime
+    {
+        public TextureLifetime(GpuTexture texture)
+        {
+            Texture = texture;
+        }
+
+        public GpuTexture Texture { get; }
+
+        public int ActiveLeaseCount { get; set; }
+
+        public bool DisposeRequested { get; set; }
+    }
+
+    private sealed class BitmapGpuTextureLease : IProGpuTextureLease
+    {
+        private Bitmap? _owner;
+        private readonly TextureLifetime _lifetime;
+
+        public BitmapGpuTextureLease(Bitmap owner, TextureLifetime lifetime)
+        {
+            _owner = owner;
+            _lifetime = lifetime;
+        }
+
+        public GpuTexture Texture => _lifetime.Texture;
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _owner, null)?.ReleaseGpuTextureLease(_lifetime);
+        }
+    }
+
+    internal WgpuContext GetDrawingContext()
+    {
+        lock (_textureLifetimeLock)
+        {
+            ThrowIfDisposed();
+            if (_textureLifetime is { Texture.IsDisposed: false } current)
+            {
+                return current.Texture.Context;
+            }
+
+            WgpuContext context = GpuProvider.Context;
+            EnsureTextureCore(context);
+            return context;
+        }
+    }
+
+    private GpuTexture EnsureTextureCore(WgpuContext requiredContext)
+    {
+        if (!requiredContext.IsInitialized)
+        {
+            throw new InvalidOperationException(
+                "Cannot materialize a GDI bitmap before the WebGPU context has a device and queue.");
+        }
+
+        if (_textureLifetime is { Texture.IsDisposed: false } current)
+        {
+            if (ReferenceEquals(current.Texture.Context, requiredContext))
+            {
+                return current.Texture;
+            }
+
+            SnapshotTexturePixelsCore(current.Texture);
+            RetireTextureLifetime(current);
+            _textureLifetime = null;
+        }
+        else if (_textureLifetime is not null)
+        {
+            _textureLifetime = null;
+        }
+
+        var texture = new GpuTexture(
+            requiredContext,
+            (uint)_width,
+            (uint)_height,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
+            "GDI Bitmap Backing Texture",
+            alphaMode: _cpuAlphaMode);
+
+        // A newly constructed System.Drawing.Bitmap is transparent black. Keep
+        // that behavior deterministic instead of depending on uninitialized
+        // device memory, while allocating the CPU buffer only on materialization.
+        byte[] pixels = GetOrCreateCpuPixelsCore();
+        texture.WritePixels(pixels);
+        texture.AlphaMode = _cpuAlphaMode;
+        _textureLifetime = new TextureLifetime(texture);
+        return texture;
+    }
+
+    private byte[] GetOrCreateCpuPixelsCore()
+    {
+        return _cpuPixels ??= new byte[checked(_width * _height * 4)];
+    }
+
+    private void SnapshotTexturePixelsCore(GpuTexture texture)
+    {
+        if (texture.IsDisposed)
+        {
+            return;
+        }
+
+        _cpuPixels = texture.ReadPixels();
+        _cpuAlphaMode = texture.AlphaMode;
+        _hasDefinedPixels = true;
+    }
+
+    private static void RetireTextureLifetime(TextureLifetime lifetime)
+    {
+        lifetime.DisposeRequested = true;
+        if (lifetime.ActiveLeaseCount == 0 && !lifetime.Texture.IsDisposed)
+        {
+            lifetime.Texture.Dispose();
+        }
+    }
+
+    private byte[] CopyPixelsForClone(out GpuTextureAlphaMode alphaMode)
+    {
+        lock (_textureLifetimeLock)
+        {
+            ThrowIfDisposed();
+            FlushCore(requiredContext: null);
+            if (_textureLifetime is { Texture.IsDisposed: false } current)
+            {
+                alphaMode = current.Texture.AlphaMode;
+                return current.Texture.ReadPixels();
+            }
+
+            alphaMode = _cpuAlphaMode;
+            return (byte[])GetOrCreateCpuPixelsCore().Clone();
+        }
+    }
+
+    private byte[] ReadPixelsCore(out GpuTextureAlphaMode alphaMode)
+    {
+        FlushCore(requiredContext: null);
+        if (_textureLifetime is { Texture.IsDisposed: false } current)
+        {
+            alphaMode = current.Texture.AlphaMode;
+            return current.Texture.ReadPixels();
+        }
+
+        alphaMode = _cpuAlphaMode;
+        return GetOrCreateCpuPixelsCore();
+    }
+
+    private void WritePixelsCore(byte[] pixels, GpuTextureAlphaMode alphaMode)
+    {
+        if (_textureLifetime is { Texture.IsDisposed: false } current)
+        {
+            current.Texture.WritePixels(pixels);
+            current.Texture.AlphaMode = alphaMode;
+            _cpuPixels = null;
+        }
+        else
+        {
+            _cpuPixels = pixels;
+        }
+
+        _cpuAlphaMode = alphaMode;
+        _hasDefinedPixels = true;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+    }
+
     public Color GetPixel(int x, int y)
     {
         if (x < 0 || x >= Width || y < 0 || y >= Height)
             throw new ArgumentOutOfRangeException(nameof(x));
 
-        Flush();
-        byte[] pixels = _texture.ReadPixels();
-        int offset = (y * Width + x) * 4;
-        byte alpha = pixels[offset + 3];
-        byte red = pixels[offset];
-        byte green = pixels[offset + 1];
-        byte blue = pixels[offset + 2];
-
-        if (_texture.AlphaMode == GpuTextureAlphaMode.Premultiplied)
+        lock (_textureLifetimeLock)
         {
-            red = UnpremultiplyChannel(red, alpha);
-            green = UnpremultiplyChannel(green, alpha);
-            blue = UnpremultiplyChannel(blue, alpha);
-        }
+            ThrowIfDisposed();
+            byte[] pixels = ReadPixelsCore(out var alphaMode);
+            int offset = (y * Width + x) * 4;
+            byte alpha = pixels[offset + 3];
+            byte red = pixels[offset];
+            byte green = pixels[offset + 1];
+            byte blue = pixels[offset + 2];
 
-        return Color.FromArgb(alpha, red, green, blue);
+            if (alphaMode == GpuTextureAlphaMode.Premultiplied)
+            {
+                red = UnpremultiplyChannel(red, alpha);
+                green = UnpremultiplyChannel(green, alpha);
+                blue = UnpremultiplyChannel(blue, alpha);
+            }
+
+            return Color.FromArgb(alpha, red, green, blue);
+        }
     }
 
     public void SetPixel(int x, int y, Color color)
@@ -204,20 +507,42 @@ public class Bitmap : Image
         if (x < 0 || x >= Width || y < 0 || y >= Height)
             throw new ArgumentOutOfRangeException(nameof(x));
 
-        Flush();
-        byte red = color.R;
-        byte green = color.G;
-        byte blue = color.B;
-        if (_texture.AlphaMode == GpuTextureAlphaMode.Premultiplied)
+        lock (_textureLifetimeLock)
         {
-            red = PremultiplyChannel(red, color.A);
-            green = PremultiplyChannel(green, color.A);
-            blue = PremultiplyChannel(blue, color.A);
-        }
+            ThrowIfDisposed();
+            FlushCore(requiredContext: null);
+            GpuTextureAlphaMode alphaMode = _textureLifetime is { Texture.IsDisposed: false } current
+                ? current.Texture.AlphaMode
+                : _cpuAlphaMode;
+            byte red = color.R;
+            byte green = color.G;
+            byte blue = color.B;
+            if (alphaMode == GpuTextureAlphaMode.Premultiplied)
+            {
+                red = PremultiplyChannel(red, color.A);
+                green = PremultiplyChannel(green, color.A);
+                blue = PremultiplyChannel(blue, color.A);
+            }
 
-        byte[] rgba = new byte[] { red, green, blue, color.A };
-        _texture.WritePixelsSubRect(rgba.AsSpan(), (uint)x, (uint)y, 1, 1);
-        _hasDefinedPixels = true;
+            if (_textureLifetime is { Texture.IsDisposed: false } textureLifetime)
+            {
+                byte[] rgba = new byte[] { red, green, blue, color.A };
+                textureLifetime.Texture.WritePixelsSubRect(rgba.AsSpan(), (uint)x, (uint)y, 1, 1);
+                _cpuPixels = null;
+            }
+            else
+            {
+                byte[] pixels = GetOrCreateCpuPixelsCore();
+                int offset = (y * Width + x) * 4;
+                pixels[offset] = red;
+                pixels[offset + 1] = green;
+                pixels[offset + 2] = blue;
+                pixels[offset + 3] = color.A;
+            }
+
+            _cpuAlphaMode = alphaMode;
+            _hasDefinedPixels = true;
+        }
     }
 
     public void Save(string filename)
@@ -234,10 +559,90 @@ public class Bitmap : Image
 
     public void MakeTransparent()
     {
+        lock (_textureLifetimeLock)
+        {
+            ThrowIfDisposed();
+            byte[] pixels = ReadPixelsCore(out var alphaMode);
+            int keyOffset = ((Height - 1) * Width) * 4;
+            byte keyAlpha = pixels[keyOffset + 3];
+            if (keyAlpha < byte.MaxValue)
+            {
+                return;
+            }
+
+            byte keyRed = pixels[keyOffset];
+            byte keyGreen = pixels[keyOffset + 1];
+            byte keyBlue = pixels[keyOffset + 2];
+            if (alphaMode == GpuTextureAlphaMode.Premultiplied)
+            {
+                keyRed = UnpremultiplyChannel(keyRed, keyAlpha);
+                keyGreen = UnpremultiplyChannel(keyGreen, keyAlpha);
+                keyBlue = UnpremultiplyChannel(keyBlue, keyAlpha);
+            }
+
+            ApplyTransparentColorKey(pixels, keyRed, keyGreen, keyBlue, alphaMode);
+        }
     }
 
     public void MakeTransparent(Color transparentColor)
     {
+        lock (_textureLifetimeLock)
+        {
+            ThrowIfDisposed();
+            byte[] pixels = ReadPixelsCore(out var alphaMode);
+            ApplyTransparentColorKey(
+                pixels,
+                transparentColor.R,
+                transparentColor.G,
+                transparentColor.B,
+                alphaMode);
+        }
+    }
+
+    private void ApplyTransparentColorKey(
+        byte[] pixels,
+        byte keyRed,
+        byte keyGreen,
+        byte keyBlue,
+        GpuTextureAlphaMode alphaMode)
+    {
+        bool changed = false;
+        for (int offset = 0; offset < pixels.Length; offset += 4)
+        {
+            byte red = pixels[offset];
+            byte green = pixels[offset + 1];
+            byte blue = pixels[offset + 2];
+            byte alpha = pixels[offset + 3];
+
+            if (alphaMode == GpuTextureAlphaMode.Premultiplied)
+            {
+                red = UnpremultiplyChannel(red, alpha);
+                green = UnpremultiplyChannel(green, alpha);
+                blue = UnpremultiplyChannel(blue, alpha);
+            }
+
+            // GDI+ color keys compare RGB channels. The key alpha and the source
+            // pixel alpha do not participate in the match.
+            if (red != keyRed
+                || green != keyGreen
+                || blue != keyBlue)
+            {
+                continue;
+            }
+
+            pixels[offset] = 0;
+            pixels[offset + 1] = 0;
+            pixels[offset + 2] = 0;
+            pixels[offset + 3] = 0;
+            changed = true;
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        WritePixelsCore(pixels, alphaMode);
     }
 
     public void Save(System.IO.Stream stream, ImageFormat format)
@@ -255,9 +660,15 @@ public class Bitmap : Image
 
     private void SavePng(System.IO.Stream stream)
     {
-        Flush();
-        byte[] pixels = _texture.ReadPixels();
-        if (_texture.AlphaMode == GpuTextureAlphaMode.Premultiplied)
+        byte[] pixels;
+        GpuTextureAlphaMode alphaMode;
+        lock (_textureLifetimeLock)
+        {
+            ThrowIfDisposed();
+            pixels = ReadPixelsCore(out alphaMode);
+        }
+
+        if (alphaMode == GpuTextureAlphaMode.Premultiplied)
         {
             pixels = UnpremultiplyPixels(pixels);
         }
@@ -285,17 +696,19 @@ public class Bitmap : Image
         return straightPixels;
     }
 
-    private void NormalizeExistingContentsForPremultipliedRenderTarget()
+    private void NormalizeExistingContentsForPremultipliedRenderTarget(GpuTexture texture)
     {
-        if (!_hasDefinedPixels || _texture.AlphaMode != GpuTextureAlphaMode.Straight)
+        if (!_hasDefinedPixels || texture.AlphaMode != GpuTextureAlphaMode.Straight)
         {
             return;
         }
 
-        var pixels = _texture.ReadPixels();
+        var pixels = texture.ReadPixels();
         PremultiplyPixelsInPlace(pixels);
-        _texture.WritePixels(pixels);
-        _texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+        texture.WritePixels(pixels);
+        texture.AlphaMode = GpuTextureAlphaMode.Premultiplied;
+        _cpuPixels = null;
+        _cpuAlphaMode = GpuTextureAlphaMode.Premultiplied;
     }
 
     private static void PremultiplyPixelsInPlace(byte[] pixels)
@@ -334,37 +747,37 @@ public class Bitmap : Image
 
     public BitmapData LockBits(Rectangle rect, ImageLockMode flags, PixelFormat format)
     {
-        ValidateLockBitsRectangle(rect);
-        if (_lockedBytes != null || _lockedHandle.IsAllocated)
+        lock (_textureLifetimeLock)
         {
-            throw new InvalidOperationException("Bitmap already has an active lock. Call UnlockBits before LockBits again.");
+            ThrowIfDisposed();
+            ValidateLockBitsRectangle(rect);
+            if (_lockedBytes != null || _lockedHandle.IsAllocated)
+            {
+                throw new InvalidOperationException("Bitmap already has an active lock. Call UnlockBits before LockBits again.");
+            }
+
+            byte[] fullPixels = ReadPixelsCore(out _lockedTextureAlphaMode);
+            int subWidth = rect.Width;
+            int subHeight = rect.Height;
+            int stride = GetLockStride(subWidth, format);
+            _lockedBytes = new byte[stride * subHeight];
+            _lockedRect = rect;
+            _lockedPixelFormat = format;
+            _lockedStride = stride;
+            _lockedWriteBack = flags != ImageLockMode.ReadOnly;
+
+            CopyRgbaToLockBuffer(fullPixels, _lockedBytes, rect, format, stride, _lockedTextureAlphaMode);
+            _lockedHandle = GCHandle.Alloc(_lockedBytes, GCHandleType.Pinned);
+
+            return new BitmapData
+            {
+                Width = subWidth,
+                Height = subHeight,
+                Stride = stride,
+                PixelFormat = format,
+                Scan0 = _lockedHandle.AddrOfPinnedObject()
+            };
         }
-
-        Flush();
-        byte[] fullPixels = _texture.ReadPixels();
-        
-        int subWidth = rect.Width;
-        int subHeight = rect.Height;
-        int stride = GetLockStride(subWidth, format);
-        _lockedBytes = new byte[stride * subHeight];
-        _lockedRect = rect;
-        _lockedPixelFormat = format;
-        _lockedStride = stride;
-        _lockedWriteBack = flags != ImageLockMode.ReadOnly;
-        _lockedTextureAlphaMode = _texture.AlphaMode;
-
-        CopyRgbaToLockBuffer(fullPixels, _lockedBytes, rect, format, stride, _lockedTextureAlphaMode);
-        
-        _lockedHandle = GCHandle.Alloc(_lockedBytes, GCHandleType.Pinned);
-
-        return new BitmapData
-        {
-            Width = subWidth,
-            Height = subHeight,
-            Stride = stride,
-            PixelFormat = format,
-            Scan0 = _lockedHandle.AddrOfPinnedObject()
-        };
     }
 
     private static int GetLockStride(int width, PixelFormat format)
@@ -467,27 +880,53 @@ public class Bitmap : Image
 
     public void UnlockBits(BitmapData bitmapData)
     {
-        if (_lockedBytes != null)
+        lock (_textureLifetimeLock)
         {
-            if (_lockedHandle.IsAllocated)
+            ThrowIfDisposed();
+            if (_lockedBytes != null)
             {
-                _lockedHandle.Free();
-            }
+                if (_lockedHandle.IsAllocated)
+                {
+                    _lockedHandle.Free();
+                }
 
-            if (_lockedWriteBack)
-            {
-                var rgba = ConvertLockBufferToRgba(_lockedBytes, _lockedRect, _lockedPixelFormat, _lockedStride);
-                ConvertPixelsToTextureAlphaMode(rgba, _lockedPixelFormat, _lockedTextureAlphaMode);
-                _texture.WritePixelsSubRect(rgba, (uint)_lockedRect.X, (uint)_lockedRect.Y, (uint)_lockedRect.Width, (uint)_lockedRect.Height);
-                _texture.AlphaMode = _lockedTextureAlphaMode;
-                _hasDefinedPixels = true;
-            }
+                if (_lockedWriteBack)
+                {
+                    var rgba = ConvertLockBufferToRgba(_lockedBytes, _lockedRect, _lockedPixelFormat, _lockedStride);
+                    ConvertPixelsToTextureAlphaMode(rgba, _lockedPixelFormat, _lockedTextureAlphaMode);
+                    if (_textureLifetime is { Texture.IsDisposed: false } current)
+                    {
+                        current.Texture.WritePixelsSubRect(
+                            rgba,
+                            (uint)_lockedRect.X,
+                            (uint)_lockedRect.Y,
+                            (uint)_lockedRect.Width,
+                            (uint)_lockedRect.Height);
+                        current.Texture.AlphaMode = _lockedTextureAlphaMode;
+                        _cpuPixels = null;
+                    }
+                    else
+                    {
+                        byte[] pixels = GetOrCreateCpuPixelsCore();
+                        for (int y = 0; y < _lockedRect.Height; y++)
+                        {
+                            int sourceOffset = y * _lockedRect.Width * 4;
+                            int destinationOffset = ((_lockedRect.Y + y) * Width + _lockedRect.X) * 4;
+                            rgba.AsSpan(sourceOffset, _lockedRect.Width * 4)
+                                .CopyTo(pixels.AsSpan(destinationOffset));
+                        }
+                    }
 
-            _lockedBytes = null;
-            _lockedStride = 0;
-            _lockedPixelFormat = default;
-            _lockedWriteBack = false;
-            _lockedTextureAlphaMode = default;
+                    _cpuAlphaMode = _lockedTextureAlphaMode;
+                    _hasDefinedPixels = true;
+                }
+
+                _lockedBytes = null;
+                _lockedStride = 0;
+                _lockedPixelFormat = default;
+                _lockedWriteBack = false;
+                _lockedTextureAlphaMode = default;
+            }
         }
     }
 
@@ -582,31 +1021,54 @@ public class Bitmap : Image
 
     private void Dispose(bool disposing)
     {
-        if (_isDisposed) return;
-        try
+        lock (_textureLifetimeLock)
         {
-            if (disposing)
+            if (_isDisposed) return;
+            try
             {
-                Flush();
-            }
-        }
-        finally
-        {
-            if (_lockedHandle.IsAllocated)
-            {
-                _lockedHandle.Free();
-            }
+                if (disposing && _recordedContext.Commands.Count != 0)
+                {
+                    WgpuContext? disposeContext =
+                        _textureLifetime is { Texture.IsDisposed: false } current
+                            && current.Texture.Context.IsInitialized
+                            ? current.Texture.Context
+                            : WgpuContext.Current is { IsInitialized: true } ambient
+                                ? ambient
+                                : null;
 
-            _lockedBytes = null;
-            _lockedStride = 0;
-            _lockedPixelFormat = default;
-            _lockedWriteBack = false;
-            if (disposing)
-            {
-                _texture.Dispose();
+                    // Disposing an image discards its contents. Preserve the
+                    // established flush-on-dispose behavior while a usable
+                    // rendering context still exists, but never create a new
+                    // device merely to throw the bitmap away during host
+                    // shutdown.
+                    if (disposeContext is not null)
+                    {
+                        FlushCore(disposeContext);
+                    }
+                }
             }
+            finally
+            {
+                if (_lockedHandle.IsAllocated)
+                {
+                    _lockedHandle.Free();
+                }
 
-            _isDisposed = true;
+                _lockedBytes = null;
+                _lockedStride = 0;
+                _lockedPixelFormat = default;
+                _lockedWriteBack = false;
+                _recordedContext.Clear();
+                _isDisposed = true;
+
+                if (disposing && _textureLifetime is not null)
+                {
+                    RetireTextureLifetime(_textureLifetime);
+                    _textureLifetime = null;
+                }
+
+                _cpuPixels = null;
+            }
         }
     }
 

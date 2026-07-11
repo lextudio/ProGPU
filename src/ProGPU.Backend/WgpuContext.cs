@@ -620,7 +620,6 @@ public unsafe class WgpuContext : IDisposable
         }
 
         Current = this;
-
     }
 
     private static bool CanCreateNativeSurface(IWindow window)

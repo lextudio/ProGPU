@@ -14,26 +14,25 @@ internal static class GpuProvider
         get
         {
             var current = WgpuContext.Current;
-            if (current != null && !current.IsDisposed)
+            if (current != null && current.IsInitialized)
             {
                 return current;
             }
 
-            if (WgpuContext.TryGetFirstActiveContext(out var active))
+            lock (s_compositorCacheScope)
             {
-                return active;
-            }
-            if (_context != null && !_context.IsDisposed)
-            {
+                if (_context != null && _context.IsInitialized)
+                {
+                    return _context;
+                }
+                if (_context != null)
+                {
+                    try { _context.Dispose(); } catch {}
+                }
+                _context = new WgpuContext();
+                _context.Initialize(null);
                 return _context;
             }
-            if (_context != null)
-            {
-                try { _context.Dispose(); } catch {}
-            }
-            _context = new WgpuContext();
-            _context.Initialize(null);
-            return _context;
         }
     }
 
