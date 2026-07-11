@@ -920,10 +920,33 @@ fn vector_fs_main(input: VertexOutput) -> vec4<f32> {
         let distance2 = -orientation *
             (edge2.x * (point.y - p2.y) - edge2.y * (point.x - p2.x)) /
             max(length(edge2), 0.0001);
-        let d_shape = max(distance0, max(distance1, distance2));
-        let fw = max(fwidth(d_shape), 0.0001);
-        let antialiasedAlpha = 1.0 - smoothstep(-0.5 * fw, 0.5 * fw, d_shape);
-        let aliasedAlpha = select(0.0, 1.0, d_shape <= 0.0);
+        let allDistance = max(distance0, max(distance1, distance2));
+        let edgeMask = u32(round(input.cornerRadius));
+        let ownedInternalEdgeMask = u32(round(input.strokeThickness));
+        let internalInside =
+            select(
+                select(distance0 < 0.0, distance0 <= 0.0, (ownedInternalEdgeMask & 1u) != 0u),
+                true,
+                (edgeMask & 1u) != 0u) &&
+            select(
+                select(distance1 < 0.0, distance1 <= 0.0, (ownedInternalEdgeMask & 2u) != 0u),
+                true,
+                (edgeMask & 2u) != 0u) &&
+            select(
+                select(distance2 < 0.0, distance2 <= 0.0, (ownedInternalEdgeMask & 4u) != 0u),
+                true,
+                (edgeMask & 4u) != 0u);
+        let exteriorDistance = max(
+            select(-1000000.0, distance0, (edgeMask & 1u) != 0u),
+            max(
+                select(-1000000.0, distance1, (edgeMask & 2u) != 0u),
+                select(-1000000.0, distance2, (edgeMask & 4u) != 0u)));
+        let fw = max(fwidth(exteriorDistance), 0.0001);
+        let antialiasedAlpha = select(
+            0.0,
+            1.0 - smoothstep(-0.5 * fw, 0.5 * fw, exteriorDistance),
+            internalInside);
+        let aliasedAlpha = select(0.0, 1.0, allDistance <= 0.0 && internalInside);
         shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
     } else if (sType == 14u) {
         // Antialiased affine stroke segment. color.xy/color.zw/shapeSize and

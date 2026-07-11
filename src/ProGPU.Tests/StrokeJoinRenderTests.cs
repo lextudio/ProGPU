@@ -23,9 +23,16 @@ public sealed class StrokeJoinRenderTests
         {
             window.Render();
 
-            Assert.Equal(32, window.Compositor.VectorVertices.Count(
-                vertex => DecodeShapeType(vertex.ShapeType) == 13));
+            var joinVertices = window.Compositor.VectorVertices
+                .Where(vertex => DecodeShapeType(vertex.ShapeType) == 13)
+                .ToArray();
+            Assert.Equal(32, joinVertices.Length);
+            Assert.All(joinVertices, vertex => Assert.Equal(3f, vertex.CornerRadius));
+            Assert.Equal(16, joinVertices.Count(vertex => vertex.StrokeThickness == 4f));
+            Assert.Equal(16, joinVertices.Count(vertex => vertex.StrokeThickness == 0f));
             var pixels = window.ReadPixels();
+            AssertOpaqueRed(pixels, window.Width, 52, 8);
+            AssertOpaqueRed(pixels, window.Width, 53, 9);
             AssertRedCoverage(pixels, window.Width, 52, 9);
             AssertRedCoverage(pixels, window.Width, 53, 7);
             AssertRedCoverage(pixels, window.Width, 52, 51);
@@ -80,10 +87,38 @@ public sealed class StrokeJoinRenderTests
 
         using var snapshot = surface.Snapshot();
         var pixels = snapshot.Texture.ReadPixels();
+        AssertOpaqueRed(pixels, 64, 52, 8);
+        AssertOpaqueRed(pixels, 64, 53, 9);
         AssertRedCoverage(pixels, 64, 52, 9);
         AssertRedCoverage(pixels, 64, 53, 7);
         AssertRedCoverage(pixels, 64, 52, 51);
         AssertRedCoverage(pixels, 64, 53, 53);
+    }
+
+    [Fact]
+    public void MiterJoinSharedEdgesDoNotDoubleBlendTransparentStroke()
+    {
+        using var surface = SKSurface.Create(
+            new SKImageInfo(64, 64, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var path = new SKPath();
+        path.AddRect(new SKRect(10f, 10f, 52f, 52f));
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(255, 0, 0, 128),
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 4f,
+            StrokeJoin = SKStrokeJoin.Miter,
+            IsAntialias = true
+        };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.DrawPath(path, paint);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+        AssertHalfAlphaRed(pixels, 64, 52, 8);
+        AssertHalfAlphaRed(pixels, 64, 53, 9);
     }
 
     [Fact]
@@ -284,6 +319,24 @@ public sealed class StrokeJoinRenderTests
         Assert.InRange(pixels[offset + 1], 0, 20);
         Assert.InRange(pixels[offset + 2], 0, 20);
         Assert.InRange(pixels[offset + 3], 100, 255);
+    }
+
+    private static void AssertOpaqueRed(byte[] pixels, uint width, int x, int y)
+    {
+        var offset = (y * (int)width + x) * 4;
+        Assert.InRange(pixels[offset], 245, 255);
+        Assert.InRange(pixels[offset + 1], 0, 5);
+        Assert.InRange(pixels[offset + 2], 0, 5);
+        Assert.InRange(pixels[offset + 3], 245, 255);
+    }
+
+    private static void AssertHalfAlphaRed(byte[] pixels, uint width, int x, int y)
+    {
+        var offset = (y * (int)width + x) * 4;
+        Assert.InRange(pixels[offset], 120, 136);
+        Assert.InRange(pixels[offset + 1], 0, 3);
+        Assert.InRange(pixels[offset + 2], 0, 3);
+        Assert.InRange(pixels[offset + 3], 120, 136);
     }
 
     private static void AssertTransparent(byte[] pixels, int width, int x, int y)

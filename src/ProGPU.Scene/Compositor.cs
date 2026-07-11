@@ -5309,15 +5309,18 @@ public unsafe class Compositor : IDisposable
             outgoingDirection,
             isSmoothJoin);
 
-        foreach (var triangle in triangles)
+        for (var triangleIndex = 0; triangleIndex < triangles.Length; triangleIndex++)
         {
+            var edgeMasks = GetStrokeTriangleEdgeMasks(triangles, triangleIndex);
             AppendStrokeTriangleVertices(
                 verticesSpan,
                 indicesSpan,
                 ref currentVertexCount,
                 ref currentIndexCount,
                 penBrushIdx,
-                triangle,
+                triangles[triangleIndex],
+                edgeMasks.Exterior,
+                edgeMasks.OwnedInternal,
                 isEdgeAliased);
         }
     }
@@ -5342,18 +5345,91 @@ public unsafe class Compositor : IDisposable
             directionAlongPath,
             isStart);
 
-        foreach (var triangle in triangles)
+        for (var triangleIndex = 0; triangleIndex < triangles.Length; triangleIndex++)
         {
+            var edgeMasks = GetStrokeTriangleEdgeMasks(triangles, triangleIndex);
             AppendStrokeTriangleVertices(
                 verticesSpan,
                 indicesSpan,
                 ref currentVertexCount,
                 ref currentIndexCount,
                 penBrushIdx,
-                triangle,
+                triangles[triangleIndex],
+                edgeMasks.Exterior,
+                edgeMasks.OwnedInternal,
                 isEdgeAliased);
         }
     }
+
+    private static (uint Exterior, uint OwnedInternal) GetStrokeTriangleEdgeMasks(
+        StrokeJoinTriangle[] triangles,
+        int triangleIndex)
+    {
+        var triangle = triangles[triangleIndex];
+        uint exteriorMask = 0;
+        uint ownedInternalMask = 0;
+        ClassifyStrokeTriangleEdge(triangle.P0, triangle.P1, 1u);
+        ClassifyStrokeTriangleEdge(triangle.P1, triangle.P2, 2u);
+        ClassifyStrokeTriangleEdge(triangle.P2, triangle.P0, 4u);
+        return (exteriorMask, ownedInternalMask);
+
+        void ClassifyStrokeTriangleEdge(Vector2 edgeStart, Vector2 edgeEnd, uint bit)
+        {
+            var sharedTriangleIndex = FindSharedStrokeTriangleEdge(
+                triangles,
+                triangleIndex,
+                edgeStart,
+                edgeEnd);
+            if (sharedTriangleIndex < 0)
+            {
+                exteriorMask |= bit;
+            }
+            else if (triangleIndex < sharedTriangleIndex)
+            {
+                ownedInternalMask |= bit;
+            }
+        }
+    }
+
+    private static int FindSharedStrokeTriangleEdge(
+        StrokeJoinTriangle[] triangles,
+        int triangleIndex,
+        Vector2 edgeStart,
+        Vector2 edgeEnd)
+    {
+        for (var index = 0; index < triangles.Length; index++)
+        {
+            if (index == triangleIndex)
+            {
+                continue;
+            }
+
+            var candidate = triangles[index];
+            if (StrokeTriangleEdgesMatch(edgeStart, edgeEnd, candidate.P0, candidate.P1) ||
+                StrokeTriangleEdgesMatch(edgeStart, edgeEnd, candidate.P1, candidate.P2) ||
+                StrokeTriangleEdgesMatch(edgeStart, edgeEnd, candidate.P2, candidate.P0))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool StrokeTriangleEdgesMatch(
+        Vector2 firstStart,
+        Vector2 firstEnd,
+        Vector2 secondStart,
+        Vector2 secondEnd)
+    {
+        return (StrokeTrianglePointsMatch(firstStart, secondStart) &&
+                StrokeTrianglePointsMatch(firstEnd, secondEnd)) ||
+               (StrokeTrianglePointsMatch(firstStart, secondEnd) &&
+                StrokeTrianglePointsMatch(firstEnd, secondStart));
+    }
+
+    private static bool StrokeTrianglePointsMatch(Vector2 first, Vector2 second) =>
+        Vector2.DistanceSquared(first, second) <= StrokeEpsilon * StrokeEpsilon;
 
     private static void AppendStrokeTriangleVertices(
         Span<VectorVertex> verticesSpan,
@@ -5362,6 +5438,8 @@ public unsafe class Compositor : IDisposable
         ref int currentIndexCount,
         float penBrushIdx,
         StrokeJoinTriangle triangle,
+        uint exteriorEdgeMask,
+        uint ownedInternalEdgeMask,
         bool isEdgeAliased)
     {
         var edge0 = triangle.P1 - triangle.P0;
@@ -5385,13 +5463,13 @@ public unsafe class Compositor : IDisposable
         var index = (uint)currentVertexCount;
 
         verticesSpan[currentVertexCount++] = new VectorVertex(
-            new Vector2(min.X, min.Y), trianglePoints, new Vector2(min.X, min.Y), penBrushIdx, triangle.P2, shapeType: shapeType);
+            new Vector2(min.X, min.Y), trianglePoints, new Vector2(min.X, min.Y), penBrushIdx, triangle.P2, exteriorEdgeMask, ownedInternalEdgeMask, shapeType);
         verticesSpan[currentVertexCount++] = new VectorVertex(
-            new Vector2(max.X, min.Y), trianglePoints, new Vector2(max.X, min.Y), penBrushIdx, triangle.P2, shapeType: shapeType);
+            new Vector2(max.X, min.Y), trianglePoints, new Vector2(max.X, min.Y), penBrushIdx, triangle.P2, exteriorEdgeMask, ownedInternalEdgeMask, shapeType);
         verticesSpan[currentVertexCount++] = new VectorVertex(
-            new Vector2(max.X, max.Y), trianglePoints, new Vector2(max.X, max.Y), penBrushIdx, triangle.P2, shapeType: shapeType);
+            new Vector2(max.X, max.Y), trianglePoints, new Vector2(max.X, max.Y), penBrushIdx, triangle.P2, exteriorEdgeMask, ownedInternalEdgeMask, shapeType);
         verticesSpan[currentVertexCount++] = new VectorVertex(
-            new Vector2(min.X, max.Y), trianglePoints, new Vector2(min.X, max.Y), penBrushIdx, triangle.P2, shapeType: shapeType);
+            new Vector2(min.X, max.Y), trianglePoints, new Vector2(min.X, max.Y), penBrushIdx, triangle.P2, exteriorEdgeMask, ownedInternalEdgeMask, shapeType);
 
         indicesSpan[currentIndexCount++] = index;
         indicesSpan[currentIndexCount++] = index + 1;
