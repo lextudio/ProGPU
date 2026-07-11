@@ -6354,43 +6354,10 @@ public unsafe class Compositor : IDisposable
                     var layerOutline = glyphFont.GetGlyphOutline(layer.GlyphId);
                     if (layerOutline == null) continue;
 
-                    float emScale = cmd.FontSize / glyphFont.UnitsPerEm;
-                    var transformedOutline = new PathGeometry();
-                    float x0 = runGlyph.Position.X + cmd.Position.X;
-                    float y0 = runGlyph.Position.Y + cmd.Position.Y;
-
-                    var layerOutlineFigures = layerOutline.Figures;
-                    for (int figureIndex = 0; figureIndex < layerOutlineFigures.Count; figureIndex++)
-                    {
-                        var fig = layerOutlineFigures[figureIndex];
-                        Vector2 startPt = new Vector2(x0 + fig.StartPoint.X * emScale, y0 - fig.StartPoint.Y * emScale);
-                        var newFig = new PathFigure(startPt) { IsClosed = fig.IsClosed, IsFilled = fig.IsFilled };
-                        var figureSegments = fig.Segments;
-                        for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
-                        {
-                            var seg = figureSegments[segmentIndex];
-                            if (seg is LineSegment ls)
-                            {
-                                newFig.Segments.Add(new LineSegment(new Vector2(x0 + ls.Point.X * emScale, y0 - ls.Point.Y * emScale)));
-                            }
-                            else if (seg is QuadraticBezierSegment qbs)
-                            {
-                                newFig.Segments.Add(new QuadraticBezierSegment(
-                                    new Vector2(x0 + qbs.ControlPoint.X * emScale, y0 - qbs.ControlPoint.Y * emScale),
-                                    new Vector2(x0 + qbs.Point.X * emScale, y0 - qbs.Point.Y * emScale)
-                                ));
-                            }
-                            else if (seg is CubicBezierSegment cbs)
-                            {
-                                newFig.Segments.Add(new CubicBezierSegment(
-                                    new Vector2(x0 + cbs.ControlPoint1.X * emScale, y0 - cbs.ControlPoint1.Y * emScale),
-                                    new Vector2(x0 + cbs.ControlPoint2.X * emScale, y0 - cbs.ControlPoint2.Y * emScale),
-                                    new Vector2(x0 + cbs.Point.X * emScale, y0 - cbs.Point.Y * emScale)
-                                ));
-                            }
-                        }
-                        transformedOutline.Figures.Add(newFig);
-                    }
+                    var transformedOutline = CreatePositionedGlyphOutline(
+                        layerOutline,
+                        cmd.FontSize / glyphFont.UnitsPerEm,
+                        runGlyph.Position + cmd.Position);
 
                     var pathCmd = new RenderCommand
                     {
@@ -6415,6 +6382,36 @@ public unsafe class Compositor : IDisposable
                 activeTransform,
                 _currentDpiScale,
                 staticZoom);
+            var atlasUpscale = atlasToLogicalScale * TransformMetrics.GetStrokeScale(activeTransform) * staticZoom;
+
+            if (cmd.UseVectorGlyphRendering || glyphFont.HasCffOutlines || atlasUpscale > 1.0001f)
+            {
+                var outline = glyphFont.GetGlyphOutline(glyphIdx);
+                if (outline is not null)
+                {
+                    var vectorPassCount = cmd.IsBold ? 2 : 1;
+                    var vectorBoldOffset = cmd.FontSize * 0.035f;
+                    for (var pass = 0; pass < vectorPassCount; pass++)
+                    {
+                        var transformedOutline = CreatePositionedGlyphOutline(
+                            outline,
+                            cmd.FontSize / glyphFont.UnitsPerEm,
+                            runGlyph.Position + cmd.Position,
+                            cmd.IsItalic ? 0.22f : 0f,
+                            pass * vectorBoldOffset);
+                        CompilePathCommand(new RenderCommand
+                        {
+                            Type = RenderCommandType.DrawPath,
+                            Path = transformedOutline,
+                            Brush = cmd.Brush,
+                            IsEdgeAliased = cmd.TextRenderingMode == TextRenderingMode.Aliased
+                        }, activeTransform);
+                    }
+                }
+
+                SwitchBatch(BatchType.Text);
+                continue;
+            }
 
             bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                              MathF.Abs(activeTransform.M21) > 0.0001f ||
@@ -6510,6 +6507,7 @@ public unsafe class Compositor : IDisposable
             activeTransform,
             _currentDpiScale,
             staticZoom);
+        var atlasUpscale = atlasToLogicalScale * TransformMetrics.GetStrokeScale(activeTransform) * staticZoom;
 
         bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
@@ -6531,43 +6529,10 @@ public unsafe class Compositor : IDisposable
                     var layerOutline = font.GetGlyphOutline(layer.GlyphId);
                     if (layerOutline == null) continue;
 
-                    float emScale = cmd.FontSize / font.UnitsPerEm;
-                    var transformedOutline = new PathGeometry();
-                    float x0 = position.X + cmd.Position.X;
-                    float y0 = position.Y + cmd.Position.Y;
-
-                    var layerOutlineFigures = layerOutline.Figures;
-                    for (int figureIndex = 0; figureIndex < layerOutlineFigures.Count; figureIndex++)
-                    {
-                        var fig = layerOutlineFigures[figureIndex];
-                        Vector2 startPt = new Vector2(x0 + fig.StartPoint.X * emScale, y0 - fig.StartPoint.Y * emScale);
-                        var newFig = new PathFigure(startPt) { IsClosed = fig.IsClosed, IsFilled = fig.IsFilled };
-                        var figureSegments = fig.Segments;
-                        for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
-                        {
-                            var seg = figureSegments[segmentIndex];
-                            if (seg is LineSegment ls)
-                            {
-                                newFig.Segments.Add(new LineSegment(new Vector2(x0 + ls.Point.X * emScale, y0 - ls.Point.Y * emScale)));
-                            }
-                            else if (seg is QuadraticBezierSegment qbs)
-                            {
-                                newFig.Segments.Add(new QuadraticBezierSegment(
-                                    new Vector2(x0 + qbs.ControlPoint.X * emScale, y0 - qbs.ControlPoint.Y * emScale),
-                                    new Vector2(x0 + qbs.Point.X * emScale, y0 - qbs.Point.Y * emScale)
-                                ));
-                            }
-                            else if (seg is CubicBezierSegment cbs)
-                            {
-                                newFig.Segments.Add(new CubicBezierSegment(
-                                    new Vector2(x0 + cbs.ControlPoint1.X * emScale, y0 - cbs.ControlPoint1.Y * emScale),
-                                    new Vector2(x0 + cbs.ControlPoint2.X * emScale, y0 - cbs.ControlPoint2.Y * emScale),
-                                    new Vector2(x0 + cbs.Point.X * emScale, y0 - cbs.Point.Y * emScale)
-                                ));
-                            }
-                        }
-                        transformedOutline.Figures.Add(newFig);
-                    }
+                    var transformedOutline = CreatePositionedGlyphOutline(
+                        layerOutline,
+                        cmd.FontSize / font.UnitsPerEm,
+                        position + cmd.Position);
 
                     var pathCmd = new RenderCommand
                     {
@@ -6577,6 +6542,35 @@ public unsafe class Compositor : IDisposable
                         IsEdgeAliased = cmd.TextRenderingMode == TextRenderingMode.Aliased
                     };
                     CompilePathCommand(pathCmd, activeTransform);
+                }
+
+                SwitchBatch(BatchType.Text);
+                continue;
+            }
+
+            if (cmd.UseVectorGlyphRendering || font.HasCffOutlines || atlasUpscale > 1.0001f)
+            {
+                var outline = font.GetGlyphOutline(glyphIdx);
+                if (outline is not null)
+                {
+                    var vectorPassCount = cmd.IsBold ? 2 : 1;
+                    var vectorBoldOffset = cmd.FontSize * 0.035f;
+                    for (var pass = 0; pass < vectorPassCount; pass++)
+                    {
+                        var transformedOutline = CreatePositionedGlyphOutline(
+                            outline,
+                            cmd.FontSize / font.UnitsPerEm,
+                            position + cmd.Position,
+                            cmd.IsItalic ? 0.22f : 0f,
+                            pass * vectorBoldOffset);
+                        CompilePathCommand(new RenderCommand
+                        {
+                            Type = RenderCommandType.DrawPath,
+                            Path = transformedOutline,
+                            Brush = cmd.Brush,
+                            IsEdgeAliased = cmd.TextRenderingMode == TextRenderingMode.Aliased
+                        }, activeTransform);
+                    }
                 }
 
                 SwitchBatch(BatchType.Text);
@@ -6640,6 +6634,71 @@ public unsafe class Compositor : IDisposable
                 });
             }
         }
+    }
+
+    private static PathGeometry CreatePositionedGlyphOutline(
+        PathGeometry outline,
+        float emScale,
+        Vector2 position,
+        float italicSkew = 0f,
+        float xOffset = 0f)
+    {
+        Vector2 TransformPoint(Vector2 point) => new(
+            position.X + (point.X + point.Y * italicSkew) * emScale + xOffset,
+            position.Y - point.Y * emScale);
+
+        var transformedOutline = new PathGeometry { FillRule = outline.FillRule };
+        var figures = outline.Figures;
+        for (var figureIndex = 0; figureIndex < figures.Count; figureIndex++)
+        {
+            var figure = figures[figureIndex];
+            var transformedFigure = new PathFigure(TransformPoint(figure.StartPoint), figure.IsClosed)
+            {
+                IsFilled = figure.IsFilled
+            };
+            var segments = figure.Segments;
+            for (var segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
+            {
+                switch (segments[segmentIndex])
+                {
+                    case LineSegment line:
+                        transformedFigure.Segments.Add(new LineSegment(
+                            TransformPoint(line.Point),
+                            line.IsSmoothJoin,
+                            line.IsStroked));
+                        break;
+                    case QuadraticBezierSegment quadratic:
+                        transformedFigure.Segments.Add(new QuadraticBezierSegment(
+                            TransformPoint(quadratic.ControlPoint),
+                            TransformPoint(quadratic.Point),
+                            quadratic.IsSmoothJoin,
+                            quadratic.IsStroked));
+                        break;
+                    case CubicBezierSegment cubic:
+                        transformedFigure.Segments.Add(new CubicBezierSegment(
+                            TransformPoint(cubic.ControlPoint1),
+                            TransformPoint(cubic.ControlPoint2),
+                            TransformPoint(cubic.Point),
+                            cubic.IsSmoothJoin,
+                            cubic.IsStroked));
+                        break;
+                    case ArcSegment arc:
+                        transformedFigure.Segments.Add(new ArcSegment(
+                            TransformPoint(arc.Point),
+                            new Vector2(MathF.Abs(arc.Size.X * emScale), MathF.Abs(arc.Size.Y * emScale)),
+                            arc.RotationAngle,
+                            arc.IsLargeArc,
+                            arc.SweepDirection,
+                            arc.IsSmoothJoin,
+                            arc.IsStroked));
+                        break;
+                }
+            }
+
+            transformedOutline.Figures.Add(transformedFigure);
+        }
+
+        return transformedOutline;
     }
 
     private void EnsureTextVertexCapacity(int additionalCapacity)

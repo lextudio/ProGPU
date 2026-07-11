@@ -345,6 +345,7 @@ public struct RenderCommand
     public float Rotation;
     public TextRenderingMode TextRenderingMode;
     public TextHintingMode TextHintingMode;
+    public bool UseVectorGlyphRendering;
     public bool IsTextAliased
     {
         readonly get => TextRenderingMode == TextRenderingMode.Aliased;
@@ -865,7 +866,8 @@ public class DrawingContext : IRenderDataProvider
         bool isItalic = false,
         float rotation = 0f,
         TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
-        TextHintingMode textHintingMode = TextHintingMode.Auto)
+        TextHintingMode textHintingMode = TextHintingMode.Auto,
+        bool useVectorGlyphRendering = false)
     {
         Commands.Add(new RenderCommand
         {
@@ -879,7 +881,8 @@ public class DrawingContext : IRenderDataProvider
             IsItalic = isItalic,
             Rotation = rotation,
             TextRenderingMode = textRenderingMode,
-            TextHintingMode = textHintingMode
+            TextHintingMode = textHintingMode,
+            UseVectorGlyphRendering = useVectorGlyphRendering
         });
     }
 
@@ -895,7 +898,8 @@ public class DrawingContext : IRenderDataProvider
         bool isItalic = false,
         float rotation = 0f,
         TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
-        TextHintingMode textHintingMode = TextHintingMode.Auto)
+        TextHintingMode textHintingMode = TextHintingMode.Auto,
+        bool useVectorGlyphRendering = false)
     {
         Commands.Add(new RenderCommand
         {
@@ -911,7 +915,8 @@ public class DrawingContext : IRenderDataProvider
             IsItalic = isItalic,
             Rotation = rotation,
             TextRenderingMode = textRenderingMode,
-            TextHintingMode = textHintingMode
+            TextHintingMode = textHintingMode,
+            UseVectorGlyphRendering = useVectorGlyphRendering
         });
     }
 
@@ -926,7 +931,8 @@ public class DrawingContext : IRenderDataProvider
         bool isItalic = false,
         float rotation = 0f,
         TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
-        TextHintingMode textHintingMode = TextHintingMode.Auto)
+        TextHintingMode textHintingMode = TextHintingMode.Auto,
+        bool useVectorGlyphRendering = false)
     {
         Commands.Add(new RenderCommand
         {
@@ -941,7 +947,8 @@ public class DrawingContext : IRenderDataProvider
             IsItalic = isItalic,
             Rotation = rotation,
             TextRenderingMode = textRenderingMode,
-            TextHintingMode = textHintingMode
+            TextHintingMode = textHintingMode,
+            UseVectorGlyphRendering = useVectorGlyphRendering
         });
     }
 
@@ -956,7 +963,8 @@ public class DrawingContext : IRenderDataProvider
         bool isBold = false,
         bool isItalic = false,
         TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
-        TextHintingMode textHintingMode = TextHintingMode.Auto)
+        TextHintingMode textHintingMode = TextHintingMode.Auto,
+        bool useVectorGlyphRendering = false)
     {
         Commands.Add(new RenderCommand
         {
@@ -971,7 +979,8 @@ public class DrawingContext : IRenderDataProvider
             IsBold = isBold,
             IsItalic = isItalic,
             TextRenderingMode = textRenderingMode,
-            TextHintingMode = textHintingMode
+            TextHintingMode = textHintingMode,
+            UseVectorGlyphRendering = useVectorGlyphRendering
         });
     }
 

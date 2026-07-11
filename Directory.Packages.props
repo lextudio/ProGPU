@@ -11,6 +11,7 @@
     <PackageVersion Include="Markdig" Version="0.37.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageVersion Include="netDxf.netstandard" Version="2.4.0" />
+    <PackageVersion Include="OpenFontSharp" Version="1.0.0" />
     <PackageVersion Include="ProDiagnostics" Version="12.0.0" />
     <PackageVersion Include="Silk.NET.Input" Version="2.23.0" />
     <PackageVersion Include="Silk.NET.GLFW" Version="2.23.0" />

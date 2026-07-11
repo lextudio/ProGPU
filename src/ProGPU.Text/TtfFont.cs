@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using OpenFontSharp;
+using OpenFontSharp.Tables.CFF;
 using ProGPU.Vector;
 
 namespace ProGPU.Text;
@@ -83,6 +85,7 @@ public class TtfFont
 
     private readonly byte[] _data;
     private readonly SfntFontFace _face;
+    private readonly Typeface? _cffTypeface;
     private readonly Dictionary<string, (uint offset, uint length)> _tables = new();
 
     public int FaceIndex { get; }
@@ -93,6 +96,7 @@ public class TtfFont
     public ushort WidthClass { get; private set; } = 5;
     public bool IsItalic { get; private set; }
     public bool HasTrueTypeOutlines { get; private set; }
+    public bool HasCffOutlines => _cffTypeface is not null;
     public bool HasBitmapGlyphs =>
         _tables.ContainsKey("sbix") ||
         (_tables.ContainsKey("bloc") && _tables.ContainsKey("bdat"));
@@ -151,13 +155,17 @@ public class TtfFont
     {
         ArgumentNullException.ThrowIfNull(fontData);
         ArgumentOutOfRangeException.ThrowIfNegative(faceIndex);
-        _data = fontData;
+        _data = SfntFontContainer.Normalize(fontData);
         FaceIndex = faceIndex;
-        _face = SfntFontFace.Load(fontData, faceIndex);
+        _face = SfntFontFace.Load(_data, faceIndex);
         FamilyName = GetName(SfntNameIds.PreferredFamilyName, SfntNameIds.FamilyName) ?? string.Empty;
         SubfamilyName = GetName(SfntNameIds.PreferredSubfamilyName, SfntNameIds.SubfamilyName) ?? string.Empty;
         FullName = GetName(SfntNameIds.FullName) ?? FamilyName;
         ParseTableDirectory();
+        if (_tables.ContainsKey("CFF "))
+        {
+            _cffTypeface = TryLoadCffTypeface(_data);
+        }
         ParseHeadTable();
         ParseHheaTable();
         ParseMaxpTable();
@@ -355,6 +363,21 @@ public class TtfFont
     {
         ArgumentNullException.ThrowIfNull(fontData);
         return SfntFontFace.LoadFaces(fontData).Count;
+    }
+
+    private static Typeface? TryLoadCffTypeface(byte[] fontData)
+    {
+        try
+        {
+            using var stream = new MemoryStream(fontData, writable: false);
+            return new OpenFontReader().Read(stream);
+        }
+        catch (Exception ex) when (ex is OpenFontException or OpenFontNotSupportedException or
+                                   InvalidDataException or ArgumentException or IndexOutOfRangeException or
+                                   NullReferenceException or OverflowException)
+        {
+            return null;
+        }
     }
 
     public bool TryGetBitmapGlyph(ushort glyphIndex, float targetPixelsPerEm, out BitmapGlyphData glyph)
@@ -621,6 +644,71 @@ public class TtfFont
         public Vector2[] Points { get; }
     }
 
+    private sealed class CffPathTranslator : IGlyphTranslator
+    {
+        private readonly PathGeometry _geometry = new();
+        private PathFigure? _currentFigure;
+
+        public PathGeometry Geometry => _geometry;
+
+        public void BeginRead(int contourCount)
+        {
+        }
+
+        public void EndRead()
+        {
+            CloseContour();
+        }
+
+        public void MoveTo(float x0, float y0)
+        {
+            CloseContour();
+            _currentFigure = new PathFigure(new Vector2(x0, y0));
+            _geometry.Figures.Add(_currentFigure);
+        }
+
+        public void LineTo(float x1, float y1)
+        {
+            EnsureFigure().Segments.Add(new LineSegment(new Vector2(x1, y1)));
+        }
+
+        public void Curve3(float x1, float y1, float x2, float y2)
+        {
+            EnsureFigure().Segments.Add(new QuadraticBezierSegment(
+                new Vector2(x1, y1),
+                new Vector2(x2, y2)));
+        }
+
+        public void Curve4(float x1, float y1, float x2, float y2, float x3, float y3)
+        {
+            EnsureFigure().Segments.Add(new CubicBezierSegment(
+                new Vector2(x1, y1),
+                new Vector2(x2, y2),
+                new Vector2(x3, y3)));
+        }
+
+        public void CloseContour()
+        {
+            if (_currentFigure is null)
+            {
+                return;
+            }
+
+            _currentFigure.IsClosed = true;
+            _currentFigure = null;
+        }
+
+        private PathFigure EnsureFigure()
+        {
+            if (_currentFigure is null)
+            {
+                MoveTo(0f, 0f);
+            }
+
+            return _currentFigure!;
+        }
+    }
+
     private readonly Dictionary<ushort, ParsedGlyph?> _glyphOutlineCache = new();
     private readonly Dictionary<ushort, PathGeometry?> _flippedOutlineCache = new();
 
@@ -633,10 +721,32 @@ public class TtfFont
                 return cached?.Geometry;
             }
 
-            var result = GetGlyphOutlineInternal(glyphIndex, new HashSet<ushort>(), 0);
+            var result = HasTrueTypeOutlines
+                ? GetGlyphOutlineInternal(glyphIndex, new HashSet<ushort>(), 0)
+                : GetCffGlyphOutline(glyphIndex);
             _glyphOutlineCache[glyphIndex] = result;
             return result?.Geometry;
         }
+    }
+
+    private ParsedGlyph? GetCffGlyphOutline(ushort glyphIndex)
+    {
+        if (_cffTypeface is null || glyphIndex >= _cffTypeface.GlyphCount)
+        {
+            return null;
+        }
+
+        var glyph = _cffTypeface.GetGlyph(glyphIndex);
+        if (!glyph.IsCffGlyph)
+        {
+            return null;
+        }
+
+        var translator = new CffPathTranslator();
+        new CffEvaluationEngine().Run(translator, glyph.GetCff1GlyphData());
+        return translator.Geometry.Figures.Count == 0
+            ? null
+            : new ParsedGlyph(translator.Geometry, Array.Empty<Vector2>());
     }
 
     public PathGeometry? GetFlippedGlyphOutline(ushort glyphIndex)
@@ -701,9 +811,24 @@ public class TtfFont
         yMin = 0;
         xMax = 0;
         yMax = 0;
-        if (!HasTrueTypeOutlines || glyphIndex >= NumGlyphs)
+        if (glyphIndex >= NumGlyphs)
         {
             return false;
+        }
+
+        if (!HasTrueTypeOutlines)
+        {
+            var outline = GetGlyphOutline(glyphIndex);
+            if (outline is null || !outline.TryGetBounds(out var minimum, out var maximum))
+            {
+                return false;
+            }
+
+            xMin = ToInt16Floor(minimum.X);
+            yMin = ToInt16Floor(minimum.Y);
+            xMax = ToInt16Ceiling(maximum.X);
+            yMax = ToInt16Ceiling(maximum.Y);
+            return xMax > xMin && yMax > yMin;
         }
 
         uint startOffset;
@@ -736,6 +861,12 @@ public class TtfFont
         yMax = ReadShort(glyphOffset + 8);
         return xMax > xMin && yMax > yMin;
     }
+
+    private static short ToInt16Floor(float value) =>
+        (short)Math.Clamp(MathF.Floor(value), short.MinValue, short.MaxValue);
+
+    private static short ToInt16Ceiling(float value) =>
+        (short)Math.Clamp(MathF.Ceiling(value), short.MinValue, short.MaxValue);
 
     private ParsedGlyph? GetGlyphOutlineInternal(ushort glyphIndex, HashSet<ushort> ancestors, int depth)
     {

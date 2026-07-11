@@ -134,6 +134,7 @@ sealed class SfntFontFace
     public static IReadOnlyList<SfntFontFace> LoadFaces(byte[] fontData)
     {
         ArgumentNullException.ThrowIfNull(fontData);
+        fontData = SfntFontContainer.Normalize(fontData);
 
         uint[] faceOffsets = ReadFaceOffsets(fontData);
         var faces = new List<SfntFontFace>(faceOffsets.Length);

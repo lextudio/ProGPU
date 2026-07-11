@@ -897,6 +897,20 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void DrawTextFillRequestsVectorGlyphRenderingForSkiaFidelity()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 64f, 64f);
+        using var font = new SKFont(SKTypeface.Default, 24f);
+        using var paint = new SKPaint { Color = SKColors.Black };
+
+        canvas.DrawText("A", 4f, 32f, font, paint);
+
+        var command = Assert.Single(context.Commands, static command => command.Type == RenderCommandType.DrawGlyphRun);
+        Assert.True(command.UseVectorGlyphRendering);
+    }
+
+    [Fact]
     public void ImageShaderAppliesPaintColorFilterOnGpuBeforeTiling()
     {
         using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Unpremul));

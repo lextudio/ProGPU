@@ -8,6 +8,20 @@ namespace ProGPU.Tests;
 
 public class SfntFontFaceTests
 {
+    private const string CffWoffFontBase64 = """
+        d09GRk9UVE8AAAL0AAkAAAAAA9AAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAABDRkYgAAACbAAAAH4AAACSuCV3zE9TLzIAAAFA
+        AAAALgAAAGBFIUPRY21hcAAAAjQAAAApAAAANAAMAJRoZWFkAAAA4AAAADYAAAA2LfovUmhoZWEAAAEYAAAAIAAAACQEsgGS
+        aG10eAAAAuwAAAAGAAAABgImAABtYXhwAAABOAAAAAYAAAAGAAJQAG5hbWUAAAFwAAAAwwAAAX3OQCP/cG9zdAAAAmAAAAAM
+        AAAAIAADAAAAAQAAAAEAAOYHGIpfDzz1AAMD6AAAAADmd/XbAAAAAOZ39dsAMgAAAcICvAAAAAMAAgAAAAAAAHicY2BkYGBW
+        +G/BwMD4hYGBIYVxAgNQBAUwAgBTuQNIAABQAAACAAB4nGNgZvzCOIGBlYGFgTBgRObYAwGQcmRwZFb4b8HAwKzAcAJNvQID
+        AwD5rQV3AAB4nIWPwQqCQBCGP9OKKOpU3WLPgaK37oKdAons3kEiEoVVD71Ir9BT9G6NuYF1aQZ2vpn/n4EFJtyxaMJi9n6b
+        6DGUrmWbJQvDTof7jHEND5izEafljGSyYme4x5SrYRuPm2Gnw325+DA8YM0z1sU2TlQYReqQltU+PdfZSf9MlRkfU11eilwFnt
+        86xNDortGJ0RRspSYoQiJJxYGUkoq91DM1GSf+edWP+yidFuUiO7mogXzK/7rRXvjsu9/7L3i8OwsAeJxjYGBgYmBgYAZiESD
+        JCKZZGBSANAsQgviO//9DyP8HwHwGAFKXBp0AAAB4nGNgZsALAAB9AAR4nGNkYGFkYGRkFAsoyncPCHV2cwtJLS7RDUpNL81J
+        LALJSP2QZvohw/xDgmVv94+wnwGsX/m7v6sJfWcUZGBiZJRQh2hUAOpUAGlVgGpFE2YAAiWQBl6FHx17xX4G/FD5G8DO96Pj
+        vdiPDvbvfd8PdP/uk/rTwc4HAFZkMPwAAAH0AAAAMgAA
+        """;
+
     [Fact]
     public void ReadsNamesFromSfntNameTable()
     {
@@ -229,6 +243,43 @@ public class SfntFontFaceTests
         Assert.Contains(
             outline.Figures[0].Segments,
             segment => segment is LineSegment { Point: var point } && point == new Vector2(200, 170));
+    }
+
+    [Fact]
+    public void TtfFontLoadsCffOutlinesFromWoffContainer()
+    {
+        byte[] fontData = Convert.FromBase64String(CffWoffFontBase64);
+
+        var font = new TtfFont(fontData);
+        ushort glyphIndex = font.GetGlyphIndex('A');
+        PathGeometry? outline = font.GetGlyphOutline(glyphIndex);
+
+        Assert.Equal("ProGPU CFF Test", font.FamilyName);
+        Assert.False(font.HasTrueTypeOutlines);
+        Assert.True(font.HasCffOutlines);
+        Assert.Equal((ushort)1, glyphIndex);
+        Assert.NotNull(outline);
+        Assert.Contains(
+            outline!.Figures.SelectMany(static figure => figure.Segments),
+            static segment => segment is CubicBezierSegment);
+        Assert.True(font.TryGetGlyphBounds(glyphIndex, out var xMin, out var yMin, out var xMax, out var yMax));
+        Assert.Equal((short)100, xMin);
+        Assert.Equal((short)0, yMin);
+        Assert.Equal((short)400, xMax);
+        Assert.Equal((short)750, yMax);
+        Assert.Equal("OTTO", Encoding.ASCII.GetString(font.FontData.Span[..4]));
+    }
+
+    [Fact]
+    public void TtfFontRejectsWoffTableOutsideDeclaredContainer()
+    {
+        byte[] fontData = Convert.FromBase64String(CffWoffFontBase64);
+        fontData[48] = 0xFF;
+        fontData[49] = 0xFF;
+        fontData[50] = 0xFF;
+        fontData[51] = 0xFF;
+
+        Assert.Throws<FormatException>(() => new TtfFont(fontData));
     }
 
     [Fact]

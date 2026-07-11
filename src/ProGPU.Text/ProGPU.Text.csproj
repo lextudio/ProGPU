@@ -7,6 +7,9 @@
     <DefineConstants>$(DefineConstants);PROGPU_TEXT_PUBLIC</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="OpenFontSharp" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\ProGPU.Backend\ProGPU.Backend.csproj" />
     <ProjectReference Include="..\ProGPU.Vector\ProGPU.Vector.csproj" />
   </ItemGroup>

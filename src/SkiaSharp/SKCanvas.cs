@@ -2750,7 +2750,8 @@ public class SKCanvas : IDisposable
                             run.Font.Size,
                             brush,
                             Vector2.Zero,
-                            transform);
+                            transform,
+                            useVectorGlyphRendering: true);
                     }
 
                     continue;
@@ -2769,7 +2770,8 @@ public class SKCanvas : IDisposable
                     run.Font.Size,
                     brush,
                     new Vector2(x, y),
-                    _currentMatrix.ToMatrix4x4()
+                    _currentMatrix.ToMatrix4x4(),
+                    useVectorGlyphRendering: true
                 );
             }
         }
