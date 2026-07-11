@@ -599,7 +599,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
-    public void GdiDrawImageRejectsCrossContextBitmapsBeforeRecording()
+    public void GdiDrawImageMigratesPortableCpuBitmapIntoTargetContext()
     {
         var previous = WgpuContext.Current;
         using var sourceContext = new WgpuContext();
@@ -611,14 +611,21 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         {
             WgpuContext.Current = sourceContext;
             using var source = new GdiBitmap(1, 1);
+            source.SetPixel(0, 0, System.Drawing.Color.Red);
+            var originalSourceTexture = source.GpuTexture;
+            Assert.Same(sourceContext, originalSourceTexture.Context);
+
             WgpuContext.Current = targetContext;
             using var target = new GdiBitmap(2, 2);
             using var graphics = GdiGraphics.FromImage(target);
 
-            var exception = Assert.Throws<System.InvalidOperationException>(
-                () => graphics.DrawImage(source, new GdiRectangle(0, 0, 1, 1)));
-            Assert.Contains("different WebGPU context", exception.Message, System.StringComparison.Ordinal);
-            Assert.Empty(graphics.DrawingContext.Commands);
+            graphics.DrawImage(source, new GdiRectangle(0, 0, 1, 1));
+
+            var command = Assert.Single(graphics.DrawingContext.Commands);
+            Assert.Same(targetContext, command.Texture!.Context);
+            Assert.NotSame(originalSourceTexture, command.Texture);
+            Assert.True(originalSourceTexture.IsDisposed);
+            Assert.Equal(System.Drawing.Color.Red.ToArgb(), target.GetPixel(0, 0).ToArgb());
         }
         finally
         {
@@ -644,6 +651,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             var retainedTexture = Assert.Single(
                 target.RecordedContext.Commands,
                 static command => command.Texture != null).Texture!;
+            Assert.Same(source.GpuTexture, retainedTexture);
             Assert.Equal(1, target.RecordedContext.RetainedResourceCount);
 
             var compositor = GetGdiBitmapCompositor(target);
@@ -672,7 +680,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
             Assert.Empty(target.RecordedContext.Commands);
             Assert.Equal(0, target.RecordedContext.RetainedResourceCount);
-            Assert.True(retainedTextureDisposed);
+            Assert.False(retainedTextureDisposed);
+            Assert.False(retainedTexture.IsDisposed);
         }
         finally
         {
@@ -728,11 +737,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         }
         finally
         {
-            if (target?.GpuTexture.IsDisposed == false)
-            {
-                target.GpuTexture.Dispose();
-            }
-
+            target?.Dispose();
             WgpuContext.Current = previous;
         }
     }

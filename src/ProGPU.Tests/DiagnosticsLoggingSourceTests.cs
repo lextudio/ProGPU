@@ -319,6 +319,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("public static bool TryGetFirstActiveContext([NotNullWhen(true)] out WgpuContext? context)", source, StringComparison.Ordinal);
         Assert.Contains("for (var i = 0; i < _activeContexts.Count; i++)", source, StringComparison.Ordinal);
         Assert.Contains("var active = _activeContexts[i];", source, StringComparison.Ordinal);
+        Assert.Contains("if (active.IsInitialized)", source, StringComparison.Ordinal);
         Assert.Contains("context = active;", source, StringComparison.Ordinal);
         Assert.Contains("return _activeContexts.ToArray();", source, StringComparison.Ordinal);
 
@@ -328,7 +329,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.DoesNotContain("var active = WgpuContext.ActiveContexts;", pathOps, StringComparison.Ordinal);
         Assert.Contains("WgpuContext.TryGetFirstActiveContext(out var active)", presentationCoreGpuProvider, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var active in WgpuContext.ActiveContexts)", presentationCoreGpuProvider, StringComparison.Ordinal);
-        Assert.Contains("WgpuContext.TryGetFirstActiveContext(out var active)", systemDrawingGpuProvider, StringComparison.Ordinal);
+        Assert.DoesNotContain("WgpuContext.TryGetFirstActiveContext", systemDrawingGpuProvider, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var active in WgpuContext.ActiveContexts)", systemDrawingGpuProvider, StringComparison.Ordinal);
         Assert.Contains("WgpuContext.TryGetFirstActiveContext(out var ctx)", skiaSharp, StringComparison.Ordinal);
         Assert.DoesNotContain("var active = WgpuContext.ActiveContexts;", skiaSharp, StringComparison.Ordinal);
@@ -396,12 +397,22 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("AppendList(DoubleBuffer, other.DoubleBuffer);", source, StringComparison.Ordinal);
         Assert.Contains("AppendList(Line3DBuffer, other.Line3DBuffer);", source, StringComparison.Ordinal);
         Assert.Contains("AppendList(FloatBuffer, other.FloatBuffer);", source, StringComparison.Ordinal);
-        Assert.Contains("AppendArray(_retainedResources, retainedResources);", source, StringComparison.Ordinal);
+        Assert.Contains("internal sealed class RetainedResourceLease : IDisposable", source, StringComparison.Ordinal);
+        Assert.Contains("return new RetainedResourceLease(new RetainedResourceOwner(resource, identity));", source, StringComparison.Ordinal);
+        Assert.Contains("owner.AddRef();", source, StringComparison.Ordinal);
+        Assert.Contains("Interlocked.Exchange(ref _owner, null)?.Release();", source, StringComparison.Ordinal);
+        Assert.Contains("leases[i] = _retainedResources[i].AddRef();", source, StringComparison.Ordinal);
+        Assert.Contains("var retainedResources = other.CloneRetainedResources();", source, StringComparison.Ordinal);
+        Assert.Contains("AppendRetainedResources(retainedResources);", source, StringComparison.Ordinal);
         Assert.Contains("private static void AppendList<T>(List<T> destination, List<T> source)", source, StringComparison.Ordinal);
-        Assert.Contains("private static void AppendArray<T>(List<T> destination, T[] source)", source, StringComparison.Ordinal);
+        Assert.Contains("private void AppendRetainedResources(RetainedResourceLease[] resources)", source, StringComparison.Ordinal);
         Assert.Contains("destination.EnsureCapacity(checked(destination.Count + sourceCount));", source, StringComparison.Ordinal);
         Assert.Contains("for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)", source, StringComparison.Ordinal);
         Assert.Contains("destination.Add(source[sourceIndex]);", source, StringComparison.Ordinal);
+        Assert.Contains("_retainedResources.EnsureCapacity(checked(_retainedResources.Count + resources.Length));", source, StringComparison.Ordinal);
+        Assert.Contains("if (identity is not null && HasRetainedResourceIdentity(identity))", source, StringComparison.Ordinal);
+        Assert.Contains("resource.Dispose();", source, StringComparison.Ordinal);
+        Assert.Contains("_retainedResources.Add(resource);", source, StringComparison.Ordinal);
         Assert.Contains("for (int i = 0; i < _retainedResources.Count; i++)", source, StringComparison.Ordinal);
         Assert.Contains("_retainedResources[i].Dispose();", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_recordingContext.Commands.ToArray()", source, StringComparison.Ordinal);
