@@ -233,6 +233,12 @@ public unsafe class GlyphAtlas : IDisposable
                                 ProcessPt(quad.ControlPoint);
                                 ProcessPt(quad.Point);
                             }
+                            else if (segment is CubicBezierSegment cubic)
+                            {
+                                ProcessPt(cubic.ControlPoint1);
+                                ProcessPt(cubic.ControlPoint2);
+                                ProcessPt(cubic.Point);
+                            }
                         }
                     }
 

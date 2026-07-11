@@ -1355,8 +1355,11 @@ struct Segment {
     p0: vec2<f32>,
     p1: vec2<f32>,
     p2: vec2<f32>,
+    p3: vec2<f32>,
     segmentType: u32,
-    _pad: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: GlyphUniforms;
@@ -1437,6 +1440,61 @@ fn is_point_inside(p: vec2<f32>, record: GlyphRecord) -> bool {
                         let tc = clamp(t, 0.0, 1.0);
                         let omt = 1.0 - tc;
                         let x_t = omt * omt * A.x + 2.0 * omt * tc * B.x + tc * tc * C.x;
+                        if (p.x < x_t) {
+                            if (deriv_y > 0.0) {
+                                winding = winding + 1;
+                            } else if (deriv_y < 0.0) {
+                                winding = winding - 1;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (seg.segmentType == 2u) {
+            let A = seg.p0;
+            let B = seg.p1;
+            let C = seg.p2;
+            let D_pt = seg.p3;
+
+            let a = -A.y + 3.0 * B.y - 3.0 * C.y + D_pt.y;
+            let b = 3.0 * A.y - 6.0 * B.y + 3.0 * C.y;
+            let c = -3.0 * A.y + 3.0 * B.y;
+            let d = A.y - p.y;
+
+            var roots = array<f32, 3>(0.0, 0.0, 0.0);
+            var root_count: u32 = 0u;
+            solve_cubic(a, b, c, d, &roots, &root_count);
+
+            for (var r: u32 = 0u; r < root_count; r = r + 1u) {
+                let t = roots[r];
+                if (t >= -0.01 && t <= 1.01) {
+                    let t_eval = clamp(t, 0.00001, 0.99999);
+                    let deriv_y = 3.0 * a * t_eval * t_eval + 2.0 * b * t_eval + c;
+
+                    var is_valid = false;
+                    if (t < 0.005) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y >= A.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y < A.y);
+                        }
+                    } else if (t > 0.995) {
+                        if (deriv_y > 0.0) {
+                            is_valid = (p.y < D_pt.y);
+                        } else if (deriv_y < 0.0) {
+                            is_valid = (p.y >= D_pt.y);
+                        }
+                    } else {
+                        is_valid = true;
+                    }
+
+                    if (is_valid) {
+                        let tc = clamp(t, 0.0, 1.0);
+                        let omt = 1.0 - tc;
+                        let x_t = omt * omt * omt * A.x
+                                + 3.0 * omt * omt * tc * B.x
+                                + 3.0 * omt * tc * tc * C.x
+                                + tc * tc * tc * D_pt.x;
                         if (p.x < x_t) {
                             if (deriv_y > 0.0) {
                                 winding = winding + 1;

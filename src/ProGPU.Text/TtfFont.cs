@@ -18,8 +18,11 @@ public struct GpuSegment
     public Vector2 P0;
     public Vector2 P1;
     public Vector2 P2;
+    public Vector2 P3;
     public uint SegmentType;
-    public uint Pad;
+    public uint Pad0;
+    public uint Pad1;
+    public uint Pad2;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -204,7 +207,10 @@ public class TtfFont
         ParseTableDirectory();
         if (_tables.ContainsKey("CFF "))
         {
-            _cffTypeface = TryLoadCffTypeface(_data);
+            byte[] cffFontData = _face.BaseOffset == 0
+                ? _data
+                : _face.CreateStandaloneFontData();
+            _cffTypeface = TryLoadCffTypeface(cffFontData);
         }
         ParseHeadTable();
         ParseHheaTable();
@@ -2064,7 +2070,9 @@ public class TtfFont
                                 P1 = line.Point,
                                 P2 = Vector2.Zero,
                                 SegmentType = 0,
-                                Pad = 0
+                                Pad0 = 0,
+                                Pad1 = 0,
+                                Pad2 = 0
                             };
                             segments.Add(seg);
 
@@ -2079,12 +2087,32 @@ public class TtfFont
                                 P1 = quad.ControlPoint,
                                 P2 = quad.Point,
                                 SegmentType = 1,
-                                Pad = 0
+                                Pad0 = 0,
+                                Pad1 = 0,
+                                Pad2 = 0
                             };
                             segments.Add(seg);
 
                             UpdateBoundingBoxWithQuad(seg.P0, seg.P1, seg.P2, ref minX, ref minY, ref maxX, ref maxY);
                             currentPoint = quad.Point;
+                        }
+                        else if (segment is CubicBezierSegment cubic)
+                        {
+                            var seg = new GpuSegment
+                            {
+                                P0 = currentPoint,
+                                P1 = cubic.ControlPoint1,
+                                P2 = cubic.ControlPoint2,
+                                P3 = cubic.Point,
+                                SegmentType = 2,
+                                Pad0 = 0,
+                                Pad1 = 0,
+                                Pad2 = 0
+                            };
+                            segments.Add(seg);
+
+                            UpdateBoundingBoxWithCubic(seg.P0, seg.P1, seg.P2, seg.P3, ref minX, ref minY, ref maxX, ref maxY);
+                            currentPoint = cubic.Point;
                         }
                     }
 
@@ -2096,7 +2124,9 @@ public class TtfFont
                             P1 = figure.StartPoint,
                             P2 = Vector2.Zero,
                             SegmentType = 0,
-                            Pad = 0
+                            Pad0 = 0,
+                            Pad1 = 0,
+                            Pad2 = 0
                         };
                         segments.Add(seg);
 
@@ -2177,6 +2207,22 @@ public class TtfFont
                 maxY = Math.Max(maxY, y);
             }
         }
+    }
+
+    private static void UpdateBoundingBoxWithCubic(
+        Vector2 p0,
+        Vector2 p1,
+        Vector2 p2,
+        Vector2 p3,
+        ref float minX,
+        ref float minY,
+        ref float maxX,
+        ref float maxY)
+    {
+        UpdateMinMax(p0, ref minX, ref minY, ref maxX, ref maxY);
+        UpdateMinMax(p1, ref minX, ref minY, ref maxX, ref maxY);
+        UpdateMinMax(p2, ref minX, ref minY, ref maxX, ref maxY);
+        UpdateMinMax(p3, ref minX, ref minY, ref maxX, ref maxY);
     }
 
     private static void UpdateMinMax(Vector2 p, ref float minX, ref float minY, ref float maxX, ref float maxY)

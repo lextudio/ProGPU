@@ -384,12 +384,36 @@ public class SfntFontFaceTests
         Assert.Contains(
             outline!.Figures.SelectMany(static figure => figure.Segments),
             static segment => segment is CubicBezierSegment);
+        var (_, gpuSegments) = font.CompileGpuOutlineData();
+        Assert.Contains(gpuSegments, static segment => segment.SegmentType == 2);
+        Assert.Equal(48, System.Runtime.InteropServices.Marshal.SizeOf<GpuSegment>());
         Assert.True(font.TryGetGlyphBounds(glyphIndex, out var xMin, out var yMin, out var xMax, out var yMax));
         Assert.Equal((short)100, xMin);
         Assert.Equal((short)0, yMin);
         Assert.Equal((short)400, xMax);
         Assert.Equal((short)750, yMax);
         Assert.Equal("OTTO", Encoding.ASCII.GetString(font.FontData.Span[..4]));
+    }
+
+    [Fact]
+    public void TtfFontLoadsCffOutlinesFromTrueTypeCollectionFace()
+    {
+        byte[] woffData = Convert.FromBase64String(CffWoffFontBase64);
+        byte[] standaloneData = new TtfFont(woffData).FontData.ToArray();
+        byte[] collectionData = BuildSingleFaceTtc(standaloneData);
+
+        var font = new TtfFont(collectionData, 0);
+        ushort glyphIndex = font.GetGlyphIndex('A');
+        PathGeometry? outline = font.GetGlyphOutline(glyphIndex);
+
+        Assert.Equal("ProGPU CFF Test", font.FamilyName);
+        Assert.Equal(0, font.FaceIndex);
+        Assert.True(font.HasCffOutlines);
+        Assert.Equal((ushort)1, glyphIndex);
+        Assert.NotNull(outline);
+        Assert.Contains(
+            outline!.Figures.SelectMany(static figure => figure.Segments),
+            static segment => segment is CubicBezierSegment);
     }
 
     [Fact]
@@ -575,6 +599,63 @@ public class SfntFontFaceTests
         {
             stream.Position = faceOffsets[i];
             WriteSfntWithTables(writer, faceOffsets[i], faceTables[i]);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static byte[] BuildSingleFaceTtc(byte[] sfnt)
+    {
+        const uint faceOffset = 16;
+        if (sfnt.Length < 12)
+        {
+            throw new ArgumentException("SFNT data is truncated.", nameof(sfnt));
+        }
+
+        ushort tableCount = ReadUShort(sfnt, 4);
+        int sourceDirectoryEnd = checked(12 + tableCount * 16);
+        if (sourceDirectoryEnd > sfnt.Length)
+        {
+            throw new ArgumentException("SFNT table directory is truncated.", nameof(sfnt));
+        }
+
+        int targetTableOffset = Align4(checked((int)faceOffset + sourceDirectoryEnd));
+        var targetOffsets = new uint[tableCount];
+        for (int i = 0; i < tableCount; i++)
+        {
+            int sourceRecordOffset = 12 + i * 16;
+            uint tableLength = ReadUInt(sfnt, sourceRecordOffset + 12);
+            targetOffsets[i] = checked((uint)targetTableOffset);
+            targetTableOffset = Align4(checked(targetTableOffset + checked((int)tableLength)));
+        }
+
+        using var stream = new MemoryStream(new byte[targetTableOffset], writable: true);
+        using var writer = new BinaryWriter(stream);
+        WriteTag(writer, "ttcf");
+        WriteUInt(writer, 0x00010000);
+        WriteUInt(writer, 1);
+        WriteUInt(writer, faceOffset);
+
+        stream.Position = faceOffset;
+        writer.Write(sfnt, 0, 12);
+        for (int i = 0; i < tableCount; i++)
+        {
+            int sourceRecordOffset = 12 + i * 16;
+            writer.Write(sfnt, sourceRecordOffset, 8);
+            WriteUInt(writer, targetOffsets[i]);
+            uint tableLength = ReadUInt(sfnt, sourceRecordOffset + 12);
+            WriteUInt(writer, tableLength);
+
+            uint sourceTableOffset = ReadUInt(sfnt, sourceRecordOffset + 8);
+            if (sourceTableOffset > sfnt.Length || tableLength > sfnt.Length - sourceTableOffset)
+            {
+                throw new ArgumentException("SFNT table is outside the source data.", nameof(sfnt));
+            }
+
+            long returnPosition = stream.Position;
+            stream.Position = targetOffsets[i];
+            writer.Write(sfnt, checked((int)sourceTableOffset), checked((int)tableLength));
+            stream.Position = returnPosition;
         }
 
         return stream.ToArray();
@@ -1077,5 +1158,20 @@ public class SfntFontFaceTests
         writer.Write((byte)(value >> 16));
         writer.Write((byte)(value >> 8));
         writer.Write((byte)value);
+    }
+
+    private static int Align4(int value) => checked((value + 3) & ~3);
+
+    private static ushort ReadUShort(byte[] data, int offset)
+    {
+        return (ushort)((data[offset] << 8) | data[offset + 1]);
+    }
+
+    private static uint ReadUInt(byte[] data, int offset)
+    {
+        return (uint)((data[offset] << 24) |
+                      (data[offset + 1] << 16) |
+                      (data[offset + 2] << 8) |
+                       data[offset + 3]);
     }
 }

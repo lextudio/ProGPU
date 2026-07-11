@@ -176,6 +176,55 @@ sealed class SfntFontFace
         return false;
     }
 
+    internal byte[] CreateStandaloneFontData()
+    {
+        SfntTableRecord[] records = _tables.Values
+            .OrderBy(static record => record.Tag, StringComparer.Ordinal)
+            .ToArray();
+        if (records.Length == 0 || records.Length > ushort.MaxValue)
+        {
+            throw new FormatException("SFNT face does not contain a valid table directory.");
+        }
+
+        int directoryLength = checked(12 + records.Length * 16);
+        int dataOffset = Align4(directoryLength);
+        int resultLength = dataOffset;
+        foreach (SfntTableRecord record in records)
+        {
+            resultLength = Align4(checked(resultLength + checked((int)record.Length)));
+        }
+
+        var result = new byte[resultLength];
+        if (_tables.ContainsKey("CFF ") || _tables.ContainsKey("CFF2"))
+        {
+            Encoding.ASCII.GetBytes("OTTO", result.AsSpan(0, 4));
+        }
+        else
+        {
+            _data.AsSpan(checked((int)BaseOffset), 4).CopyTo(result);
+        }
+
+        ushort tableCount = checked((ushort)records.Length);
+        WriteUShort(result, 4, tableCount);
+        WriteSearchParameters(result, tableCount);
+
+        int targetOffset = dataOffset;
+        for (int i = 0; i < records.Length; i++)
+        {
+            SfntTableRecord record = records[i];
+            int recordOffset = 12 + i * 16;
+            Encoding.ASCII.GetBytes(record.Tag, result.AsSpan(recordOffset, 4));
+            WriteUInt(result, recordOffset + 4, record.Checksum);
+            WriteUInt(result, recordOffset + 8, checked((uint)targetOffset));
+            WriteUInt(result, recordOffset + 12, record.Length);
+            _data.AsSpan(checked((int)record.Offset), checked((int)record.Length))
+                .CopyTo(result.AsSpan(targetOffset));
+            targetOffset = Align4(checked(targetOffset + checked((int)record.Length)));
+        }
+
+        return result;
+    }
+
     public IReadOnlyList<string> GetNames(ushort nameId)
     {
         if (!TryGetTable("name", out ReadOnlyMemory<byte> tableMemory))
@@ -832,6 +881,38 @@ sealed class SfntFontFace
     private static short ReadShort(ReadOnlySpan<byte> data, int offset)
     {
         return unchecked((short)ReadUShort(data, offset));
+    }
+
+    private static int Align4(int value) => checked((value + 3) & ~3);
+
+    private static void WriteSearchParameters(Span<byte> data, ushort tableCount)
+    {
+        ushort powerOfTwo = 1;
+        ushort entrySelector = 0;
+        while (powerOfTwo <= tableCount / 2)
+        {
+            powerOfTwo *= 2;
+            entrySelector++;
+        }
+
+        ushort searchRange = checked((ushort)(powerOfTwo * 16));
+        WriteUShort(data, 6, searchRange);
+        WriteUShort(data, 8, entrySelector);
+        WriteUShort(data, 10, checked((ushort)(tableCount * 16 - searchRange)));
+    }
+
+    private static void WriteUShort(Span<byte> data, int offset, ushort value)
+    {
+        data[offset] = (byte)(value >> 8);
+        data[offset + 1] = (byte)value;
+    }
+
+    private static void WriteUInt(Span<byte> data, int offset, uint value)
+    {
+        data[offset] = (byte)(value >> 24);
+        data[offset + 1] = (byte)(value >> 16);
+        data[offset + 2] = (byte)(value >> 8);
+        data[offset + 3] = (byte)value;
     }
 
     private static bool CanRead(ReadOnlySpan<byte> data, int offset, int length)

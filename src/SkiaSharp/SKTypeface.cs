@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using ProGPU.Text;
 
@@ -543,60 +544,282 @@ public class SKFontManager : IDisposable
 
     public SKTypeface? MatchCharacter(string? familyName, SKFontStyle style, string[] bcp47, int codepoint)
     {
-        var systemFonts = FontApi.GetSystemFonts();
-        // First try the requested family
-        if (!string.IsNullOrEmpty(familyName))
+        if (codepoint < 0 || codepoint > 0x10FFFF)
         {
-            foreach (var font in systemFonts)
+            return null;
+        }
+
+        var systemFonts = FontApi.GetSystemFonts();
+        var visited = new HashSet<(string Path, int FaceIndex)>();
+        if (!string.IsNullOrWhiteSpace(familyName) &&
+            TryMatchFamily(systemFonts, familyName, style, codepoint, visited, out var requestedTypeface))
+        {
+            return requestedTypeface;
+        }
+
+        IReadOnlyList<string> fallbackFamilies = GetFallbackFamilyPreferences(bcp47, codepoint);
+        for (int i = 0; i < fallbackFamilies.Count; i++)
+        {
+            if (TryMatchFamily(systemFonts, fallbackFamilies[i], style, codepoint, visited, out var localeTypeface))
             {
-                if (font.FamilyName.Equals(familyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        if (FontApi.ContainsGlyph(font, (uint)codepoint))
-                        {
-                            var ttf = SKTypeface.CreateFont(font);
-                            bool isBold = style.Weight >= (int)SKFontStyleWeight.SemiBold;
-                            bool isItalic = style.Slant != SKFontStyleSlant.Upright;
-                            return new SKTypeface(
-                                ttf,
-                                font.FamilyName,
-                                isBold,
-                                isItalic,
-                                style.Weight,
-                                style.Width,
-                                style.Slant);
-                        }
-                    }
-                    catch { }
-                }
+                return localeTypeface;
             }
         }
 
-        // Search other fonts that support the character
-        foreach (var font in systemFonts)
+        for (int stylePass = 0; stylePass < 2; stylePass++)
         {
-            try
+            bool requireStyleMatch = stylePass == 0;
+            foreach (FontInfo font in systemFonts)
             {
-                if (FontApi.ContainsGlyph(font, (uint)codepoint))
+                if ((requireStyleMatch && !MatchesRequestedStyle(font, style)) ||
+                    !visited.Add((font.FilePath, font.FaceIndex)))
                 {
-                    var ttf = SKTypeface.CreateFont(font);
-                    bool isBold = style.Weight >= (int)SKFontStyleWeight.SemiBold;
-                    bool isItalic = style.Slant != SKFontStyleSlant.Upright;
-                    return new SKTypeface(
-                        ttf,
-                        font.FamilyName,
-                        isBold,
-                        isItalic,
-                        style.Weight,
-                        style.Width,
-                        style.Slant);
+                    continue;
+                }
+
+                if (TryCreateRenderableTypeface(font, style, codepoint, out var typeface))
+                {
+                    return typeface;
                 }
             }
-            catch { }
         }
 
         return null;
+    }
+
+    internal static IReadOnlyList<string> GetFallbackFamilyPreferences(
+        IReadOnlyList<string>? bcp47,
+        int codepoint)
+    {
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(params string[] families)
+        {
+            foreach (string family in families)
+            {
+                if (seen.Add(family))
+                {
+                    result.Add(family);
+                }
+            }
+        }
+
+        void AddLanguage(string language)
+        {
+            string normalized = language.Trim().Replace('_', '-').ToLowerInvariant();
+            if (normalized == "ja" || normalized.StartsWith("ja-", StringComparison.Ordinal))
+            {
+                Add(
+                    "Hiragino Sans",
+                    "Hiragino Kaku Gothic ProN",
+                    "Yu Gothic",
+                    "Meiryo",
+                    "Noto Sans CJK JP",
+                    "Noto Sans JP",
+                    ".Aqua Kana");
+                return;
+            }
+
+            if (normalized == "ko" || normalized.StartsWith("ko-", StringComparison.Ordinal))
+            {
+                Add(
+                    "Apple SD Gothic Neo",
+                    "AppleGothic",
+                    "Malgun Gothic",
+                    "Noto Sans CJK KR",
+                    "Noto Sans KR");
+                return;
+            }
+
+            if (normalized == "zh" || normalized.StartsWith("zh-", StringComparison.Ordinal))
+            {
+                bool traditional = normalized.Contains("-hant", StringComparison.Ordinal) ||
+                                   normalized.EndsWith("-tw", StringComparison.Ordinal) ||
+                                   normalized.EndsWith("-hk", StringComparison.Ordinal) ||
+                                   normalized.EndsWith("-mo", StringComparison.Ordinal);
+                if (traditional)
+                {
+                    Add(
+                        "PingFang TC",
+                        "Heiti TC",
+                        "Noto Sans CJK TC",
+                        "Noto Sans TC",
+                        "Microsoft JhengHei",
+                        "Songti TC");
+                }
+                else
+                {
+                    Add(
+                        "PingFang SC",
+                        "Heiti SC",
+                        "Hiragino Sans GB",
+                        "Noto Sans CJK SC",
+                        "Noto Sans SC",
+                        "Microsoft YaHei",
+                        "SimHei",
+                        "Songti SC");
+                }
+            }
+        }
+
+        if (bcp47 is not null)
+        {
+            for (int i = 0; i < bcp47.Count; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(bcp47[i]))
+                {
+                    AddLanguage(bcp47[i]);
+                }
+            }
+        }
+
+        if (codepoint is >= 0x3040 and <= 0x30FF)
+        {
+            AddLanguage("ja");
+        }
+        else if (codepoint is >= 0xAC00 and <= 0xD7AF ||
+                 codepoint is >= 0x1100 and <= 0x11FF)
+        {
+            AddLanguage("ko");
+        }
+        else if (codepoint is >= 0x3400 and <= 0x9FFF ||
+                 codepoint is >= 0xF900 and <= 0xFAFF ||
+                 codepoint is >= 0x20000 and <= 0x323AF)
+        {
+            AddLanguage("zh-Hans");
+        }
+
+        return result;
+    }
+
+    private static bool TryMatchFamily(
+        IReadOnlyList<FontInfo> fonts,
+        string familyName,
+        SKFontStyle style,
+        int codepoint,
+        HashSet<(string Path, int FaceIndex)> visited,
+        out SKTypeface? typeface)
+    {
+        SKTypeface? bestTypeface = null;
+        int bestStyleDistance = int.MaxValue;
+        for (int i = 0; i < fonts.Count; i++)
+        {
+            FontInfo font = fonts[i];
+            if (!MatchesFamily(font, familyName) ||
+                !visited.Add((font.FilePath, font.FaceIndex)) ||
+                !TryCreateRenderableTypeface(font, style, codepoint, out var candidate) ||
+                candidate is null)
+            {
+                continue;
+            }
+
+            int styleDistance = GetStyleDistance(candidate.Font, style);
+            if (styleDistance < bestStyleDistance)
+            {
+                bestTypeface = candidate;
+                bestStyleDistance = styleDistance;
+                if (styleDistance == 0)
+                {
+                    break;
+                }
+            }
+        }
+
+        typeface = bestTypeface;
+        return typeface is not null;
+    }
+
+    private static int GetStyleDistance(TtfFont font, SKFontStyle style)
+    {
+        int actualWeight = font.WeightClass == 0
+            ? (int)SKFontStyleWeight.Normal
+            : font.WeightClass;
+        int actualWidth = font.WidthClass == 0
+            ? (int)SKFontStyleWidth.Normal
+            : font.WidthClass;
+        bool wantsItalic = style.Slant != SKFontStyleSlant.Upright;
+        int slantDistance = wantsItalic == font.IsItalic ? 0 : 10_000;
+        int widthDistance = Math.Abs(actualWidth - style.Width) * 1_000;
+        int weightDistance = Math.Abs(actualWeight - style.Weight);
+        return slantDistance + widthDistance + weightDistance;
+    }
+
+    private static bool MatchesFamily(FontInfo font, string familyName)
+    {
+        return font.FamilyName.Equals(familyName, StringComparison.OrdinalIgnoreCase) ||
+               font.Name.Equals(familyName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesRequestedStyle(FontInfo font, SKFontStyle style)
+    {
+        bool wantsBold = style.Weight >= (int)SKFontStyleWeight.SemiBold;
+        bool wantsItalic = style.Slant != SKFontStyleSlant.Upright;
+        bool isBold = HasStyleToken(font.Name, "bold") ||
+                      HasStyleToken(font.Name, "semibold") ||
+                      HasStyleToken(font.Name, "demibold") ||
+                      HasStyleToken(font.Name, "black") ||
+                      HasStyleToken(font.Name, "heavy");
+        bool isItalic = HasStyleToken(font.Name, "italic") || HasStyleToken(font.Name, "oblique");
+        return wantsBold == isBold && wantsItalic == isItalic;
+    }
+
+    private static bool HasStyleToken(string value, string token) =>
+        value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool TryCreateRenderableTypeface(
+        FontInfo font,
+        SKFontStyle style,
+        int codepoint,
+        out SKTypeface? typeface)
+    {
+        typeface = null;
+        try
+        {
+            if (!FontApi.ContainsGlyph(font, (uint)codepoint))
+            {
+                return false;
+            }
+
+            TtfFont ttf = SKTypeface.CreateFont(font);
+            ushort glyph = ttf.GetGlyphIndex((uint)codepoint);
+            if (glyph == 0 || !CanRenderGlyph(ttf, glyph, codepoint))
+            {
+                return false;
+            }
+
+            typeface = new SKTypeface(
+                ttf,
+                font.FamilyName,
+                style.Weight >= (int)SKFontStyleWeight.SemiBold,
+                style.Slant != SKFontStyleSlant.Upright,
+                style.Weight,
+                style.Width,
+                style.Slant);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool CanRenderGlyph(TtfFont font, ushort glyph, int codepoint)
+    {
+        if (font.GetGlyphOutline(glyph) is not null ||
+            font.HasColorLayers(glyph) ||
+            font.TryGetBitmapGlyph(glyph, 64f, out _))
+        {
+            return true;
+        }
+
+        string text = char.ConvertFromUtf32(codepoint);
+        UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(text, 0);
+        return category is UnicodeCategory.Control or
+               UnicodeCategory.Format or
+               UnicodeCategory.SpaceSeparator or
+               UnicodeCategory.LineSeparator or
+               UnicodeCategory.ParagraphSeparator;
     }
 
     public SKTypeface? MatchCharacter(int codepoint) =>
