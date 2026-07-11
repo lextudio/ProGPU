@@ -339,6 +339,19 @@ public class SKCanvas : IDisposable
         SKImageFilter root)
     {
         var sourceColorSpace = GetRootImageFilterColorSpace(root);
+        var converted = ConvertTextureToSrgb(texture, sourceColorSpace);
+        if (!ReferenceEquals(converted, texture))
+        {
+            ReleaseOwnedLayerTexture(texture);
+        }
+
+        return converted;
+    }
+
+    private GpuTexture ConvertTextureToSrgb(
+        GpuTexture texture,
+        SKColorSpace? sourceColorSpace)
+    {
         if (sourceColorSpace == null ||
             sourceColorSpace.TransferFunction == SKColorSpaceTransferFn.Srgb)
         {
@@ -351,10 +364,17 @@ public class SKCanvas : IDisposable
             table,
             table,
             table);
-        var converted = RenderColorFilter(texture, colorFilter, cropRect: null);
+        return RenderColorFilter(texture, colorFilter, cropRect: null);
+    }
+
+    private GpuTexture ConvertImageTextureToSrgb(
+        GpuTexture texture,
+        SKColorSpace? sourceColorSpace)
+    {
+        var converted = ConvertTextureToSrgb(texture, sourceColorSpace);
         if (!ReferenceEquals(converted, texture))
         {
-            ReleaseOwnedLayerTexture(texture);
+            RetainLayerTextureForDeferredCommand(converted);
         }
 
         return converted;
@@ -2387,6 +2407,7 @@ public class SKCanvas : IDisposable
         LimitTileRange(ref startY, ref endY);
 
         var texture = RetainImageTexture(imageShader.Image);
+        texture = ConvertImageTextureToSrgb(texture, imageShader.Image.ColorSpace);
         texture = ApplyTextureColorFilter(texture, shaderColorFilter);
         texture = ApplyTextureColorFilter(texture, paintColorFilter);
         _context.PushGeometryClip(clipGeometry, _currentMatrix.ToMatrix4x4());
@@ -2540,6 +2561,7 @@ public class SKCanvas : IDisposable
         var retainedTexture = RetainImageTexture(
             image,
             samplingMode == TextureSamplingMode.LinearMipmap);
+        retainedTexture = ConvertImageTextureToSrgb(retainedTexture, image.ColorSpace);
         if (paint?.ColorFilter is { } colorFilter)
         {
             var filteredTexture = RenderColorFilter(retainedTexture, colorFilter, cropRect: null);

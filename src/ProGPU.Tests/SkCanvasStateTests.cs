@@ -732,6 +732,81 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void DrawImageConvertsLinearSourceToSrgb()
+    {
+        using var linearColorSpace = SKColorSpace.CreateSrgbLinear();
+        using var bitmap = new SKBitmap(new SKImageInfo(
+            1,
+            1,
+            SKColorType.Rgba8888,
+            SKAlphaType.Unpremul,
+            linearColorSpace));
+        bitmap.SetPixel(0, 0, new SKColor(64, 0, 0, 255));
+        using var image = SKImage.FromBitmap(bitmap);
+        using var srgbColorSpace = SKColorSpace.CreateSrgb();
+        using var surface = SKSurface.Create(new SKImageInfo(
+            4,
+            4,
+            SKColorType.Rgba8888,
+            SKAlphaType.Premul,
+            srgbColorSpace));
+        using var paint = new SKPaint { IsAntialias = false };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.DrawImage(
+            image,
+            new SKRect(0f, 0f, 1f, 1f),
+            new SKRect(0f, 0f, 4f, 4f),
+            paint);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+        Assert.InRange(pixels[0], (byte)136, (byte)138);
+        Assert.Equal((byte)0, pixels[1]);
+        Assert.Equal((byte)0, pixels[2]);
+        Assert.Equal((byte)255, pixels[3]);
+    }
+
+    [Fact]
+    public void ImageShaderConvertsLinearSourceToSrgb()
+    {
+        using var linearColorSpace = SKColorSpace.CreateSrgbLinear();
+        using var bitmap = new SKBitmap(new SKImageInfo(
+            1,
+            1,
+            SKColorType.Rgba8888,
+            SKAlphaType.Unpremul,
+            linearColorSpace));
+        bitmap.SetPixel(0, 0, new SKColor(64, 0, 0, 255));
+        using var image = SKImage.FromBitmap(bitmap);
+        using var shader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp);
+        using var paint = new SKPaint
+        {
+            IsAntialias = false,
+            Shader = shader
+        };
+        using var srgbColorSpace = SKColorSpace.CreateSrgb();
+        using var surface = SKSurface.Create(new SKImageInfo(
+            4,
+            4,
+            SKColorType.Rgba8888,
+            SKAlphaType.Premul,
+            srgbColorSpace));
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.DrawRect(new SKRect(0f, 0f, 4f, 4f), paint);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+        Assert.InRange(pixels[0], (byte)136, (byte)138);
+        Assert.Equal((byte)0, pixels[1]);
+        Assert.Equal((byte)0, pixels[2]);
+        Assert.Equal((byte)255, pixels[3]);
+    }
+
+    [Fact]
     public void TransformedPicturePathKeepsGradientInLocalCoordinates()
     {
         using var recorder = new SKPictureRecorder();
