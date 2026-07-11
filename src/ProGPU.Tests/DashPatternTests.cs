@@ -21,7 +21,7 @@ public sealed class DashPatternTests
     }
 
     [Fact]
-    public void TryCreateConvertsZeroLengthDrawnDashesToStrokeThickness()
+    public void TryCreateKeepsZeroLengthDrawnDashesSubpixelSized()
     {
         Assert.True(DashPattern.TryCreate(
             new[] { 0.0, 2.0 },
@@ -29,17 +29,21 @@ public sealed class DashPatternTests
             strokeThickness: 3.0,
             out var pattern));
 
-        Assert.Equal(new[] { 3f, 6f }, pattern.Intervals.ToArray());
+        Assert.InRange(pattern.Intervals[0], 0f, 0.01f);
+        Assert.Equal(6f, pattern.Intervals[1]);
     }
 
     [Fact]
-    public void TryCreateRejectsZeroLengthGaps()
+    public void TryCreateKeepsZeroLengthGapsSubpixelSized()
     {
-        Assert.False(DashPattern.TryCreate(
+        Assert.True(DashPattern.TryCreate(
             new[] { 1.0, 0.0 },
             dashOffset: 0.0,
             strokeThickness: 2.0,
-            out _));
+            out var pattern));
+
+        Assert.Equal(2f, pattern.Intervals[0]);
+        Assert.InRange(pattern.Intervals[1], 0f, 0.01f);
     }
 
     [Fact]

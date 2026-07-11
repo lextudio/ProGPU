@@ -365,6 +365,13 @@ public unsafe class WgpuContext : IDisposable
     
     private bool _isDisposed;
     public bool IsDisposed => _isDisposed;
+    public bool IsInitialized =>
+        !_isDisposed &&
+        Wgpu != null &&
+        Instance != null &&
+        Adapter != null &&
+        Device != null &&
+        Queue != null;
     private uint _lastWidth = 1;
     private uint _lastHeight = 1;
     private bool _vsync = false;
@@ -407,7 +414,7 @@ public unsafe class WgpuContext : IDisposable
             for (var i = 0; i < _activeContexts.Count; i++)
             {
                 var active = _activeContexts[i];
-                if (!active.IsDisposed)
+                if (active.IsInitialized)
                 {
                     context = active;
                     return true;
@@ -470,14 +477,6 @@ public unsafe class WgpuContext : IDisposable
         }
 
         SafeLog($"[WGPUCONTEXT] Initialize started, window exists={window != null}\n");
-        lock (_activeContexts)
-        {
-            if (!_activeContexts.Contains(this))
-            {
-                _activeContexts.Add(this);
-            }
-        }
-        Current = this;
         _window = window;
         Wgpu = WebGPU.GetApi();
         
@@ -611,6 +610,17 @@ public unsafe class WgpuContext : IDisposable
             ConfigureSwapChain((uint)window.FramebufferSize.X, (uint)window.FramebufferSize.Y);
             SafeLog("[WGPUCONTEXT] Configuring SwapChain finished\n");
         }
+
+        lock (_activeContexts)
+        {
+            if (!_activeContexts.Contains(this))
+            {
+                _activeContexts.Add(this);
+            }
+        }
+
+        Current = this;
+
     }
 
     private static bool CanCreateNativeSurface(IWindow window)

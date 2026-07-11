@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
 using Microsoft.UI.Xaml;
 using ProGPU.Scene;
 using ProGPU.Tests.Headless;
@@ -13,6 +14,30 @@ namespace ProGPU.Tests;
 
 public sealed class TextRenderingModeRenderTests
 {
+    [Fact]
+    public void TransformedTextRasterizationUsesDeviceScaleWithoutChangingGeometry()
+    {
+        var method = typeof(Compositor).GetMethod(
+            "ResolveTextRasterization",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var result = Assert.IsType<ValueTuple<float, float, float>>(method.Invoke(
+            null,
+            new object[]
+            {
+                30f,
+                Matrix4x4.CreateScale(5f / 7f),
+                1f,
+                1f
+            }));
+
+        Assert.Equal(1f, result.Item1);
+        Assert.Equal(21.5f, result.Item2);
+        Assert.Equal(30f / 21.5f, result.Item3, 5);
+        Assert.Equal(30f, result.Item2 * result.Item3, 5);
+    }
+
     [Fact]
     public void IsTextAliasedCompatibilityPropertyMapsTextRenderingMode()
     {

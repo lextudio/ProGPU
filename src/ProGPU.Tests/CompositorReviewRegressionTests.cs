@@ -1676,6 +1676,57 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public async Task ConcurrentRenderOffscreenCallsKeepFrameStateIsolated()
+    {
+        using var window = new HeadlessWindow(16, 16);
+        using var redTarget = new GpuTexture(
+            window.Context,
+            16,
+            16,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "Concurrent Red Target");
+        using var greenTarget = new GpuTexture(
+            window.Context,
+            16,
+            16,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "Concurrent Green Target");
+        var redVisual = new DrawingVisual { Size = new Vector2(16f, 16f) };
+        var greenVisual = new DrawingVisual { Size = new Vector2(16f, 16f) };
+        redVisual.Context.DrawRectangle(
+            new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+            null,
+            new Rect(0f, 0f, 16f, 16f));
+        greenVisual.Context.DrawRectangle(
+            new SolidColorBrush(new Vector4(0f, 1f, 0f, 1f)),
+            null,
+            new Rect(0f, 0f, 16f, 16f));
+
+        await Task.WhenAll(
+            Task.Run(() => window.Compositor.RenderOffscreen(
+                redVisual,
+                16,
+                16,
+                redTarget,
+                0f,
+                1f)),
+            Task.Run(() => window.Compositor.RenderOffscreen(
+                greenVisual,
+                16,
+                16,
+                greenTarget,
+                0f,
+                1f)));
+
+        var red = ReadPixel(redTarget.ReadPixels(), redTarget.Width, 8, 8);
+        var green = ReadPixel(greenTarget.ReadPixels(), greenTarget.Width, 8, 8);
+        Assert.True(red.R >= 220 && red.G <= 35 && red.B <= 35, $"Expected red target, found {red}.");
+        Assert.True(green.G >= 220 && green.R <= 35 && green.B <= 35, $"Expected green target, found {green}.");
+    }
+
+    [Fact]
     public void RenderSceneEndsExtensionFrameWhenCompilationThrows()
     {
         using var window = new HeadlessWindow(32, 32);

@@ -1718,6 +1718,7 @@ public class DrawingContext : IRenderDataProvider
                 Invert = imageEffect.Invert,
                 BlurSigma = imageEffect.BlurSigma,
                 ColorMatrix = imageEffect.ColorMatrix,
+                LuminanceToAlpha = imageEffect.LuminanceToAlpha,
                 MaskTexture = imageEffect.MaskTexture,
                 LastError = imageEffect.LastError
             },

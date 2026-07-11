@@ -354,11 +354,12 @@ public class DiagnosticsLoggingSourceTests
     {
         string source = ReadSource("src", "ProGPU.Compute", "ComputeAccelerator.cs");
 
-        Assert.Contains("Span<nint> bindGroupsToRelease = stackalloc nint[iterations * 2];", source, StringComparison.Ordinal);
+        Assert.Contains("horizontalParams.WriteSingle(new GaussianBlurParams(sigmaX));", source, StringComparison.Ordinal);
+        Assert.Contains("verticalParams.WriteSingle(new GaussianBlurParams(sigmaY));", source, StringComparison.Ordinal);
         Assert.Contains("var bindGroupToReleaseCount = 0;", source, StringComparison.Ordinal);
-        Assert.Contains("RunBlurPass(encoder, _blurHorizPipeline, blurHLayout, hInput, temp, width, height, bindGroupsToRelease, ref bindGroupToReleaseCount);", source, StringComparison.Ordinal);
-        Assert.Contains("RunBlurPass(encoder, _blurVertPipeline, blurVLayout, temp, destination, width, height, bindGroupsToRelease, ref bindGroupToReleaseCount);", source, StringComparison.Ordinal);
         Assert.Contains("Span<nint> bindGroupsToRelease = stackalloc nint[2];", source, StringComparison.Ordinal);
+        Assert.Contains("horizontalParams,", source, StringComparison.Ordinal);
+        Assert.Contains("verticalParams,", source, StringComparison.Ordinal);
         Assert.Contains("RunShadowPass(encoder, _shadowBlurHorizPipeline, shadowHLayout, source, temp, paramsBuffer, width, height, bindGroupsToRelease, ref bindGroupToReleaseCount);", source, StringComparison.Ordinal);
         Assert.Contains("RunShadowPass(encoder, _shadowBlurVertPipeline, shadowVLayout, temp, destination, paramsBuffer, width, height, bindGroupsToRelease, ref bindGroupToReleaseCount);", source, StringComparison.Ordinal);
         Assert.Contains("ReleaseBindGroups(bindGroupsToRelease[..bindGroupToReleaseCount]);", source, StringComparison.Ordinal);

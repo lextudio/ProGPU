@@ -17,6 +17,13 @@ public unsafe class ComputeAccelerator : IDisposable
     private ComputePipeline* _shadowPipeline;
     private ComputePipeline* _shadowBlurHorizPipeline;
     private ComputePipeline* _shadowBlurVertPipeline;
+    private ComputePipeline* _morphologyPipeline;
+    private ComputePipeline* _imageBlendPipeline;
+    private ComputePipeline* _colorTablePipeline;
+    private ComputePipeline* _arithmeticCompositePipeline;
+    private ComputePipeline* _displacementMapPipeline;
+    private ComputePipeline* _matrixConvolutionPipeline;
+    private ComputePipeline* _imageLightingPipeline;
 
 
     private bool _isDisposed;
@@ -50,6 +57,162 @@ public unsafe class ComputeAccelerator : IDisposable
         }
     }
 
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    public struct GaussianBlurParams
+    {
+        [FieldOffset(0)] public float Sigma;
+        [FieldOffset(4)] public uint Radius;
+
+        public GaussianBlurParams(float sigma)
+        {
+            Sigma = float.IsFinite(sigma) ? Math.Max(0f, sigma) : 0f;
+            Radius = (uint)Math.Clamp((int)MathF.Ceiling(Sigma * 3f), 0, 128);
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    public struct MorphologyParams
+    {
+        [FieldOffset(0)] public int DirectionX;
+        [FieldOffset(4)] public int DirectionY;
+        [FieldOffset(8)] public uint Radius;
+        [FieldOffset(12)] public uint Dilate;
+
+        public MorphologyParams(int directionX, int directionY, uint radius, bool dilate)
+        {
+            DirectionX = directionX;
+            DirectionY = directionY;
+            Radius = radius;
+            Dilate = dilate ? 1u : 0u;
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    public struct ImageBlendParams
+    {
+        [FieldOffset(0)] public uint Mode;
+        [FieldOffset(4)] public uint LinearRgb;
+        [FieldOffset(8)] private uint _padding0;
+        [FieldOffset(12)] private uint _padding1;
+
+        public ImageBlendParams(GpuBlendMode mode, bool linearRgb)
+        {
+            Mode = (uint)mode;
+            LinearRgb = linearRgb ? 1u : 0u;
+            _padding0 = 0u;
+            _padding1 = 0u;
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
+    public struct ArithmeticCompositeParams
+    {
+        [FieldOffset(0)] public Vector4 Coefficients;
+        [FieldOffset(16)] public uint EnforcePremultipliedColor;
+        [FieldOffset(20)] private uint _padding0;
+        [FieldOffset(24)] private uint _padding1;
+        [FieldOffset(28)] private uint _padding2;
+
+        public ArithmeticCompositeParams(
+            float k1,
+            float k2,
+            float k3,
+            float k4,
+            bool enforcePremultipliedColor)
+        {
+            Coefficients = new Vector4(k1, k2, k3, k4);
+            EnforcePremultipliedColor = enforcePremultipliedColor ? 1u : 0u;
+            _padding0 = 0u;
+            _padding1 = 0u;
+            _padding2 = 0u;
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    public struct DisplacementMapParams
+    {
+        [FieldOffset(0)] public float Scale;
+        [FieldOffset(4)] public uint XChannel;
+        [FieldOffset(8)] public uint YChannel;
+        [FieldOffset(12)] private uint _padding;
+
+        public DisplacementMapParams(float scale, uint xChannel, uint yChannel)
+        {
+            Scale = float.IsFinite(scale) ? scale : 0f;
+            XChannel = Math.Min(xChannel, 3u);
+            YChannel = Math.Min(yChannel, 3u);
+            _padding = 0u;
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 32)]
+    public struct MatrixConvolutionParams
+    {
+        [FieldOffset(0)] public int KernelWidth;
+        [FieldOffset(4)] public int KernelHeight;
+        [FieldOffset(8)] public int KernelOffsetX;
+        [FieldOffset(12)] public int KernelOffsetY;
+        [FieldOffset(16)] public float Gain;
+        [FieldOffset(20)] public float Bias;
+        [FieldOffset(24)] public uint TileMode;
+        [FieldOffset(28)] public uint ConvolveAlpha;
+
+        public MatrixConvolutionParams(
+            int kernelWidth,
+            int kernelHeight,
+            int kernelOffsetX,
+            int kernelOffsetY,
+            float gain,
+            float bias,
+            uint tileMode,
+            bool convolveAlpha)
+        {
+            KernelWidth = kernelWidth;
+            KernelHeight = kernelHeight;
+            KernelOffsetX = kernelOffsetX;
+            KernelOffsetY = kernelOffsetY;
+            Gain = float.IsFinite(gain) ? gain : 0f;
+            Bias = float.IsFinite(bias) ? bias : 0f;
+            TileMode = Math.Min(tileMode, 3u);
+            ConvolveAlpha = convolveAlpha ? 1u : 0u;
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 80)]
+    public struct ImageLightingParams
+    {
+        [FieldOffset(0)] public Vector4 LightPositionAndType;
+        [FieldOffset(16)] public Vector4 LightTargetAndSpotExponent;
+        [FieldOffset(32)] public Vector4 LightColor;
+        [FieldOffset(48)] public Vector4 SurfaceParams;
+        [FieldOffset(64)] public Vector4 ModeParams;
+
+        public ImageLightingParams(
+            Vector3 lightPosition,
+            uint lightType,
+            Vector3 lightTarget,
+            float spotExponent,
+            Vector4 lightColor,
+            float surfaceScale,
+            float lightingConstant,
+            float shininess,
+            float cutoffAngle,
+            bool specular)
+        {
+            LightPositionAndType = new Vector4(lightPosition, Math.Min(lightType, 2u));
+            LightTargetAndSpotExponent = new Vector4(
+                lightTarget,
+                float.IsFinite(spotExponent) ? Math.Max(0f, spotExponent) : 0f);
+            LightColor = Vector4.Clamp(lightColor, Vector4.Zero, Vector4.One);
+            SurfaceParams = new Vector4(
+                float.IsFinite(surfaceScale) ? surfaceScale : 0f,
+                float.IsFinite(lightingConstant) ? Math.Max(0f, lightingConstant) : 0f,
+                float.IsFinite(shininess) ? Math.Clamp(shininess, 1f, 128f) : 1f,
+                float.IsFinite(cutoffAngle) ? Math.Clamp(MathF.Abs(cutoffAngle), 0f, 90f) : 90f);
+            ModeParams = new Vector4(specular ? 1f : 0f, 0f, 0f, 0f);
+        }
+    }
+
 
 
     public ComputeAccelerator(WgpuContext context)
@@ -76,6 +239,47 @@ public unsafe class ComputeAccelerator : IDisposable
 
         var shShadowBlurV = _cache.GetOrCreateShader("ShadowBlurV", ComputeShaders.ShadowBlurVertical, "ShadowBlurVShader");
         _shadowBlurVertPipeline = _cache.GetOrCreateComputePipeline("ShadowBlurV", shShadowBlurV);
+
+        var morphologyShader = _cache.GetOrCreateShader("Morphology", ComputeShaders.Morphology, "MorphologyShader");
+        _morphologyPipeline = _cache.GetOrCreateComputePipeline("Morphology", morphologyShader);
+
+        var imageBlendShader = _cache.GetOrCreateShader("ImageBlend", ComputeShaders.ImageBlend, "ImageBlendShader");
+        _imageBlendPipeline = _cache.GetOrCreateComputePipeline("ImageBlend", imageBlendShader);
+
+        var colorTableShader = _cache.GetOrCreateShader("ColorTable", ComputeShaders.ColorTable, "ColorTableShader");
+        _colorTablePipeline = _cache.GetOrCreateComputePipeline("ColorTable", colorTableShader);
+
+        var arithmeticCompositeShader = _cache.GetOrCreateShader(
+            "ArithmeticComposite",
+            ComputeShaders.ArithmeticComposite,
+            "ArithmeticCompositeShader");
+        _arithmeticCompositePipeline = _cache.GetOrCreateComputePipeline(
+            "ArithmeticComposite",
+            arithmeticCompositeShader);
+
+        var displacementMapShader = _cache.GetOrCreateShader(
+            "DisplacementMap",
+            ComputeShaders.DisplacementMap,
+            "DisplacementMapShader");
+        _displacementMapPipeline = _cache.GetOrCreateComputePipeline(
+            "DisplacementMap",
+            displacementMapShader);
+
+        var matrixConvolutionShader = _cache.GetOrCreateShader(
+            "MatrixConvolution",
+            ComputeShaders.MatrixConvolution,
+            "MatrixConvolutionShader");
+        _matrixConvolutionPipeline = _cache.GetOrCreateComputePipeline(
+            "MatrixConvolution",
+            matrixConvolutionShader);
+
+        var imageLightingShader = _cache.GetOrCreateShader(
+            "ImageLighting",
+            ComputeShaders.ImageLighting,
+            "ImageLightingShader");
+        _imageLightingPipeline = _cache.GetOrCreateComputePipeline(
+            "ImageLighting",
+            imageLightingShader);
     }
 
     private static void TrackBindGroupForRelease(Span<nint> bindGroupsToRelease, ref int count, BindGroup* bindGroup)
@@ -91,48 +295,14 @@ public unsafe class ComputeAccelerator : IDisposable
         }
     }
 
-    private void RunBlurPass(
-        CommandEncoder* encoder,
-        ComputePipeline* pipeline,
-        BindGroupLayout* layout,
-        GpuTexture input,
-        GpuTexture output,
-        uint width,
-        uint height,
-        Span<nint> bindGroupsToRelease,
-        ref int bindGroupToReleaseCount)
-    {
-        var entries = stackalloc BindGroupEntry[2];
-        entries[0] = new BindGroupEntry { Binding = 0, TextureView = input.ViewPtr };
-        entries[1] = new BindGroupEntry { Binding = 1, TextureView = output.ViewPtr };
-
-        var bgDesc = new BindGroupDescriptor
-        {
-            Layout = layout,
-            EntryCount = 2,
-            Entries = entries
-        };
-        var bg = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bgDesc);
-        TrackBindGroupForRelease(bindGroupsToRelease, ref bindGroupToReleaseCount, bg);
-
-        var passDesc = new ComputePassDescriptor();
-        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDesc);
-        _context.Wgpu.ComputePassEncoderSetPipeline(pass, pipeline);
-        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bg, 0, null);
-
-        uint workgroupX = (width + 15) / 16;
-        uint workgroupY = (height + 15) / 16;
-        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(pass, workgroupX, workgroupY, 1);
-
-        _context.Wgpu.ComputePassEncoderEnd(pass);
-        _context.Wgpu.ComputePassEncoderRelease(pass);
-    }
-
-    public void ApplyGaussianBlur(GpuTexture source, GpuTexture temp, GpuTexture destination, float radius)
+    public void ApplyGaussianBlur(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        float sigmaX,
+        float sigmaY)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
-
-        float snappedRadius = MathF.Round(radius * 2f) / 2f;
 
         uint width = source.Width;
         uint height = source.Height;
@@ -141,8 +311,18 @@ public unsafe class ComputeAccelerator : IDisposable
         temp.Resize(width, height);
         destination.Resize(width, height);
 
-        // Clamp iterations based on blur radius to yield high quality result
-        int iterations = Math.Clamp((int)Math.Round(snappedRadius / 2.5f), 1, 8);
+        using var horizontalParams = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<GaussianBlurParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Gaussian Blur Horizontal Params");
+        using var verticalParams = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<GaussianBlurParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Gaussian Blur Vertical Params");
+        horizontalParams.WriteSingle(new GaussianBlurParams(sigmaX));
+        verticalParams.WriteSingle(new GaussianBlurParams(sigmaY));
 
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compute Blur Encoder") };
         var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
@@ -151,15 +331,31 @@ public unsafe class ComputeAccelerator : IDisposable
         var blurHLayout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_blurHorizPipeline, 0);
         var blurVLayout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_blurVertPipeline, 0);
 
-        Span<nint> bindGroupsToRelease = stackalloc nint[iterations * 2];
+        Span<nint> bindGroupsToRelease = stackalloc nint[2];
         var bindGroupToReleaseCount = 0;
 
-        for (int i = 0; i < iterations; i++)
-        {
-            var hInput = (i == 0) ? source : destination;
-            RunBlurPass(encoder, _blurHorizPipeline, blurHLayout, hInput, temp, width, height, bindGroupsToRelease, ref bindGroupToReleaseCount);
-            RunBlurPass(encoder, _blurVertPipeline, blurVLayout, temp, destination, width, height, bindGroupsToRelease, ref bindGroupToReleaseCount);
-        }
+        RunShadowPass(
+            encoder,
+            _blurHorizPipeline,
+            blurHLayout,
+            source,
+            temp,
+            horizontalParams,
+            width,
+            height,
+            bindGroupsToRelease,
+            ref bindGroupToReleaseCount);
+        RunShadowPass(
+            encoder,
+            _blurVertPipeline,
+            blurVLayout,
+            temp,
+            destination,
+            verticalParams,
+            width,
+            height,
+            bindGroupsToRelease,
+            ref bindGroupToReleaseCount);
 
         // Submit commands to queue
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compute Blur Buffer") };
@@ -176,6 +372,589 @@ public unsafe class ComputeAccelerator : IDisposable
 
         _context.Wgpu.BindGroupLayoutRelease(blurHLayout);
         _context.Wgpu.BindGroupLayoutRelease(blurVLayout);
+    }
+
+    public void ApplyGaussianBlur(GpuTexture source, GpuTexture temp, GpuTexture destination, float sigma) =>
+        ApplyGaussianBlur(source, temp, destination, sigma, sigma);
+
+    public void ApplyMorphology(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        float radiusX,
+        float radiusY,
+        bool dilate)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+
+        var horizontalRadius = (uint)Math.Clamp((int)MathF.Ceiling(radiusX), 0, 128);
+        var verticalRadius = (uint)Math.Clamp((int)MathF.Ceiling(radiusY), 0, 128);
+        if (horizontalRadius == 0 && verticalRadius == 0)
+        {
+            destination.CopyFrom(source);
+            return;
+        }
+
+        var width = source.Width;
+        var height = source.Height;
+        temp.Resize(width, height);
+        destination.Resize(width, height);
+
+        using var horizontalParams = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<MorphologyParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Morphology Horizontal Params");
+        using var verticalParams = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<MorphologyParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Morphology Vertical Params");
+        horizontalParams.WriteSingle(new MorphologyParams(1, 0, horizontalRadius, dilate));
+        verticalParams.WriteSingle(new MorphologyParams(0, 1, verticalRadius, dilate));
+
+        var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compute Morphology Encoder") };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
+        SilkMarshal.Free((nint)encoderDesc.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_morphologyPipeline, 0);
+        Span<nint> bindGroupsToRelease = stackalloc nint[2];
+        var bindGroupToReleaseCount = 0;
+
+        RunShadowPass(
+            encoder,
+            _morphologyPipeline,
+            layout,
+            source,
+            temp,
+            horizontalParams,
+            width,
+            height,
+            bindGroupsToRelease,
+            ref bindGroupToReleaseCount);
+        RunShadowPass(
+            encoder,
+            _morphologyPipeline,
+            layout,
+            temp,
+            destination,
+            verticalParams,
+            width,
+            height,
+            bindGroupsToRelease,
+            ref bindGroupToReleaseCount);
+
+        var commandDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Compute Morphology Buffer") };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDesc);
+        SilkMarshal.Free((nint)commandDesc.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        ReleaseBindGroups(bindGroupsToRelease[..bindGroupToReleaseCount]);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
+    }
+
+    public void ApplyImageLighting(
+        GpuTexture source,
+        GpuTexture destination,
+        Vector3 lightPosition,
+        uint lightType,
+        Vector3 lightTarget,
+        float spotExponent,
+        Vector4 lightColor,
+        float surfaceScale,
+        float lightingConstant,
+        float shininess,
+        float cutoffAngle,
+        bool specular)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+
+        var width = source.Width;
+        var height = source.Height;
+        destination.Resize(width, height);
+        using var paramsBuffer = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<ImageLightingParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Image Lighting Params");
+        paramsBuffer.WriteSingle(new ImageLightingParams(
+            lightPosition,
+            lightType,
+            lightTarget,
+            spotExponent,
+            lightColor,
+            surfaceScale,
+            lightingConstant,
+            shininess,
+            cutoffAngle,
+            specular));
+
+        var encoderDescriptor = new CommandEncoderDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Image Lighting Encoder")
+        };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDescriptor);
+        SilkMarshal.Free((nint)encoderDescriptor.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_imageLightingPipeline, 0);
+
+        var entries = stackalloc BindGroupEntry[3];
+        entries[0] = new BindGroupEntry { Binding = 0, TextureView = source.ViewPtr };
+        entries[1] = new BindGroupEntry { Binding = 1, TextureView = destination.ViewPtr };
+        entries[2] = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = paramsBuffer.BufferPtr,
+            Offset = 0,
+            Size = paramsBuffer.Size
+        };
+        var bindGroupDescriptor = new BindGroupDescriptor
+        {
+            Layout = layout,
+            EntryCount = 3,
+            Entries = entries
+        };
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDescriptor);
+
+        var passDescriptor = new ComputePassDescriptor();
+        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescriptor);
+        _context.Wgpu.ComputePassEncoderSetPipeline(pass, _imageLightingPipeline);
+        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(
+            pass,
+            (width + 15) / 16,
+            (height + 15) / 16,
+            1);
+        _context.Wgpu.ComputePassEncoderEnd(pass);
+        _context.Wgpu.ComputePassEncoderRelease(pass);
+
+        var commandDescriptor = new CommandBufferDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Image Lighting Buffer")
+        };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDescriptor);
+        SilkMarshal.Free((nint)commandDescriptor.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        _context.Wgpu.BindGroupRelease(bindGroup);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
+    }
+
+    public void ApplyMatrixConvolution(
+        GpuTexture source,
+        GpuTexture destination,
+        int kernelWidth,
+        int kernelHeight,
+        ReadOnlySpan<float> kernel,
+        float gain,
+        float bias,
+        int kernelOffsetX,
+        int kernelOffsetY,
+        uint tileMode,
+        bool convolveAlpha)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+        if (kernelWidth is <= 0 or > 64 || kernelHeight is <= 0 or > 64)
+        {
+            throw new ArgumentOutOfRangeException(nameof(kernelWidth), "Convolution kernels must be between 1x1 and 64x64.");
+        }
+
+        var kernelLength = checked(kernelWidth * kernelHeight);
+        if (kernel.Length < kernelLength)
+        {
+            throw new ArgumentException("The convolution kernel does not match its declared dimensions.", nameof(kernel));
+        }
+
+        var width = source.Width;
+        var height = source.Height;
+        destination.Resize(width, height);
+        using var paramsBuffer = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<MatrixConvolutionParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Matrix Convolution Params");
+        paramsBuffer.WriteSingle(new MatrixConvolutionParams(
+            kernelWidth,
+            kernelHeight,
+            kernelOffsetX,
+            kernelOffsetY,
+            gain,
+            bias,
+            tileMode,
+            convolveAlpha));
+        using var kernelBuffer = new GpuBuffer(
+            _context,
+            (uint)(kernelLength * sizeof(float)),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Matrix Convolution Kernel");
+        kernelBuffer.Write(kernel[..kernelLength]);
+
+        var encoderDescriptor = new CommandEncoderDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Matrix Convolution Encoder")
+        };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDescriptor);
+        SilkMarshal.Free((nint)encoderDescriptor.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_matrixConvolutionPipeline, 0);
+
+        var entries = stackalloc BindGroupEntry[4];
+        entries[0] = new BindGroupEntry { Binding = 0, TextureView = source.ViewPtr };
+        entries[1] = new BindGroupEntry { Binding = 1, TextureView = destination.ViewPtr };
+        entries[2] = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = paramsBuffer.BufferPtr,
+            Offset = 0,
+            Size = paramsBuffer.Size
+        };
+        entries[3] = new BindGroupEntry
+        {
+            Binding = 3,
+            Buffer = kernelBuffer.BufferPtr,
+            Offset = 0,
+            Size = kernelBuffer.Size
+        };
+        var bindGroupDescriptor = new BindGroupDescriptor
+        {
+            Layout = layout,
+            EntryCount = 4,
+            Entries = entries
+        };
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDescriptor);
+
+        var passDescriptor = new ComputePassDescriptor();
+        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescriptor);
+        _context.Wgpu.ComputePassEncoderSetPipeline(pass, _matrixConvolutionPipeline);
+        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(
+            pass,
+            (width + 15) / 16,
+            (height + 15) / 16,
+            1);
+        _context.Wgpu.ComputePassEncoderEnd(pass);
+        _context.Wgpu.ComputePassEncoderRelease(pass);
+
+        var commandDescriptor = new CommandBufferDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Matrix Convolution Buffer")
+        };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDescriptor);
+        SilkMarshal.Free((nint)commandDescriptor.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        _context.Wgpu.BindGroupRelease(bindGroup);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
+    }
+
+    public void ApplyDisplacementMap(
+        GpuTexture source,
+        GpuTexture displacement,
+        GpuTexture destination,
+        float scale,
+        uint xChannel,
+        uint yChannel)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+        var width = Math.Max(destination.Width, source.Width);
+        var height = Math.Max(destination.Height, source.Height);
+        destination.Resize(width, height);
+        using var paramsBuffer = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<DisplacementMapParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Displacement Map Params");
+        paramsBuffer.WriteSingle(new DisplacementMapParams(scale, xChannel, yChannel));
+
+        var encoderDescriptor = new CommandEncoderDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Displacement Map Encoder")
+        };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDescriptor);
+        SilkMarshal.Free((nint)encoderDescriptor.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_displacementMapPipeline, 0);
+
+        var entries = stackalloc BindGroupEntry[4];
+        entries[0] = new BindGroupEntry { Binding = 0, TextureView = source.ViewPtr };
+        entries[1] = new BindGroupEntry { Binding = 1, TextureView = displacement.ViewPtr };
+        entries[2] = new BindGroupEntry { Binding = 2, TextureView = destination.ViewPtr };
+        entries[3] = new BindGroupEntry
+        {
+            Binding = 3,
+            Buffer = paramsBuffer.BufferPtr,
+            Offset = 0,
+            Size = paramsBuffer.Size
+        };
+        var bindGroupDescriptor = new BindGroupDescriptor
+        {
+            Layout = layout,
+            EntryCount = 4,
+            Entries = entries
+        };
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDescriptor);
+
+        var passDescriptor = new ComputePassDescriptor();
+        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescriptor);
+        _context.Wgpu.ComputePassEncoderSetPipeline(pass, _displacementMapPipeline);
+        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(
+            pass,
+            (width + 15) / 16,
+            (height + 15) / 16,
+            1);
+        _context.Wgpu.ComputePassEncoderEnd(pass);
+        _context.Wgpu.ComputePassEncoderRelease(pass);
+
+        var commandDescriptor = new CommandBufferDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Displacement Map Buffer")
+        };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDescriptor);
+        SilkMarshal.Free((nint)commandDescriptor.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        _context.Wgpu.BindGroupRelease(bindGroup);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
+    }
+
+    public void ApplyArithmeticComposite(
+        GpuTexture background,
+        GpuTexture foreground,
+        GpuTexture destination,
+        float k1,
+        float k2,
+        float k3,
+        float k4,
+        bool enforcePremultipliedColor)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+        var width = Math.Max(destination.Width, Math.Max(background.Width, foreground.Width));
+        var height = Math.Max(destination.Height, Math.Max(background.Height, foreground.Height));
+        destination.Resize(width, height);
+        using var paramsBuffer = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<ArithmeticCompositeParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Arithmetic Composite Params");
+        paramsBuffer.WriteSingle(new ArithmeticCompositeParams(
+            k1,
+            k2,
+            k3,
+            k4,
+            enforcePremultipliedColor));
+
+        var encoderDescriptor = new CommandEncoderDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Arithmetic Composite Encoder")
+        };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDescriptor);
+        SilkMarshal.Free((nint)encoderDescriptor.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_arithmeticCompositePipeline, 0);
+
+        var entries = stackalloc BindGroupEntry[4];
+        entries[0] = new BindGroupEntry { Binding = 0, TextureView = background.ViewPtr };
+        entries[1] = new BindGroupEntry { Binding = 1, TextureView = foreground.ViewPtr };
+        entries[2] = new BindGroupEntry { Binding = 2, TextureView = destination.ViewPtr };
+        entries[3] = new BindGroupEntry
+        {
+            Binding = 3,
+            Buffer = paramsBuffer.BufferPtr,
+            Offset = 0,
+            Size = paramsBuffer.Size
+        };
+        var bindGroupDescriptor = new BindGroupDescriptor
+        {
+            Layout = layout,
+            EntryCount = 4,
+            Entries = entries
+        };
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDescriptor);
+
+        var passDescriptor = new ComputePassDescriptor();
+        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescriptor);
+        _context.Wgpu.ComputePassEncoderSetPipeline(pass, _arithmeticCompositePipeline);
+        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(
+            pass,
+            (width + 15) / 16,
+            (height + 15) / 16,
+            1);
+        _context.Wgpu.ComputePassEncoderEnd(pass);
+        _context.Wgpu.ComputePassEncoderRelease(pass);
+
+        var commandDescriptor = new CommandBufferDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Arithmetic Composite Buffer")
+        };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDescriptor);
+        SilkMarshal.Free((nint)commandDescriptor.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        _context.Wgpu.BindGroupRelease(bindGroup);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
+    }
+
+    public void ApplyImageBlend(
+        GpuTexture background,
+        GpuTexture foreground,
+        GpuTexture destination,
+        GpuBlendMode blendMode,
+        bool linearRgb)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+        var width = Math.Max(destination.Width, Math.Max(background.Width, foreground.Width));
+        var height = Math.Max(destination.Height, Math.Max(background.Height, foreground.Height));
+        destination.Resize(width, height);
+        using var paramsBuffer = new GpuBuffer(
+            _context,
+            (uint)Marshal.SizeOf<ImageBlendParams>(),
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Image Blend Params");
+        paramsBuffer.WriteSingle(new ImageBlendParams(blendMode, linearRgb));
+
+        var encoderDescriptor = new CommandEncoderDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Image Blend Encoder")
+        };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDescriptor);
+        SilkMarshal.Free((nint)encoderDescriptor.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_imageBlendPipeline, 0);
+
+        var entries = stackalloc BindGroupEntry[4];
+        entries[0] = new BindGroupEntry { Binding = 0, TextureView = background.ViewPtr };
+        entries[1] = new BindGroupEntry { Binding = 1, TextureView = foreground.ViewPtr };
+        entries[2] = new BindGroupEntry { Binding = 2, TextureView = destination.ViewPtr };
+        entries[3] = new BindGroupEntry
+        {
+            Binding = 3,
+            Buffer = paramsBuffer.BufferPtr,
+            Offset = 0,
+            Size = paramsBuffer.Size
+        };
+        var bindGroupDescriptor = new BindGroupDescriptor
+        {
+            Layout = layout,
+            EntryCount = 4,
+            Entries = entries
+        };
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDescriptor);
+
+        var passDescriptor = new ComputePassDescriptor();
+        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescriptor);
+        _context.Wgpu.ComputePassEncoderSetPipeline(pass, _imageBlendPipeline);
+        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(
+            pass,
+            (width + 15) / 16,
+            (height + 15) / 16,
+            1);
+        _context.Wgpu.ComputePassEncoderEnd(pass);
+        _context.Wgpu.ComputePassEncoderRelease(pass);
+
+        var commandDescriptor = new CommandBufferDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Image Blend Buffer")
+        };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDescriptor);
+        SilkMarshal.Free((nint)commandDescriptor.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        _context.Wgpu.BindGroupRelease(bindGroup);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
+    }
+
+    public void ApplyColorTable(
+        GpuTexture source,
+        GpuTexture destination,
+        ReadOnlySpan<byte> alpha,
+        ReadOnlySpan<byte> red,
+        ReadOnlySpan<byte> green,
+        ReadOnlySpan<byte> blue)
+    {
+        if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
+        if (alpha.Length < 256 || red.Length < 256 || green.Length < 256 || blue.Length < 256)
+        {
+            throw new ArgumentException("Color filter tables must contain 256 entries.");
+        }
+
+        var width = source.Width;
+        var height = source.Height;
+        destination.Resize(width, height);
+
+        Span<uint> packedTables = stackalloc uint[1024];
+        for (var i = 0; i < 256; i++)
+        {
+            packedTables[i] = red[i];
+            packedTables[256 + i] = green[i];
+            packedTables[512 + i] = blue[i];
+            packedTables[768 + i] = alpha[i];
+        }
+
+        using var tablesBuffer = new GpuBuffer(
+            _context,
+            (uint)(packedTables.Length * sizeof(uint)),
+            BufferUsage.Storage | BufferUsage.CopyDst,
+            "Color Table Values");
+        tablesBuffer.Write(packedTables);
+
+        var encoderDescriptor = new CommandEncoderDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Color Table Encoder")
+        };
+        var encoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDescriptor);
+        SilkMarshal.Free((nint)encoderDescriptor.Label);
+        var layout = _context.Wgpu.ComputePipelineGetBindGroupLayout(_colorTablePipeline, 0);
+
+        var entries = stackalloc BindGroupEntry[3];
+        entries[0] = new BindGroupEntry { Binding = 0, TextureView = source.ViewPtr };
+        entries[1] = new BindGroupEntry { Binding = 1, TextureView = destination.ViewPtr };
+        entries[2] = new BindGroupEntry
+        {
+            Binding = 2,
+            Buffer = tablesBuffer.BufferPtr,
+            Offset = 0,
+            Size = tablesBuffer.Size
+        };
+        var bindGroupDescriptor = new BindGroupDescriptor
+        {
+            Layout = layout,
+            EntryCount = 3,
+            Entries = entries
+        };
+        var bindGroup = _context.Wgpu.DeviceCreateBindGroup(_context.Device, &bindGroupDescriptor);
+
+        var passDescriptor = new ComputePassDescriptor();
+        var pass = _context.Wgpu.CommandEncoderBeginComputePass(encoder, &passDescriptor);
+        _context.Wgpu.ComputePassEncoderSetPipeline(pass, _colorTablePipeline);
+        _context.Wgpu.ComputePassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+        _context.Wgpu.ComputePassEncoderDispatchWorkgroups(
+            pass,
+            (width + 15) / 16,
+            (height + 15) / 16,
+            1);
+        _context.Wgpu.ComputePassEncoderEnd(pass);
+        _context.Wgpu.ComputePassEncoderRelease(pass);
+
+        var commandDescriptor = new CommandBufferDescriptor
+        {
+            Label = (byte*)SilkMarshal.StringToPtr("Compute Color Table Buffer")
+        };
+        var commandBuffer = _context.Wgpu.CommandEncoderFinish(encoder, &commandDescriptor);
+        SilkMarshal.Free((nint)commandDescriptor.Label);
+        _context.Wgpu.QueueSubmit(_context.Queue, 1, &commandBuffer);
+
+        _context.Wgpu.CommandBufferRelease(commandBuffer);
+        _context.Wgpu.CommandEncoderRelease(encoder);
+        _context.Wgpu.BindGroupRelease(bindGroup);
+        _context.Wgpu.BindGroupLayoutRelease(layout);
     }
 
     private void RunShadowPass(

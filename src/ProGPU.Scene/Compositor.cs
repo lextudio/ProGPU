@@ -19,7 +19,7 @@ namespace ProGPU.Scene;
 [StructLayout(LayoutKind.Explicit, Size = 256)]
 public struct GpuBrush
 {
-    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial, 5 = Two-point conical, 6 = Sweep
+    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial, 5 = Two-point conical, 6 = Sweep, 7 = Perlin noise
     [FieldOffset(4)] public float Opacity;
     [FieldOffset(8)] public Vector2 StartPoint;
     [FieldOffset(16)] public Vector2 EndPoint;
@@ -171,6 +171,8 @@ public readonly record struct RenderTargetViewport(float X, float Y, float Width
 public unsafe class Compositor : IDisposable
 {
     internal const int MaxGradientStops = 65536;
+    private const int PerlinNoiseTableEntryCount = 512;
+    private const int MaxCachedPerlinNoiseTables = 16;
     private const float StrokeEpsilon = 0.0001f;
     private const float AliasedShapeTypeOffset = 1000f;
     private const float ArcSdfShapeType = 12f;
@@ -260,6 +262,32 @@ public unsafe class Compositor : IDisposable
         }
 
         return (0, transformedPosition);
+    }
+
+    private static (float DpiScale, float RasterFontSize, float AtlasToLogicalScale) ResolveTextRasterization(
+        float fontSize,
+        Matrix4x4 transform,
+        float dpiScale,
+        float staticZoom)
+    {
+        dpiScale = float.IsFinite(dpiScale) && dpiScale > 0f ? dpiScale : 1f;
+        staticZoom = float.IsFinite(staticZoom) && staticZoom > 0f ? staticZoom : 1f;
+
+        var transformScale = TransformMetrics.GetStrokeScale(transform);
+        var untransformedPhysicalFontSize = fontSize * dpiScale;
+        var targetRasterFontSize = untransformedPhysicalFontSize * transformScale * staticZoom;
+        var rasterFontSize = Math.Clamp(targetRasterFontSize, 4f, 64f);
+        if (rasterFontSize <= 24f)
+        {
+            rasterFontSize = MathF.Round(rasterFontSize * 2f) / 2f;
+        }
+        else
+        {
+            rasterFontSize = MathF.Round(rasterFontSize / 2f) * 2f;
+        }
+
+        var atlasToLogicalScale = untransformedPhysicalFontSize / MathF.Max(rasterFontSize, 0.0001f);
+        return (dpiScale * staticZoom, rasterFontSize, atlasToLogicalScale);
     }
 
     private readonly List<StaticTextRecord> _compiledTextRecords = new();
@@ -765,9 +793,11 @@ public unsafe class Compositor : IDisposable
     private readonly Dictionary<TextureCacheKey, CachedBindGroup> _persistentTextureBindGroups = new();
     private readonly List<GpuBrush> _activeBrushes = new();
     private readonly List<GpuGradientStop> _activeGradientStops = new();
+    private readonly Dictionary<int, GpuGradientStop[]> _perlinNoiseTableCache = new();
     private readonly GpuBuffer _brushesStorageBuffer;
     private readonly GpuBuffer _gradientStopsStorageBuffer;
     private ulong _frameNumber = 0;
+    private readonly object _offscreenRenderLock = new();
     private int _offscreenRenderDepth;
     private float _totalTime = 0f;
     private readonly Dictionary<(string Text, TtfFont Font, float Size, TextAlignment Align), TextLayout> _layoutCache = new();
@@ -982,6 +1012,192 @@ public unsafe class Compositor : IDisposable
 
         InitializePipelinesAndBindGroups();
         GpuTexture.OnDisposedWithId += HandleTextureDisposed;
+    }
+
+    public void ApplyGaussianBlur(
+        GpuTexture source,
+        GpuTexture temporary,
+        GpuTexture destination,
+        float sigmaX,
+        float sigmaY)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyGaussianBlur(source, temporary, destination, sigmaX, sigmaY);
+        }
+    }
+
+    public void ApplyGaussianBlur(
+        GpuTexture source,
+        GpuTexture temporary,
+        GpuTexture destination,
+        float sigma) =>
+        ApplyGaussianBlur(source, temporary, destination, sigma, sigma);
+
+    public void ApplyDropShadow(
+        GpuTexture source,
+        GpuTexture temporary,
+        GpuTexture destination,
+        Vector2 offset,
+        Vector4 color,
+        float blurRadius)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyDropShadow(source, temporary, destination, offset, color, blurRadius);
+        }
+    }
+
+    public void ApplyMorphology(
+        GpuTexture source,
+        GpuTexture temporary,
+        GpuTexture destination,
+        float radiusX,
+        float radiusY,
+        bool dilate)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyMorphology(source, temporary, destination, radiusX, radiusY, dilate);
+        }
+    }
+
+    public void ApplyImageBlend(
+        GpuTexture background,
+        GpuTexture foreground,
+        GpuTexture destination,
+        GpuBlendMode blendMode,
+        bool linearRgb = true)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyImageBlend(
+                background,
+                foreground,
+                destination,
+                blendMode,
+                linearRgb);
+        }
+    }
+
+    public void ApplyImageLighting(
+        GpuTexture source,
+        GpuTexture destination,
+        Vector3 lightPosition,
+        uint lightType,
+        Vector3 lightTarget,
+        float spotExponent,
+        Vector4 lightColor,
+        float surfaceScale,
+        float lightingConstant,
+        float shininess,
+        float cutoffAngle,
+        bool specular)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyImageLighting(
+                source,
+                destination,
+                lightPosition,
+                lightType,
+                lightTarget,
+                spotExponent,
+                lightColor,
+                surfaceScale,
+                lightingConstant,
+                shininess,
+                cutoffAngle,
+                specular);
+        }
+    }
+
+    public void ApplyMatrixConvolution(
+        GpuTexture source,
+        GpuTexture destination,
+        int kernelWidth,
+        int kernelHeight,
+        ReadOnlySpan<float> kernel,
+        float gain,
+        float bias,
+        int kernelOffsetX,
+        int kernelOffsetY,
+        uint tileMode,
+        bool convolveAlpha)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyMatrixConvolution(
+                source,
+                destination,
+                kernelWidth,
+                kernelHeight,
+                kernel,
+                gain,
+                bias,
+                kernelOffsetX,
+                kernelOffsetY,
+                tileMode,
+                convolveAlpha);
+        }
+    }
+
+    public void ApplyDisplacementMap(
+        GpuTexture source,
+        GpuTexture displacement,
+        GpuTexture destination,
+        float scale,
+        uint xChannel,
+        uint yChannel)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyDisplacementMap(
+                source,
+                displacement,
+                destination,
+                scale,
+                xChannel,
+                yChannel);
+        }
+    }
+
+    public void ApplyArithmeticComposite(
+        GpuTexture background,
+        GpuTexture foreground,
+        GpuTexture destination,
+        float k1,
+        float k2,
+        float k3,
+        float k4,
+        bool enforcePremultipliedColor)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyArithmeticComposite(
+                background,
+                foreground,
+                destination,
+                k1,
+                k2,
+                k3,
+                k4,
+                enforcePremultipliedColor);
+        }
+    }
+
+    public void ApplyColorTable(
+        GpuTexture source,
+        GpuTexture destination,
+        ReadOnlySpan<byte> alpha,
+        ReadOnlySpan<byte> red,
+        ReadOnlySpan<byte> green,
+        ReadOnlySpan<byte> blue)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyColorTable(source, destination, alpha, red, green, blue);
+        }
     }
 
     private void InitializePipelinesAndBindGroups()
@@ -3234,7 +3450,18 @@ public unsafe class Compositor : IDisposable
             var brushTransform = cmd.Type == RenderCommandType.DrawPath && cmd.Transform != default
                 ? cmd.Transform * activeTransform
                 : activeTransform;
-            TransformCommandBrushes(ref cmd, brushTransform, pictureStrokeScale);
+            if (!UsesLocalBrushCoordinates(cmd.Type))
+            {
+                TransformCommandBrushes(ref cmd, brushTransform, pictureStrokeScale);
+            }
+            else
+            {
+                ScaleCommandPen(ref cmd, pictureStrokeScale);
+                if (cmd.Type == RenderCommandType.DrawPath)
+                {
+                    TransformCommandPenBrush(ref cmd, brushTransform);
+                }
+            }
 
             bool savedUseGpuTransformsActive = _useGpuTransformsActive;
             Matrix4x4 savedCameraViewMatrix = _cameraViewMatrix;
@@ -3435,9 +3662,8 @@ public unsafe class Compositor : IDisposable
         command.Brush = TransformCommandBrush(command.Brush, inverseCommandTransform);
         if (command.Pen != null)
         {
-            var penThickness = command.IsPenThicknessLocal
-                ? command.Pen.Thickness
-                : command.Pen.Thickness * strokeScale;
+            var penScale = command.IsPenThicknessLocal ? 1f : strokeScale;
+            var penThickness = command.Pen.Thickness * penScale;
             command.Pen = new Pen(
                 TransformCommandBrush(command.Pen.Brush, inverseCommandTransform)!,
                 penThickness,
@@ -3446,9 +3672,72 @@ public unsafe class Compositor : IDisposable
                 command.Pen.StartLineCap,
                 command.Pen.EndLineCap,
                 command.Pen.DashCap,
-                command.Pen.DashArray,
-                command.Pen.DashOffset);
+                ScaleRelativeDashArray(command.Pen.DashArray, penScale),
+                command.Pen.DashOffset / penScale);
         }
+    }
+
+    private static bool UsesLocalBrushCoordinates(RenderCommandType commandType)
+    {
+        return commandType is
+            RenderCommandType.DrawRect or
+            RenderCommandType.DrawEllipse or
+            RenderCommandType.DrawCircle or
+            RenderCommandType.DrawRoundedRect or
+            RenderCommandType.DrawPath;
+    }
+
+    private static void ScaleCommandPen(ref RenderCommand command, float strokeScale)
+    {
+        if (command.Pen == null || command.IsPenThicknessLocal)
+        {
+            return;
+        }
+
+        command.Pen = new Pen(
+            command.Pen.Brush,
+            command.Pen.Thickness * strokeScale,
+            command.Pen.LineJoin,
+            command.Pen.MiterLimit,
+            command.Pen.StartLineCap,
+            command.Pen.EndLineCap,
+            command.Pen.DashCap,
+            ScaleRelativeDashArray(command.Pen.DashArray, strokeScale),
+            command.Pen.DashOffset / strokeScale);
+    }
+
+    private static double[]? ScaleRelativeDashArray(double[]? dashArray, float strokeScale)
+    {
+        if (dashArray == null || strokeScale == 1f)
+        {
+            return dashArray;
+        }
+
+        for (var i = 0; i < dashArray.Length; i++)
+        {
+            dashArray[i] /= strokeScale;
+        }
+
+        return dashArray;
+    }
+
+    private static void TransformCommandPenBrush(ref RenderCommand command, Matrix4x4 commandTransform)
+    {
+        if (command.Pen == null || !Matrix4x4.Invert(commandTransform, out var inverseCommandTransform))
+        {
+            return;
+        }
+
+        command.Pen = new Pen(
+            TransformCommandBrush(command.Pen.Brush, inverseCommandTransform)!,
+            command.Pen.Thickness,
+            command.Pen.LineJoin,
+            command.Pen.MiterLimit,
+            command.Pen.StartLineCap,
+            command.Pen.EndLineCap,
+            command.Pen.DashCap,
+            command.Pen.DashArray,
+            command.Pen.DashOffset);
     }
 
     private static Brush? TransformCommandBrush(Brush? brush, Matrix4x4 inverseCommandTransform)
@@ -3492,6 +3781,16 @@ public unsafe class Compositor : IDisposable
                 SpreadMethod = sweep.SpreadMethod,
                 ColorInterpolationMode = sweep.ColorInterpolationMode,
                 CoordinateTransform = inverseCommandTransform * sweep.CoordinateTransform
+            },
+            PerlinNoiseBrush perlin => new PerlinNoiseBrush(
+                perlin.IsTurbulence,
+                perlin.BaseFrequency,
+                perlin.NumOctaves,
+                perlin.Seed,
+                perlin.TileSize)
+            {
+                Opacity = perlin.Opacity,
+                CoordinateTransform = inverseCommandTransform * perlin.CoordinateTransform
             },
             _ => brush
         };
@@ -3729,6 +4028,10 @@ public unsafe class Compositor : IDisposable
             float penBrushIdx = RegisterBrush(cmd.Pen.Brush);
             var penSolidColor = (cmd.Pen.Brush is SolidColorBrush solid) ? solid.Color : new Vector4(1f, 1f, 1f, 1f);
             float thickness = cmd.Pen.Thickness;
+            var useAffineStrokeGeometry = RequiresAffineStrokeGeometry(transform);
+            var localAffineThickness = useAffineStrokeGeometry
+                ? thickness / TransformMetrics.GetStrokeScale(transform)
+                : thickness;
 
             int maxVertices = 0;
             int maxIndices = 0;
@@ -3920,17 +4223,35 @@ public unsafe class Compositor : IDisposable
                         var lineStart = segmentStart;
                         var lineEnd = line.Point;
 
-                        AppendStrokeLineVertices(
-                            verticesSpan,
-                            indicesSpan,
-                            ref currentVertexCount,
-                            ref currentIndexCount,
-                            penSolidColor,
-                            penBrushIdx,
-                            thickness,
-                            Vector2.Transform(lineStart, transform),
-                            Vector2.Transform(lineEnd, transform),
-                            cmd.IsEdgeAliased);
+                        if (useAffineStrokeGeometry)
+                        {
+                            AppendAffineStrokeLineVertices(
+                                verticesSpan,
+                                indicesSpan,
+                                ref currentVertexCount,
+                                ref currentIndexCount,
+                                penSolidColor,
+                                penBrushIdx,
+                                localAffineThickness,
+                                lineStart,
+                                lineEnd,
+                                transform,
+                                cmd.IsEdgeAliased);
+                        }
+                        else
+                        {
+                            AppendStrokeLineVertices(
+                                verticesSpan,
+                                indicesSpan,
+                                ref currentVertexCount,
+                                ref currentIndexCount,
+                                penSolidColor,
+                                penBrushIdx,
+                                thickness,
+                                Vector2.Transform(lineStart, transform),
+                                Vector2.Transform(lineEnd, transform),
+                                cmd.IsEdgeAliased);
+                        }
 
                         currentPoint = lineEnd;
                         hasLastCapCandidate = TryGetPathSegmentEndDirection(segment, segmentStart, out lastCapDirection);
@@ -4558,6 +4879,68 @@ public unsafe class Compositor : IDisposable
         indicesSpan[currentIndexCount++] = idxStart + 1;
         indicesSpan[currentIndexCount++] = idxStart + 3;
         indicesSpan[currentIndexCount++] = idxStart + 2;
+    }
+
+    private static void AppendAffineStrokeLineVertices(
+        Span<VectorVertex> verticesSpan,
+        Span<uint> indicesSpan,
+        ref int currentVertexCount,
+        ref int currentIndexCount,
+        Vector4 penSolidColor,
+        float penBrushIdx,
+        float localThickness,
+        Vector2 localStart,
+        Vector2 localEnd,
+        Matrix4x4 transform,
+        bool isEdgeAliased)
+    {
+        var delta = localEnd - localStart;
+        var length = delta.Length();
+        if (!float.IsFinite(length) || length <= StrokeEpsilon)
+        {
+            return;
+        }
+
+        var halfThickness = localThickness * 0.5f;
+        var direction = delta / length;
+        var normal = new Vector2(-direction.Y, direction.X) * halfThickness;
+        var p0 = Vector2.Transform(localStart + normal, transform);
+        var p1 = Vector2.Transform(localStart - normal, transform);
+        var p2 = Vector2.Transform(localEnd + normal, transform);
+        var p3 = Vector2.Transform(localEnd - normal, transform);
+        var shapeType = EncodeShapeType(isEdgeAliased, 7f);
+        var index = (uint)currentVertexCount;
+
+        verticesSpan[currentVertexCount++] = new VectorVertex(p0, penSolidColor, p0, penBrushIdx, shapeType: shapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(p1, penSolidColor, p1, penBrushIdx, shapeType: shapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(p2, penSolidColor, p2, penBrushIdx, shapeType: shapeType);
+        verticesSpan[currentVertexCount++] = new VectorVertex(p3, penSolidColor, p3, penBrushIdx, shapeType: shapeType);
+
+        indicesSpan[currentIndexCount++] = index;
+        indicesSpan[currentIndexCount++] = index + 1;
+        indicesSpan[currentIndexCount++] = index + 2;
+        indicesSpan[currentIndexCount++] = index + 1;
+        indicesSpan[currentIndexCount++] = index + 3;
+        indicesSpan[currentIndexCount++] = index + 2;
+    }
+
+    private static bool RequiresAffineStrokeGeometry(Matrix4x4 transform)
+    {
+        var axisX = new Vector2(transform.M11, transform.M12);
+        var axisY = new Vector2(transform.M21, transform.M22);
+        var lengthX = axisX.Length();
+        var lengthY = axisY.Length();
+        if (!float.IsFinite(lengthX) || !float.IsFinite(lengthY) ||
+            lengthX <= StrokeEpsilon || lengthY <= StrokeEpsilon)
+        {
+            return false;
+        }
+
+        var scale = MathF.Max(lengthX, lengthY);
+        var lengthTolerance = scale * 0.0001f;
+        var dotTolerance = lengthX * lengthY * 0.0001f;
+        return MathF.Abs(lengthX - lengthY) > lengthTolerance ||
+            MathF.Abs(Vector2.Dot(axisX, axisY)) > dotTolerance;
     }
 
     private static bool AppendStrokeArcVertices(
@@ -5513,6 +5896,7 @@ public unsafe class Compositor : IDisposable
         if (brush == null) return 0f;
 
         GpuBrush gpuBrush = new GpuBrush();
+        PerlinNoiseBrush? perlinNoiseBrush = null;
         gpuBrush.Opacity = brush.Opacity * _activeOpacity;
         SetBrushCoordinateTransform(ref gpuBrush, Matrix4x4.Identity);
         var gradientStopStart = _activeGradientStops.Count;
@@ -5570,6 +5954,19 @@ public unsafe class Compositor : IDisposable
             gpuBrush.ColorInterpolationMode = (uint)sweep.ColorInterpolationMode;
             ApplyGradientStops(ref gpuBrush, sweep.Stops);
         }
+        else if (brush is PerlinNoiseBrush perlin)
+        {
+            perlinNoiseBrush = perlin;
+            gpuBrush.Type = 7;
+            gpuBrush.StartPoint = ResolvePerlinNoiseFrequency(perlin.BaseFrequency, perlin.TileSize);
+            gpuBrush.EndPoint = ResolvePerlinNoiseStitchData(gpuBrush.StartPoint, perlin.TileSize);
+            gpuBrush.Center = perlin.TileSize;
+            gpuBrush.Radius = NormalizePerlinNoiseSeed(perlin.Seed);
+            gpuBrush.StopCount = (uint)Math.Clamp(perlin.NumOctaves, 0, 255);
+            gpuBrush.SpreadMethod = perlin.IsTurbulence ? 1u : 0u;
+            gpuBrush.ColorInterpolationMode = 1u;
+            SetBrushCoordinateTransform(ref gpuBrush, perlin.CoordinateTransform);
+        }
         else if (brush is HatchPatternBrush hatch)
         {
             gpuBrush.Type = 3;
@@ -5594,6 +5991,11 @@ public unsafe class Compositor : IDisposable
                 TrimGradientStops((uint)gradientStopStart);
                 return (float)i;
             }
+        }
+
+        if (perlinNoiseBrush != null && !ApplyPerlinNoiseTable(ref gpuBrush, perlinNoiseBrush.Seed))
+        {
+            gpuBrush.ColorInterpolationMode = 0u;
         }
 
         if (_activeBrushes.Count < 8192)
@@ -5669,6 +6071,182 @@ public unsafe class Compositor : IDisposable
     {
         gpuBrush.CoordinateTransform0 = new Vector4(transform.M11, transform.M21, transform.M41, 0f);
         gpuBrush.CoordinateTransform1 = new Vector4(transform.M12, transform.M22, transform.M42, 0f);
+    }
+
+    private bool ApplyPerlinNoiseTable(ref GpuBrush gpuBrush, float seed)
+    {
+        if (MaxGradientStops - _activeGradientStops.Count < PerlinNoiseTableEntryCount)
+        {
+            return false;
+        }
+
+        var normalizedSeed = NormalizePerlinNoiseSeed(seed);
+        if (!_perlinNoiseTableCache.TryGetValue(normalizedSeed, out var table))
+        {
+            if (_perlinNoiseTableCache.Count >= MaxCachedPerlinNoiseTables)
+            {
+                _perlinNoiseTableCache.Clear();
+            }
+
+            table = CreatePerlinNoiseTable(normalizedSeed);
+            _perlinNoiseTableCache.Add(normalizedSeed, table);
+        }
+
+        gpuBrush.StopOffset = (uint)_activeGradientStops.Count;
+        _activeGradientStops.AddRange(table);
+        return true;
+    }
+
+    private static GpuGradientStop[] CreatePerlinNoiseTable(int seed)
+    {
+        const int blockSize = 256;
+        var latticeSelector = new byte[blockSize];
+        var noise = new ushort[4][];
+        for (var channel = 0; channel < noise.Length; channel++)
+        {
+            noise[channel] = new ushort[blockSize * 2];
+            for (var i = 0; i < blockSize; i++)
+            {
+                latticeSelector[i] = (byte)i;
+                noise[channel][i * 2] = (ushort)(NextPerlinNoiseRandom(ref seed) % (2 * blockSize));
+                noise[channel][i * 2 + 1] = (ushort)(NextPerlinNoiseRandom(ref seed) % (2 * blockSize));
+            }
+        }
+
+        for (var i = blockSize - 1; i > 0; i--)
+        {
+            var selected = NextPerlinNoiseRandom(ref seed) % blockSize;
+            (latticeSelector[i], latticeSelector[selected]) = (latticeSelector[selected], latticeSelector[i]);
+        }
+
+        for (var channel = 0; channel < noise.Length; channel++)
+        {
+            var source = (ushort[])noise[channel].Clone();
+            for (var i = 0; i < blockSize; i++)
+            {
+                var sourceIndex = latticeSelector[i] * 2;
+                noise[channel][i * 2] = source[sourceIndex];
+                noise[channel][i * 2 + 1] = source[sourceIndex + 1];
+            }
+        }
+
+        var table = new GpuGradientStop[PerlinNoiseTableEntryCount];
+        for (var i = 0; i < blockSize; i++)
+        {
+            var gradient0 = CreatePerlinNoiseGradient(noise[0][i * 2], noise[0][i * 2 + 1]);
+            var gradient1 = CreatePerlinNoiseGradient(noise[1][i * 2], noise[1][i * 2 + 1]);
+            var gradient2 = CreatePerlinNoiseGradient(noise[2][i * 2], noise[2][i * 2 + 1]);
+            var gradient3 = CreatePerlinNoiseGradient(noise[3][i * 2], noise[3][i * 2 + 1]);
+            table[i * 2] = new GpuGradientStop
+            {
+                Color = new Vector4(gradient0.X, gradient0.Y, gradient1.X, gradient1.Y),
+                Offset = latticeSelector[i]
+            };
+            table[i * 2 + 1] = new GpuGradientStop
+            {
+                Color = new Vector4(gradient2.X, gradient2.Y, gradient3.X, gradient3.Y)
+            };
+        }
+
+        return table;
+    }
+
+    private static Vector2 CreatePerlinNoiseGradient(ushort x, ushort y)
+    {
+        var gradient = new Vector2(
+            (x - 256f) / 256f,
+            (y - 256f) / 256f);
+        var length = gradient.Length();
+        if (length > float.Epsilon)
+        {
+            gradient /= length;
+        }
+
+        return new Vector2(
+            QuantizePerlinNoiseGradient(gradient.X),
+            QuantizePerlinNoiseGradient(gradient.Y));
+    }
+
+    private static float QuantizePerlinNoiseGradient(float value)
+    {
+        var encoded = Math.Clamp(
+            (int)MathF.Floor((value + 1f) * 32767.5f + 0.5f),
+            0,
+            ushort.MaxValue);
+        return encoded * (2f / ushort.MaxValue) - 1f;
+    }
+
+    private static int NextPerlinNoiseRandom(ref int seed)
+    {
+        const int amplitude = 16807;
+        const int quotient = 127773;
+        const int remainder = 2836;
+        const int maximum = int.MaxValue;
+        var result = amplitude * (seed % quotient) - remainder * (seed / quotient);
+        if (result <= 0)
+        {
+            result += maximum;
+        }
+
+        seed = result;
+        return result;
+    }
+
+    private static int NormalizePerlinNoiseSeed(float value)
+    {
+        const long maximumSeed = int.MaxValue - 1L;
+        var truncated = Math.Truncate((double)value);
+        var seed = truncated >= int.MaxValue
+            ? (long)int.MaxValue
+            : truncated <= int.MinValue
+                ? (long)int.MinValue
+                : (long)truncated;
+        if (seed <= 0)
+        {
+            seed = -(seed % maximumSeed) + 1;
+        }
+        if (seed > maximumSeed)
+        {
+            seed = maximumSeed;
+        }
+
+        return (int)seed;
+    }
+
+    private static Vector2 ResolvePerlinNoiseFrequency(Vector2 frequency, Vector2 tileSize)
+    {
+        if (tileSize.X <= 0f || tileSize.Y <= 0f)
+        {
+            return frequency;
+        }
+
+        return new Vector2(
+            ResolvePerlinNoiseFrequency(frequency.X, tileSize.X),
+            ResolvePerlinNoiseFrequency(frequency.Y, tileSize.Y));
+    }
+
+    private static float ResolvePerlinNoiseFrequency(float frequency, float tileSize)
+    {
+        if (frequency == 0f)
+        {
+            return 0f;
+        }
+
+        var low = MathF.Floor(tileSize * frequency) / tileSize;
+        var high = MathF.Ceiling(tileSize * frequency) / tileSize;
+        return frequency / low < high / frequency ? low : high;
+    }
+
+    private static Vector2 ResolvePerlinNoiseStitchData(Vector2 frequency, Vector2 tileSize)
+    {
+        if (tileSize.X <= 0f || tileSize.Y <= 0f)
+        {
+            return Vector2.Zero;
+        }
+
+        return new Vector2(
+            MathF.Floor(tileSize.X * frequency.X + 0.5f),
+            MathF.Floor(tileSize.Y * frequency.Y + 0.5f));
     }
 
     private void ApplyGradientStops(ref GpuBrush gpuBrush, GradientStop[]? stops)
@@ -5828,22 +6406,12 @@ public unsafe class Compositor : IDisposable
             float baseCursorX = runGlyph.Position.X - runGlyph.Glyph.BearX;
             float baseCursorY = runGlyph.Position.Y - runGlyph.Glyph.BearY;
 
-            float dpiScale = _currentDpiScale;
-            if (ActiveCompilationContext != null && ActiveCompilationContext.StaticZoom > 0.0001f)
-            {
-                dpiScale *= ActiveCompilationContext.StaticZoom;
-            }
-
-            float physicalFontSize = cmd.FontSize * dpiScale;
-            float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 64f);
-            if (rasterFontSize <= 24f)
-            {
-                rasterFontSize = MathF.Round(rasterFontSize * 2f) / 2f;
-            }
-            else
-            {
-                rasterFontSize = MathF.Round(rasterFontSize / 2f) * 2f;
-            }
+            var staticZoom = ActiveCompilationContext?.StaticZoom ?? 1f;
+            var (dpiScale, rasterFontSize, atlasToLogicalScale) = ResolveTextRasterization(
+                cmd.FontSize,
+                activeTransform,
+                _currentDpiScale,
+                staticZoom);
 
             bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                              MathF.Abs(activeTransform.M21) > 0.0001f ||
@@ -5857,8 +6425,6 @@ public unsafe class Compositor : IDisposable
                 rasterFontSize,
                 isRotated,
                 cmd.TextHintingMode);
-
-            float scaleRatio = physicalFontSize / rasterFontSize;
 
             var info = _atlas.GetOrCreateGlyph(glyphFont, runGlyph.CodePoint, rasterFontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
@@ -5900,7 +6466,7 @@ public unsafe class Compositor : IDisposable
                     BearSize = new Vector4(info.BearX, info.BearY, info.Width, info.Height),
                     TexCoords = new Vector4(info.TexCoordMin.X, info.TexCoordMin.Y, info.TexCoordMax.X, info.TexCoordMax.Y),
                     Color = color,
-                    ScaleBoldItalicUseMvp = new Vector4(scaleRatio, xOffset, cmd.IsItalic ? 0.22f : 0f, EncodeTextFlags(ActiveCompilationContext != null, cmd.TextRenderingMode)),
+                    ScaleBoldItalicUseMvp = new Vector4(atlasToLogicalScale, xOffset, cmd.IsItalic ? 0.22f : 0f, EncodeTextFlags(ActiveCompilationContext != null, cmd.TextRenderingMode)),
                     BrushIndex = bIdx,
                     Padding = 0f
                 });
@@ -5935,22 +6501,12 @@ public unsafe class Compositor : IDisposable
 
         EnsureTextVertexCapacity(cmd.GlyphIndices.Length * (cmd.IsBold ? 2 : 1));
 
-        float dpiScale = _currentDpiScale;
-        if (ActiveCompilationContext != null && ActiveCompilationContext.StaticZoom > 0.0001f)
-        {
-            dpiScale *= ActiveCompilationContext.StaticZoom;
-        }
-
-        float physicalFontSize = cmd.FontSize * dpiScale;
-        float rasterFontSize = Math.Clamp(physicalFontSize, 4f, 64f);
-        if (rasterFontSize <= 24f)
-        {
-            rasterFontSize = MathF.Round(rasterFontSize * 2f) / 2f;
-        }
-        else
-        {
-            rasterFontSize = MathF.Round(rasterFontSize / 2f) * 2f;
-        }
+        var staticZoom = ActiveCompilationContext?.StaticZoom ?? 1f;
+        var (dpiScale, rasterFontSize, atlasToLogicalScale) = ResolveTextRasterization(
+            cmd.FontSize,
+            activeTransform,
+            _currentDpiScale,
+            staticZoom);
 
         bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
@@ -6035,8 +6591,6 @@ public unsafe class Compositor : IDisposable
                 isRotated,
                 cmd.TextHintingMode);
 
-            float scaleRatio = physicalFontSize / rasterFontSize;
-
             var info = _atlas.GetOrCreateGlyphByIndex(font, glyphIdx, rasterFontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
 
@@ -6077,7 +6631,7 @@ public unsafe class Compositor : IDisposable
                     BearSize = new Vector4(info.BearX, info.BearY, info.Width, info.Height),
                     TexCoords = new Vector4(info.TexCoordMin.X, info.TexCoordMin.Y, info.TexCoordMax.X, info.TexCoordMax.Y),
                     Color = color,
-                    ScaleBoldItalicUseMvp = new Vector4(scaleRatio, xOffset, cmd.IsItalic ? 0.22f : 0f, EncodeTextFlags(ActiveCompilationContext != null, cmd.TextRenderingMode)),
+                    ScaleBoldItalicUseMvp = new Vector4(atlasToLogicalScale, xOffset, cmd.IsItalic ? 0.22f : 0f, EncodeTextFlags(ActiveCompilationContext != null, cmd.TextRenderingMode)),
                     BrushIndex = bIdx,
                     Padding = 0f
                 });
@@ -6965,6 +7519,11 @@ public unsafe class Compositor : IDisposable
             return false;
         }
 
+        clippedLeft = SnapScissorCoordinate(clippedLeft);
+        clippedTop = SnapScissorCoordinate(clippedTop);
+        clippedRight = SnapScissorCoordinate(clippedRight);
+        clippedBottom = SnapScissorCoordinate(clippedBottom);
+
         uint localX = (uint)Math.Floor(clippedLeft);
         uint localY = (uint)Math.Floor(clippedTop);
         uint localRight = (uint)Math.Ceiling(clippedRight);
@@ -6981,6 +7540,12 @@ public unsafe class Compositor : IDisposable
         sw = Math.Min(localRight, targetWidth) - localX;
         sh = Math.Min(localBottom, targetHeight) - localY;
         return sw > 0 && sh > 0;
+    }
+
+    private static float SnapScissorCoordinate(float value)
+    {
+        var rounded = MathF.Round(value);
+        return MathF.Abs(value - rounded) <= 0.0001f ? rounded : value;
     }
 
     private unsafe void ApplyRenderPassViewport(
@@ -7467,34 +8032,37 @@ public unsafe class Compositor : IDisposable
         bool includeRootTransform = true,
         bool includeRootVisualState = true)
     {
-        var ownsOffscreenFrame = _offscreenRenderDepth++ == 0;
-        try
+        lock (_offscreenRenderLock)
         {
-            if (ownsOffscreenFrame)
+            var ownsOffscreenFrame = _offscreenRenderDepth++ == 0;
+            try
             {
-                _context.CleanupPendingResources();
-                _pathAtlas.CleanupFrame(targetTexture.Width, targetTexture.Height);
-            }
+                if (ownsOffscreenFrame)
+                {
+                    _context.CleanupPendingResources();
+                    _pathAtlas.CleanupFrame(targetTexture.Width, targetTexture.Height);
+                }
 
-            RenderOffscreenCore(
-                node,
-                width,
-                height,
-                targetTexture,
-                padding,
-                dpiScale,
-                clearColor,
-                loadExistingContents,
-                includeRootTransform,
-                includeRootVisualState);
-        }
-        finally
-        {
-            _offscreenRenderDepth--;
-            if (ownsOffscreenFrame)
+                RenderOffscreenCore(
+                    node,
+                    width,
+                    height,
+                    targetTexture,
+                    padding,
+                    dpiScale,
+                    clearColor,
+                    loadExistingContents,
+                    includeRootTransform,
+                    includeRootVisualState);
+            }
+            finally
             {
-                _frameNumber++;
-                EvictUnusedBindGroups();
+                _offscreenRenderDepth--;
+                if (ownsOffscreenFrame)
+                {
+                    _frameNumber++;
+                    EvictUnusedBindGroups();
+                }
             }
         }
     }

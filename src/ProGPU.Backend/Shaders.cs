@@ -247,6 +247,181 @@ fn transform_brush_coordinate(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
         dot(p, brush.coordinateTransform1.xyz));
 }
 
+fn perlin_fade(value: vec2<f32>) -> vec2<f32> {
+    return value * value * (vec2<f32>(3.0) - 2.0 * value);
+}
+
+fn wrap_perlin_cell(cell: vec2<f32>, period: vec2<f32>) -> vec2<f32> {
+    var wrapped = cell;
+    if (period.x > 0.5) {
+        wrapped.x = wrapped.x - floor(wrapped.x / period.x) * period.x;
+    }
+    if (period.y > 0.5) {
+        wrapped.y = wrapped.y - floor(wrapped.y / period.y) * period.y;
+    }
+    return wrapped;
+}
+
+fn fallback_perlin_gradient(cell: vec2<f32>, seed: f32, channel: f32) -> vec2<f32> {
+    let value = fract(sin(dot(cell, vec2<f32>(127.1, 311.7)) + seed * 74.7 + channel * 19.19) * 43758.5453);
+    let angle = value * 6.283185307179586;
+    return vec2<f32>(cos(angle), sin(angle));
+}
+
+fn fallback_perlin_noise(
+    point: vec2<f32>,
+    seed: f32,
+    channel: f32,
+    period: vec2<f32>) -> f32 {
+    let baseCell = floor(point);
+    let local = fract(point);
+    let fade = perlin_fade(local);
+    let cell00 = wrap_perlin_cell(baseCell, period);
+    let cell10 = wrap_perlin_cell(baseCell + vec2<f32>(1.0, 0.0), period);
+    let cell01 = wrap_perlin_cell(baseCell + vec2<f32>(0.0, 1.0), period);
+    let cell11 = wrap_perlin_cell(baseCell + vec2<f32>(1.0, 1.0), period);
+    let value00 = dot(fallback_perlin_gradient(cell00, seed, channel), local);
+    let value10 = dot(fallback_perlin_gradient(cell10, seed, channel), local - vec2<f32>(1.0, 0.0));
+    let value01 = dot(fallback_perlin_gradient(cell01, seed, channel), local - vec2<f32>(0.0, 1.0));
+    let value11 = dot(fallback_perlin_gradient(cell11, seed, channel), local - vec2<f32>(1.0, 1.0));
+    return mix(mix(value00, value10, fade.x), mix(value01, value11, fade.x), fade.y);
+}
+
+fn fallback_perlin_channel(brush: Brush, coordinate: vec2<f32>, channel: f32) -> f32 {
+    let octaveCount = min(brush.stopCount, 255u);
+    if (octaveCount == 0u) {
+        return select(0.5, 0.0, brush.spreadMethod != 0u);
+    }
+
+    var frequency = max(abs(brush.gradientStart), vec2<f32>(0.000001));
+    var amplitude = 1.0;
+    var sum = 0.0;
+    var amplitudeSum = 0.0;
+    var octave = 0u;
+    loop {
+        if (octave >= octaveCount) {
+            break;
+        }
+        let period = select(
+            vec2<f32>(0.0),
+            max(round(abs(brush.gradientCenter) * frequency), vec2<f32>(1.0)),
+            all(abs(brush.gradientCenter) > vec2<f32>(0.0)));
+        let sampleValue = fallback_perlin_noise(
+            coordinate * frequency,
+            brush.gradientRadius,
+            channel,
+            period);
+        sum = sum + select(sampleValue, abs(sampleValue), brush.spreadMethod != 0u) * amplitude;
+        amplitudeSum = amplitudeSum + amplitude;
+        frequency = frequency * 2.0;
+        amplitude = amplitude * 0.5;
+        octave = octave + 1u;
+    }
+
+    let normalized = sum / max(amplitudeSum, 0.000001);
+    return clamp(select(normalized * 0.5 + 0.5, normalized, brush.spreadMethod != 0u), 0.0, 1.0);
+}
+
+fn perlin_table_selector(brush: Brush, index: i32) -> i32 {
+    let wrapped = u32(index & 255);
+    return i32(round(gradientStops[brush.stopOffset + wrapped * 2u].offset));
+}
+
+fn perlin_table_gradient(brush: Brush, channel: u32, index: i32) -> vec2<f32> {
+    let wrapped = u32(index & 255);
+    let first = gradientStops[brush.stopOffset + wrapped * 2u].color;
+    if (channel == 0u) {
+        return first.xy;
+    }
+    if (channel == 1u) {
+        return first.zw;
+    }
+
+    let second = gradientStops[brush.stopOffset + wrapped * 2u + 1u].color;
+    return select(second.zw, second.xy, channel == 2u);
+}
+
+fn perlin_table_noise(
+    brush: Brush,
+    noiseVector: vec2<f32>,
+    stitchData: vec2<f32>) -> vec4<f32> {
+    var floorValue = floor(noiseVector);
+    var ceilValue = floorValue + vec2<f32>(1.0);
+    let fraction = noiseVector - floorValue;
+    if (stitchData.x > 0.0) {
+        if (floorValue.x >= stitchData.x) { floorValue.x = floorValue.x - stitchData.x; }
+        if (ceilValue.x >= stitchData.x) { ceilValue.x = ceilValue.x - stitchData.x; }
+    }
+    if (stitchData.y > 0.0) {
+        if (floorValue.y >= stitchData.y) { floorValue.y = floorValue.y - stitchData.y; }
+        if (ceilValue.y >= stitchData.y) { ceilValue.y = ceilValue.y - stitchData.y; }
+    }
+
+    let latticeX0 = perlin_table_selector(brush, i32(round(floorValue.x)));
+    let latticeX1 = perlin_table_selector(brush, i32(round(ceilValue.x)));
+    let index00 = latticeX0 + i32(round(floorValue.y));
+    let index10 = latticeX1 + i32(round(floorValue.y));
+    let index01 = latticeX0 + i32(round(ceilValue.y));
+    let index11 = latticeX1 + i32(round(ceilValue.y));
+    let smoothValue = perlin_fade(fraction);
+    var result = vec4<f32>(0.0);
+    for (var channel = 0u; channel < 4u; channel = channel + 1u) {
+        let value00 = dot(perlin_table_gradient(brush, channel, index00), fraction);
+        let value10 = dot(
+            perlin_table_gradient(brush, channel, index10),
+            fraction - vec2<f32>(1.0, 0.0));
+        let value01 = dot(
+            perlin_table_gradient(brush, channel, index01),
+            fraction - vec2<f32>(0.0, 1.0));
+        let value11 = dot(
+            perlin_table_gradient(brush, channel, index11),
+            fraction - vec2<f32>(1.0, 1.0));
+        result[channel] = mix(
+            mix(value00, value10, smoothValue.x),
+            mix(value01, value11, smoothValue.x),
+            smoothValue.y);
+    }
+    return result;
+}
+
+fn exact_perlin_noise(brush: Brush, coordinate: vec2<f32>) -> vec4<f32> {
+    let octaveCount = min(brush.stopCount, 255u);
+    if (octaveCount == 0u) {
+        return select(vec4<f32>(0.5), vec4<f32>(0.0), brush.spreadMethod != 0u);
+    }
+
+    var noiseVector = (coordinate + vec2<f32>(0.5)) * brush.gradientStart;
+    var stitchData = brush.gradientEnd;
+    var ratio = 1.0;
+    var result = vec4<f32>(0.0);
+    for (var octave = 0u; octave < octaveCount; octave = octave + 1u) {
+        var sampleValue = perlin_table_noise(brush, noiseVector, stitchData);
+        if (brush.spreadMethod != 0u) {
+            sampleValue = abs(sampleValue);
+        }
+        result = result + sampleValue * ratio;
+        noiseVector = noiseVector * 2.0;
+        stitchData = stitchData * 2.0;
+        ratio = ratio * 0.5;
+    }
+
+    if (brush.spreadMethod == 0u) {
+        result = result * 0.5 + vec4<f32>(0.5);
+    }
+    return clamp(result, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+
+fn sample_perlin_noise(brush: Brush, coordinate: vec2<f32>) -> vec4<f32> {
+    if (brush.colorInterpolationMode != 0u) {
+        return exact_perlin_noise(brush, coordinate);
+    }
+    return vec4<f32>(
+        fallback_perlin_channel(brush, coordinate, 0.0),
+        fallback_perlin_channel(brush, coordinate, 1.0),
+        fallback_perlin_channel(brush, coordinate, 2.0),
+        fallback_perlin_channel(brush, coordinate, 3.0));
+}
+
 fn solve_two_point_conical_gradient(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
     let centerDelta = brush.gradientCenter - brush.gradientStart;
     let radiusDelta = brush.gradientRadiusY - brush.gradientRadius;
@@ -627,7 +802,20 @@ fn vector_fs_main(input: VertexOutput) -> vec4<f32> {
     }
 
     var shapeAlpha: f32 = 1.0;
-    if (sType < 3u) {
+    if (sType == 0u && input.strokeThickness <= 0.0) {
+        let edgeDistance = abs(input.texCoord) - input.shapeSize * 0.5;
+        let edgeWidth = max(fwidth(edgeDistance), vec2<f32>(0.0001));
+        let antialiasedCoverage = vec2<f32>(1.0) - smoothstep(
+            -0.5 * edgeWidth,
+            0.5 * edgeWidth,
+            edgeDistance);
+        let aliasedCoverage = select(
+            vec2<f32>(0.0),
+            vec2<f32>(1.0),
+            edgeDistance <= vec2<f32>(0.0));
+        let coverage = select(antialiasedCoverage, aliasedCoverage, aliasedEdge);
+        shapeAlpha = coverage.x * coverage.y;
+    } else if (sType < 3u) {
         var d_shape: f32 = 0.0;
         if (input.strokeThickness > 0.0) {
             var strokeDistance = d;
@@ -782,8 +970,13 @@ fn vector_fs_main(input: VertexOutput) -> vec4<f32> {
             if (t < 0.0) {
                 t = t + 1.0;
             }
+        } else if (brush.brushType == 7u) {
+            let noiseColor = sample_perlin_noise(brush, brushCoord);
+            finalColor = vec4<f32>(noiseColor.rgb, noiseColor.a * brush.opacity);
         }
-        if (gradientCoverage <= 0.0) {
+        if (brush.brushType == 7u) {
+            // Procedural noise was evaluated directly above.
+        } else if (gradientCoverage <= 0.0) {
             if ((brush.spreadMethod & 0x80000000u) != 0u) {
                 finalColor = vec4<f32>(brush.stopColors0.rgb, brush.stopColors0.a * brush.opacity);
             } else {
@@ -1254,12 +1447,12 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     var coverage: f32 = 0.0;
     
-    for (var dy: f32 = 0.125; dy < 1.0; dy = dy + 0.25) {
-        for (var dx: f32 = 0.125; dx < 1.0; dx = dx + 0.25) {
+    for (var dy: f32 = 0.0625; dy < 1.0; dy = dy + 0.125) {
+        for (var dx: f32 = 0.0625; dx < 1.0; dx = dx + 0.125) {
             let sp = vec2<f32>(px + dx - uniforms.subpixelX, py + dy);
             let fp = vec2<f32>(sp.x / uniforms.scale, -sp.y / uniforms.scale);
             if (is_point_inside(fp, record)) {
-                coverage = coverage + 0.0625;
+                coverage = coverage + 0.015625;
             }
         }
     }

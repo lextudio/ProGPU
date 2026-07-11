@@ -21,6 +21,7 @@ namespace ProGPU.Scene
             Rect? sourceRect = null,
             TextureSamplingMode samplingMode = TextureSamplingMode.Linear,
             ImageEffectColorMatrix? colorMatrix = null,
+            bool luminanceToAlpha = false,
             Matrix4x4 transform = default)
         {
             if (texture == null) return;
@@ -39,7 +40,8 @@ namespace ProGPU.Scene
                 Invert = invert,
                 BlurSigma = blurSigma,
                 MaskTexture = maskTexture,
-                ColorMatrix = colorMatrix
+                ColorMatrix = colorMatrix,
+                LuminanceToAlpha = luminanceToAlpha
             };
 
             context.DrawExtension(

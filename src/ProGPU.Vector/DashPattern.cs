@@ -72,12 +72,7 @@ readonly struct DashPattern
 
             if (interval <= Epsilon)
             {
-                if ((i % 2) != 0)
-                {
-                    return false;
-                }
-
-                interval = strokeThickness;
+                interval = MathF.Max(Epsilon * 2.0f, (float)strokeThickness * 0.001f);
             }
 
             intervals[i] = (float)interval;

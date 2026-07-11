@@ -146,6 +146,30 @@ public class SweepGradientBrush : Brush
     }
 }
 
+public class PerlinNoiseBrush : Brush
+{
+    public bool IsTurbulence { get; set; }
+    public Vector2 BaseFrequency { get; set; }
+    public int NumOctaves { get; set; }
+    public float Seed { get; set; }
+    public Vector2 TileSize { get; set; }
+    public Matrix4x4 CoordinateTransform { get; set; } = Matrix4x4.Identity;
+
+    public PerlinNoiseBrush(
+        bool isTurbulence,
+        Vector2 baseFrequency,
+        int numOctaves,
+        float seed,
+        Vector2 tileSize)
+    {
+        IsTurbulence = isTurbulence;
+        BaseFrequency = baseFrequency;
+        NumOctaves = numOctaves;
+        Seed = seed;
+        TileSize = tileSize;
+    }
+}
+
 public enum PenLineJoin
 {
     Miter = 0,

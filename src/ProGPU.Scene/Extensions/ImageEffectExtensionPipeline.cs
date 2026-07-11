@@ -131,6 +131,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let inverted = vec3<f32>(1.0) - straightColor.rgb;
     straightColor = vec4<f32>(mix(straightColor.rgb, inverted, effect.effects1.y), straightColor.a);
 
+    if (effect.flags0.w > 0.5) {
+        let maskLuminance = dot(straightColor.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        straightColor = vec4<f32>(1.0, 1.0, 1.0, maskLuminance * straightColor.a);
+    }
+
     if (effect.flags0.z > 0.5) {
         let matrixSource = straightColor;
         straightColor = vec4<f32>(
@@ -538,7 +543,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                     MathF.Max(1f, maskCanvasHeight),
                     sourceAlphaMode == GpuTextureAlphaMode.Premultiplied ? 1f : 0f,
                     pipelineSourceAlphaMode == GpuTextureAlphaMode.Premultiplied ? 1f : 0f),
-                Flags0 = new Vector4(0f, 0f, colorMatrix.HasValue ? 1f : 0f, 0f)
+                Flags0 = new Vector4(
+                    0f,
+                    0f,
+                    colorMatrix.HasValue ? 1f : 0f,
+                    p.LuminanceToAlpha ? 1f : 0f)
             });
 
             // 2. Texture & Sampler BindGroup (Group 2)
