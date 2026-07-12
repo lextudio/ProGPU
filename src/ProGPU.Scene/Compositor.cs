@@ -184,7 +184,10 @@ public unsafe class Compositor : IDisposable
     private const float QuadrilateralStripStartSdfShapeType = 16f;
     private const float QuadrilateralStripEndSdfShapeType = 17f;
     private const float AffineStrokeArcMaxAngleRadians = MathF.PI / 24f;
-    private const float TextPathCoverageGamma = 0.65f;
+    // Matches Skia grayscale edge weight for axis-aligned vector glyphs rasterized at 8x8 coverage.
+    private const float SmallTextPathCoverageGamma = 0.65f;
+    private const float LargeTextPathCoverageGamma = 0.61f;
+    private const float LargeTextPathCoveragePixelThreshold = 24f;
     private const float TransformedTextPathCoverageGamma = 0.875f;
     private const int MaxCachedVectorGlyphPaths = 4096;
 
@@ -7610,7 +7613,9 @@ SceneStateUploadComplete:
             activeTransform,
             _currentDpiScale,
             staticZoom);
-        var atlasUpscale = atlasToLogicalScale * TransformMetrics.GetStrokeScale(activeTransform) * staticZoom;
+        var transformScale = TransformMetrics.GetStrokeScale(activeTransform);
+        var atlasUpscale = atlasToLogicalScale * transformScale * staticZoom;
+        var textPathCoverageGamma = GetTextPathCoverageGamma(cmd.FontSize, activeTransform, transformScale);
         bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
                          activeTransform.M11 < 0.0f ||
@@ -7655,7 +7660,7 @@ SceneStateUploadComplete:
                         PathSampleGrid = cmd.TextRenderingMode == TextRenderingMode.Aliased
                             ? PathAtlas.StandardCoverageSampleGrid
                             : PathAtlas.HighPrecisionCoverageSampleGrid,
-                        PathCoverageGamma = GetTextPathCoverageGamma(activeTransform)
+                        PathCoverageGamma = textPathCoverageGamma
                     };
                     CompilePathCommand(pathCmd, activeTransform);
                 }
@@ -7686,6 +7691,7 @@ SceneStateUploadComplete:
                             runGlyph.Position + cmd.Position,
                             cmd.IsItalic ? 0.22f : 0f,
                             pass * vectorBoldOffset,
+                            textPathCoverageGamma,
                             activeTransform);
                     }
                 }
@@ -7786,7 +7792,9 @@ SceneStateUploadComplete:
             activeTransform,
             _currentDpiScale,
             staticZoom);
-        var atlasUpscale = atlasToLogicalScale * TransformMetrics.GetStrokeScale(activeTransform) * staticZoom;
+        var transformScale = TransformMetrics.GetStrokeScale(activeTransform);
+        var atlasUpscale = atlasToLogicalScale * transformScale * staticZoom;
+        var textPathCoverageGamma = GetTextPathCoverageGamma(cmd.FontSize, activeTransform, transformScale);
 
         bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
@@ -7832,7 +7840,7 @@ SceneStateUploadComplete:
                         PathSampleGrid = cmd.TextRenderingMode == TextRenderingMode.Aliased
                             ? PathAtlas.StandardCoverageSampleGrid
                             : PathAtlas.HighPrecisionCoverageSampleGrid,
-                        PathCoverageGamma = GetTextPathCoverageGamma(activeTransform)
+                        PathCoverageGamma = textPathCoverageGamma
                     };
                     CompilePathCommand(pathCmd, activeTransform);
                 }
@@ -7859,6 +7867,7 @@ SceneStateUploadComplete:
                             position + cmd.Position,
                             cmd.IsItalic ? 0.22f : 0f,
                             pass * vectorBoldOffset,
+                            textPathCoverageGamma,
                             activeTransform);
                     }
                 }
@@ -7937,6 +7946,7 @@ SceneStateUploadComplete:
         Vector2 position,
         float italicSkew,
         float xOffset,
+        float pathCoverageGamma,
         Matrix4x4 activeTransform)
     {
         var positioned = position + new Vector2(xOffset, 0f);
@@ -7993,19 +8003,25 @@ SceneStateUploadComplete:
             PathSampleGrid = textCommand.TextRenderingMode == TextRenderingMode.Aliased
                 ? PathAtlas.StandardCoverageSampleGrid
                 : PathAtlas.HighPrecisionCoverageSampleGrid,
-            PathCoverageGamma = GetTextPathCoverageGamma(activeTransform)
+            PathCoverageGamma = pathCoverageGamma
         }, placementTransform);
     }
 
-    private static float GetTextPathCoverageGamma(Matrix4x4 transform)
+    private static float GetTextPathCoverageGamma(float fontSize, Matrix4x4 transform, float transformScale)
     {
         const float epsilon = 0.0001f;
         var hasNonAxisAlignedBasis = MathF.Abs(transform.M12) > epsilon ||
             MathF.Abs(transform.M21) > epsilon;
         var hasReflectedBasis = transform.M11 < 0f || transform.M22 < 0f;
-        return hasNonAxisAlignedBasis || hasReflectedBasis
-            ? TransformedTextPathCoverageGamma
-            : TextPathCoverageGamma;
+        if (hasNonAxisAlignedBasis || hasReflectedBasis)
+        {
+            return TransformedTextPathCoverageGamma;
+        }
+
+        var pixelSize = MathF.Abs(fontSize) * transformScale;
+        return float.IsFinite(pixelSize) && pixelSize >= LargeTextPathCoveragePixelThreshold
+            ? LargeTextPathCoverageGamma
+            : SmallTextPathCoverageGamma;
     }
 
     private static PathGeometry CreatePositionedGlyphOutline(

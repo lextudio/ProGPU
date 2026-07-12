@@ -67,6 +67,7 @@ Required focused tests live in `LayerRenderTests` and `CompositorReviewRegressio
 * Do not update animations twice. `Window.RenderFrameCore` owns the core `UpdateAnimations` call; sample callbacks should update only sample-specific state.
 * Keep status/diagnostic text updates rate-limited. Rebuilding `RichTextBlock` inlines every frame defeats both its command cache and whole-scene reuse.
 * Preserve `TextRunGlyph.GlyphIndex`; do not repeat character-map lookup during compositor compilation. Cache font table capability flags and hoist transform, raster-size, basis, and bold invariants out of glyph loops.
+* Classify vector-text coverage once per text command, reusing the already computed transform scale. Keep the calibrated small/large device-pixel policy and transformed-text branch out of per-glyph loops.
 * Preserve `SKCubicResampler` B/C coefficients from the compatibility API through `RenderCommand` and texture vertices. Keep the Catmull-Rom fast path pixel-identical; do not collapse Mitchell and custom resamplers into a generic cubic mode.
 * Preserve the allocation-free double-queue dispatcher. Do not copy the pending queue into a new `List<Action>` per frame, execute newly posted work recursively in the same drain, or enqueue one delegate per benchmark element.
 * Keep producer backpressure bounded. The LOL/s workload batches element mutations and limits pending work separately for VSync and uncapped runs so background production cannot starve rendering.
@@ -117,7 +118,7 @@ dotnet test tests/Svg.Skia.UnitTests/Svg.Skia.UnitTests.csproj -f net10.0 -c Rel
   --filter 'FullyQualifiedName!~W3CTestSuiteTests&FullyQualifiedName!~resvgTests'
 ```
 
-The current shim baseline is 927 resvg passes with 37 explicit inventory skips and 1,147 remaining passes. The W3C image lane has 56 established threshold differences, 474 passes, and 3 skips versus native SkiaSharp's 530 passes and 3 skips. Performance-only work must not add a fixture, increase an image error, or change a previously matching result. Compare the exact fixture/error list against the parent commit; intentional parity improvements should reduce the difference set and include their own image-focused review.
+The current shim baseline is 927 resvg passes with 37 explicit inventory skips and 1,147 remaining passes. The W3C image lane has 48 established threshold differences, 482 passes, and 3 skips versus native SkiaSharp's 530 passes and 3 skips. Performance-only work must not add a fixture, increase an image error, or change a previously matching result. Compare the exact fixture/error list against the parent commit; intentional parity improvements should reduce the difference set and include their own image-focused review.
 
 Record benchmark result lines and test totals in the commit or task summary. Do not claim a performance fix from subjective interaction alone.
 
