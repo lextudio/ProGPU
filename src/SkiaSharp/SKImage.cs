@@ -2414,6 +2414,54 @@ public class SKBitmap : SKObject
         return pixmap is not null && pixmap.Encode(dst, format, quality);
     }
 
+    public SKShader ToShader() =>
+        ToShader(
+            SKShaderTileMode.Clamp,
+            SKShaderTileMode.Clamp,
+            SKSamplingOptions.Default,
+            SKMatrix.Identity);
+
+    public SKShader ToShader(SKShaderTileMode tmx, SKShaderTileMode tmy) =>
+        ToShader(tmx, tmy, SKSamplingOptions.Default, SKMatrix.Identity);
+
+    public SKShader ToShader(
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
+        SKSamplingOptions sampling) =>
+        ToShader(tmx, tmy, sampling, SKMatrix.Identity);
+
+#pragma warning disable CS0619
+    [Obsolete("Use ToShader(SKShaderTileMode tmx, SKShaderTileMode tmy, SKSamplingOptions sampling) instead.", true)]
+    public SKShader ToShader(
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
+        SKFilterQuality quality) =>
+        ToShader(tmx, tmy, SamplingFromQuality((int)quality), SKMatrix.Identity);
+#pragma warning restore CS0619
+
+    public SKShader ToShader(
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
+        SKMatrix localMatrix) =>
+        ToShader(tmx, tmy, SKSamplingOptions.Default, localMatrix);
+
+    public SKShader ToShader(
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
+        SKSamplingOptions sampling,
+        SKMatrix localMatrix) =>
+        SKShader.CreateImage(SKImage.FromBitmap(this), tmx, tmy, localMatrix, sampling);
+
+#pragma warning disable CS0619
+    [Obsolete("Use ToShader(SKShaderTileMode tmx, SKShaderTileMode tmy, SKSamplingOptions sampling, SKMatrix localMatrix) instead.", true)]
+    public SKShader ToShader(
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
+        SKFilterQuality quality,
+        SKMatrix localMatrix) =>
+        ToShader(tmx, tmy, SamplingFromQuality((int)quality), localMatrix);
+#pragma warning restore CS0619
+
     internal byte[] CopyRgba8888Rows()
     {
         FlushAttachedCanvas();

@@ -2680,6 +2680,8 @@ public class SKCanvas : IDisposable
         }
         texture = ApplyTextureColorFilter(texture, shaderColorFilter);
         texture = ApplyTextureColorFilter(texture, paintColorFilter);
+        var samplingMode = MapSampling(imageShader.Sampling);
+        var cubicCoefficients = MapCubicSampling(imageShader.Sampling);
         _context.PushGeometryClip(clipGeometry, _currentMatrix.ToMatrix4x4());
         try
         {
@@ -2700,7 +2702,9 @@ public class SKCanvas : IDisposable
                         Rect = new Rect(0f, 0f, imageShader.Image.Width, imageShader.Image.Height),
                         SrcRect = new Rect(0f, 0f, imageShader.Image.Width, imageShader.Image.Height),
                         Transform = placement * localMatrix * _currentMatrix.ToMatrix4x4(),
-                        TextureSamplingMode = TextureSamplingMode.Linear
+                        TextureSamplingMode = samplingMode,
+                        TextureCubicCoefficients = cubicCoefficients.GetValueOrDefault(),
+                        HasTextureCubicCoefficients = cubicCoefficients.HasValue
                     });
                 }
             }
