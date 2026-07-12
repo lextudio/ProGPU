@@ -970,6 +970,37 @@ public class DrawingContext : IRenderDataProvider
         bool isItalic = false,
         TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
         TextHintingMode textHintingMode = TextHintingMode.Auto,
+        bool useVectorGlyphRendering = false)
+    {
+        DrawTransformedGlyphRun(
+            glyphIndices,
+            glyphPositions,
+            font,
+            fontSize,
+            brush,
+            position,
+            transform,
+            isBold,
+            isItalic,
+            textRenderingMode,
+            textHintingMode,
+            useVectorGlyphRendering,
+            fontScaleX: 1f,
+            fontSkewX: 0f);
+    }
+
+    public void DrawTransformedGlyphRun(
+        ushort[] glyphIndices,
+        Vector2[] glyphPositions,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        Matrix4x4 transform = default,
+        bool isBold = false,
+        bool isItalic = false,
+        TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
+        TextHintingMode textHintingMode = TextHintingMode.Auto,
         bool useVectorGlyphRendering = false,
         float fontScaleX = 1f,
         float fontSkewX = 0f)

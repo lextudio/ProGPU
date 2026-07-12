@@ -31,6 +31,8 @@ public struct GlyphInfo
 
 public unsafe class GlyphAtlas : IDisposable
 {
+    private const uint DefaultUniformRingBufferSize = 256 * 1024;
+
     private readonly WgpuContext _context;
     private readonly GpuTexture _atlasTexture;
     private readonly uint _atlasSize;
@@ -47,6 +49,7 @@ public unsafe class GlyphAtlas : IDisposable
     private readonly ComputePipeline* _computePipeline;
 
     private CommandEncoder* _batchEncoder;
+    private int _batchDepth;
     private readonly List<GpuBuffer> _batchBuffers = new();
     private readonly List<nint> _batchBindGroups = new();
 
@@ -56,18 +59,37 @@ public unsafe class GlyphAtlas : IDisposable
     public void BeginBatch()
     {
         if (_isDisposed) return;
-        if (_batchEncoder != null) return;
-        
+        _batchDepth++;
+        if (_batchDepth > 1) return;
+
+        CreateBatchEncoder();
+    }
+
+    private void CreateBatchEncoder()
+    {
         var encoderDesc = new CommandEncoderDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Glyph Rasterizer Batch Encoder") };
         _batchEncoder = _context.Wgpu.DeviceCreateCommandEncoder(_context.Device, &encoderDesc);
         SilkMarshal.Free((nint)encoderDesc.Label);
-        
-        _ringOffset = 0; // Reset offset on each batch pass
+
+        if (_batchEncoder == null)
+        {
+            throw new InvalidOperationException("Failed to create the glyph rasterizer batch encoder.");
+        }
+
+        _ringOffset = 0;
     }
 
     public void EndBatch()
     {
         if (_isDisposed) return;
+        if (_batchDepth == 0) return;
+        _batchDepth--;
+        if (_batchDepth > 0) return;
+        FlushBatchEncoder();
+    }
+
+    private void FlushBatchEncoder()
+    {
         if (_batchEncoder == null) return;
 
         var cmdDesc = new CommandBufferDescriptor { Label = (byte*)SilkMarshal.StringToPtr("Glyph Rasterizer Batch Command Buffer") };
@@ -105,6 +127,8 @@ public unsafe class GlyphAtlas : IDisposable
 
     public ulong Generation { get; private set; }
 
+    public bool CapacityExceeded { get; private set; }
+
     public bool IsAlmostFull => (_currentY + _currentRowHeight) > (_atlasSize * 0.85f);
 
     public void Clear()
@@ -118,11 +142,22 @@ public unsafe class GlyphAtlas : IDisposable
         _currentRowHeight = 0;
 
         _atlasTexture.ClearRenderTarget();
+        CapacityExceeded = false;
         Generation++;
     }
 
     public GlyphAtlas(WgpuContext context, uint atlasSize = 2048)
+        : this(context, atlasSize, DefaultUniformRingBufferSize)
     {
+    }
+
+    internal GlyphAtlas(WgpuContext context, uint atlasSize, uint uniformRingBufferSize)
+    {
+        if (uniformRingBufferSize < 256 || uniformRingBufferSize % 256 != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(uniformRingBufferSize));
+        }
+
         _context = context;
         _atlasSize = atlasSize;
         
@@ -133,7 +168,8 @@ public unsafe class GlyphAtlas : IDisposable
             _atlasSize, 
             _atlasSize, 
             TextureFormat.Rgba8Unorm, 
-            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.StorageBinding | TextureUsage.RenderAttachment,
+            TextureUsage.TextureBinding | TextureUsage.CopySrc | TextureUsage.CopyDst |
+            TextureUsage.StorageBinding | TextureUsage.RenderAttachment,
             "Dynamic Glyph Atlas"
         );
 
@@ -145,7 +181,11 @@ public unsafe class GlyphAtlas : IDisposable
         _computePipeline = _pipelineCache.GetOrCreateComputePipeline("GlyphRasterizer", shaderModule, "cs_main");
 
         // Allocate a 256KB uniform ring buffer once at startup to eliminate CPU-to-GPU memory allocation overhead
-        _uniformRingBuffer = new GpuBuffer(_context, 256 * 1024, BufferUsage.Uniform | BufferUsage.CopyDst, "Glyph Atlas Uniform Ring Buffer");
+        _uniformRingBuffer = new GpuBuffer(
+            _context,
+            uniformRingBufferSize,
+            BufferUsage.Uniform | BufferUsage.CopyDst,
+            "Glyph Atlas Uniform Ring Buffer");
         _ringOffset = 0;
     }
 
@@ -283,33 +323,10 @@ public unsafe class GlyphAtlas : IDisposable
                             uint gW = (uint)width;
                             uint gH = (uint)height;
 
-                            if (_currentX + gW + 2 > _atlasSize)
+                            if (!TryAllocateAtlasRegion(gW, gH, out uint posX, out uint posY))
                             {
-                                // Row is full, wrap to next shelf row
-                                _currentX = 2;
-                                _currentY += _currentRowHeight + 2;
-                                _currentRowHeight = 0;
+                                return default;
                             }
-
-                            if (_currentY + gH + 2 > _atlasSize)
-                            {
-                                // Atlas is entirely out of space, reset packer
-                                ProGpuTextDiagnostics.WriteLine("[GlyphAtlas] Warning: Texture Atlas is full! Clearing cache.");
-                                _glyphs.Clear();
-                                _currentX = 2;
-                                _currentY = 2;
-                                _currentRowHeight = 0;
-
-                                _atlasTexture.ClearRenderTarget();
-                                Generation++;
-                            }
-
-                            uint posX = _currentX;
-                            uint posY = _currentY;
-
-                            // Advance packer
-                            _currentX += gW + 2;
-                            _currentRowHeight = Math.Max(_currentRowHeight, gH);
 
                             // Upload pre-compiled font segments and records once per font loading
                             if (!_fontGpuData.TryGetValue(font, out var gpuData))
@@ -363,8 +380,8 @@ public unsafe class GlyphAtlas : IDisposable
                                 // Ring buffer slice allocation
                                 if (_ringOffset + alignedSize > _uniformRingBuffer.Size)
                                 {
-                                    // Reset offset in the highly unlikely event we exceed 256KB inside a single batch
-                                    _ringOffset = 0;
+                                    FlushBatchEncoder();
+                                    CreateBatchEncoder();
                                 }
 
                                 _context.Wgpu.QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr, _ringOffset, &uniforms, (uint)Marshal.SizeOf<GlyphUniforms>());
@@ -574,32 +591,42 @@ public unsafe class GlyphAtlas : IDisposable
     {
         x = 0;
         y = 0;
-        if (_atlasSize <= 4 ||
-            width == 0 ||
-            height == 0 ||
-            width > _atlasSize - 4 ||
-            height > _atlasSize - 4)
+        if (_atlasSize <= 4 || width == 0 || height == 0)
         {
             return false;
         }
 
-        if (_currentX + width + 2 > _atlasSize)
+        if (width > _atlasSize - 4 || height > _atlasSize - 4)
         {
-            _currentX = 2;
-            _currentY += _currentRowHeight + 2;
-            _currentRowHeight = 0;
+            CapacityExceeded = true;
+            ProGpuTextDiagnostics.WriteLine(
+                $"[GlyphAtlas] Glyph {width}x{height} cannot fit in the {_atlasSize}x{_atlasSize} atlas; using vector fallback.");
+            return false;
         }
 
-        if (_currentY + height + 2 > _atlasSize)
+        uint nextX = _currentX;
+        uint nextY = _currentY;
+        uint nextRowHeight = _currentRowHeight;
+        if (nextX + width + 2 > _atlasSize)
         {
-            ProGpuTextDiagnostics.WriteLine("[GlyphAtlas] Warning: Texture Atlas is full! Clearing cache.");
-            Clear();
+            nextX = 2;
+            nextY += nextRowHeight + 2;
+            nextRowHeight = 0;
         }
 
-        x = _currentX;
-        y = _currentY;
-        _currentX += width + 2;
-        _currentRowHeight = Math.Max(_currentRowHeight, height);
+        if (nextY + height + 2 > _atlasSize)
+        {
+            CapacityExceeded = true;
+            ProGpuTextDiagnostics.WriteLine(
+                "[GlyphAtlas] Atlas capacity exhausted; preserving existing UVs and using vector fallback for the new glyph.");
+            return false;
+        }
+
+        x = nextX;
+        y = nextY;
+        _currentX = nextX + width + 2;
+        _currentY = nextY;
+        _currentRowHeight = Math.Max(nextRowHeight, height);
         return true;
     }
 
@@ -628,6 +655,12 @@ public unsafe class GlyphAtlas : IDisposable
     public void Dispose()
     {
         if (_isDisposed) return;
+
+        if (_batchDepth > 0)
+        {
+            _batchDepth = 1;
+            EndBatch();
+        }
 
         _uniformRingBuffer.Dispose();
 

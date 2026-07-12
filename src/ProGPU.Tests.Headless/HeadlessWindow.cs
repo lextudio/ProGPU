@@ -76,7 +76,10 @@ public unsafe class HeadlessWindow : IDisposable
     public uint Width => _width;
     public uint Height => _height;
 
-    public HeadlessWindow(uint width = 1280, uint height = 800)
+    public HeadlessWindow(
+        uint width = 1280,
+        uint height = 800,
+        CompositorOptions? compositorOptions = null)
     {
         _width = width;
         _height = height;
@@ -86,7 +89,10 @@ public unsafe class HeadlessWindow : IDisposable
         _context.Initialize(null);
 
         // 2. Initialize Compositor with RGBA8 target format for raw pixel reading
-        _compositor = new Compositor(_context, TextureFormat.Rgba8Unorm);
+        _compositor = new Compositor(
+            _context,
+            TextureFormat.Rgba8Unorm,
+            compositorOptions ?? CompositorOptions.Default);
 
         // Setup Decoupled Hooks (similar to Window.cs)
         _compositor.PreRender += (w, h) => PopupService.MeasureAndArrangePopups(new Vector2(w, h));

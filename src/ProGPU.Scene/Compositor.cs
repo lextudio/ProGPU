@@ -1871,11 +1871,6 @@ public unsafe class Compositor : IDisposable
             _explicitRenderTargetHeight ?? height);
         _activeLayerTextureOwners.Clear();
 
-        if (_atlas.IsAlmostFull)
-        {
-            _atlas.Clear();
-        }
-
         // Invoke pre-render actions (e.g. measure/arrange popups in UI framework)
         PreRender?.Invoke(width, height);
 
@@ -1951,6 +1946,7 @@ public unsafe class Compositor : IDisposable
         }
 
         var extensionFrame = BeginExtensionFrame();
+        bool glyphBatchActive = false;
         CommandEncoder* encoder = null;
         System.Diagnostics.Stopwatch uploadSw = null!;
         System.Diagnostics.Stopwatch passSw = null!;
@@ -1961,6 +1957,9 @@ public unsafe class Compositor : IDisposable
         {
             goto SceneCompilationComplete;
         }
+
+        _atlas.BeginBatch();
+        glyphBatchActive = true;
 
         // 3. Compile Layer 0: Root Visual Scene
         _pendingVectorStart = (uint)_vectorIndicesList.Count;
@@ -2173,6 +2172,11 @@ public unsafe class Compositor : IDisposable
         }
 
 SceneCompilationComplete:
+        if (glyphBatchActive)
+        {
+            glyphBatchActive = false;
+            _atlas.EndBatch();
+        }
         compileSw.Stop();
         uploadSw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -2501,6 +2505,11 @@ SceneStateUploadComplete:
         }
         finally
         {
+            if (glyphBatchActive)
+            {
+                glyphBatchActive = false;
+                _atlas.EndBatch();
+            }
             EndExtensionFrame(extensionFrame);
         }
 
@@ -7602,7 +7611,7 @@ SceneStateUploadComplete:
         float bIdx = RegisterBrush(cmd.Brush);
         var brush = cmd.Brush as SolidColorBrush;
         var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
-        color.W *= _activeOpacity;
+        color.W *= (brush?.Opacity ?? 1f) * _activeOpacity;
 
         var layoutGlyphs = layout.Glyphs;
         var layoutGlyphCount = layoutGlyphs.Count;
@@ -7698,25 +7707,15 @@ SceneStateUploadComplete:
             if (!hasBitmapGlyph &&
                 (cmd.UseVectorGlyphRendering || glyphFont.HasCffOutlines || atlasUpscale > 1.0001f))
             {
-                var outline = glyphFont.GetGlyphOutline(glyphIdx);
-                if (outline is not null)
-                {
-                    var vectorPassCount = cmd.IsBold ? 2 : 1;
-                    var vectorBoldOffset = cmd.FontSize * 0.035f;
-                    for (var pass = 0; pass < vectorPassCount; pass++)
-                    {
-                        CompileVectorGlyphPath(
-                            outline,
-                            cmd,
-                            cmd.FontSize / glyphFont.UnitsPerEm,
-                            runGlyph.Position + cmd.Position,
-                            glyphItalicSkew,
-                            pass * vectorBoldOffset,
-                            textPathCoverageGamma,
-                            activeTransform,
-                            fontScaleX);
-                    }
-                }
+                CompileVectorGlyphFallback(
+                    glyphFont,
+                    glyphIdx,
+                    cmd,
+                    runGlyph.Position + cmd.Position,
+                    glyphItalicSkew,
+                    textPathCoverageGamma,
+                    activeTransform,
+                    fontScaleX);
 
                 continue;
             }
@@ -7731,7 +7730,19 @@ SceneStateUploadComplete:
                 cmd.TextHintingMode);
 
             var info = _atlas.GetOrCreateGlyphByIndex(glyphFont, glyphIdx, rasterFontSize, subpixelX);
-            if (info.Width == 0 || info.Height == 0) continue;
+            if (info.Width == 0 || info.Height == 0)
+            {
+                CompileVectorGlyphFallback(
+                    glyphFont,
+                    glyphIdx,
+                    cmd,
+                    runGlyph.Position + cmd.Position,
+                    glyphItalicSkew,
+                    textPathCoverageGamma,
+                    activeTransform,
+                    fontScaleX);
+                continue;
+            }
             var glyphAtlasScale = atlasToLogicalScale * (info.RasterScale > 0f ? info.RasterScale : 1f);
             var glyphRenderWidth = info.RenderWidth > 0f ? info.RenderWidth : info.Width;
             var glyphRenderHeight = info.RenderHeight > 0f ? info.RenderHeight : info.Height;
@@ -7808,7 +7819,7 @@ SceneStateUploadComplete:
         float bIdx = RegisterBrush(cmd.Brush);
         var brush = cmd.Brush as SolidColorBrush;
         var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
-        color.W *= _activeOpacity;
+        color.W *= (brush?.Opacity ?? 1f) * _activeOpacity;
 
         EnsureTextVertexCapacity(cmd.GlyphIndices.Length * (cmd.IsBold ? 2 : 1));
 
@@ -7899,25 +7910,15 @@ SceneStateUploadComplete:
             if (!hasBitmapGlyph &&
                 (cmd.UseVectorGlyphRendering || font.HasCffOutlines || atlasUpscale > 1.0001f))
             {
-                var outline = font.GetGlyphOutline(glyphIdx);
-                if (outline is not null)
-                {
-                    var vectorPassCount = cmd.IsBold ? 2 : 1;
-                    var vectorBoldOffset = cmd.FontSize * 0.035f;
-                    for (var pass = 0; pass < vectorPassCount; pass++)
-                    {
-                        CompileVectorGlyphPath(
-                            outline,
-                            cmd,
-                            cmd.FontSize / font.UnitsPerEm,
-                            position + cmd.Position,
-                            glyphItalicSkew,
-                            pass * vectorBoldOffset,
-                            textPathCoverageGamma,
-                            activeTransform,
-                            fontScaleX);
-                    }
-                }
+                CompileVectorGlyphFallback(
+                    font,
+                    glyphIdx,
+                    cmd,
+                    position + cmd.Position,
+                    glyphItalicSkew,
+                    textPathCoverageGamma,
+                    activeTransform,
+                    fontScaleX);
 
                 continue;
             }
@@ -7935,7 +7936,19 @@ SceneStateUploadComplete:
                 cmd.TextHintingMode);
 
             var info = _atlas.GetOrCreateGlyphByIndex(font, glyphIdx, rasterFontSize, subpixelX);
-            if (info.Width == 0 || info.Height == 0) continue;
+            if (info.Width == 0 || info.Height == 0)
+            {
+                CompileVectorGlyphFallback(
+                    font,
+                    glyphIdx,
+                    cmd,
+                    position + cmd.Position,
+                    glyphItalicSkew,
+                    textPathCoverageGamma,
+                    activeTransform,
+                    fontScaleX);
+                continue;
+            }
             var glyphAtlasScale = atlasToLogicalScale * (info.RasterScale > 0f ? info.RasterScale : 1f);
             var glyphRenderWidth = info.RenderWidth > 0f ? info.RenderWidth : info.Width;
             var glyphRenderHeight = info.RenderHeight > 0f ? info.RenderHeight : info.Height;
@@ -7987,6 +8000,39 @@ SceneStateUploadComplete:
                     Padding = 0f
                 });
             }
+        }
+    }
+
+    private void CompileVectorGlyphFallback(
+        TtfFont font,
+        ushort glyphIndex,
+        RenderCommand command,
+        Vector2 position,
+        float italicSkew,
+        float pathCoverageGamma,
+        Matrix4x4 activeTransform,
+        float scaleX)
+    {
+        var outline = font.GetGlyphOutline(glyphIndex);
+        if (outline is null)
+        {
+            return;
+        }
+
+        int passCount = command.IsBold ? 2 : 1;
+        float boldOffset = command.FontSize * 0.035f;
+        for (int pass = 0; pass < passCount; pass++)
+        {
+            CompileVectorGlyphPath(
+                outline,
+                command,
+                command.FontSize / font.UnitsPerEm,
+                position,
+                italicSkew,
+                pass * boldOffset,
+                pathCoverageGamma,
+                activeTransform,
+                scaleX);
         }
     }
 

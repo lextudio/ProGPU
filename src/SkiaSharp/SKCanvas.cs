@@ -3037,7 +3037,7 @@ public class SKCanvas : IDisposable
                         var transform = matrices[i].ToMatrix().ToMatrix4x4()
                             * Matrix4x4.CreateTranslation(x, y, 0f)
                             * _currentMatrix.ToMatrix4x4();
-                        _context.DrawGlyphRun(
+                        _context.DrawTransformedGlyphRun(
                             new[] { run.GlyphIndices[i] },
                             new[] { Vector2.Zero },
                             run.Font.Typeface.Font,
@@ -3060,7 +3060,7 @@ public class SKCanvas : IDisposable
                     positions[i] = new Vector2(run.GlyphPositions[i].X, run.GlyphPositions[i].Y);
                 }
 
-                _context.DrawGlyphRun(
+                _context.DrawTransformedGlyphRun(
                     run.GlyphIndices,
                     positions,
                     run.Font.Typeface.Font,

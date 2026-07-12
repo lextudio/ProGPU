@@ -227,6 +227,17 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         return checked((int)(((info.Y + localY) * atlasWidth + info.X + localX) * 4));
     }
 
+    private static byte ReadGlyphAtlasCoverage(
+        byte[] pixels,
+        GlyphInfo info,
+        uint atlasWidth,
+        uint localX,
+        uint localY)
+    {
+        int offset = checked((int)(((info.Y + localY) * atlasWidth + info.X + localX) * 4));
+        return pixels[offset];
+    }
+
     [Fact]
     public void PathAtlasReservesCapacityBeforeAFrameCanRelocateCompiledPaths()
     {
@@ -1164,13 +1175,14 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
-    public void GlyphAtlasGenerationChangesWhenCapacityResetMovesEntries()
+    public void GlyphAtlasCapacityExhaustionPreservesExistingCoordinates()
     {
         var font = new TtfFont(BuildMissingGlyphOutlineFont());
         using var atlas = new GlyphAtlas(HeadlessWindow.Shared.Context, atlasSize: 64);
+        GlyphInfo first = atlas.GetOrCreateGlyph(font, 'A', 8f, subpixelX: 0);
         ulong generation = atlas.Generation;
 
-        for (int size = 8; size <= 20 && atlas.Generation == generation; size++)
+        for (int size = 9; size <= 40 && !atlas.CapacityExceeded; size++)
         {
             for (byte subpixel = 0; subpixel < 4; subpixel++)
             {
@@ -1178,7 +1190,107 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             }
         }
 
-        Assert.True(atlas.Generation > generation);
+        GlyphInfo cached = atlas.GetOrCreateGlyph(font, 'A', 8f, subpixelX: 0);
+
+        Assert.True(atlas.CapacityExceeded);
+        Assert.Equal(generation, atlas.Generation);
+        Assert.Equal(first.X, cached.X);
+        Assert.Equal(first.Y, cached.Y);
+        Assert.Equal(first.TexCoordMin, cached.TexCoordMin);
+        Assert.Equal(first.TexCoordMax, cached.TexCoordMax);
+    }
+
+    [Fact]
+    public void GlyphAtlasBatchFlushesBeforeUniformRingWraps()
+    {
+        const int glyphCount = 12;
+        const uint atlasSize = 256;
+        const uint ringBufferSize = 8 * 256;
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        var constructor = typeof(GlyphAtlas).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(WgpuContext), typeof(uint), typeof(uint)],
+            modifiers: null);
+        Assert.NotNull(constructor);
+        using var atlas = Assert.IsType<GlyphAtlas>(constructor.Invoke(
+            [HeadlessWindow.Shared.Context, atlasSize, ringBufferSize]));
+        GlyphInfo first = default;
+        GlyphInfo last = default;
+
+        atlas.BeginBatch();
+        try
+        {
+            for (int index = 0; index < glyphCount; index++)
+            {
+                GlyphInfo info = atlas.GetOrCreateGlyph(font, 'A', 8f + index * 0.0001f);
+                if (index == 0)
+                {
+                    first = info;
+                }
+                last = info;
+            }
+        }
+        finally
+        {
+            atlas.EndBatch();
+        }
+
+        Assert.False(atlas.CapacityExceeded);
+        var pixels = atlas.AtlasTexture.ReadPixels();
+        Assert.True(ReadGlyphAtlasCoverage(pixels, first, atlasSize, 6, 6) > 200);
+        Assert.True(ReadGlyphAtlasCoverage(pixels, last, atlasSize, 6, 6) > 200);
+    }
+
+    [Fact]
+    public void GlyphAtlasCapacityExhaustionFallsBackWithoutDroppingGlyphs()
+    {
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        using var window = new HeadlessWindow(
+            96,
+            64,
+            CompositorOptions.Default with
+            {
+                GlyphAtlasSize = 32,
+                PathAtlasSize = 256
+            });
+        window.Content = new AtlasOverflowGlyphRunVisual(font);
+
+        window.Render();
+
+        Assert.True(window.Compositor.Atlas.CapacityExceeded);
+        Assert.Contains(
+            GetDrawCalls(window.Compositor),
+            drawCall => drawCall.Type == Compositor.DrawCallType.Text && drawCall.IndexCount > 0);
+        Assert.Contains(
+            GetDrawCalls(window.Compositor),
+            drawCall => drawCall.Type == Compositor.DrawCallType.Vector && drawCall.IndexCount > 0);
+
+        var pixels = window.ReadPixels();
+        for (int glyphIndex = 0; glyphIndex < 4; glyphIndex++)
+        {
+            int x = glyphIndex * 20 + 6;
+            int redOffset = (33 * 96 + x) * 4;
+            Assert.True(
+                pixels[redOffset] > 200,
+                $"Glyph {glyphIndex} was dropped after glyph-atlas capacity exhaustion.");
+        }
+    }
+
+    [Fact]
+    public void GlyphRunBrushOpacityComposesWithVisualOpacity()
+    {
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        using var window = new HeadlessWindow(64, 48);
+        window.Content = new GlyphBrushOpacityVisual(font);
+
+        window.Render();
+
+        var pixels = window.ReadPixels();
+        int opaqueRed = (33 * 64 + 6) * 4;
+        int composedRed = (33 * 64 + 30) * 4;
+        Assert.True(pixels[opaqueRed] > 200);
+        Assert.InRange(pixels[composedRed], (byte)45, (byte)85);
     }
 
     [Fact]
@@ -4310,6 +4422,71 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                     Vector2.Zero,
                     useVectorGlyphRendering: true);
             }
+        }
+    }
+
+    private sealed class AtlasOverflowGlyphRunVisual : FrameworkElement
+    {
+        private readonly TtfFont _font;
+
+        public AtlasOverflowGlyphRunVisual(TtfFont font)
+        {
+            _font = font;
+            Width = 96f;
+            Height = 64f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            ushort glyphIndex = _font.GetGlyphIndex('A');
+            context.DrawGlyphRun(
+                new[] { glyphIndex, glyphIndex, glyphIndex, glyphIndex },
+                new[]
+                {
+                    new Vector2(0f, 40f),
+                    new Vector2(20.25f, 40f),
+                    new Vector2(40.5f, 40f),
+                    new Vector2(60.75f, 40f)
+                },
+                _font,
+                24f,
+                new SolidColorBrush(new Vector4(1f, 1f, 1f, 1f)),
+                Vector2.Zero);
+        }
+    }
+
+    private sealed class GlyphBrushOpacityVisual : FrameworkElement
+    {
+        private readonly TtfFont _font;
+
+        public GlyphBrushOpacityVisual(TtfFont font)
+        {
+            _font = font;
+            Width = 64f;
+            Height = 48f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            ushort glyphIndex = _font.GetGlyphIndex('A');
+            var opaque = new SolidColorBrush(Vector4.One);
+            var translucent = new SolidColorBrush(Vector4.One) { Opacity = 0.5f };
+            context.DrawGlyphRun(
+                new[] { glyphIndex },
+                new[] { new Vector2(0f, 40f) },
+                _font,
+                24f,
+                opaque,
+                Vector2.Zero);
+            context.PushOpacity(0.5f);
+            context.DrawGlyphRun(
+                new[] { glyphIndex },
+                new[] { new Vector2(24f, 40f) },
+                _font,
+                24f,
+                translucent,
+                Vector2.Zero);
+            context.PopOpacity();
         }
     }
 
