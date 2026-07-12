@@ -2128,7 +2128,7 @@ public sealed class SkCanvasStateTests
         roundRect.SetRect(new SKRect(1f, 2f, 21f, 12f));
         canvas.DrawRoundRect(roundRect, paint);
 
-        Assert.All(roundRect.CornerRadii, radius => Assert.Equal(default, radius));
+        Assert.All(roundRect.Radii, radius => Assert.Equal(default, radius));
         var command = Assert.Single(context.Commands);
         Assert.Equal(RenderCommandType.DrawRoundedRect, command.Type);
         Assert.Equal(new Rect(1f, 2f, 20f, 10f), command.Rect);
