@@ -957,7 +957,17 @@ public class SKShader : IDisposable
         SKShaderTileMode tileModeY,
         SKMatrix localMatrix)
     {
-        return new SKShader(new ImageShaderData(image, tileModeX, tileModeY, localMatrix));
+        return CreateImage(image, tileModeX, tileModeY, localMatrix, SKSamplingOptions.Default);
+    }
+
+    internal static SKShader CreateImage(
+        SKImage image,
+        SKShaderTileMode tileModeX,
+        SKShaderTileMode tileModeY,
+        SKMatrix localMatrix,
+        SKSamplingOptions sampling)
+    {
+        return new SKShader(new ImageShaderData(image, tileModeX, tileModeY, localMatrix, sampling));
     }
 
     internal void AddReference()
@@ -1387,17 +1397,29 @@ public class SKShader : IDisposable
             SKShaderTileMode tileModeX,
             SKShaderTileMode tileModeY,
             SKMatrix localMatrix)
+            : this(image, tileModeX, tileModeY, localMatrix, SKSamplingOptions.Default)
+        {
+        }
+
+        public ImageShaderData(
+            SKImage image,
+            SKShaderTileMode tileModeX,
+            SKShaderTileMode tileModeY,
+            SKMatrix localMatrix,
+            SKSamplingOptions sampling)
         {
             Image = image;
             TileModeX = tileModeX;
             TileModeY = tileModeY;
             LocalMatrix = localMatrix;
+            Sampling = sampling;
         }
 
         public SKImage Image { get; }
         public SKShaderTileMode TileModeX { get; }
         public SKShaderTileMode TileModeY { get; }
         public SKMatrix LocalMatrix { get; }
+        public SKSamplingOptions Sampling { get; }
         public SKRect TileRect => new(0f, 0f, Image.Width, Image.Height);
 
         public void Dispose()
