@@ -104,6 +104,21 @@ public class DiagnosticsLoggingSourceTests
     }
 
     [Fact]
+    public void PackableProjectsIncludeApprovedPackageIconAssets()
+    {
+        string directoryBuildProps = ReadSource("Directory.Build.props");
+        string iconSvg = ReadSource("eng", "Assets", "ProGpuIcon.svg");
+        var iconPng = new FileInfo(FindRepoFile("eng", "Assets", "ProGpuIcon.png"));
+
+        Assert.Contains("<PackageIcon Condition=\"'$(PackageIcon)' == ''", directoryBuildProps, StringComparison.Ordinal);
+        Assert.Contains(">ProGpuIcon.png</PackageIcon>", directoryBuildProps, StringComparison.Ordinal);
+        Assert.Contains("eng/Assets/ProGpuIcon.png", directoryBuildProps, StringComparison.Ordinal);
+        Assert.Contains("eng/Assets/ProGpuIcon.svg", directoryBuildProps, StringComparison.Ordinal);
+        Assert.Contains("<title id=\"title\">ProGPU package icon</title>", iconSvg, StringComparison.Ordinal);
+        Assert.True(iconPng.Length > 0);
+    }
+
+    [Fact]
     public void BuildWorkflowUsesExplicitRuntimeNativeWebGpuTestLanes()
     {
         string workflow = ReadSource(".github", "workflows", "build.yml");
