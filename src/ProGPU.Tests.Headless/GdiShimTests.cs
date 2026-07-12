@@ -378,7 +378,9 @@ public class GdiShimTests
 
         using var stream = File.OpenRead(outputPath);
         using var data = SKData.Create(stream);
-        using var decoded = SKBitmap.Decode(data);
+        using var decoded = SKBitmap.Decode(
+            data,
+            new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Unpremul));
         var pixel = decoded.GetPixels();
 
         Assert.Equal(255, Marshal.ReadByte(pixel, 0));

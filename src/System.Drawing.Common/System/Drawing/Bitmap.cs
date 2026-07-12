@@ -126,7 +126,17 @@ public class Bitmap : Image, IProGpuContextTextureLeaseSource
     private void InitializeFromStream(System.IO.Stream stream)
     {
         using var skData = SkiaSharp.SKData.Create(stream);
-        using var tempBitmap = SkiaSharp.SKBitmap.Decode(skData);
+        using var codec = SkiaSharp.SKCodec.Create(skData);
+
+        if (codec is null)
+        {
+            throw new ArgumentException("The stream does not contain a supported bitmap image.", nameof(stream));
+        }
+
+        var decodeInfo = codec.Info;
+        decodeInfo.ColorType = SkiaSharp.SKColorType.Rgba8888;
+        decodeInfo.AlphaType = SkiaSharp.SKAlphaType.Unpremul;
+        using var tempBitmap = SkiaSharp.SKBitmap.Decode(codec, decodeInfo);
 
         if (tempBitmap is null)
         {

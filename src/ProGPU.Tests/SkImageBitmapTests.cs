@@ -152,7 +152,9 @@ public sealed class SkImageBitmapTests
         using var image = SKImage.FromBitmap(bitmap);
 
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        using var decoded = SKBitmap.Decode(data);
+        using var decoded = SKBitmap.Decode(
+            data,
+            new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Unpremul));
 
         Assert.Equal(new byte[] { 255, 0, 0, 128 }, ReadBytes(decoded.GetPixels(), 4));
     }

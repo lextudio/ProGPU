@@ -73,7 +73,7 @@ public class SKImage : IDisposable
         try
         {
             using var bitmap = SKBitmap.Decode(new SKData(data));
-            return FromBitmap(bitmap);
+            return bitmap is null ? null : FromBitmap(bitmap);
         }
         catch (Exception exception) when (IsInvalidEncodedImageException(exception))
         {
@@ -88,7 +88,7 @@ public class SKImage : IDisposable
     {
         ArgumentNullException.ThrowIfNull(data);
         using var bitmap = SKBitmap.Decode(data);
-        return FromBitmap(bitmap);
+        return bitmap is null ? null : FromBitmap(bitmap);
     }
 
     public static SKImage? FromEncodedData(Stream data)
