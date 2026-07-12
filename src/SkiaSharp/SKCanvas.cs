@@ -3008,7 +3008,9 @@ public class SKCanvas : IDisposable
 
     public void DrawTextBlob(SKTextBlob textBlob, float x, float y, SKPaint paint)
     {
-        if (paint.Shader != null || paint.Style != SKPaintStyle.Fill)
+        if (paint.Shader != null ||
+            paint.Style != SKPaintStyle.Fill ||
+            textBlob.HasEmboldenedRuns)
         {
             using var textPath = CreateTextBlobPath(textBlob, x, y);
             DrawPath(textPath, paint);

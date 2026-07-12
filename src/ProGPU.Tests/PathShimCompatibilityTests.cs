@@ -158,6 +158,46 @@ public sealed class PathShimCompatibilityTests
         Assert.False(widened.Contains(4.5f, 20f));
     }
 
+    [Theory]
+    [InlineData(0.25f)]
+    [InlineData(0.5f)]
+    public void SkPaintFillPathPreservesFractionalStrokeWidth(float strokeWidth)
+    {
+        using var source = new SKPath();
+        source.MoveTo(10f, 20f);
+        source.LineTo(50f, 20f);
+        using var widened = new SKPath();
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = strokeWidth,
+            StrokeCap = SKStrokeCap.Butt
+        };
+
+        Assert.True(paint.GetFillPath(source, widened));
+        AssertNear(10f, widened.Bounds.Left);
+        AssertNear(20f - strokeWidth * 0.5f, widened.Bounds.Top);
+        AssertNear(50f, widened.Bounds.Right);
+        AssertNear(20f + strokeWidth * 0.5f, widened.Bounds.Bottom);
+    }
+
+    [Fact]
+    public void SkPaintFillPathCannotMaterializeDeviceDependentHairline()
+    {
+        using var source = new SKPath();
+        source.MoveTo(10f, 20f);
+        source.LineTo(50f, 20f);
+        using var widened = new SKPath();
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 0f
+        };
+
+        Assert.False(paint.GetFillPath(source, widened));
+        Assert.True(widened.IsEmpty);
+    }
+
     [Fact]
     public void SkPathTransformUpdatesNativeArcParameters()
     {

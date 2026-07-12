@@ -233,7 +233,12 @@ public class SKPaint : IDisposable
             destination.AddPath(source);
         }
 
-        var halfWidth = MathF.Max(StrokeWidth, HairlineStrokeWidth) / 2f;
+        if (!float.IsFinite(StrokeWidth) || StrokeWidth <= 0f)
+        {
+            return !destination.IsEmpty;
+        }
+
+        var halfWidth = StrokeWidth / 2f;
         foreach (var figure in source.Geometry.Figures)
         {
             if (TryAddOvalStroke(destination, figure, halfWidth))
@@ -293,6 +298,132 @@ public class SKPaint : IDisposable
 
         return !destination.IsEmpty;
     }
+
+    internal static void NormalizeStrokeWinding(SKPath source, SKPath stroke)
+    {
+        var desiredWinding = GetDominantWinding(source.Geometry.Figures);
+        var figures = stroke.Geometry.Figures;
+        for (var index = 0; index < figures.Count; index++)
+        {
+            var points = FlattenFigure(figures[index]);
+            var winding = GetSignedArea(points);
+            if (MathF.Abs(winding) > 0.0001f && MathF.Sign(winding) != desiredWinding)
+            {
+                figures[index] = ReverseFigure(figures[index]);
+            }
+        }
+    }
+
+    private static int GetDominantWinding(IReadOnlyList<PathFigure> figures)
+    {
+        var dominantArea = 0f;
+        for (var index = 0; index < figures.Count; index++)
+        {
+            var area = GetSignedArea(FlattenFigure(figures[index]));
+            if (MathF.Abs(area) > MathF.Abs(dominantArea))
+            {
+                dominantArea = area;
+            }
+        }
+
+        return dominantArea < 0f ? -1 : 1;
+    }
+
+    private static float GetSignedArea(IReadOnlyList<Vector2> points)
+    {
+        if (points.Count < 3)
+        {
+            return 0f;
+        }
+
+        var twiceArea = 0f;
+        var previous = points[^1];
+        for (var index = 0; index < points.Count; index++)
+        {
+            var current = points[index];
+            twiceArea += previous.X * current.Y - current.X * previous.Y;
+            previous = current;
+        }
+
+        return twiceArea * 0.5f;
+    }
+
+    private static PathFigure ReverseFigure(PathFigure source)
+    {
+        var segments = source.Segments;
+        if (segments.Count == 0)
+        {
+            return source;
+        }
+
+        var segmentStarts = new Vector2[segments.Count];
+        var current = source.StartPoint;
+        for (var index = 0; index < segments.Count; index++)
+        {
+            segmentStarts[index] = current;
+            current = GetSegmentEnd(segments[index]);
+        }
+
+        var reversed = new PathFigure(current, source.IsClosed)
+        {
+            IsFilled = source.IsFilled
+        };
+        for (var index = segments.Count - 1; index >= 0; index--)
+        {
+            var endpoint = segmentStarts[index];
+            switch (segments[index])
+            {
+                case LineSegment line:
+                    reversed.Segments.Add(new LineSegment(
+                        endpoint,
+                        line.IsSmoothJoin,
+                        line.IsStroked));
+                    break;
+                case QuadraticBezierSegment quadratic:
+                    reversed.Segments.Add(new QuadraticBezierSegment(
+                        quadratic.ControlPoint,
+                        endpoint,
+                        quadratic.IsSmoothJoin,
+                        quadratic.IsStroked));
+                    break;
+                case CubicBezierSegment cubic:
+                    reversed.Segments.Add(new CubicBezierSegment(
+                        cubic.ControlPoint2,
+                        cubic.ControlPoint1,
+                        endpoint,
+                        cubic.IsSmoothJoin,
+                        cubic.IsStroked));
+                    break;
+                case ArcSegment arc:
+                    reversed.Segments.Add(new ArcSegment(
+                        endpoint,
+                        arc.Size,
+                        arc.RotationAngle,
+                        arc.IsLargeArc,
+                        arc.SweepDirection == SweepDirection.Clockwise
+                            ? SweepDirection.Counterclockwise
+                            : SweepDirection.Clockwise,
+                        arc.IsSmoothJoin,
+                        arc.IsStroked));
+                    break;
+                default:
+                    throw new NotSupportedException(
+                        $"Unsupported stroke path segment '{segments[index].GetType().FullName}'.");
+            }
+        }
+
+        return reversed;
+    }
+
+    private static Vector2 GetSegmentEnd(PathSegment segment) => segment switch
+    {
+        LineSegment line => line.Point,
+        QuadraticBezierSegment quadratic => quadratic.Point,
+        CubicBezierSegment cubic => cubic.Point,
+        ArcSegment arc => arc.Point,
+        _ => throw new NotSupportedException(
+            $"Unsupported stroke path segment '{segment.GetType().FullName}'.")
+    };
 
     private static void RemoveConsecutiveDuplicatePoints(List<Vector2> points)
     {

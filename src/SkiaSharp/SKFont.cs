@@ -7,6 +7,8 @@ namespace SkiaSharp;
 
 public class SKFont : IDisposable
 {
+    private const float FakeBoldScale = 1f / 32f;
+
     public SKTypeface Typeface { get; set; }
     public float Size { get; set; }
     public SKFontHinting Hinting { get; set; } = SKFontHinting.Normal;
@@ -80,6 +82,28 @@ public class SKFont : IDisposable
             {
                 path.Close();
             }
+        }
+
+        if (!Embolden || !float.IsFinite(Size) || Size <= 0f)
+        {
+            return path;
+        }
+
+        using var emboldenPaint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = Size * FakeBoldScale,
+            StrokeJoin = SKStrokeJoin.Miter,
+            StrokeMiter = 4f
+        };
+        using var strokePath = new SKPath();
+        if (emboldenPaint.GetFillPath(path, strokePath))
+        {
+            SKPaint.NormalizeStrokeWinding(path, strokePath);
+            var emboldenedPath = new SKPath(path);
+            emboldenedPath.AddPath(strokePath);
+            path.Dispose();
+            return emboldenedPath;
         }
 
         return path;

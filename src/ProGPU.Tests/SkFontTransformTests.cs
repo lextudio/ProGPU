@@ -65,14 +65,70 @@ public sealed class SkFontTransformTests
     }
 
     [Fact]
+    public void EmboldenUsesSkiaFakeBoldStrokeStrengthWithoutChangingAdvance()
+    {
+        using var normal = new SKFont(SKTypeface.Default, 16f, scaleX: 1.5f);
+        using var emboldened = new SKFont(SKTypeface.Default, 16f, scaleX: 1.5f)
+        {
+            Embolden = true
+        };
+        using var normalPath = normal.GetTextPath("H");
+        using var emboldenedPath = emboldened.GetTextPath("H");
+        using var expectedPath = new SKPath();
+        using var fakeBoldPaint = new SKPaint
+        {
+            Style = SKPaintStyle.StrokeAndFill,
+            StrokeWidth = normal.Size / 32f,
+            StrokeJoin = SKStrokeJoin.Miter,
+            StrokeMiter = 4f
+        };
+
+        Assert.True(fakeBoldPaint.GetFillPath(normalPath, expectedPath));
+        Assert.Equal(expectedPath.Bounds, emboldenedPath.Bounds);
+        AssertNear(normal.MeasureText("H"), emboldened.MeasureText("H"));
+    }
+
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(1.5f)]
+    [InlineData(-1f)]
+    public void EmboldenDoesNotCancelOriginalGlyphInterior(float scaleX)
+    {
+        using var normal = new SKFont(SKTypeface.Default, 40f, scaleX);
+        using var emboldened = new SKFont(SKTypeface.Default, 40f, scaleX)
+        {
+            Embolden = true
+        };
+        using var normalPath = normal.GetTextPath("A");
+        using var emboldenedPath = emboldened.GetTextPath("A");
+        var bounds = normalPath.Bounds;
+        var interiorSamples = 0;
+
+        for (var y = bounds.Top; y <= bounds.Bottom; y += 0.5f)
+        {
+            for (var x = bounds.Left; x <= bounds.Right; x += 0.5f)
+            {
+                if (!normalPath.Contains(x, y))
+                {
+                    continue;
+                }
+
+                interiorSamples++;
+                Assert.True(
+                    emboldenedPath.Contains(x, y),
+                    $"Emboldening removed glyph interior coverage at ({x}, {y}).");
+            }
+        }
+
+        Assert.True(interiorSamples > 0);
+    }
+
+    [Fact]
     public void DrawTextCarriesFontTransformWithoutRescalingGlyphPositions()
     {
         var context = new DrawingContext();
         using var canvas = new SKCanvas(context, 128f, 64f);
-        using var font = new SKFont(SKTypeface.Default, 40f, scaleX: 1.5f, skewX: 0.25f)
-        {
-            Embolden = true
-        };
+        using var font = new SKFont(SKTypeface.Default, 40f, scaleX: 1.5f, skewX: 0.25f);
         using var paint = new SKPaint { Color = SKColors.Black };
 
         canvas.DrawText("AA", 4f, 48f, font, paint);
@@ -82,7 +138,7 @@ public sealed class SkFontTransformTests
             static command => command.Type == RenderCommandType.DrawGlyphRun);
         Assert.True(command.HasFontTransform);
         Assert.Equal(new Vector2(1.5f, 0.25f), command.FontTransform);
-        Assert.True(command.IsBold);
+        Assert.False(command.IsBold);
         Assert.True(command.UseVectorGlyphRendering);
         Assert.Equal(new Vector2(4f, 48f), command.Position);
         Assert.Equal(Vector2.Zero, command.GlyphPositions![0]);
@@ -92,6 +148,30 @@ public sealed class SkFontTransformTests
             font.Size) * font.ScaleX;
         AssertNear(expectedAdvance, command.GlyphPositions[1].X);
         AssertNear(0f, command.GlyphPositions[1].Y);
+    }
+
+    [Fact]
+    public void EmboldenedFillTextRecordsWidenedPathInsteadOfOffsetGlyphPasses()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 128f, 64f);
+        using var font = new SKFont(SKTypeface.Default, 40f)
+        {
+            Embolden = true
+        };
+        using var paint = new SKPaint { Color = SKColors.Black };
+
+        canvas.DrawText("A", 5f, 48f, font, paint);
+
+        var command = Assert.Single(context.Commands);
+        Assert.Equal(RenderCommandType.DrawPath, command.Type);
+        using var expectedPath = font.GetTextPath("A");
+        var expectedBounds = expectedPath.Bounds;
+        Assert.True(command.Path!.TryGetBounds(out var actualMin, out var actualMax));
+        AssertNear(expectedBounds.Left + 5f, actualMin.X);
+        AssertNear(expectedBounds.Top + 48f, actualMin.Y);
+        AssertNear(expectedBounds.Right + 5f, actualMax.X);
+        AssertNear(expectedBounds.Bottom + 48f, actualMax.Y);
     }
 
     [Fact]

@@ -36,6 +36,7 @@ public class SKTextBlob : IDisposable
     public SKFont Font => Runs[0].Font;
     public ushort[] GlyphIndices { get; }
     public SKPoint[] GlyphPositions { get; }
+    internal bool HasEmboldenedRuns { get; }
 
     public SKTextBlob(SKFont font, ushort[] glyphIndices, SKPoint[] glyphPositions)
         : this(new[] { new SKTextBlobRun(font, glyphIndices, glyphPositions) })
@@ -55,6 +56,7 @@ public class SKTextBlob : IDisposable
         foreach (var run in runs)
         {
             glyphCount += run.GlyphIndices.Length;
+            HasEmboldenedRuns |= run.Font.Embolden;
         }
 
         GlyphIndices = new ushort[glyphCount];
