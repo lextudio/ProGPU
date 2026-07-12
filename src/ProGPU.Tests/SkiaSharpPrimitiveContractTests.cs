@@ -78,19 +78,25 @@ public sealed class SkiaSharpPrimitiveContractTests
     [Fact]
     public void NamedColorPaletteMatchesNativeSkiaSharp()
     {
-        var rows = typeof(SKColors)
+        var fields = typeof(SKColors)
             .GetFields(BindingFlags.Public | BindingFlags.Static)
             .Where(field => field.FieldType == typeof(SKColor))
+            .ToArray();
+        var rows = fields
             .Select(field =>
             {
                 var color = (SKColor)field.GetValue(null)!;
                 return $"{field.Name}\t{color.Red},{color.Green},{color.Blue},{color.Alpha}";
             })
+            .Append($"{nameof(SKColors.Empty)}\t{SKColors.Empty.Red},{SKColors.Empty.Green},{SKColors.Empty.Blue},{SKColors.Empty.Alpha}")
             .OrderBy(row => row, StringComparer.Ordinal)
             .ToArray();
         var fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', rows))));
 
+        Assert.Equal(141, fields.Length);
+        Assert.DoesNotContain(fields, static field => field.Name == nameof(SKColors.Empty));
+        Assert.NotNull(typeof(SKColors).GetProperty(nameof(SKColors.Empty), BindingFlags.Public | BindingFlags.Static));
         Assert.Equal(142, rows.Length);
         Assert.Equal("8637BF92DE0388C4FC891C45A150CB1CE91F73CAA4F9BC5455643DC395EB1BF0", fingerprint);
     }
