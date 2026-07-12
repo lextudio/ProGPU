@@ -1914,6 +1914,9 @@ public class SKCanvas : IDisposable
         DrawPath(path, paint);
     }
 
+    public void DrawLine(SKPoint point0, SKPoint point1, SKPaint paint) =>
+        DrawLine(point0.X, point0.Y, point1.X, point1.Y, paint);
+
     public void DrawRect(float x, float y, float w, float h, SKPaint paint)
     {
         var rect = new SKRect(x, y, x + w, y + h);
@@ -2083,6 +2086,9 @@ public class SKCanvas : IDisposable
             PopPaintBlendMode(pushedBlendMode);
         }
     }
+
+    public void DrawCircle(SKPoint center, float radius, SKPaint paint) =>
+        DrawCircle(center.X, center.Y, radius, paint);
 
     public void DrawRoundRectDifference(SKRoundRect outer, SKRoundRect inner, SKPaint paint)
     {
