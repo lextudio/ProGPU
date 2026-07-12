@@ -183,6 +183,7 @@ public unsafe class Compositor : IDisposable
     private const float QuadrilateralStripEndSdfShapeType = 17f;
     private const float AffineStrokeArcMaxAngleRadians = MathF.PI / 24f;
     private const float TextPathCoverageGamma = 0.65f;
+    private const float TransformedTextPathCoverageGamma = 0.875f;
     private const int MaxCachedVectorGlyphPaths = 4096;
 
     private readonly record struct VectorGlyphPathCacheKey(
@@ -7420,7 +7421,7 @@ public unsafe class Compositor : IDisposable
                         PathSampleGrid = cmd.TextRenderingMode == TextRenderingMode.Aliased
                             ? PathAtlas.StandardCoverageSampleGrid
                             : PathAtlas.HighPrecisionCoverageSampleGrid,
-                        PathCoverageGamma = TextPathCoverageGamma
+                        PathCoverageGamma = GetTextPathCoverageGamma(activeTransform)
                     };
                     CompilePathCommand(pathCmd, activeTransform);
                 }
@@ -7608,7 +7609,7 @@ public unsafe class Compositor : IDisposable
                         PathSampleGrid = cmd.TextRenderingMode == TextRenderingMode.Aliased
                             ? PathAtlas.StandardCoverageSampleGrid
                             : PathAtlas.HighPrecisionCoverageSampleGrid,
-                        PathCoverageGamma = TextPathCoverageGamma
+                        PathCoverageGamma = GetTextPathCoverageGamma(activeTransform)
                     };
                     CompilePathCommand(pathCmd, activeTransform);
                 }
@@ -7774,8 +7775,19 @@ public unsafe class Compositor : IDisposable
             PathSampleGrid = textCommand.TextRenderingMode == TextRenderingMode.Aliased
                 ? PathAtlas.StandardCoverageSampleGrid
                 : PathAtlas.HighPrecisionCoverageSampleGrid,
-            PathCoverageGamma = TextPathCoverageGamma
+            PathCoverageGamma = GetTextPathCoverageGamma(activeTransform)
         }, placementTransform);
+    }
+
+    private static float GetTextPathCoverageGamma(Matrix4x4 transform)
+    {
+        const float epsilon = 0.0001f;
+        var hasNonAxisAlignedBasis = MathF.Abs(transform.M12) > epsilon ||
+            MathF.Abs(transform.M21) > epsilon;
+        var hasReflectedBasis = transform.M11 < 0f || transform.M22 < 0f;
+        return hasNonAxisAlignedBasis || hasReflectedBasis
+            ? TransformedTextPathCoverageGamma
+            : TextPathCoverageGamma;
     }
 
     private static PathGeometry CreatePositionedGlyphOutline(
