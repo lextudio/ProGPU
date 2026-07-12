@@ -2030,6 +2030,9 @@ public class SKCanvas : IDisposable
         DrawPath(path, paint);
     }
 
+    public void DrawLine(SKPoint point0, SKPoint point1, SKPaint paint) =>
+        DrawLine(point0.X, point0.Y, point1.X, point1.Y, paint);
+
     public void DrawPoints(SKPointMode mode, SKPoint[] points, SKPaint paint)
     {
         ArgumentNullException.ThrowIfNull(paint);
@@ -2181,6 +2184,12 @@ public class SKCanvas : IDisposable
         DrawRoundRect(new SKRoundRect(rect, rx, ry), paint);
     }
 
+    public void DrawRoundRect(float x, float y, float width, float height, float rx, float ry, SKPaint paint) =>
+        DrawRoundRect(new SKRect(x, y, x + width, y + height), rx, ry, paint);
+
+    public void DrawRoundRect(SKRect rect, SKSize radius, SKPaint paint) =>
+        DrawRoundRect(rect, radius.Width, radius.Height, paint);
+
     private static bool TryGetUniformRadii(SKRoundRect rect, out float radiusX, out float radiusY)
     {
         radiusX = rect.CornerRadii[0].X;
@@ -2233,6 +2242,12 @@ public class SKCanvas : IDisposable
         }
     }
 
+    public void DrawOval(float cx, float cy, float rx, float ry, SKPaint paint) =>
+        DrawOval(new SKRect(cx - rx, cy - ry, cx + rx, cy + ry), paint);
+
+    public void DrawOval(SKPoint center, SKSize radius, SKPaint paint) =>
+        DrawOval(center.X, center.Y, radius.Width, radius.Height, paint);
+
     public void DrawCircle(float cx, float cy, float radius, SKPaint paint)
     {
         if (HasSpecialShader(paint.Shader))
@@ -2268,6 +2283,9 @@ public class SKCanvas : IDisposable
             PopPaintBlendMode(pushedBlendMode);
         }
     }
+
+    public void DrawCircle(SKPoint center, float radius, SKPaint paint) =>
+        DrawCircle(center.X, center.Y, radius, paint);
 
     public void DrawRoundRectDifference(SKRoundRect outer, SKRoundRect inner, SKPaint paint)
     {

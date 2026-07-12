@@ -151,6 +151,8 @@ Point primitives implement SkiaSharp's `SKPointMode` and `SKCanvas.DrawPoint(s)`
 
 Canvas transform convenience APIs preserve SkiaSharp's post-concatenation order across scalar, point, pivot, radians, degrees, skew, 3x3, and 4x4 inputs. Identity scales, empty point transforms, zero skews, and complete degree turns are skipped before matrix arithmetic; pivot operations use the native translate-transform-translate sequence. Every transform is allocation-free `O(1)` CPU work, updates only retained canvas state, and performs no command recording, GPU submission, or readback.
 
+Canvas point/size shape overloads normalize directly into the existing line, rounded-rectangle, ellipse, and circle primitives. Conversion is allocation-free `O(1)` work before the normal retained command or path is created, so an overload never adds a second draw, changes tessellation, or introduces a GPU synchronization boundary.
+
 `SKTextBlob` intercept queries use the same path-boundary algorithm as Skia for underline and strike-through avoidance. Each positioned glyph independently tests line, quadratic, and cubic crossings at both horizontal band boundaries, expands the interval with path points strictly inside the band, and returns at most one ordered pair without merging overlaps from neighboring glyphs. `ScaleX`, `SkewX`, vertical placement, and synthetic emboldening are included; rotation-scale runs are intentionally ignored like native Skia. Array, span, and count overloads share the CPU-only engine, with short spans receiving the available prefix. For `G` glyphs and `S` path segments, time is `O(G * S)`, root-solving workspace is `O(1)`, and returned storage is at most `O(G)`.
 
 | Package | Purpose | NuGet |
