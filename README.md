@@ -133,6 +133,8 @@ Image metadata uses the complete `SKImageInfo` value contract and SkiaSharp 4.14
 
 `SKTextBlob` intercept queries use the same path-boundary algorithm as Skia for underline and strike-through avoidance. Each positioned glyph independently tests line, quadratic, and cubic crossings at both horizontal band boundaries, expands the interval with path points strictly inside the band, and returns at most one ordered pair without merging overlaps from neighboring glyphs. `ScaleX`, `SkewX`, vertical placement, and synthetic emboldening are included; rotation-scale runs are intentionally ignored like native Skia. Array, span, and count overloads share the CPU-only engine, with short spans receiving the available prefix. For `G` glyphs and `S` path segments, time is `O(G * S)`, root-solving workspace is `O(1)`, and returned storage is at most `O(G)`.
 
+`SKRotationScaleMatrix` provides the complete SkiaSharp 4.148 identity, translation, uniform-scale, radian rotation, degree rotation, anchored rotation-scale, and matrix-conversion factories used by RSXform text and atlas placement. Every factory is allocation-free `O(1)` CPU math. Combined transforms preserve native operation order: degree conversion multiplies by the pre-divided float radians-per-degree constant, sine and cosine are evaluated in double precision and then cast to float, and anchor compensation is applied in the original float expression order. This keeps all four stored components bit-identical to native without initializing WebGPU.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |

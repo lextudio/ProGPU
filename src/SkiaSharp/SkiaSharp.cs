@@ -2357,7 +2357,7 @@ public struct SKRotationScaleMatrix : IEquatable<SKRotationScaleMatrix>
         float ty,
         float anchorX,
         float anchorY) =>
-        Create(scale, degrees * MathF.PI / 180f, tx, ty, anchorX, anchorY);
+        Create(scale, degrees * ((float)Math.PI / 180f), tx, ty, anchorX, anchorY);
 
     public static SKRotationScaleMatrix Create(
         float scale,
@@ -2367,14 +2367,26 @@ public struct SKRotationScaleMatrix : IEquatable<SKRotationScaleMatrix>
         float anchorX,
         float anchorY)
     {
-        var sin = MathF.Sin(radians) * scale;
-        var cos = MathF.Cos(radians) * scale;
+        var sin = (float)Math.Sin(radians) * scale;
+        var cos = (float)Math.Cos(radians) * scale;
         return new SKRotationScaleMatrix(
             cos,
             sin,
             tx - cos * anchorX + sin * anchorY,
             ty - sin * anchorX - cos * anchorY);
     }
+
+    public static SKRotationScaleMatrix CreateIdentity() => new(1f, 0f, 0f, 0f);
+
+    public static SKRotationScaleMatrix CreateTranslation(float x, float y) => new(1f, 0f, x, y);
+
+    public static SKRotationScaleMatrix CreateScale(float scale) => new(scale, 0f, 0f, 0f);
+
+    public static SKRotationScaleMatrix CreateRotation(float radians, float anchorX, float anchorY) =>
+        Create(1f, radians, 0f, 0f, anchorX, anchorY);
+
+    public static SKRotationScaleMatrix CreateRotationDegrees(float degrees, float anchorX, float anchorY) =>
+        CreateDegrees(1f, degrees, 0f, 0f, anchorX, anchorY);
 
     public readonly bool Equals(SKRotationScaleMatrix other) =>
         SCos == other.SCos && SSin == other.SSin && TX == other.TX && TY == other.TY;
