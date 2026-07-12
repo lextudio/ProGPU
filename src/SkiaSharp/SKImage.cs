@@ -2069,14 +2069,14 @@ public class SKBitmap : SKObject
             || !SupportsResizeColorType(ColorType)
             || !SupportsResizeColorType(info.ColorType)
             || (sampling.UseCubic
-                && (!float.IsFinite(sampling.CubicResampler.B)
-                    || !float.IsFinite(sampling.CubicResampler.C))))
+                && (!float.IsFinite(sampling.Cubic.B)
+                    || !float.IsFinite(sampling.Cubic.C))))
         {
             return null!;
         }
 
         var resized = new SKBitmap(info);
-        if (!sampling.UseCubic && sampling.FilterMode != SKFilterMode.Linear)
+        if (!sampling.UseCubic && !sampling.IsAniso && sampling.Filter != SKFilterMode.Linear)
         {
             ResizeNearestPixels(resized, info);
             return resized;
@@ -2248,10 +2248,10 @@ public class SKBitmap : SKObject
     {
         if (sampling.UseCubic)
         {
-            return SampleResizeCubic(source, width, height, x, y, sampling.CubicResampler);
+            return SampleResizeCubic(source, width, height, x, y, sampling.Cubic);
         }
 
-        if (sampling.FilterMode == SKFilterMode.Linear)
+        if (sampling.IsAniso || sampling.Filter == SKFilterMode.Linear)
         {
             var x0 = (int)MathF.Floor(x);
             var y0 = (int)MathF.Floor(y);

@@ -1371,18 +1371,23 @@ public class SKCanvas : IDisposable
     private static TextureSamplingMode MapSampling(SKSamplingOptions sampling) =>
         sampling.UseCubic
             ? TextureSamplingMode.Cubic
-            : sampling.MipmapMode != SKMipmapMode.None
+            : sampling.IsAniso || sampling.Mipmap != SKMipmapMode.None
                 ? TextureSamplingMode.LinearMipmap
-                : sampling.FilterMode == SKFilterMode.Nearest
+                : sampling.Filter == SKFilterMode.Nearest
                     ? TextureSamplingMode.Nearest
                     : TextureSamplingMode.Linear;
 
     private static Vector2? MapCubicSampling(SKSamplingOptions sampling) =>
         sampling.UseCubic &&
-        float.IsFinite(sampling.CubicResampler.B) &&
-        float.IsFinite(sampling.CubicResampler.C)
-            ? new Vector2(sampling.CubicResampler.B, sampling.CubicResampler.C)
+        float.IsFinite(sampling.Cubic.B) &&
+        float.IsFinite(sampling.Cubic.C)
+            ? new Vector2(sampling.Cubic.B, sampling.Cubic.C)
             : null;
+
+    private static byte MapMaxAnisotropy(SKSamplingOptions sampling) =>
+        sampling.IsAniso
+            ? (byte)Math.Clamp(sampling.MaxAniso, 1, 16)
+            : (byte)1;
 
     private static Vector4 ToVector4(SKColor color)
     {
@@ -2680,6 +2685,7 @@ public class SKCanvas : IDisposable
         texture = ApplyTextureColorFilter(texture, shaderColorFilter);
         texture = ApplyTextureColorFilter(texture, paintColorFilter);
         var samplingMode = MapSampling(imageShader.Sampling);
+        var maxAnisotropy = MapMaxAnisotropy(imageShader.Sampling);
         var cubicCoefficients = MapCubicSampling(imageShader.Sampling);
         _context.PushGeometryClip(clipGeometry, _currentMatrix.ToMatrix4x4());
         try
@@ -2702,6 +2708,7 @@ public class SKCanvas : IDisposable
                         SrcRect = new Rect(0f, 0f, imageShader.Image.Width, imageShader.Image.Height),
                         Transform = placement * localMatrix * _currentMatrix.ToMatrix4x4(),
                         TextureSamplingMode = samplingMode,
+                        TextureMaxAnisotropy = maxAnisotropy,
                         TextureCubicCoefficients = cubicCoefficients.GetValueOrDefault(),
                         HasTextureCubicCoefficients = cubicCoefficients.HasValue
                     });
@@ -2829,7 +2836,8 @@ public class SKCanvas : IDisposable
         SKRect dest,
         TextureSamplingMode samplingMode,
         SKPaint? paint,
-        Vector2? cubicCoefficients = null)
+        Vector2? cubicCoefficients = null,
+        byte maxAnisotropy = 1)
     {
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
         var retainedTexture = RetainImageTexture(
@@ -2887,6 +2895,7 @@ public class SKCanvas : IDisposable
                     source.Height + sourceExtensionY),
                 Transform = _currentMatrix.ToMatrix4x4(),
                 TextureSamplingMode = samplingMode,
+                TextureMaxAnisotropy = maxAnisotropy,
                 TextureCubicCoefficients = cubicCoefficients.GetValueOrDefault(),
                 HasTextureCubicCoefficients = cubicCoefficients.HasValue,
                 IsEdgeAliased = paint is { IsAntialias: false }
@@ -2917,7 +2926,14 @@ public class SKCanvas : IDisposable
         SKPaint? paint)
     {
         var samplingMode = MapSampling(sampling);
-        DrawImageCore(image, source, dest, samplingMode, paint, MapCubicSampling(sampling));
+        DrawImageCore(
+            image,
+            source,
+            dest,
+            samplingMode,
+            paint,
+            MapCubicSampling(sampling),
+            MapMaxAnisotropy(sampling));
     }
 
     public void DrawImage(

@@ -1063,28 +1063,86 @@ public readonly struct SKCubicResampler : IEquatable<SKCubicResampler>
     }
 }
 
-public struct SKSamplingOptions
+public readonly struct SKSamplingOptions : IEquatable<SKSamplingOptions>
 {
     public static readonly SKSamplingOptions Default;
-    public SKFilterMode FilterMode;
-    public SKMipmapMode MipmapMode;
-    public bool UseCubic;
-    public SKCubicResampler CubicResampler;
 
-    public SKSamplingOptions(SKFilterMode filterMode, SKMipmapMode mipmapMode)
+    private readonly int _maxAniso;
+    private readonly byte _useCubic;
+    private readonly SKCubicResampler _cubic;
+    private readonly SKFilterMode _filter;
+    private readonly SKMipmapMode _mipmap;
+
+    public bool IsAniso => MaxAniso != 0;
+
+    public int MaxAniso => _maxAniso;
+
+    public bool UseCubic => _useCubic > 0;
+
+    public SKCubicResampler Cubic => _cubic;
+
+    public SKFilterMode Filter => _filter;
+
+    public SKMipmapMode Mipmap => _mipmap;
+
+    public SKSamplingOptions(SKFilterMode filter, SKMipmapMode mipmap)
     {
-        FilterMode = filterMode;
-        MipmapMode = mipmapMode;
-        UseCubic = false;
-        CubicResampler = default;
+        _maxAniso = 0;
+        _useCubic = 0;
+        _cubic = default;
+        _filter = filter;
+        _mipmap = mipmap;
     }
 
-    public SKSamplingOptions(SKCubicResampler cubicResampler)
+    public SKSamplingOptions(SKFilterMode filter)
     {
-        FilterMode = default;
-        MipmapMode = default;
-        UseCubic = true;
-        CubicResampler = cubicResampler;
+        _maxAniso = 0;
+        _useCubic = 0;
+        _cubic = default;
+        _filter = filter;
+        _mipmap = SKMipmapMode.None;
+    }
+
+    public SKSamplingOptions(SKCubicResampler resampler)
+    {
+        _maxAniso = 0;
+        _useCubic = 1;
+        _cubic = resampler;
+        _filter = SKFilterMode.Nearest;
+        _mipmap = SKMipmapMode.None;
+    }
+
+    public SKSamplingOptions(int maxAniso)
+    {
+        _maxAniso = Math.Max(1, maxAniso);
+        _useCubic = 0;
+        _cubic = default;
+        _filter = SKFilterMode.Nearest;
+        _mipmap = SKMipmapMode.None;
+    }
+
+    public bool Equals(SKSamplingOptions other) =>
+        _maxAniso == other._maxAniso &&
+        _useCubic == other._useCubic &&
+        _cubic == other._cubic &&
+        _filter == other._filter &&
+        _mipmap == other._mipmap;
+
+    public override bool Equals(object? obj) => obj is SKSamplingOptions other && Equals(other);
+
+    public static bool operator ==(SKSamplingOptions left, SKSamplingOptions right) => left.Equals(right);
+
+    public static bool operator !=(SKSamplingOptions left, SKSamplingOptions right) => !left.Equals(right);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(_maxAniso);
+        hash.Add(_useCubic);
+        hash.Add(_cubic);
+        hash.Add(_filter);
+        hash.Add(_mipmap);
+        return hash.ToHashCode();
     }
 }
 

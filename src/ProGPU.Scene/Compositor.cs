@@ -672,6 +672,7 @@ public unsafe class Compositor : IDisposable
     private Sampler* _atlasSampler;
     private Sampler* _nearestTextureSampler;
     private Sampler* _mipmapTextureSampler;
+    private readonly Dictionary<byte, nint> _anisotropicTextureSamplers = new();
     private BindGroup* _atlasBindGroup;
     private BindGroupLayout* _atlasBindGroupLayout;
     private BindGroup* _atlasBindGroupOffscreen;
@@ -769,6 +770,7 @@ public unsafe class Compositor : IDisposable
         public GpuTexture? MaskTexture;
         public GpuBlendMode BlendMode;
         public TextureSamplingMode TextureSamplingMode;
+        public byte TextureMaxAnisotropy;
         public GpuTextureAlphaMode TextureAlphaMode;
 
         // Custom Extension properties
@@ -800,18 +802,32 @@ public unsafe class Compositor : IDisposable
         public readonly uint Generation;
         public readonly bool IsOffscreen;
         public readonly TextureSamplingMode SamplingMode;
+        public readonly byte MaxAnisotropy;
 
-        public TextureCacheKey(ulong textureId, uint generation, bool isOffscreen, TextureSamplingMode samplingMode)
+        public TextureCacheKey(
+            ulong textureId,
+            uint generation,
+            bool isOffscreen,
+            TextureSamplingMode samplingMode,
+            byte maxAnisotropy)
         {
             TextureId = textureId;
             Generation = generation;
             IsOffscreen = isOffscreen;
             SamplingMode = samplingMode;
+            MaxAnisotropy = samplingMode == TextureSamplingMode.LinearMipmap && maxAnisotropy > 1
+                ? (byte)Math.Clamp((int)maxAnisotropy, 2, 16)
+                : (byte)1;
         }
 
-        public bool Equals(TextureCacheKey other) => TextureId == other.TextureId && Generation == other.Generation && IsOffscreen == other.IsOffscreen && SamplingMode == other.SamplingMode;
+        public bool Equals(TextureCacheKey other) =>
+            TextureId == other.TextureId &&
+            Generation == other.Generation &&
+            IsOffscreen == other.IsOffscreen &&
+            SamplingMode == other.SamplingMode &&
+            MaxAnisotropy == other.MaxAnisotropy;
         public override bool Equals(object? obj) => obj is TextureCacheKey other && Equals(other);
-        public override int GetHashCode() => HashCode.Combine(TextureId, Generation, IsOffscreen, SamplingMode);
+        public override int GetHashCode() => HashCode.Combine(TextureId, Generation, IsOffscreen, SamplingMode, MaxAnisotropy);
     }
 
     public class CachedBindGroup
@@ -2414,14 +2430,23 @@ SceneStateUploadComplete:
                 currentBlendMode = dc.BlendMode;
 
                 var viewPtr = texture.ViewPtr;
-                var cacheKey = new TextureCacheKey(texture.Id, texture.Generation, isOffscreen: false, dc.TextureSamplingMode);
+                var cacheKey = new TextureCacheKey(
+                    texture.Id,
+                    texture.Generation,
+                    isOffscreen: false,
+                    dc.TextureSamplingMode,
+                    dc.TextureMaxAnisotropy);
 
                 CachedBindGroup? cachedBg;
                 lock (_persistentTextureBindGroups)
                 {
                     if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out cachedBg))
                     {
-                        textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = GetTextureSampler(dc.TextureSamplingMode) };
+                        textureEntries[0] = new BindGroupEntry
+                        {
+                            Binding = 0,
+                            Sampler = GetTextureSampler(dc.TextureSamplingMode, dc.TextureMaxAnisotropy)
+                        };
                         textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
 
                         var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayout, EntryCount = 2, Entries = textureEntries };
@@ -8378,12 +8403,18 @@ SceneStateUploadComplete:
             MaskTexture = _maskStack.Count > 0 ? _maskStack.Peek() : null,
             BlendMode = _activeBlendMode,
             TextureSamplingMode = cmd.TextureSamplingMode,
+            TextureMaxAnisotropy = cmd.TextureMaxAnisotropy,
             TextureAlphaMode = cmd.Texture.AlphaMode
         });
     }
 
-    internal Sampler* GetTextureSampler(TextureSamplingMode samplingMode)
+    internal Sampler* GetTextureSampler(TextureSamplingMode samplingMode, byte maxAnisotropy = 1)
     {
+        if (samplingMode == TextureSamplingMode.LinearMipmap && maxAnisotropy > 1)
+        {
+            return GetAnisotropicTextureSampler(maxAnisotropy);
+        }
+
         return samplingMode switch
         {
             TextureSamplingMode.Nearest when _nearestTextureSampler != null =>
@@ -8392,6 +8423,34 @@ SceneStateUploadComplete:
                 _mipmapTextureSampler,
             _ => _atlasSampler
         };
+    }
+
+    private Sampler* GetAnisotropicTextureSampler(byte requestedMaxAnisotropy)
+    {
+        var maxAnisotropy = (byte)Math.Clamp((int)requestedMaxAnisotropy, 2, 16);
+        lock (_anisotropicTextureSamplers)
+        {
+            if (_anisotropicTextureSamplers.TryGetValue(maxAnisotropy, out var existing))
+            {
+                return (Sampler*)existing;
+            }
+
+            var descriptor = new SamplerDescriptor
+            {
+                AddressModeU = AddressMode.ClampToEdge,
+                AddressModeV = AddressMode.ClampToEdge,
+                AddressModeW = AddressMode.ClampToEdge,
+                MagFilter = FilterMode.Linear,
+                MinFilter = FilterMode.Linear,
+                MipmapFilter = MipmapFilterMode.Linear,
+                LodMaxClamp = 32f,
+                LodMinClamp = 0f,
+                MaxAnisotropy = maxAnisotropy
+            };
+            var sampler = _context.Wgpu.DeviceCreateSampler(_context.Device, &descriptor);
+            _anisotropicTextureSamplers.Add(maxAnisotropy, (nint)sampler);
+            return sampler;
+        }
     }
 
     private void CommitPendingVectorDrawCall()
@@ -8550,6 +8609,11 @@ SceneStateUploadComplete:
                 if (_atlasSampler != null) _context.QueueSamplerDisposal((IntPtr)_atlasSampler);
                 if (_nearestTextureSampler != null) _context.QueueSamplerDisposal((IntPtr)_nearestTextureSampler);
                 if (_mipmapTextureSampler != null) _context.QueueSamplerDisposal((IntPtr)_mipmapTextureSampler);
+                foreach (var sampler in _anisotropicTextureSamplers.Values)
+                {
+                    _context.QueueSamplerDisposal(sampler);
+                }
+                _anisotropicTextureSamplers.Clear();
 
                 if (_vectorUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroup);
                 if (_vectorUniformBindGroupOffscreen != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroupOffscreen);
@@ -8931,7 +8995,8 @@ SceneStateUploadComplete:
                 texture.Id,
                 texture.Generation,
                 isOffscreen: true,
-                drawCall.TextureSamplingMode);
+                drawCall.TextureSamplingMode,
+                drawCall.TextureMaxAnisotropy);
             CachedBindGroup? cachedBindGroup;
             lock (_persistentTextureBindGroups)
             {
@@ -8941,7 +9006,9 @@ SceneStateUploadComplete:
                     entries[0] = new BindGroupEntry
                     {
                         Binding = 0,
-                        Sampler = GetTextureSampler(drawCall.TextureSamplingMode)
+                        Sampler = GetTextureSampler(
+                            drawCall.TextureSamplingMode,
+                            drawCall.TextureMaxAnisotropy)
                     };
                     entries[1] = new BindGroupEntry
                     {
@@ -10023,14 +10090,23 @@ SceneStateUploadComplete:
                 currentBlendMode = dc.BlendMode;
 
                 var viewPtr = texture.ViewPtr;
-                var cacheKey = new TextureCacheKey(texture.Id, texture.Generation, isOffscreen: true, dc.TextureSamplingMode);
+                var cacheKey = new TextureCacheKey(
+                    texture.Id,
+                    texture.Generation,
+                    isOffscreen: true,
+                    dc.TextureSamplingMode,
+                    dc.TextureMaxAnisotropy);
 
                 CachedBindGroup? cachedBg;
                 lock (_persistentTextureBindGroups)
                 {
                     if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out cachedBg))
                     {
-                        textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = GetTextureSampler(dc.TextureSamplingMode) };
+                        textureEntries[0] = new BindGroupEntry
+                        {
+                            Binding = 0,
+                            Sampler = GetTextureSampler(dc.TextureSamplingMode, dc.TextureMaxAnisotropy)
+                        };
                         textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
 
                         var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayoutOffscreen, EntryCount = 2, Entries = textureEntries };
@@ -12307,14 +12383,23 @@ SceneStateUploadComplete:
                     _context.Wgpu.RenderPassEncoderSetBindGroup(pass, 2, maskBindGroup, 0, null);
 
                     var viewPtr = texture.ViewPtr;
-                    var cacheKey = new TextureCacheKey(texture.Id, texture.Generation, isOffscreen: true, dc.TextureSamplingMode);
+                    var cacheKey = new TextureCacheKey(
+                        texture.Id,
+                        texture.Generation,
+                        isOffscreen: true,
+                        dc.TextureSamplingMode,
+                        dc.TextureMaxAnisotropy);
 
                     CachedBindGroup? cachedBg;
                     lock (_persistentTextureBindGroups)
                     {
                         if (!_persistentTextureBindGroups.TryGetValue(cacheKey, out cachedBg))
                         {
-                            textureEntries[0] = new BindGroupEntry { Binding = 0, Sampler = GetTextureSampler(dc.TextureSamplingMode) };
+                            textureEntries[0] = new BindGroupEntry
+                            {
+                                Binding = 0,
+                                Sampler = GetTextureSampler(dc.TextureSamplingMode, dc.TextureMaxAnisotropy)
+                            };
                             textureEntries[1] = new BindGroupEntry { Binding = 1, TextureView = viewPtr };
 
                             var bgDesc = new BindGroupDescriptor { Layout = _textureBindGroupLayoutOffscreen, EntryCount = 2, Entries = textureEntries };

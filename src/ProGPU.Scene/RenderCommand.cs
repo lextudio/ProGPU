@@ -358,6 +358,7 @@ public struct RenderCommand
     public GpuTexture? Texture;
     public Rect SrcRect;
     public TextureSamplingMode TextureSamplingMode;
+    public byte TextureMaxAnisotropy;
     public Vector2 TextureCubicCoefficients;
     public bool HasTextureCubicCoefficients;
 
