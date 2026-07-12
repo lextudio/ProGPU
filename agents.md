@@ -69,6 +69,7 @@ Required focused tests live in `LayerRenderTests` and `CompositorReviewRegressio
 * Preserve `TextRunGlyph.GlyphIndex`; do not repeat character-map lookup during compositor compilation. Cache font table capability flags and hoist transform, raster-size, basis, and bold invariants out of glyph loops.
 * Classify vector-text coverage once per text command, reusing the already computed transform scale. Physical size must include font size, transform scale, current display DPI, and static-buffer zoom. Keep the calibrated small/large device-pixel policy and transformed-text branch out of per-glyph loops.
 * Preserve `SKCubicResampler` B/C coefficients from the compatibility API through `RenderCommand` and texture vertices. Keep the Catmull-Rom fast path pixel-identical; do not collapse Mitchell and custom resamplers into a generic cubic mode.
+* Preserve Skia pixel-center and alpha-representation semantics in `SKBitmap.Resize`. Keep nearest sampling free of source-sized temporary allocations and retain raw same-format texel copies; linear and cubic paths must remain stride-aware, and cubic must evaluate the requested B/C kernel rather than a generic bicubic approximation.
 * Preserve the allocation-free double-queue dispatcher. Do not copy the pending queue into a new `List<Action>` per frame, execute newly posted work recursively in the same drain, or enqueue one delegate per benchmark element.
 * Keep producer backpressure bounded. The LOL/s workload batches element mutations and limits pending work separately for VSync and uncapped runs so background production cannot starve rendering.
 * Before reserving atlas capacity, prove that the requested entries fit in an empty atlas. An impossible reservation must not reset a useful atlas every frame.
@@ -82,7 +83,7 @@ dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj -c Release
 dotnet test src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj -c Release
 ```
 
-The current baseline is 1,183 renderer tests and 149 headless tests. Update these counts only when tests are intentionally added or removed.
+The current baseline is 1,189 renderer tests and 149 headless tests. Update these counts only when tests are intentionally added or removed.
 
 Build once, then measure the exact final binaries:
 

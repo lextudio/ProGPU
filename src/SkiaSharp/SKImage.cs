@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using ProGPU.Backend;
 using Silk.NET.WebGPU;
@@ -912,37 +913,305 @@ public class SKBitmap : IDisposable
         return new SKPixmap(_info, _pixels, RowBytes);
     }
 
-    public SKBitmap Resize(SKImageInfo info, SKSamplingOptions sampling)
+    public SKBitmap? Resize(SKImageInfo info, SKSamplingOptions sampling)
     {
-        // Create scaled bitmap
-        var resized = new SKBitmap(info);
-        // Simple pixel scaling (nearest neighbor/bilinear stub)
-        byte[] src = new byte[BytesSize];
-        Marshal.Copy(_pixels, src, 0, BytesSize);
-
-        byte[] dst = new byte[resized.BytesSize];
-        float xRatio = (float)_width / info.Width;
-        float yRatio = (float)_height / info.Height;
-
-        for (int y = 0; y < info.Height; y++)
+        FlushAttachedCanvas();
+        if (_pixels == IntPtr.Zero
+            || _width <= 0
+            || _height <= 0
+            || info.Width <= 0
+            || info.Height <= 0
+            || !SupportsResizeColorType(ColorType)
+            || !SupportsResizeColorType(info.ColorType)
+            || (sampling.UseCubic
+                && (!float.IsFinite(sampling.CubicResampler.B)
+                    || !float.IsFinite(sampling.CubicResampler.C))))
         {
-            int srcY = (int)(y * yRatio);
-            srcY = Math.Clamp(srcY, 0, _height - 1);
-            for (int x = 0; x < info.Width; x++)
+            return null;
+        }
+
+        var resized = new SKBitmap(info);
+        if (!sampling.UseCubic && sampling.FilterMode != SKFilterMode.Linear)
+        {
+            ResizeNearestPixels(resized, info);
+            return resized;
+        }
+
+        var source = CopyResizeSourcePixels();
+        var sourceScaleX = (float)_width / info.Width;
+        var sourceScaleY = (float)_height / info.Height;
+        unsafe
+        {
+            var destination = (byte*)resized.GetPixels();
+            for (var y = 0; y < info.Height; y++)
             {
-                int srcX = (int)(x * xRatio);
-                srcX = Math.Clamp(srcX, 0, _width - 1);
-
-                int srcOffset = srcY * RowBytes + srcX * 4;
-                int dstOffset = (y * info.Width + x) * 4;
-
-                Array.Copy(src, srcOffset, dst, dstOffset, 4);
+                var sourceY = ((y + 0.5f) * sourceScaleY) - 0.5f;
+                var destinationRow = destination + y * resized.RowBytes;
+                for (var x = 0; x < info.Width; x++)
+                {
+                    var sourceX = ((x + 0.5f) * sourceScaleX) - 0.5f;
+                    var color = SampleResizePixel(
+                        source,
+                        _width,
+                        _height,
+                        sourceX,
+                        sourceY,
+                        sampling);
+                    WriteResizePixel(
+                        destinationRow + x * info.BytesPerPixel,
+                        info,
+                        color,
+                        AlphaType == SKAlphaType.Premul);
+                }
             }
         }
 
-        Marshal.Copy(dst, 0, resized.GetPixels(), dst.Length);
         return resized;
     }
+
+    private static bool SupportsResizeColorType(SKColorType colorType) =>
+        colorType is SKColorType.Rgb565
+            or SKColorType.Rgba8888
+            or SKColorType.Rgb888x
+            or SKColorType.Bgra8888;
+
+    private unsafe Vector4[] CopyResizeSourcePixels()
+    {
+        var result = new Vector4[checked(_width * _height)];
+        var source = (byte*)_pixels;
+        for (var y = 0; y < _height; y++)
+        {
+            var sourceRow = source + y * RowBytes;
+            for (var x = 0; x < _width; x++)
+            {
+                var pixel = sourceRow + x * _info.BytesPerPixel;
+                result[y * _width + x] = ReadResizeSourcePixel(pixel);
+            }
+        }
+
+        return result;
+    }
+
+    private unsafe void ResizeNearestPixels(SKBitmap resized, SKImageInfo info)
+    {
+        var source = (byte*)_pixels;
+        var destination = (byte*)resized.GetPixels();
+        var sourceScaleX = (float)_width / info.Width;
+        var sourceScaleY = (float)_height / info.Height;
+        var canCopyStoredPixel = ColorType == info.ColorType
+            && AlphaType == info.AlphaType
+            && (AlphaType != SKAlphaType.Opaque || ColorType == SKColorType.Rgb565);
+        for (var y = 0; y < info.Height; y++)
+        {
+            var sourceY = Math.Clamp(
+                (int)MathF.Ceiling(((y + 0.5f) * sourceScaleY) - 1f),
+                0,
+                _height - 1);
+            var sourceRow = source + sourceY * RowBytes;
+            var destinationRow = destination + y * resized.RowBytes;
+            for (var x = 0; x < info.Width; x++)
+            {
+                var sourceX = Math.Clamp(
+                    (int)MathF.Ceiling(((x + 0.5f) * sourceScaleX) - 1f),
+                    0,
+                    _width - 1);
+                var sourcePixel = sourceRow + sourceX * _info.BytesPerPixel;
+                var destinationPixel = destinationRow + x * info.BytesPerPixel;
+                if (canCopyStoredPixel)
+                {
+                    System.Buffer.MemoryCopy(
+                        sourcePixel,
+                        destinationPixel,
+                        info.BytesPerPixel,
+                        info.BytesPerPixel);
+                    continue;
+                }
+
+                var color = ReadResizeSourcePixel(sourcePixel);
+                WriteResizePixel(
+                    destinationPixel,
+                    info,
+                    color,
+                    AlphaType == SKAlphaType.Premul);
+            }
+        }
+    }
+
+    private unsafe Vector4 ReadResizeSourcePixel(byte* pixel)
+    {
+        if (ColorType == SKColorType.Rgb565)
+        {
+            var packed = (ushort)(pixel[0] | (pixel[1] << 8));
+            return new Vector4(
+                ((packed >> 11) & 0x1f) / 31f,
+                ((packed >> 5) & 0x3f) / 63f,
+                (packed & 0x1f) / 31f,
+                1f);
+        }
+
+        var alpha = AlphaType == SKAlphaType.Opaque || ColorType == SKColorType.Rgb888x
+            ? 1f
+            : pixel[3] / 255f;
+        return ColorType == SKColorType.Bgra8888
+            ? new Vector4(pixel[2] / 255f, pixel[1] / 255f, pixel[0] / 255f, alpha)
+            : new Vector4(pixel[0] / 255f, pixel[1] / 255f, pixel[2] / 255f, alpha);
+    }
+
+    private static Vector4 SampleResizePixel(
+        Vector4[] source,
+        int width,
+        int height,
+        float x,
+        float y,
+        SKSamplingOptions sampling)
+    {
+        if (sampling.UseCubic)
+        {
+            return SampleResizeCubic(source, width, height, x, y, sampling.CubicResampler);
+        }
+
+        if (sampling.FilterMode == SKFilterMode.Linear)
+        {
+            var x0 = (int)MathF.Floor(x);
+            var y0 = (int)MathF.Floor(y);
+            var fractionX = x - x0;
+            var fractionY = y - y0;
+            var top = Vector4.Lerp(
+                GetResizePixel(source, width, height, x0, y0),
+                GetResizePixel(source, width, height, x0 + 1, y0),
+                fractionX);
+            var bottom = Vector4.Lerp(
+                GetResizePixel(source, width, height, x0, y0 + 1),
+                GetResizePixel(source, width, height, x0 + 1, y0 + 1),
+                fractionX);
+            return Vector4.Lerp(top, bottom, fractionY);
+        }
+
+        var nearestX = (int)MathF.Ceiling(x - 0.5f);
+        var nearestY = (int)MathF.Ceiling(y - 0.5f);
+        return GetResizePixel(source, width, height, nearestX, nearestY);
+    }
+
+    private static Vector4 SampleResizeCubic(
+        Vector4[] source,
+        int width,
+        int height,
+        float x,
+        float y,
+        SKCubicResampler resampler)
+    {
+        var baseX = (int)MathF.Floor(x);
+        var baseY = (int)MathF.Floor(y);
+        var fractionX = x - baseX;
+        var fractionY = y - baseY;
+        var color = Vector4.Zero;
+        var totalWeight = 0f;
+        for (var tapY = -1; tapY <= 2; tapY++)
+        {
+            var weightY = ResizeCubicWeight(fractionY - tapY, resampler.B, resampler.C);
+            for (var tapX = -1; tapX <= 2; tapX++)
+            {
+                var weight = ResizeCubicWeight(fractionX - tapX, resampler.B, resampler.C) * weightY;
+                color += GetResizePixel(source, width, height, baseX + tapX, baseY + tapY) * weight;
+                totalWeight += weight;
+            }
+        }
+
+        return MathF.Abs(totalWeight) > 0.0001f
+            ? color / totalWeight
+            : GetResizePixel(source, width, height, baseX, baseY);
+    }
+
+    private static float ResizeCubicWeight(float value, float b, float c)
+    {
+        var x = MathF.Abs(value);
+        var x2 = x * x;
+        var x3 = x2 * x;
+        if (b == 0f && c == 0.5f)
+        {
+            const float a = -0.5f;
+            if (x <= 1f)
+            {
+                return ((a + 2f) * x3) - ((a + 3f) * x2) + 1f;
+            }
+
+            return x < 2f
+                ? (a * x3) - (5f * a * x2) + (8f * a * x) - (4f * a)
+                : 0f;
+        }
+
+        if (x <= 1f)
+        {
+            return ((12f - 9f * b - 6f * c) * x3
+                + (-18f + 12f * b + 6f * c) * x2
+                + (6f - 2f * b)) / 6f;
+        }
+
+        return x < 2f
+            ? ((-b - 6f * c) * x3
+                + (6f * b + 30f * c) * x2
+                + (-12f * b - 48f * c) * x
+                + (8f * b + 24f * c)) / 6f
+            : 0f;
+    }
+
+    private static Vector4 GetResizePixel(Vector4[] source, int width, int height, int x, int y)
+    {
+        x = Math.Clamp(x, 0, width - 1);
+        y = Math.Clamp(y, 0, height - 1);
+        return source[y * width + x];
+    }
+
+    private static unsafe void WriteResizePixel(
+        byte* destination,
+        SKImageInfo info,
+        Vector4 color,
+        bool sourceIsPremultiplied)
+    {
+        var alpha = Math.Clamp(color.W, 0f, 1f);
+        var targetHasAlpha = (info.ColorType is SKColorType.Rgba8888 or SKColorType.Bgra8888)
+            && info.AlphaType != SKAlphaType.Opaque;
+        var targetIsPremultiplied = targetHasAlpha && info.AlphaType == SKAlphaType.Premul;
+        var rgb = new Vector3(color.X, color.Y, color.Z);
+        if (sourceIsPremultiplied && !targetIsPremultiplied)
+        {
+            rgb = alpha > 0f ? rgb / alpha : Vector3.Zero;
+        }
+        else if (!sourceIsPremultiplied && targetIsPremultiplied)
+        {
+            rgb *= alpha;
+        }
+
+        var red = ResizeChannelToByte(rgb.X);
+        var green = ResizeChannelToByte(rgb.Y);
+        var blue = ResizeChannelToByte(rgb.Z);
+        var alphaByte = targetHasAlpha ? ResizeChannelToByte(alpha) : (byte)255;
+        if (info.ColorType == SKColorType.Rgb565)
+        {
+            var packed = PackRgb565(red, green, blue);
+            destination[0] = (byte)packed;
+            destination[1] = (byte)(packed >> 8);
+            return;
+        }
+
+        if (info.ColorType == SKColorType.Bgra8888)
+        {
+            destination[0] = blue;
+            destination[1] = green;
+            destination[2] = red;
+        }
+        else
+        {
+            destination[0] = red;
+            destination[1] = green;
+            destination[2] = blue;
+        }
+
+        destination[3] = alphaByte;
+    }
+
+    private static byte ResizeChannelToByte(float value) =>
+        (byte)Math.Clamp(MathF.Floor(Math.Clamp(value, 0f, 1f) * 255f + 0.5f), 0f, 255f);
 
     public SKData Encode(SKEncodedImageFormat format, int quality)
     {

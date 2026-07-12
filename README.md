@@ -85,6 +85,8 @@ The SkiaSharp compatibility shim implements a portable SkiaSharp-shaped API over
 
 Encoded images are decoded on the CPU before their pixels enter the GPU texture path. PNG-backed ICO/CUR frames use the common image decoder; bitmap-backed frames support legacy core and modern information headers, indexed 1/4/8-bit color, RLE4/RLE8 streams, RGB555, RGB565 and other validated 16/32-bit channel masks, 24-bit BGR, 32-bit BGRA, and Windows AND-mask transparency. Keeping decode and upload separate preserves deterministic pixel semantics and avoids initializing a WebGPU device for metadata or bitmap-only workflows.
 
+CPU bitmap resizing follows Skia's pixel-center mapping and alpha representation. Nearest and linear modes use fixed one- and four-sample footprints; cubic mode evaluates the requested Mitchell-Netravali B/C kernel over a fixed 4x4 footprint, preserving the distinction between Mitchell and Catmull-Rom. Source rows are read with their actual stride and color order, and output is converted to RGBA8888, BGRA8888, RGB888x, or RGB565 without forcing a WebGPU upload. Nearest sampling is a direct `O(destination pixels)` pass with no source-sized temporary allocation, and same-format texels stay as raw copies. Linear and cubic sampling normalize source pixels once, then run in `O(source pixels + destination pixels)` and `O(source pixels + 16 * destination pixels)` time with `O(source pixels)` temporary storage.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
