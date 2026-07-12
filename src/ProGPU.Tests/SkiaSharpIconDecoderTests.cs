@@ -81,6 +81,124 @@ public sealed class SkiaSharpIconDecoderTests
     }
 
     [Fact]
+    public void DecodeRle4IconUsesEndMarkerToLocateAndMask()
+    {
+        var icon = CreateIcon(
+            bitCount: 4,
+            xorPixels: [2, 0x12, 0, 0, 0, 1],
+            andMask: [0x40, 0, 0, 0],
+            palette:
+            [
+                0, 0, 0, 0,
+                0, 0, 255, 0,
+                0, 255, 0, 0
+            ],
+            colorCount: 3,
+            compression: 2,
+            imageByteCount: 0);
+
+        using var bitmap = SKBitmap.Decode(new SKData(icon));
+
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
+        Assert.Equal(new SKColor(0, 255, 0, 0), bitmap.GetPixel(1, 0));
+    }
+
+    [Fact]
+    public void DecodeRle8IconSupportsEncodedRuns()
+    {
+        var icon = CreateIcon(
+            bitCount: 8,
+            xorPixels: [1, 1, 1, 2, 0, 0, 0, 1],
+            andMask: [0, 0, 0, 0],
+            palette:
+            [
+                0, 0, 0, 0,
+                0, 0, 255, 0,
+                0, 255, 0, 0
+            ],
+            colorCount: 3,
+            compression: 1);
+
+        using var bitmap = SKBitmap.Decode(new SKData(icon));
+
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
+    }
+
+    [Fact]
+    public void DecodeRle4IconSupportsAbsoluteRuns()
+    {
+        var icon = CreateIcon(
+            bitCount: 4,
+            xorPixels: [0, 5, 0x12, 0x12, 0x10, 0, 0, 0, 0, 1],
+            andMask: [0, 0, 0, 0],
+            palette:
+            [
+                0, 0, 0, 0,
+                0, 0, 255, 0,
+                0, 255, 0, 0
+            ],
+            colorCount: 3,
+            compression: 2,
+            width: 5);
+
+        using var bitmap = SKBitmap.Decode(new SKData(icon));
+
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(2, 0));
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(3, 0));
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(4, 0));
+    }
+
+    [Fact]
+    public void DecodeRle8IconSupportsDeltaAndBottomUpRows()
+    {
+        var icon = CreateIcon(
+            bitCount: 8,
+            xorPixels: [0, 2, 1, 0, 2, 1, 0, 0, 4, 2, 0, 0, 0, 1],
+            andMask: [0, 0, 0, 0, 0, 0, 0, 0],
+            palette:
+            [
+                0, 0, 0, 0,
+                0, 0, 255, 0,
+                0, 255, 0, 0
+            ],
+            colorCount: 3,
+            compression: 1,
+            width: 4,
+            height: 2);
+
+        using var bitmap = SKBitmap.Decode(new SKData(icon));
+
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(0, 0));
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(3, 0));
+        Assert.Equal(SKColors.Black, bitmap.GetPixel(0, 1));
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(1, 1));
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(2, 1));
+        Assert.Equal(SKColors.Black, bitmap.GetPixel(3, 1));
+    }
+
+    [Fact]
+    public void DecodeRleIconRejectsMissingEndMarker()
+    {
+        var icon = CreateIcon(
+            bitCount: 4,
+            xorPixels: [2, 0x12],
+            andMask: [],
+            palette:
+            [
+                0, 0, 0, 0,
+                0, 0, 255, 0,
+                0, 255, 0, 0
+            ],
+            colorCount: 3,
+            compression: 2);
+
+        Assert.Throws<InvalidOperationException>(() => SKBitmap.Decode(new SKData(icon)));
+    }
+
+    [Fact]
     public void Decode16BitIconSupportsRgb555Pixels()
     {
         var icon = CreateIcon(
@@ -201,12 +319,18 @@ public sealed class SkiaSharpIconDecoderTests
         byte[]? palette = null,
         uint colorCount = 0,
         uint compression = 0,
-        byte[]? bitFieldMasks = null)
+        byte[]? bitFieldMasks = null,
+        int width = 2,
+        int height = 1,
+        uint? imageByteCount = null)
     {
-        const int width = 2;
-        const int height = 1;
         const int directorySize = 6 + 16;
         const int bitmapHeaderSize = 40;
+        if (width is <= 0 or > 256 || height is <= 0 or > 256)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width));
+        }
+
         palette ??= [];
         bitFieldMasks ??= [];
         var payloadSize = checked(bitmapHeaderSize + bitFieldMasks.Length + palette.Length + xorPixels.Length + andMask.Length);
@@ -214,8 +338,8 @@ public sealed class SkiaSharpIconDecoderTests
 
         BinaryPrimitives.WriteUInt16LittleEndian(icon.AsSpan(2), 1);
         BinaryPrimitives.WriteUInt16LittleEndian(icon.AsSpan(4), 1);
-        icon[6] = width;
-        icon[7] = height;
+        icon[6] = width == 256 ? (byte)0 : (byte)width;
+        icon[7] = height == 256 ? (byte)0 : (byte)height;
         icon[8] = colorCount > byte.MaxValue ? (byte)0 : (byte)colorCount;
         BinaryPrimitives.WriteUInt16LittleEndian(icon.AsSpan(10), 1);
         BinaryPrimitives.WriteUInt16LittleEndian(icon.AsSpan(12), bitCount);
@@ -229,7 +353,7 @@ public sealed class SkiaSharpIconDecoderTests
         BinaryPrimitives.WriteUInt16LittleEndian(payload.Slice(12), 1);
         BinaryPrimitives.WriteUInt16LittleEndian(payload.Slice(14), bitCount);
         BinaryPrimitives.WriteUInt32LittleEndian(payload.Slice(16), compression);
-        BinaryPrimitives.WriteUInt32LittleEndian(payload.Slice(20), (uint)xorPixels.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.Slice(20), imageByteCount ?? (uint)xorPixels.Length);
         BinaryPrimitives.WriteUInt32LittleEndian(payload.Slice(32), colorCount);
 
         var offset = bitmapHeaderSize;

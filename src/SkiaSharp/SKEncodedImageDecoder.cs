@@ -103,13 +103,16 @@ internal static class SKEncodedImageDecoder
         var compression = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(16, 4));
         var isUncompressed = compression == 0;
         var usesBitFields = compression is 3 or 6;
+        var usesRunLengthEncoding = compression is 1 or 2;
         if (headerSize < 40
             || headerSize > payload.Length
             || (!(isUncompressed && bitCount is 1 or 4 or 8 or 16 or 24 or 32)
-                && !(usesBitFields && bitCount is 16 or 32)))
+                && !(usesBitFields && bitCount is 16 or 32)
+                && !(compression == 1 && bitCount == 8)
+                && !(compression == 2 && bitCount == 4)))
         {
             throw new NotSupportedException(
-                "Only uncompressed indexed, 16-bit, 24-bit, 32-bit, and 16/32-bit bitfield ICO bitmap frames are supported.");
+                "Only indexed, RLE4/RLE8, 16-bit, 24-bit, 32-bit, and 16/32-bit bitfield ICO bitmap frames are supported.");
         }
 
         if (dibWidth == int.MinValue || dibHeight == int.MinValue)
@@ -187,15 +190,44 @@ internal static class SKEncodedImageDecoder
             pixelOffset += paletteByteCount;
         }
 
-        var xorRowBytes = checked(((width * bitCount + 31) / 32) * 4);
-        var xorByteCount = checked(xorRowBytes * height);
+        var bottomUp = dibHeight > 0;
+        var xorRowBytes = 0;
+        var xorByteCount = 0;
+        byte[]? decodedIndices = null;
+        if (usesRunLengthEncoding)
+        {
+            var declaredByteCount = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(20, 4));
+            var availableByteCount = payload.Length - pixelOffset;
+            var encodedByteCount = declaredByteCount == 0
+                ? availableByteCount
+                : checked((int)declaredByteCount);
+            if (encodedByteCount > availableByteCount)
+            {
+                throw new InvalidOperationException("ICO RLE bitmap pixels are truncated.");
+            }
+
+            decodedIndices = new byte[checked(width * height)];
+            var consumedByteCount = DecodeIconRle(
+                payload.Slice(pixelOffset, encodedByteCount),
+                decodedIndices,
+                width,
+                height,
+                bitCount,
+                bottomUp);
+            xorByteCount = declaredByteCount == 0 ? consumedByteCount : encodedByteCount;
+        }
+        else
+        {
+            xorRowBytes = checked(((width * bitCount + 31) / 32) * 4);
+            xorByteCount = checked(xorRowBytes * height);
+        }
+
         if (pixelOffset > payload.Length - xorByteCount)
         {
             throw new InvalidOperationException("ICO bitmap pixels are truncated.");
         }
 
         var rgba = new byte[checked(width * height * 4)];
-        var bottomUp = dibHeight > 0;
         var usesPixelAlpha = (bitCount == 32 && isUncompressed) || alphaMask != 0;
         var hasNonZeroAlpha = false;
         for (var y = 0; y < height; y++)
@@ -207,12 +239,14 @@ internal static class SKEncodedImageDecoder
                 var destination = (y * width + x) * 4;
                 if (bitCount <= 8)
                 {
-                    var colorIndex = bitCount switch
-                    {
-                        1 => (sourceRow[x >> 3] >> (7 - (x & 7))) & 0x01,
-                        4 => (sourceRow[x >> 1] >> (x % 2 == 0 ? 4 : 0)) & 0x0f,
-                        _ => sourceRow[x]
-                    };
+                    var colorIndex = decodedIndices is not null
+                        ? decodedIndices[y * width + x]
+                        : bitCount switch
+                        {
+                            1 => (sourceRow[x >> 3] >> (7 - (x & 7))) & 0x01,
+                            4 => (sourceRow[x >> 1] >> (x % 2 == 0 ? 4 : 0)) & 0x0f,
+                            _ => sourceRow[x]
+                        };
                     var paletteOffset = colorIndex * 4;
                     if (paletteOffset + 4 > palette.Length)
                     {
@@ -287,6 +321,117 @@ internal static class SKEncodedImageDecoder
         var maximum = mask >> shift;
         var value = (packed & mask) >> shift;
         return (byte)(((ulong)value * 255UL + maximum / 2UL) / maximum);
+    }
+
+    private static int DecodeIconRle(
+        ReadOnlySpan<byte> encoded,
+        Span<byte> indices,
+        int width,
+        int height,
+        ushort bitCount,
+        bool bottomUp)
+    {
+        var offset = 0;
+        var x = 0;
+        var sourceY = 0;
+        while (offset < encoded.Length)
+        {
+            if (offset > encoded.Length - 2)
+            {
+                throw new InvalidOperationException("ICO RLE command is truncated.");
+            }
+
+            var count = encoded[offset++];
+            var value = encoded[offset++];
+            if (count != 0)
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    var colorIndex = bitCount == 8
+                        ? value
+                        : (byte)(index % 2 == 0 ? value >> 4 : value & 0x0f);
+                    WriteIconRleIndex(indices, width, height, bottomUp, x++, sourceY, colorIndex);
+                }
+
+                continue;
+            }
+
+            if (value == 0)
+            {
+                x = 0;
+                sourceY++;
+                if (sourceY > height)
+                {
+                    throw new InvalidOperationException("ICO RLE rows exceed the bitmap height.");
+                }
+
+                continue;
+            }
+
+            if (value == 1)
+            {
+                return offset;
+            }
+
+            if (value == 2)
+            {
+                if (offset > encoded.Length - 2)
+                {
+                    throw new InvalidOperationException("ICO RLE delta is truncated.");
+                }
+
+                x = checked(x + encoded[offset++]);
+                sourceY = checked(sourceY + encoded[offset++]);
+                if (x > width || sourceY > height)
+                {
+                    throw new InvalidOperationException("ICO RLE delta exceeds the bitmap bounds.");
+                }
+
+                continue;
+            }
+
+            var absoluteCount = value;
+            var absoluteByteCount = bitCount == 8
+                ? absoluteCount
+                : (absoluteCount + 1) / 2;
+            var paddedByteCount = (absoluteByteCount + 1) & ~1;
+            if (offset > encoded.Length - paddedByteCount)
+            {
+                throw new InvalidOperationException("ICO RLE absolute run is truncated.");
+            }
+
+            for (var index = 0; index < absoluteCount; index++)
+            {
+                var colorIndex = bitCount == 8
+                    ? encoded[offset + index]
+                    : (byte)(index % 2 == 0
+                        ? encoded[offset + index / 2] >> 4
+                        : encoded[offset + index / 2] & 0x0f);
+                WriteIconRleIndex(indices, width, height, bottomUp, x++, sourceY, colorIndex);
+            }
+
+            offset += paddedByteCount;
+        }
+
+        throw new InvalidOperationException("ICO RLE bitmap is missing its end marker.");
+    }
+
+    private static void WriteIconRleIndex(
+        Span<byte> indices,
+        int width,
+        int height,
+        bool bottomUp,
+        int x,
+        int sourceY,
+        byte colorIndex)
+    {
+        if ((uint)x >= (uint)width || (uint)sourceY >= (uint)height)
+        {
+            throw new InvalidOperationException("ICO RLE run exceeds the bitmap bounds.");
+        }
+
+        var destinationY = bottomUp ? height - 1 - sourceY : sourceY;
+        indices[destinationY * width + x] = colorIndex;
     }
 
     private static void ValidateBitFieldMasks(
