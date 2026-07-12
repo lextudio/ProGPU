@@ -274,19 +274,30 @@ public enum SKRegionOperation
     Replace = 5,
 }
 
-public struct SKPoint
+public partial struct SKPoint : IEquatable<SKPoint>
 {
-    public float X;
-    public float Y;
+    private float _x;
+    private float _y;
+
+    public float X
+    {
+        readonly get => _x;
+        set => _x = value;
+    }
+
+    public float Y
+    {
+        readonly get => _y;
+        set => _y = value;
+    }
 
     public SKPoint(float x, float y)
     {
-        X = x;
-        Y = y;
+        _x = x;
+        _y = y;
     }
 
     public static readonly SKPoint Empty = new(0, 0);
-    public override string ToString() => $"({X}, {Y})";
 }
 
 public struct SKPointI : IEquatable<SKPointI>
@@ -361,10 +372,10 @@ public struct SKPointI : IEquatable<SKPointI>
 
     public static SKPointI Reflect(SKPointI point, SKPointI normal)
     {
-        var dot = point._x * normal._x + point._y * normal._y;
+        var lengthSquared = point._x * point._x + point._y * point._y;
         return new SKPointI(
-            (int)(point._x - 2f * dot * normal._x),
-            (int)(point._y - 2f * dot * normal._y));
+            (int)(point._x - 2f * lengthSquared * normal._x),
+            (int)(point._y - 2f * lengthSquared * normal._y));
     }
 
     public static SKPointI Ceiling(SKPoint value)
@@ -416,7 +427,13 @@ public struct SKPointI : IEquatable<SKPointI>
     public override readonly bool Equals(object? obj) => obj is SKPointI other && Equals(other);
     public static bool operator ==(SKPointI left, SKPointI right) => left.Equals(right);
     public static bool operator !=(SKPointI left, SKPointI right) => !left.Equals(right);
-    public override readonly int GetHashCode() => HashCode.Combine(_x, _y);
+    public override readonly int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(_x);
+        hash.Add(_y);
+        return hash.ToHashCode();
+    }
 }
 
 public struct SKPoint3 : IEquatable<SKPoint3>
