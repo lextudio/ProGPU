@@ -1743,15 +1743,20 @@ public readonly struct SKColorF : IEquatable<SKColorF>
 public struct SKColorSpaceTransferFn : IEquatable<SKColorSpaceTransferFn>
 {
     public static readonly SKColorSpaceTransferFn Empty;
+
+    public static SKColorSpaceTransferFn Srgb =>
+        new(2.4f, 0.9478673f, 0.0521327f, 0.07739938f, 0.04045f, 0f, 0f);
+
+    public static SKColorSpaceTransferFn TwoDotTwo => new(2.2f, 1f, 0f, 0f, 0f, 0f, 0f);
+
     public static SKColorSpaceTransferFn Linear => new(1f, 1f, 0f, 0f, 0f, 0f, 0f);
-    public static SKColorSpaceTransferFn Srgb => new(
-        2.4f,
-        1f / 1.055f,
-        0.055f / 1.055f,
-        1f / 12.92f,
-        0.04045f,
-        0f,
-        0f);
+
+    public static SKColorSpaceTransferFn Rec2020 =>
+        new(2.22222f, 0.909672f, 0.0903276f, 0.222222f, 0.0812429f, 0f, 0f);
+
+    public static SKColorSpaceTransferFn Pq => new(-5f, 203f, 0f, 0f, 0f, 0f, 0f);
+
+    public static SKColorSpaceTransferFn Hlg => new(-6f, 203f, 1000f, 1.2f, 0f, 0f, 0f);
 
     public float G { readonly get; set; }
     public float A { readonly get; set; }
@@ -1773,8 +1778,183 @@ public struct SKColorSpaceTransferFn : IEquatable<SKColorSpaceTransferFn>
         F = f;
     }
 
-    public readonly float Transform(float value) =>
-        value < D ? C * value + F : MathF.Pow(A * value + B, G) + E;
+    public SKColorSpaceTransferFn(float[] values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Length != 7)
+        {
+            throw new ArgumentException(
+                "The values must have exactly 7 items, one for each of [G, A, B, C, D, E, F].",
+                nameof(values));
+        }
+
+        G = values[0];
+        A = values[1];
+        B = values[2];
+        C = values[3];
+        D = values[4];
+        E = values[5];
+        F = values[6];
+    }
+
+    public readonly SKColorSpaceTransferFn Invert()
+    {
+        if (!IsSrgbLike())
+        {
+            return Empty;
+        }
+
+        var threshold = C * D + F;
+        var nonlinearThreshold = PowApprox(A * D + B, G) + E;
+        if (MathF.Abs(threshold - nonlinearThreshold) > 1f / 512f)
+        {
+            return Empty;
+        }
+
+        var inverse = new SKColorSpaceTransferFn
+        {
+            D = threshold,
+        };
+        if (threshold > 0f)
+        {
+            inverse.C = 1f / C;
+            inverse.F = -F / C;
+        }
+
+        var scale = PowApprox(A, -G);
+        inverse.G = 1f / G;
+        inverse.A = scale;
+        inverse.B = -scale * E;
+        inverse.E = -B / A;
+        if (inverse.A < 0f)
+        {
+            return Empty;
+        }
+
+        if (inverse.A * inverse.D + inverse.B < 0f)
+        {
+            inverse.B = -inverse.A * inverse.D;
+        }
+
+        if (!inverse.IsSrgbLike())
+        {
+            return Empty;
+        }
+
+        var one = Transform(1f);
+        if (!float.IsFinite(one))
+        {
+            return Empty;
+        }
+
+        var sign = one < 0f ? -1f : 1f;
+        one *= sign;
+        if (one < inverse.D)
+        {
+            inverse.F = 1f - sign * inverse.C * one;
+        }
+        else
+        {
+            inverse.E = 1f - sign * PowApprox(inverse.A * one + inverse.B, inverse.G);
+        }
+
+        return inverse.IsSrgbLike() ? inverse : Empty;
+    }
+
+    public readonly float Transform(float value)
+    {
+        var sign = value < 0f ? -1f : 1f;
+        var magnitude = value * sign;
+        if (G == Pq.G)
+        {
+            const float c1 = 107f / 128f;
+            const float c2 = 2413f / 128f;
+            const float c3 = 2392f / 128f;
+            const float m1 = 1305f / 8192f;
+            const float m2 = 2523f / 32f;
+            var power = PowApprox(magnitude, 1f / m2);
+            return PowApprox((power - c1) / (c2 - c3 * power), 1f / m1);
+        }
+
+        if (G == Hlg.G)
+        {
+            const float hlgA = 0.17883277f;
+            const float hlgB = 0.28466892f;
+            const float hlgC = 0.55991073f;
+            return sign * (magnitude <= 0.5f
+                ? magnitude * magnitude / 3f
+                : (ExpApprox((magnitude - hlgC) / hlgA) + hlgB) / 12f);
+        }
+
+        if (!IsSrgbLike())
+        {
+            return 0f;
+        }
+
+        return sign * (magnitude < D
+            ? C * magnitude + F
+            : PowApprox(A * magnitude + B, G) + E);
+    }
+
+    private readonly bool IsSrgbLike() =>
+        float.IsFinite(G + A + B + C + D + E + F) &&
+        A >= 0f && C >= 0f && D >= 0f && G >= 0f && A * D + B >= 0f;
+
+    private static float PowApprox(float value, float power)
+    {
+        if (value <= 0f)
+        {
+            return 0f;
+        }
+
+        if (value == 1f)
+        {
+            return 1f;
+        }
+
+        return Exp2Approx(Log2Approx(value) * power);
+    }
+
+    private static float Log2Approx(float value)
+    {
+        var bits = BitConverter.SingleToInt32Bits(value);
+        var exponent = bits * (1f / (1 << 23));
+        var mantissa = BitConverter.Int32BitsToSingle((bits & 0x007fffff) | 0x3f000000);
+        return exponent - 124.225514990f -
+               1.498030302f * mantissa -
+               1.725879990f / (0.3520887068f + mantissa);
+    }
+
+    private static float Exp2Approx(float value)
+    {
+        if (value > 128f)
+        {
+            return float.PositiveInfinity;
+        }
+
+        if (value < -127f)
+        {
+            return 0f;
+        }
+
+        var fraction = value - MathF.Floor(value);
+        var floatBits = (1 << 23) * (value + 121.274057500f -
+            1.490129070f * fraction +
+            27.728023300f / (4.84252568f - fraction));
+        if (floatBits >= (float)int.MaxValue)
+        {
+            return float.PositiveInfinity;
+        }
+
+        if (floatBits < 0f)
+        {
+            return 0f;
+        }
+
+        return BitConverter.Int32BitsToSingle((int)floatBits);
+    }
+
+    private static float ExpApprox(float value) => Exp2Approx(1.4426950408889634f * value);
 
     public readonly bool Equals(SKColorSpaceTransferFn other) =>
         G == other.G && A == other.A && B == other.B && C == other.C &&
@@ -1787,54 +1967,224 @@ public struct SKColorSpaceTransferFn : IEquatable<SKColorSpaceTransferFn>
 
 public struct SKColorSpaceXyz : IEquatable<SKColorSpaceXyz>
 {
-    private float[]? _values;
+    private float _m00;
+    private float _m01;
+    private float _m02;
+    private float _m10;
+    private float _m11;
+    private float _m12;
+    private float _m20;
+    private float _m21;
+    private float _m22;
 
     public static readonly SKColorSpaceXyz Empty;
-    public static readonly SKColorSpaceXyz Identity = new(new[]
-    {
+
+    public static readonly SKColorSpaceXyz Identity = new(
         1f, 0f, 0f,
         0f, 1f, 0f,
-        0f, 0f, 1f,
-    });
-    public static SKColorSpaceXyz Srgb => new(new[]
-    {
-        0.4124564f, 0.3575761f, 0.1804375f,
-        0.2126729f, 0.7151522f, 0.0721750f,
-        0.0193339f, 0.1191920f, 0.9503041f,
-    });
+        0f, 0f, 1f);
+
+    public static SKColorSpaceXyz Srgb => new(
+        0.43606567f, 0.3851471f, 0.1430664f,
+        0.2224884f, 0.71687317f, 0.06060791f,
+        0.013916016f, 0.097076416f, 0.71409607f);
+
+    public static SKColorSpaceXyz AdobeRgb => new(
+        0.6097412f, 0.20527649f, 0.14918518f,
+        0.31111145f, 0.6256714f, 0.06321716f,
+        0.019470215f, 0.06086731f, 0.7445679f);
+
+    public static SKColorSpaceXyz DisplayP3 => new(
+        0.515102f, 0.291965f, 0.157153f,
+        0.241182f, 0.692236f, 0.0665819f,
+        -0.00104941f, 0.0418818f, 0.784378f);
+
+    public static SKColorSpaceXyz Rec2020 => new(
+        0.673459f, 0.165661f, 0.1251f,
+        0.279033f, 0.675338f, 0.0456288f,
+        -0.00193139f, 0.0299794f, 0.797162f);
+
+    public static SKColorSpaceXyz Xyz => Identity;
 
     public float[] Values
     {
-        readonly get => _values is null ? new float[9] : (float[])_values.Clone();
+        readonly get =>
+        [
+            _m00, _m01, _m02,
+            _m10, _m11, _m12,
+            _m20, _m21, _m22,
+        ];
         set
         {
-            ArgumentNullException.ThrowIfNull(value);
             if (value.Length != 9)
             {
                 throw new ArgumentException("The matrix array must have a length of 9.", nameof(value));
             }
 
-            _values = (float[])value.Clone();
+            _m00 = value[0];
+            _m01 = value[1];
+            _m02 = value[2];
+            _m10 = value[3];
+            _m11 = value[4];
+            _m12 = value[5];
+            _m20 = value[6];
+            _m21 = value[7];
+            _m22 = value[8];
         }
+    }
+
+    public readonly float this[int x, int y]
+    {
+        get
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(x);
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(x, 3);
+            ArgumentOutOfRangeException.ThrowIfNegative(y);
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, 3);
+            return (x + y * 3) switch
+            {
+                0 => _m00,
+                1 => _m01,
+                2 => _m02,
+                3 => _m10,
+                4 => _m11,
+                5 => _m12,
+                6 => _m20,
+                7 => _m21,
+                8 => _m22,
+                _ => throw new ArgumentOutOfRangeException("index"),
+            };
+        }
+    }
+
+    public SKColorSpaceXyz(float value)
+        : this(value, value, value, value, value, value, value, value, value)
+    {
     }
 
     public SKColorSpaceXyz(float[] values)
     {
-        _values = null;
-        Values = values;
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Length != 9)
+        {
+            throw new ArgumentException("The matrix array must have a length of 9.", nameof(values));
+        }
+
+        _m00 = values[0];
+        _m01 = values[1];
+        _m02 = values[2];
+        _m10 = values[3];
+        _m11 = values[4];
+        _m12 = values[5];
+        _m20 = values[6];
+        _m21 = values[7];
+        _m22 = values[8];
     }
 
-    public readonly bool Equals(SKColorSpaceXyz other) => Values.AsSpan().SequenceEqual(other.Values);
+    public SKColorSpaceXyz(
+        float m00, float m01, float m02,
+        float m10, float m11, float m12,
+        float m20, float m21, float m22)
+    {
+        _m00 = m00;
+        _m01 = m01;
+        _m02 = m02;
+        _m10 = m10;
+        _m11 = m11;
+        _m12 = m12;
+        _m20 = m20;
+        _m21 = m21;
+        _m22 = m22;
+    }
+
+    public readonly SKColorSpaceXyz Invert()
+    {
+        var a00 = (double)_m00;
+        var a01 = (double)_m10;
+        var a02 = (double)_m20;
+        var a10 = (double)_m01;
+        var a11 = (double)_m11;
+        var a12 = (double)_m21;
+        var a20 = (double)_m02;
+        var a21 = (double)_m12;
+        var a22 = (double)_m22;
+        var b0 = a00 * a11 - a01 * a10;
+        var b1 = a00 * a12 - a02 * a10;
+        var b2 = a01 * a12 - a02 * a11;
+        var b3 = a20;
+        var b4 = a21;
+        var b5 = a22;
+        var determinant = b0 * b5 - b1 * b4 + b2 * b3;
+        if (determinant == 0d)
+        {
+            return Empty;
+        }
+
+        var inverseDeterminant = 1d / determinant;
+        if (!double.IsFinite(inverseDeterminant) ||
+            inverseDeterminant > float.MaxValue || inverseDeterminant < -float.MaxValue)
+        {
+            return Empty;
+        }
+
+        b0 *= inverseDeterminant;
+        b1 *= inverseDeterminant;
+        b2 *= inverseDeterminant;
+        b3 *= inverseDeterminant;
+        b4 *= inverseDeterminant;
+        b5 *= inverseDeterminant;
+        var result = new SKColorSpaceXyz(
+            (float)(a11 * b5 - a12 * b4),
+            (float)(a12 * b3 - a10 * b5),
+            (float)(a10 * b4 - a11 * b3),
+            (float)(a02 * b4 - a01 * b5),
+            (float)(a00 * b5 - a02 * b3),
+            (float)(a01 * b3 - a00 * b4),
+            (float)b2,
+            (float)-b1,
+            (float)b0);
+        return result.IsFinite() ? result : Empty;
+    }
+
+    private readonly bool IsFinite() =>
+        float.IsFinite(_m00) && float.IsFinite(_m01) && float.IsFinite(_m02) &&
+        float.IsFinite(_m10) && float.IsFinite(_m11) && float.IsFinite(_m12) &&
+        float.IsFinite(_m20) && float.IsFinite(_m21) && float.IsFinite(_m22);
+
+    public static SKColorSpaceXyz Concat(SKColorSpaceXyz left, SKColorSpaceXyz right) => new(
+        left._m00 * right._m00 + left._m01 * right._m10 + left._m02 * right._m20,
+        left._m00 * right._m01 + left._m01 * right._m11 + left._m02 * right._m21,
+        left._m00 * right._m02 + left._m01 * right._m12 + left._m02 * right._m22,
+        left._m10 * right._m00 + left._m11 * right._m10 + left._m12 * right._m20,
+        left._m10 * right._m01 + left._m11 * right._m11 + left._m12 * right._m21,
+        left._m10 * right._m02 + left._m11 * right._m12 + left._m12 * right._m22,
+        left._m20 * right._m00 + left._m21 * right._m10 + left._m22 * right._m20,
+        left._m20 * right._m01 + left._m21 * right._m11 + left._m22 * right._m21,
+        left._m20 * right._m02 + left._m21 * right._m12 + left._m22 * right._m22);
+
+    public readonly bool Equals(SKColorSpaceXyz other) =>
+        _m00 == other._m00 && _m01 == other._m01 && _m02 == other._m02 &&
+        _m10 == other._m10 && _m11 == other._m11 && _m12 == other._m12 &&
+        _m20 == other._m20 && _m21 == other._m21 && _m22 == other._m22;
+
     public override readonly bool Equals(object? obj) => obj is SKColorSpaceXyz other && Equals(other);
+
     public static bool operator ==(SKColorSpaceXyz left, SKColorSpaceXyz right) => left.Equals(right);
+
     public static bool operator !=(SKColorSpaceXyz left, SKColorSpaceXyz right) => !left.Equals(right);
+
     public override readonly int GetHashCode()
     {
         var hash = new HashCode();
-        foreach (var value in Values)
-        {
-            hash.Add(value);
-        }
+        hash.Add(_m00);
+        hash.Add(_m01);
+        hash.Add(_m02);
+        hash.Add(_m10);
+        hash.Add(_m11);
+        hash.Add(_m12);
+        hash.Add(_m20);
+        hash.Add(_m21);
+        hash.Add(_m22);
 
         return hash.ToHashCode();
     }
