@@ -117,6 +117,8 @@ public struct CompositorMetrics
     public int VectorVerticesCount;
     public int TextVerticesCount;
     public int PathAtlasCachedCount;
+    public bool SceneCacheHit;
+    public string? SceneCacheMissReason;
 }
 
 public readonly record struct RenderTargetViewport(float X, float Y, float Width, float Height)
@@ -434,7 +436,7 @@ public unsafe class Compositor : IDisposable
 
     private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform)
     {
-        if (!_suspendHitTestCacheWrites)
+        if (Options.EnableGpuHitTesting && !_suspendHitTestCacheWrites)
         {
             _hitTestCacheBuilder.AddCommand(command, transform);
         }
@@ -442,7 +444,7 @@ public unsafe class Compositor : IDisposable
 
     private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform, IRenderDataProvider provider)
     {
-        if (!_suspendHitTestCacheWrites)
+        if (Options.EnableGpuHitTesting && !_suspendHitTestCacheWrites)
         {
             _hitTestCacheBuilder.AddCommand(command, transform, provider);
         }
@@ -450,7 +452,7 @@ public unsafe class Compositor : IDisposable
 
     private void AddHitTestCommand(RenderCommand command, Matrix4x4 transform, int id)
     {
-        if (!_suspendHitTestCacheWrites)
+        if (Options.EnableGpuHitTesting && !_suspendHitTestCacheWrites)
         {
             _hitTestCacheBuilder.AddCommand(command, transform, id);
         }
@@ -458,7 +460,7 @@ public unsafe class Compositor : IDisposable
 
     private void PushHitTestClip(Rect clipBounds, Matrix4x4 transform)
     {
-        if (!_suspendHitTestCacheWrites)
+        if (Options.EnableGpuHitTesting && !_suspendHitTestCacheWrites)
         {
             _hitTestCacheBuilder.PushClip(clipBounds, transform);
         }
@@ -466,7 +468,7 @@ public unsafe class Compositor : IDisposable
 
     private void PopHitTestClip()
     {
-        if (!_suspendHitTestCacheWrites)
+        if (Options.EnableGpuHitTesting && !_suspendHitTestCacheWrites)
         {
             _hitTestCacheBuilder.PopClip();
         }
@@ -541,6 +543,7 @@ public unsafe class Compositor : IDisposable
         {
             _registeredExtensions.Add(extension);
             _extensionsById[id] = extension;
+            _compiledSceneReusable = false;
         }
     }
 
@@ -610,6 +613,7 @@ public unsafe class Compositor : IDisposable
     public Func<Visual?>? GetTooltip { get; set; }
     public Func<Vector2>? GetMousePosition { get; set; }
     public Action<DrawingContext, uint, uint>? RenderDiagnostics { get; set; }
+    public Func<bool>? HasDynamicDiagnostics { get; set; }
     public Vector4 ClearColor { get; set; } = new Vector4(0.08f, 0.08f, 0.12f, 1.0f);
 
     public unsafe BindGroupLayout* VectorUniformBindGroupLayout => _vectorUniformBindGroupLayout;
@@ -819,6 +823,8 @@ public unsafe class Compositor : IDisposable
     }
 
     private readonly List<CompositorDrawCall> _drawCalls = new();
+    private readonly List<CompiledVisualVersion> _compiledExternalLayers = new();
+    private readonly List<CompiledLayerVersion> _compiledLayerOwners = new();
     private readonly Dictionary<TextureCacheKey, CachedBindGroup> _persistentTextureBindGroups = new();
     private readonly List<GpuBrush> _activeBrushes = new();
     private readonly List<GpuGradientStop> _activeGradientStops = new();
@@ -826,6 +832,24 @@ public unsafe class Compositor : IDisposable
     private readonly GpuBuffer _brushesStorageBuffer;
     private readonly GpuBuffer _gradientStopsStorageBuffer;
     private ulong _frameNumber = 0;
+    private bool _compiledSceneReusable;
+    private string _compiledSceneCacheStateReason = "No compiled scene";
+    private string? _currentSceneCacheMissReason;
+    private Visual? _compiledSceneRoot;
+    private long _compiledSceneRootVersion;
+    private uint _compiledSceneWidth;
+    private uint _compiledSceneHeight;
+    private uint? _compiledSceneRenderTargetWidth;
+    private uint? _compiledSceneRenderTargetHeight;
+    private RenderTargetViewport? _compiledSceneRenderTargetViewport;
+    private float _compiledSceneDpiScale;
+    private Visual? _compiledSceneToolTip;
+    private long _compiledSceneToolTipVersion;
+    private ulong _compiledSceneGlyphAtlasGeneration;
+    private ulong _compiledScenePathAtlasGeneration;
+    private bool _compiledSceneHasGpuTransforms;
+    private Matrix4x4 _compiledSceneGpuTransformsCameraView;
+    private bool _compiledSceneContainsDrawingVisual;
     private readonly object _offscreenRenderLock = new();
     private int _offscreenRenderDepth;
     private float _totalTime = 0f;
@@ -837,6 +861,9 @@ public unsafe class Compositor : IDisposable
         Vector,
         Text
     }
+
+    private readonly record struct CompiledVisualVersion(Visual Visual, long ChangeVersion);
+    private readonly record struct CompiledLayerVersion(Visual Visual, GpuTexture Texture);
 
     [Flags]
     private enum VisualCompositeScope
@@ -1848,10 +1875,9 @@ public unsafe class Compositor : IDisposable
         // Invoke pre-render actions (e.g. measure/arrange popups in UI framework)
         PreRender?.Invoke(width, height);
 
-        _useGpuTransformsActive = false;
-        _cameraViewMatrix = Matrix4x4.Identity;
-        _hasGpuTransformsInFrame = false;
-        _gpuTransformsCameraView = Matrix4x4.Identity;
+        IReadOnlyList<Visual>? externalLayers = GetExternalLayers?.Invoke();
+        Visual? activeToolTip = GetTooltip?.Invoke();
+        bool hasDynamicDiagnostics = RenderDiagnostics != null && (HasDynamicDiagnostics?.Invoke() ?? true);
 
         // 1. Calculate orthographic projection matrix for modern 2D rendering
         // Maps X in [0, width] to [-1, 1], and Y in [0, height] to [1, -1]
@@ -1863,46 +1889,74 @@ public unsafe class Compositor : IDisposable
         );
         _currentProjection = projection;
 
-        // 2. Clear CPU collection batch lists and active brushes
-        _activeBrushes.Clear();
-        _activeGradientStops.Clear();
-        _vectorVerticesList.Clear();
-        _vectorIndicesList.Clear();
-        _textVerticesList.Clear();
-        _textureVerticesList.Clear();
-        _textureIndicesList.Clear();
-        _drawCalls.Clear();
-        _hitTestCacheBuilder.Clear();
-        ClearLastHitTestIndex();
+        bool reuseCompiledScene = CanReuseCompiledScene(
+            root,
+            width,
+            height,
+            externalLayers,
+            activeToolTip,
+            hasDynamicDiagnostics);
 
-
-        if (_layoutCache.Count > 1000)
+        _useGpuTransformsActive = false;
+        _cameraViewMatrix = Matrix4x4.Identity;
+        if (reuseCompiledScene)
         {
-            _layoutCache.Clear();
+            _hasGpuTransformsInFrame = _compiledSceneHasGpuTransforms;
+            _gpuTransformsCameraView = _compiledSceneGpuTransformsCameraView;
+            MarkCompiledSceneResourcesUsed();
+        }
+        else
+        {
+            _hasGpuTransformsInFrame = false;
+            _gpuTransformsCameraView = Matrix4x4.Identity;
+            _compiledSceneContainsDrawingVisual = false;
         }
 
-        _clipStack.Clear();
-        _clipScopeIsGeometryMask.Clear();
-        _activeClipRect = null;
+        // 2. Clear CPU collection batch lists and active brushes
+        if (!reuseCompiledScene)
+        {
+            _activeBrushes.Clear();
+            _activeGradientStops.Clear();
+            _vectorVerticesList.Clear();
+            _vectorIndicesList.Clear();
+            _textVerticesList.Clear();
+            _textureVerticesList.Clear();
+            _textureIndicesList.Clear();
+            _drawCalls.Clear();
+            _hitTestCacheBuilder.Clear();
+            ClearLastHitTestIndex();
 
-        _opacityStack.Clear();
-        _activeOpacity = 1.0f;
-        _currentBatchType = BatchType.None;
+            if (_layoutCache.Count > 1000)
+            {
+                _layoutCache.Clear();
+            }
 
-        _blendModeStack.Clear();
-        _activeBlendMode = GpuBlendMode.SrcOver;
-        _maskStack.Clear();
-        ReturnMaskRenderPassDrawCallLists();
-        _masksToReturnToPool.Clear();
+            _clipStack.Clear();
+            _clipScopeIsGeometryMask.Clear();
+            _activeClipRect = null;
+
+            _opacityStack.Clear();
+            _activeOpacity = 1.0f;
+            _currentBatchType = BatchType.None;
+
+            _blendModeStack.Clear();
+            _activeBlendMode = GpuBlendMode.SrcOver;
+            _maskStack.Clear();
+            ReturnMaskRenderPassDrawCallLists();
+            _masksToReturnToPool.Clear();
+        }
 
         var extensionFrame = BeginExtensionFrame();
         CommandEncoder* encoder = null;
-        IReadOnlyList<Visual>? externalLayers = null;
-        Visual? activeToolTip = null;
         System.Diagnostics.Stopwatch uploadSw = null!;
         System.Diagnostics.Stopwatch passSw = null!;
         try
         {
+
+        if (reuseCompiledScene)
+        {
+            goto SceneCompilationComplete;
+        }
 
         // 3. Compile Layer 0: Root Visual Scene
         _pendingVectorStart = (uint)_vectorIndicesList.Count;
@@ -1911,7 +1965,6 @@ public unsafe class Compositor : IDisposable
         CommitPendingDrawCalls();
 
         // 4. Compile Layer 1: Active Popups / External Layers (in proper Z-order)
-        externalLayers = GetExternalLayers?.Invoke();
         if (externalLayers != null && externalLayers.Count > 0)
         {
             var savedActiveClipRect = _activeClipRect;
@@ -1952,7 +2005,6 @@ public unsafe class Compositor : IDisposable
         }
 
         // 5. Compile Layer 2: Tooltips
-        activeToolTip = GetTooltip?.Invoke();
         if (activeToolTip != null)
         {
             var savedActiveClipRect = _activeClipRect;
@@ -1988,7 +2040,10 @@ public unsafe class Compositor : IDisposable
             }
         }
 
-        SetLastHitTestIndex(_hitTestCacheBuilder.BuildIndex());
+        if (Options.EnableGpuHitTesting)
+        {
+            SetLastHitTestIndex(_hitTestCacheBuilder.BuildIndex());
+        }
 
         // 6. Compile Layer 3: Adorner / DevTools bounds highlights
         if (RenderDiagnostics != null)
@@ -2113,12 +2168,18 @@ public unsafe class Compositor : IDisposable
             }
         }
 
+SceneCompilationComplete:
         compileSw.Stop();
         uploadSw = System.Diagnostics.Stopwatch.StartNew();
 
         // Dynamic buffer writing will happen after uploads to keep logic clear
 
         // Upload CPU batches to dynamic GPU buffers
+        if (reuseCompiledScene)
+        {
+            goto DynamicBufferUploadComplete;
+        }
+
         if (_vectorVerticesList.Count > 0)
         {
             EnsureBufferSize(ref _vectorVertexBuffer, (uint)_vectorVerticesList.Count * (uint)Marshal.SizeOf<VectorVertex>(), BufferUsage.Vertex);
@@ -2147,6 +2208,7 @@ public unsafe class Compositor : IDisposable
             _textureIndexBuffer.Write(CollectionsMarshal.AsSpan(_textureIndicesList));
         }
 
+DynamicBufferUploadComplete:
         // Determine physical render target size for MSAA matching the physical FramebufferSize.
         uint renderWidth = _explicitRenderTargetWidth ?? width;
         uint renderHeight = _explicitRenderTargetHeight ?? height;
@@ -2157,6 +2219,11 @@ public unsafe class Compositor : IDisposable
         {
             renderWidth = (uint)_context.Window.FramebufferSize.X;
             renderHeight = (uint)_context.Window.FramebufferSize.Y;
+        }
+
+        if (reuseCompiledScene)
+        {
+            goto SceneStateUploadComplete;
         }
 
         // Upload unified projection and MVP matrices
@@ -2180,11 +2247,18 @@ public unsafe class Compositor : IDisposable
             _gradientStopsStorageBuffer.Write(CollectionsMarshal.AsSpan(_activeGradientStops));
         }
 
-
-
-        // Rasterize all pending paths before starting the render pass
+        // Rasterize all pending paths before starting the render pass.
         _pathAtlas.RasterizePendingPaths();
 
+        CaptureCompiledScene(
+            root,
+            width,
+            height,
+            externalLayers,
+            activeToolTip,
+            hasDynamicDiagnostics);
+
+SceneStateUploadComplete:
         uploadSw.Stop();
         passSw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -2457,7 +2531,9 @@ public unsafe class Compositor : IDisposable
             DrawCallsCount = _drawCalls.Count,
             VectorVerticesCount = _vectorVerticesList.Count,
             TextVerticesCount = _textVerticesList.Count,
-            PathAtlasCachedCount = _pathAtlas.CachedPathCount
+            PathAtlasCachedCount = _pathAtlas.CachedPathCount,
+            SceneCacheHit = reuseCompiledScene,
+            SceneCacheMissReason = reuseCompiledScene ? null : _currentSceneCacheMissReason
         };
     }
 
@@ -2492,6 +2568,139 @@ public unsafe class Compositor : IDisposable
         }
     }
 
+    private bool CanReuseCompiledScene(
+        Visual root,
+        uint width,
+        uint height,
+        IReadOnlyList<Visual>? externalLayers,
+        Visual? activeToolTip,
+        bool hasDynamicDiagnostics)
+    {
+        _currentSceneCacheMissReason = null;
+        if (!Options.EnableCompiledSceneCache) return MissCompiledSceneCache("Compiled scene cache disabled");
+        if (!_compiledSceneReusable) return MissCompiledSceneCache(_compiledSceneCacheStateReason);
+        if (hasDynamicDiagnostics) return MissCompiledSceneCache("Dynamic diagnostics active");
+        if (!ReferenceEquals(_compiledSceneRoot, root)) return MissCompiledSceneCache("Root changed");
+        if (_compiledSceneRootVersion != root.ChangeVersion) return MissCompiledSceneCache("Root version changed");
+        if (_compiledSceneWidth != width || _compiledSceneHeight != height)
+            return MissCompiledSceneCache("Logical target changed");
+        if (_compiledSceneRenderTargetWidth != _explicitRenderTargetWidth ||
+            _compiledSceneRenderTargetHeight != _explicitRenderTargetHeight ||
+            _compiledSceneRenderTargetViewport != _explicitRenderTargetViewport ||
+            _compiledSceneDpiScale != _currentDpiScale)
+            return MissCompiledSceneCache("Physical target changed");
+        if (_compiledSceneGlyphAtlasGeneration != _atlas.Generation)
+            return MissCompiledSceneCache("Glyph atlas changed");
+        if (_compiledScenePathAtlasGeneration != _pathAtlas.Generation)
+            return MissCompiledSceneCache("Path atlas changed");
+        if (!ReferenceEquals(_compiledSceneToolTip, activeToolTip) ||
+            (activeToolTip != null && _compiledSceneToolTipVersion != activeToolTip.ChangeVersion))
+            return MissCompiledSceneCache("Tooltip changed");
+
+        int externalLayerCount = externalLayers?.Count ?? 0;
+        if (_compiledExternalLayers.Count != externalLayerCount)
+        {
+            return MissCompiledSceneCache("External layer count changed");
+        }
+
+        for (int i = 0; i < externalLayerCount; i++)
+        {
+            var layer = externalLayers![i];
+            var compiled = _compiledExternalLayers[i];
+            if (!ReferenceEquals(compiled.Visual, layer) || compiled.ChangeVersion != layer.ChangeVersion)
+            {
+                return MissCompiledSceneCache("External layer changed");
+            }
+        }
+
+        for (int i = 0; i < _compiledLayerOwners.Count; i++)
+        {
+            var compiled = _compiledLayerOwners[i];
+            if (!compiled.Visual.CacheAsLayer ||
+                !compiled.Visual.IsVisible ||
+                compiled.Visual.IsDirty ||
+                compiled.Texture.IsDisposed ||
+                !ReferenceEquals(compiled.Visual.LayerTexture, compiled.Texture))
+            {
+                return MissCompiledSceneCache("Cached layer changed");
+            }
+        }
+
+        return true;
+    }
+
+    private bool MissCompiledSceneCache(string reason)
+    {
+        _currentSceneCacheMissReason = reason;
+        return false;
+    }
+
+    private void CaptureCompiledScene(
+        Visual root,
+        uint width,
+        uint height,
+        IReadOnlyList<Visual>? externalLayers,
+        Visual? activeToolTip,
+        bool hasDynamicDiagnostics)
+    {
+        _compiledSceneCacheStateReason =
+            !Options.EnableCompiledSceneCache ? "Compiled scene cache disabled" :
+            hasDynamicDiagnostics ? "Dynamic diagnostics active" :
+            _compiledSceneContainsDrawingVisual ? "Drawing visuals active" :
+            _maskRenderPasses.Count != 0 ? "Mask render passes active" :
+            _effectTextures.Count != 0 ? "Effects active" :
+            string.Empty;
+        _compiledSceneReusable = _compiledSceneCacheStateReason.Length == 0;
+
+        if (!_compiledSceneReusable)
+        {
+            _compiledExternalLayers.Clear();
+            _compiledLayerOwners.Clear();
+            return;
+        }
+
+        _compiledSceneRoot = root;
+        _compiledSceneRootVersion = root.ChangeVersion;
+        _compiledSceneWidth = width;
+        _compiledSceneHeight = height;
+        _compiledSceneRenderTargetWidth = _explicitRenderTargetWidth;
+        _compiledSceneRenderTargetHeight = _explicitRenderTargetHeight;
+        _compiledSceneRenderTargetViewport = _explicitRenderTargetViewport;
+        _compiledSceneDpiScale = _currentDpiScale;
+        _compiledSceneToolTip = activeToolTip;
+        _compiledSceneToolTipVersion = activeToolTip?.ChangeVersion ?? 0;
+        _compiledSceneGlyphAtlasGeneration = _atlas.Generation;
+        _compiledScenePathAtlasGeneration = _pathAtlas.Generation;
+        _compiledSceneHasGpuTransforms = _hasGpuTransformsInFrame;
+        _compiledSceneGpuTransformsCameraView = _gpuTransformsCameraView;
+        _compiledSceneCacheStateReason = "Compiled scene available";
+
+        _compiledExternalLayers.Clear();
+        int externalLayerCount = externalLayers?.Count ?? 0;
+        for (int i = 0; i < externalLayerCount; i++)
+        {
+            var layer = externalLayers![i];
+            _compiledExternalLayers.Add(new CompiledVisualVersion(layer, layer.ChangeVersion));
+        }
+
+        _compiledLayerOwners.Clear();
+        foreach (var owner in _activeLayerTextureOwners)
+        {
+            if (owner.LayerTexture is { IsDisposed: false } texture)
+            {
+                _compiledLayerOwners.Add(new CompiledLayerVersion(owner, texture));
+            }
+        }
+    }
+
+    private void MarkCompiledSceneResourcesUsed()
+    {
+        for (int i = 0; i < _compiledLayerOwners.Count; i++)
+        {
+            _activeLayerTextureOwners.Add(_compiledLayerOwners[i].Visual);
+        }
+    }
+
     private bool IsTextureBindable(GpuTexture? texture)
     {
         var textureContext = texture?.Context;
@@ -2507,6 +2716,8 @@ public unsafe class Compositor : IDisposable
     private void HandleTextureDisposed(ulong textureId)
     {
         if (Environment.HasShutdownStarted) return;
+
+        _compiledSceneReusable = false;
 
         RemoveMaskTexturePoolEntries(textureId);
 
@@ -3178,6 +3389,11 @@ public unsafe class Compositor : IDisposable
         bool includeLocalTransform = true,
         bool includeLocalVisualState = true)
     {
+        if (node is DrawingVisual)
+        {
+            _compiledSceneContainsDrawingVisual = true;
+        }
+
         if (!node.IsVisible
             || (includeLocalVisualState && node.Opacity <= 0.0001f)
             || _activeOpacity <= 0.0001f)
@@ -7388,12 +7604,30 @@ public unsafe class Compositor : IDisposable
         var layoutGlyphCount = layoutGlyphs.Count;
         EnsureTextVertexCapacity(layoutGlyphCount * (cmd.IsBold ? 2 : 1));
 
+        var staticZoom = ActiveCompilationContext?.StaticZoom ?? 1f;
+        var (dpiScale, rasterFontSize, atlasToLogicalScale) = ResolveTextRasterization(
+            cmd.FontSize,
+            activeTransform,
+            _currentDpiScale,
+            staticZoom);
+        var atlasUpscale = atlasToLogicalScale * TransformMetrics.GetStrokeScale(activeTransform) * staticZoom;
+        bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
+                         MathF.Abs(activeTransform.M21) > 0.0001f ||
+                         activeTransform.M11 < 0.0f ||
+                         activeTransform.M22 < 0.0f;
+        var basisX = new Vector2(activeTransform.M11, activeTransform.M12);
+        var basisY = new Vector2(activeTransform.M21, activeTransform.M22);
+        int passCount = cmd.IsBold ? 2 : 1;
+        float boldOffset = cmd.FontSize * 0.035f;
+
         for (int glyphIndex = 0; glyphIndex < layoutGlyphCount; glyphIndex++)
         {
             var runGlyph = layoutGlyphs[glyphIndex];
             var glyphFont = runGlyph.Font ?? font;
-            ushort glyphIdx = glyphFont.GetGlyphIndex(runGlyph.CodePoint);
-            var colorLayers = glyphFont.GetColorLayers(glyphIdx);
+            ushort glyphIdx = runGlyph.GlyphIndex;
+            var colorLayers = glyphFont.HasColorGlyphs
+                ? glyphFont.GetColorLayers(glyphIdx)
+                : null;
 
             if (colorLayers != null && colorLayers.Count > 0)
             {
@@ -7432,14 +7666,8 @@ public unsafe class Compositor : IDisposable
             float baseCursorX = runGlyph.Position.X - runGlyph.Glyph.BearX;
             float baseCursorY = runGlyph.Position.Y - runGlyph.Glyph.BearY;
 
-            var staticZoom = ActiveCompilationContext?.StaticZoom ?? 1f;
-            var (dpiScale, rasterFontSize, atlasToLogicalScale) = ResolveTextRasterization(
-                cmd.FontSize,
-                activeTransform,
-                _currentDpiScale,
-                staticZoom);
-            var atlasUpscale = atlasToLogicalScale * TransformMetrics.GetStrokeScale(activeTransform) * staticZoom;
-            var hasBitmapGlyph = glyphFont.TryGetBitmapGlyph(glyphIdx, rasterFontSize, out _);
+            var hasBitmapGlyph = glyphFont.HasBitmapGlyphs &&
+                glyphFont.TryGetBitmapGlyph(glyphIdx, rasterFontSize, out _);
 
             if (!hasBitmapGlyph &&
                 (cmd.UseVectorGlyphRendering || glyphFont.HasCffOutlines || atlasUpscale > 1.0001f))
@@ -7466,11 +7694,6 @@ public unsafe class Compositor : IDisposable
             }
 
             SwitchBatch(BatchType.Text);
-            bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
-                             MathF.Abs(activeTransform.M21) > 0.0001f ||
-                             activeTransform.M11 < 0.0f ||
-                             activeTransform.M22 < 0.0f;
-
             Vector2 transPos = Vector2.Transform(new Vector2(baseCursorX + cmd.Position.X, baseCursorY + cmd.Position.Y), activeTransform);
             var (subpixelX, snappedLogicalPos) = ResolveTextPlacement(
                 transPos,
@@ -7479,14 +7702,11 @@ public unsafe class Compositor : IDisposable
                 isRotated,
                 cmd.TextHintingMode);
 
-            var info = _atlas.GetOrCreateGlyph(glyphFont, runGlyph.CodePoint, rasterFontSize, subpixelX);
+            var info = _atlas.GetOrCreateGlyphByIndex(glyphFont, glyphIdx, rasterFontSize, subpixelX);
             if (info.Width == 0 || info.Height == 0) continue;
             var glyphAtlasScale = atlasToLogicalScale * (info.RasterScale > 0f ? info.RasterScale : 1f);
             var glyphRenderWidth = info.RenderWidth > 0f ? info.RenderWidth : info.Width;
             var glyphRenderHeight = info.RenderHeight > 0f ? info.RenderHeight : info.Height;
-
-            int passCount = cmd.IsBold ? 2 : 1;
-            float boldOffset = cmd.FontSize * 0.035f;
 
             for (int pass = 0; pass < passCount; pass++)
             {
@@ -7510,9 +7730,6 @@ public unsafe class Compositor : IDisposable
                         continue;
                     }
                 }
-
-                Vector2 basisX = new Vector2(activeTransform.M11, activeTransform.M12);
-                Vector2 basisY = new Vector2(activeTransform.M21, activeTransform.M22);
 
                 _textVerticesList.Add(new GlyphInstance
                 {
@@ -7575,13 +7792,19 @@ public unsafe class Compositor : IDisposable
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
                          activeTransform.M11 < 0.0f ||
                          activeTransform.M22 < 0.0f;
+        var basisX = new Vector2(activeTransform.M11, activeTransform.M12);
+        var basisY = new Vector2(activeTransform.M21, activeTransform.M22);
+        int passCount = cmd.IsBold ? 2 : 1;
+        float boldOffset = cmd.FontSize * 0.035f;
 
         for (int i = 0; i < cmd.GlyphIndices.Length; i++)
         {
             ushort glyphIdx = cmd.GlyphIndices[i];
             Vector2 position = cmd.GlyphPositions[i];
 
-            var colorLayers = font.GetColorLayers(glyphIdx);
+            var colorLayers = font.HasColorGlyphs
+                ? font.GetColorLayers(glyphIdx)
+                : null;
 
             if (colorLayers != null && colorLayers.Count > 0)
             {
@@ -7617,7 +7840,8 @@ public unsafe class Compositor : IDisposable
                 continue;
             }
 
-            var hasBitmapGlyph = font.TryGetBitmapGlyph(glyphIdx, rasterFontSize, out _);
+            var hasBitmapGlyph = font.HasBitmapGlyphs &&
+                font.TryGetBitmapGlyph(glyphIdx, rasterFontSize, out _);
             if (!hasBitmapGlyph &&
                 (cmd.UseVectorGlyphRendering || font.HasCffOutlines || atlasUpscale > 1.0001f))
             {
@@ -7660,9 +7884,6 @@ public unsafe class Compositor : IDisposable
             var glyphRenderWidth = info.RenderWidth > 0f ? info.RenderWidth : info.Width;
             var glyphRenderHeight = info.RenderHeight > 0f ? info.RenderHeight : info.Height;
 
-            int passCount = cmd.IsBold ? 2 : 1;
-            float boldOffset = cmd.FontSize * 0.035f;
-
             for (int pass = 0; pass < passCount; pass++)
             {
                 float xOffset = pass * boldOffset;
@@ -7685,9 +7906,6 @@ public unsafe class Compositor : IDisposable
                         continue;
                     }
                 }
-
-                Vector2 basisX = new Vector2(activeTransform.M11, activeTransform.M12);
-                Vector2 basisY = new Vector2(activeTransform.M21, activeTransform.M22);
 
                 _textVerticesList.Add(new GlyphInstance
                 {
@@ -9299,6 +9517,7 @@ public unsafe class Compositor : IDisposable
         bool includeRootTransform = true,
         bool includeRootVisualState = true)
     {
+        _compiledSceneReusable = false;
         lock (_offscreenRenderLock)
         {
             var ownsOffscreenFrame = _offscreenRenderDepth++ == 0;

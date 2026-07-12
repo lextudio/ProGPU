@@ -12,6 +12,102 @@ namespace ProGPU.Tests;
 public sealed class LayerRenderTests
 {
     [Fact]
+    public void UnchangedSceneReusesCompiledGpuBuffers()
+    {
+        using var window = new HeadlessWindow(64, 64);
+        var visual = new SceneCacheVisual();
+        window.Content = visual;
+
+        try
+        {
+            window.Render();
+            Assert.False(window.Compositor.Metrics.SceneCacheHit);
+
+            window.Render();
+
+            Assert.True(window.Compositor.Metrics.SceneCacheHit);
+            Assert.Equal(1, visual.RenderCount);
+            AssertRed(ReadPixel(window.ReadPixels(), window.Width, 20, 20));
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void VisualInvalidationRecompilesSceneAndUpdatesPixels()
+    {
+        using var window = new HeadlessWindow(64, 64);
+        var visual = new SceneCacheVisual();
+        window.Content = visual;
+
+        try
+        {
+            window.Render();
+            window.Render();
+            Assert.True(window.Compositor.Metrics.SceneCacheHit);
+
+            visual.SetColor(new Vector4(0f, 1f, 0f, 1f));
+            window.Render();
+
+            Assert.False(window.Compositor.Metrics.SceneCacheHit);
+            Assert.Equal("Root version changed", window.Compositor.Metrics.SceneCacheMissReason);
+            Assert.Equal(2, visual.RenderCount);
+            AssertGreen(ReadPixel(window.ReadPixels(), window.Width, 20, 20));
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void ResizeInvalidatesCompiledSceneTarget()
+    {
+        using var window = new HeadlessWindow(64, 64);
+        var visual = new SceneCacheVisual();
+        window.Content = visual;
+
+        try
+        {
+            window.Render();
+            window.Render();
+            Assert.True(window.Compositor.Metrics.SceneCacheHit);
+
+            window.Resize(80, 64);
+            window.Render();
+
+            Assert.False(window.Compositor.Metrics.SceneCacheHit);
+            Assert.Equal(2, visual.RenderCount);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void MutableDrawingVisualDisablesCompiledSceneReuse()
+    {
+        using var window = new HeadlessWindow(64, 64);
+        window.Content = new DrawingVisualHost();
+
+        try
+        {
+            window.Render();
+            window.Render();
+
+            Assert.False(window.Compositor.Metrics.SceneCacheHit);
+            Assert.Equal("Drawing visuals active", window.Compositor.Metrics.SceneCacheMissReason);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
     public void CachedLayerCompositeIncludesVisualLocalTransform()
     {
         var window = HeadlessWindow.Shared;
@@ -184,6 +280,14 @@ public sealed class LayerRenderTests
         Assert.Equal(255, pixel.A);
     }
 
+    private static void AssertGreen(RgbaPixel pixel)
+    {
+        Assert.True(pixel.G >= 220, $"Expected scene to render green, found {pixel}.");
+        Assert.True(pixel.R <= 35, $"Expected scene red channel to stay low, found {pixel}.");
+        Assert.True(pixel.B <= 35, $"Expected scene blue channel to stay low, found {pixel}.");
+        Assert.Equal(255, pixel.A);
+    }
+
     private static void AssertBlack(RgbaPixel pixel)
     {
         Assert.InRange(pixel.R, 0, 12);
@@ -201,6 +305,46 @@ public sealed class LayerRenderTests
     }
 
     private readonly record struct RgbaPixel(byte R, byte G, byte B, byte A);
+
+    private sealed class SceneCacheVisual : FrameworkElement
+    {
+        private readonly SolidColorBrush _brush = new(new Vector4(1f, 0f, 0f, 1f));
+
+        public int RenderCount { get; private set; }
+
+        public SceneCacheVisual()
+        {
+            Width = 64f;
+            Height = 64f;
+        }
+
+        public void SetColor(Vector4 color)
+        {
+            _brush.Color = color;
+            Invalidate();
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            RenderCount++;
+            context.DrawRectangle(_brush, null, new Rect(0f, 0f, 64f, 64f));
+        }
+    }
+
+    private sealed class DrawingVisualHost : FrameworkElement
+    {
+        public DrawingVisualHost()
+        {
+            Width = 64f;
+            Height = 64f;
+            var drawing = new DrawingVisual { Size = new Vector2(64f, 64f) };
+            drawing.Context.DrawRectangle(
+                new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+                null,
+                new Rect(0f, 0f, 64f, 64f));
+            AddChild(drawing);
+        }
+    }
 
     private sealed class VisualCompositeScopeHost : FrameworkElement
     {

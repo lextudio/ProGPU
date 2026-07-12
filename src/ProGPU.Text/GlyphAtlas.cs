@@ -103,6 +103,8 @@ public unsafe class GlyphAtlas : IDisposable
 
     public uint AtlasSize => _atlasSize;
 
+    public ulong Generation { get; private set; }
+
     public bool IsAlmostFull => (_currentY + _currentRowHeight) > (_atlasSize * 0.85f);
 
     public void Clear()
@@ -116,6 +118,7 @@ public unsafe class GlyphAtlas : IDisposable
         _currentRowHeight = 0;
 
         _atlasTexture.ClearRenderTarget();
+        Generation++;
     }
 
     public GlyphAtlas(WgpuContext context, uint atlasSize = 2048)
@@ -298,6 +301,7 @@ public unsafe class GlyphAtlas : IDisposable
                                 _currentRowHeight = 0;
 
                                 _atlasTexture.ClearRenderTarget();
+                                Generation++;
                             }
 
                             uint posX = _currentX;

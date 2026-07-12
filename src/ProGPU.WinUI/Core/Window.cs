@@ -16,6 +16,17 @@ using ProGPU.Scene;
 
 namespace Microsoft.UI.Xaml;
 
+public readonly record struct WindowFrameMetrics(
+    double DispatcherTimeMs,
+    double RenderingCallbackTimeMs,
+    double FrameSetupTimeMs,
+    double AnimationTimeMs,
+    double LayoutTimeMs,
+    double SurfaceAcquireTimeMs,
+    double CompositorTimeMs,
+    double PresentTimeMs,
+    double TotalTimeMs);
+
 public class Window
 {
     private IWindow? _silkWindow;
@@ -56,6 +67,7 @@ public class Window
     public NativeWindowFrameInsets FrameInsets =>
         _windowController?.FrameInsets ?? NativeWindowFrameInsets.Empty;
     public bool IsUsingSystemBackdropFallback { get; private set; }
+    public WindowFrameMetrics FrameMetrics { get; private set; }
 
     public NativeWindowDecorations Decorations
     {
@@ -334,7 +346,10 @@ public class Window
 
         _wgpuContext = new WgpuContext();
         _wgpuContext.Initialize(_silkWindow);
-        _compositor = new Compositor(_wgpuContext, _wgpuContext.SwapChainFormat);
+        _compositor = new Compositor(
+            _wgpuContext,
+            _wgpuContext.SwapChainFormat,
+            CompositorOptions.Default with { EnableGpuHitTesting = false });
         ApplySystemBackdrop();
         
         // Decoupled Compositor Rendering Hooks Setup
@@ -342,6 +357,7 @@ public class Window
         _compositor.GetExternalLayers = () => PopupService.ActivePopups;
         _compositor.GetTooltip = () => InputSystem.ActiveToolTip;
         _compositor.GetMousePosition = () => InputSystem.LastMousePosition;
+        _compositor.HasDynamicDiagnostics = () => DevToolsService.IsDevToolsActive || DragDropManager.IsDragging;
         _compositor.RenderDiagnostics = (diagContext, w, h) =>
         {
             if (DevToolsService.IsDevToolsActive)
@@ -391,11 +407,14 @@ public class Window
 
     private unsafe void RenderFrameCore(double delta)
     {
+        long frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var wgpuContext = _wgpuContext!;
         var compositor = _compositor!;
         var content = _renderRoot;
 
+        long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
         UIThread.RunPending();
+        double dispatcherTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
 
         if (_inputState != null)
         {
@@ -403,19 +422,28 @@ public class Window
         }
 
         // Raise Rendering event
+        phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
         Rendering?.Invoke(this, delta);
+        double renderingCallbackTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
 
+        phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var framebufferSize = GetCurrentFramebufferSize();
         wgpuContext.ReconfigureIfNeeded((uint)framebufferSize.X, (uint)framebufferSize.Y);
         float dpiScale = ResolveWindowDpiScale(framebufferSize);
         Vector2 logicalSize = ResolveLogicalClientSize(framebufferSize, dpiScale);
+        double frameSetupTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
 
         // Core animation updates
+        phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
         content.UpdateAnimations((float)delta);
+        double animationTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
 
+        phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
         content.Measure(logicalSize);
         content.Arrange(new Rect(0, 0, logicalSize.X, logicalSize.Y));
+        double layoutTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
 
+        phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
         TextureView* targetView = null;
         var surfaceTexture = new SurfaceTexture();
         if (wgpuContext.Surface != null)
@@ -437,11 +465,15 @@ public class Window
                 targetView = wgpuContext.Wgpu.TextureCreateView(surfaceTexture.Texture, &viewDesc);
             }
         }
+        double surfaceAcquireTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
+        double compositorTimeMs = 0d;
+        double presentTimeMs = 0d;
 
         try
         {
             if (targetView != null)
             {
+                phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 compositor.RenderScene(
                     content,
                     (uint)MathF.Ceiling(logicalSize.X),
@@ -450,8 +482,11 @@ public class Window
                     (uint)framebufferSize.Y,
                     dpiScale,
                     targetView);
+                compositorTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
 
+                phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 wgpuContext.Wgpu.SurfacePresent(wgpuContext.Surface);
+                presentTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
             }
         }
         finally
@@ -465,6 +500,17 @@ public class Window
                 wgpuContext.Wgpu.TextureRelease(surfaceTexture.Texture);
             }
         }
+
+        FrameMetrics = new WindowFrameMetrics(
+            dispatcherTimeMs,
+            renderingCallbackTimeMs,
+            frameSetupTimeMs,
+            animationTimeMs,
+            layoutTimeMs,
+            surfaceAcquireTimeMs,
+            compositorTimeMs,
+            presentTimeMs,
+            System.Diagnostics.Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds);
     }
 
     private void OnResize(Vector2D<int> _)

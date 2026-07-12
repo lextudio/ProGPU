@@ -12,6 +12,10 @@ public sealed record CompositorOptions
 
     public uint InitialIndexCount { get; init; } = 24576;
 
+    public bool EnableGpuHitTesting { get; init; } = true;
+
+    public bool EnableCompiledSceneCache { get; init; } = true;
+
     internal void Validate()
     {
         if (GlyphAtlasSize == 0)
