@@ -518,8 +518,8 @@ public partial class SKTypeface : IDisposable
 
 public abstract class SKStreamAsset : SKStreamSeekable
 {
-    private readonly byte[] _data;
-    private readonly MemoryStream _stream;
+    private byte[] _data;
+    private MemoryStream _stream;
     private System.Runtime.InteropServices.GCHandle _pin;
 
     internal SKStreamAsset(byte[] data)
@@ -548,6 +548,21 @@ public abstract class SKStreamAsset : SKStreamSeekable
         }
 
         return _pin.AddrOfPinnedObject();
+    }
+
+    internal void SetData(byte[] data)
+    {
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
+        ArgumentNullException.ThrowIfNull(data);
+
+        if (_pin.IsAllocated)
+        {
+            _pin.Free();
+        }
+
+        _stream.Dispose();
+        _data = data;
+        _stream = new MemoryStream(_data, writable: false);
     }
 
     protected override void DisposeManaged()
