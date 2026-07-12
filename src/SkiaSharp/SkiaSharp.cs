@@ -576,32 +576,134 @@ public struct SKPoint3 : IEquatable<SKPoint3>
     public override readonly int GetHashCode() => HashCode.Combine(_x, _y, _z);
 }
 
-public struct SKSize
+public struct SKSize : IEquatable<SKSize>
 {
-    public float Width;
-    public float Height;
+    private float _width;
+    private float _height;
+
+    public static readonly SKSize Empty;
+
+    public readonly bool IsEmpty => this == Empty;
+
+    public float Width
+    {
+        readonly get => _width;
+        set => _width = value;
+    }
+
+    public float Height
+    {
+        readonly get => _height;
+        set => _height = value;
+    }
 
     public SKSize(float width, float height)
     {
-        Width = width;
-        Height = height;
+        _width = width;
+        _height = height;
     }
 
-    public static readonly SKSize Empty = new(0, 0);
+    public SKSize(SKPoint point)
+    {
+        _width = point.X;
+        _height = point.Y;
+    }
+
+    public readonly SKPoint ToPoint() => new(_width, _height);
+
+    public readonly SKSizeI ToSizeI()
+    {
+        checked
+        {
+            return new SKSizeI((int)_width, (int)_height);
+        }
+    }
+
+    public static SKSize Add(SKSize left, SKSize right) => left + right;
+
+    public static SKSize Subtract(SKSize left, SKSize right) => left - right;
+
+    public readonly bool Equals(SKSize other) => _width == other._width && _height == other._height;
+
+    public override readonly bool Equals(object? obj) => obj is SKSize other && Equals(other);
+
+    public override readonly int GetHashCode() => HashCode.Combine(_width, _height);
+
+    public override readonly string ToString() => $"{{Width={_width}, Height={_height}}}";
+
+    public static SKSize operator +(SKSize left, SKSize right) =>
+        new(left.Width + right.Width, left.Height + right.Height);
+
+    public static SKSize operator -(SKSize left, SKSize right) =>
+        new(left.Width - right.Width, left.Height - right.Height);
+
+    public static bool operator ==(SKSize left, SKSize right) => left.Equals(right);
+
+    public static bool operator !=(SKSize left, SKSize right) => !left.Equals(right);
+
+    public static explicit operator SKPoint(SKSize size) => size.ToPoint();
+
+    public static implicit operator SKSize(SKSizeI size) => new(size.Width, size.Height);
 }
 
-public struct SKSizeI
+public struct SKSizeI : IEquatable<SKSizeI>
 {
-    public int Width;
-    public int Height;
+    private int _width;
+    private int _height;
+
+    public static readonly SKSizeI Empty;
+
+    public readonly bool IsEmpty => this == Empty;
+
+    public int Width
+    {
+        readonly get => _width;
+        set => _width = value;
+    }
+
+    public int Height
+    {
+        readonly get => _height;
+        set => _height = value;
+    }
 
     public SKSizeI(int width, int height)
     {
-        Width = width;
-        Height = height;
+        _width = width;
+        _height = height;
     }
 
-    public static readonly SKSizeI Empty = new(0, 0);
+    public SKSizeI(SKPointI point)
+    {
+        _width = point.X;
+        _height = point.Y;
+    }
+
+    public readonly SKPointI ToPointI() => new(_width, _height);
+
+    public static SKSizeI Add(SKSizeI left, SKSizeI right) => left + right;
+
+    public static SKSizeI Subtract(SKSizeI left, SKSizeI right) => left - right;
+
+    public readonly bool Equals(SKSizeI other) => _width == other._width && _height == other._height;
+
+    public override readonly bool Equals(object? obj) => obj is SKSizeI other && Equals(other);
+
+    public override readonly int GetHashCode() => HashCode.Combine(_width, _height);
+
+    public override readonly string ToString() => $"{{Width={_width}, Height={_height}}}";
+
+    public static SKSizeI operator +(SKSizeI left, SKSizeI right) =>
+        new(left.Width + right.Width, left.Height + right.Height);
+
+    public static SKSizeI operator -(SKSizeI left, SKSizeI right) =>
+        new(left.Width - right.Width, left.Height - right.Height);
+
+    public static bool operator ==(SKSizeI left, SKSizeI right) => left.Equals(right);
+
+    public static bool operator !=(SKSizeI left, SKSizeI right) => !left.Equals(right);
+
+    public static explicit operator SKPointI(SKSizeI size) => size.ToPointI();
 }
 
 public struct SKRect : IEquatable<SKRect>
@@ -811,31 +913,231 @@ public struct SKRect : IEquatable<SKRect>
     public static bool operator ==(SKRect left, SKRect right) => left.Equals(right);
 
     public static bool operator !=(SKRect left, SKRect right) => !left.Equals(right);
+
+    public static implicit operator SKRect(SKRectI rect) =>
+        new(rect.Left, rect.Top, rect.Right, rect.Bottom);
 }
 
-public struct SKRectI
+public struct SKRectI : IEquatable<SKRectI>
 {
-    public int Left;
-    public int Top;
-    public int Right;
-    public int Bottom;
+    private int _left;
+    private int _top;
+    private int _right;
+    private int _bottom;
 
-    public int Width => Right - Left;
-    public int Height => Bottom - Top;
+    public static readonly SKRectI Empty;
+
+    public int Left
+    {
+        readonly get => _left;
+        set => _left = value;
+    }
+
+    public int Top
+    {
+        readonly get => _top;
+        set => _top = value;
+    }
+
+    public int Right
+    {
+        readonly get => _right;
+        set => _right = value;
+    }
+
+    public int Bottom
+    {
+        readonly get => _bottom;
+        set => _bottom = value;
+    }
+
+    public readonly int Width => _right - _left;
+
+    public readonly int Height => _bottom - _top;
+
+    public readonly int MidX => _left + Width / 2;
+
+    public readonly int MidY => _top + Height / 2;
+
+    public readonly bool IsEmpty => this == Empty;
+
+    public SKPointI Location
+    {
+        readonly get => new(_left, _top);
+        set
+        {
+            var size = Size;
+            this = Create(value, size);
+        }
+    }
+
+    public SKSizeI Size
+    {
+        readonly get => new(Width, Height);
+        set
+        {
+            _right = _left + value.Width;
+            _bottom = _top + value.Height;
+        }
+    }
+
+    public readonly SKRectI Standardized => new(
+        Math.Min(_left, _right),
+        Math.Min(_top, _bottom),
+        Math.Max(_left, _right),
+        Math.Max(_top, _bottom));
 
     public SKRectI(int left, int top, int right, int bottom)
     {
-        Left = left;
-        Top = top;
-        Right = right;
-        Bottom = bottom;
+        _left = left;
+        _top = top;
+        _right = right;
+        _bottom = bottom;
     }
 
-    public static readonly SKRectI Empty = new(0, 0, 0, 0);
+    public readonly SKRectI AspectFit(SKSizeI size) => Floor(((SKRect)this).AspectFit(size));
+
+    public readonly SKRectI AspectFill(SKSizeI size) => Floor(((SKRect)this).AspectFill(size));
+
+    public static SKRectI Ceiling(SKRect value) => Ceiling(value, outwards: false);
+
+    public static SKRectI Ceiling(SKRect value, bool outwards)
+    {
+        checked
+        {
+            return new SKRectI(
+                (int)(outwards && value.Width > 0f ? Math.Floor(value.Left) : Math.Ceiling(value.Left)),
+                (int)(outwards && value.Height > 0f ? Math.Floor(value.Top) : Math.Ceiling(value.Top)),
+                (int)(outwards && value.Width < 0f ? Math.Floor(value.Right) : Math.Ceiling(value.Right)),
+                (int)(outwards && value.Height < 0f ? Math.Floor(value.Bottom) : Math.Ceiling(value.Bottom)));
+        }
+    }
+
+    public static SKRectI Floor(SKRect value) => Floor(value, inwards: false);
+
+    public static SKRectI Floor(SKRect value, bool inwards)
+    {
+        checked
+        {
+            return new SKRectI(
+                (int)(inwards && value.Width > 0f ? Math.Ceiling(value.Left) : Math.Floor(value.Left)),
+                (int)(inwards && value.Height > 0f ? Math.Ceiling(value.Top) : Math.Floor(value.Top)),
+                (int)(inwards && value.Width < 0f ? Math.Ceiling(value.Right) : Math.Floor(value.Right)),
+                (int)(inwards && value.Height < 0f ? Math.Ceiling(value.Bottom) : Math.Floor(value.Bottom)));
+        }
+    }
+
+    public static SKRectI Round(SKRect value)
+    {
+        checked
+        {
+            return new SKRectI(
+                (int)Math.Round(value.Left),
+                (int)Math.Round(value.Top),
+                (int)Math.Round(value.Right),
+                (int)Math.Round(value.Bottom));
+        }
+    }
+
+    public static SKRectI Truncate(SKRect value)
+    {
+        checked
+        {
+            return new SKRectI((int)value.Left, (int)value.Top, (int)value.Right, (int)value.Bottom);
+        }
+    }
+
+    public void Inflate(SKSizeI size) => Inflate(size.Width, size.Height);
+
+    public void Inflate(int width, int height)
+    {
+        _left -= width;
+        _top -= height;
+        _right += width;
+        _bottom += height;
+    }
+
+    public static SKRectI Inflate(SKRectI rect, int width, int height)
+    {
+        rect.Inflate(width, height);
+        return rect;
+    }
+
+    public void Offset(SKPointI point) => Offset(point.X, point.Y);
+
+    public void Offset(int x, int y)
+    {
+        _left += x;
+        _top += y;
+        _right += x;
+        _bottom += y;
+    }
+
+    public void Intersect(SKRectI rect) => this = Intersect(this, rect);
+
+    public static SKRectI Intersect(SKRectI left, SKRectI right)
+    {
+        if (!left.IntersectsWithInclusive(right))
+        {
+            return Empty;
+        }
+
+        return new SKRectI(
+            Math.Max(left.Left, right.Left),
+            Math.Max(left.Top, right.Top),
+            Math.Min(left.Right, right.Right),
+            Math.Min(left.Bottom, right.Bottom));
+    }
+
+    public readonly bool IntersectsWith(SKRectI rect) =>
+        _left < rect.Right && rect.Left < _right &&
+        _top < rect.Bottom && rect.Top < _bottom;
+
+    public readonly bool IntersectsWithInclusive(SKRectI rect) =>
+        _left <= rect.Right && rect.Left <= _right &&
+        _top <= rect.Bottom && rect.Top <= _bottom;
+
+    public void Union(SKRectI rect) => this = Union(this, rect);
+
+    public static SKRectI Union(SKRectI left, SKRectI right) => new(
+        Math.Min(left.Left, right.Left),
+        Math.Min(left.Top, right.Top),
+        Math.Max(left.Right, right.Right),
+        Math.Max(left.Bottom, right.Bottom));
+
+    public readonly bool Contains(SKPointI point) => Contains(point.X, point.Y);
+
+    public readonly bool Contains(int x, int y) =>
+        _left <= x && x < _right && _top <= y && y < _bottom;
+
+    public readonly bool Contains(SKRectI rect) =>
+        _left <= rect.Left && _top <= rect.Top &&
+        _right >= rect.Right && _bottom >= rect.Bottom;
 
     public static SKRectI Create(int width, int height) => new(0, 0, width, height);
+
     public static SKRectI Create(int x, int y, int width, int height) =>
         new(x, y, x + width, y + height);
+
+    public static SKRectI Create(SKSizeI size) => Create(size.Width, size.Height);
+
+    public static SKRectI Create(SKPointI location, SKSizeI size) =>
+        Create(location.X, location.Y, size.Width, size.Height);
+
+    public readonly bool Equals(SKRectI other) =>
+        _left == other._left && _top == other._top &&
+        _right == other._right && _bottom == other._bottom;
+
+    public override readonly bool Equals(object? obj) => obj is SKRectI other && Equals(other);
+
+    public override readonly int GetHashCode() => HashCode.Combine(_left, _top, _right, _bottom);
+
+    public override readonly string ToString() =>
+        $"{{Left={Left},Top={Top},Width={Width},Height={Height}}}";
+
+    public static bool operator ==(SKRectI left, SKRectI right) => left.Equals(right);
+
+    public static bool operator !=(SKRectI left, SKRectI right) => !left.Equals(right);
 }
 
 public struct SKColor
