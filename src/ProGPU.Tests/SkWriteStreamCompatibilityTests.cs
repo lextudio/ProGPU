@@ -1,0 +1,138 @@
+using SkiaSharp;
+using Xunit;
+
+namespace ProGPU.Tests;
+
+public sealed class SkWriteStreamCompatibilityTests
+{
+    [Fact]
+    public void PrimitiveTextAndPackedWritesMatchSkiaEncoding()
+    {
+        using var stream = new SKDynamicMemoryWStream();
+
+        Assert.True(stream.Write(new byte[] { 0xaa, 0xbb, 0xcc }, 2));
+        Assert.True(stream.NewLine());
+        Assert.True(stream.Write8(0x12));
+        Assert.True(stream.Write16(0x3456));
+        Assert.True(stream.Write32(0x789abcde));
+        Assert.True(stream.WriteText("Hi"));
+        Assert.True(stream.WriteDecimalAsTest(-42));
+        Assert.True(stream.WriteBigDecimalAsText(42, 5));
+        Assert.True(stream.WriteHexAsText(0x1a, 4));
+        Assert.True(stream.WriteScalarAsText(1.25f));
+        Assert.True(stream.WriteBool(true));
+        Assert.True(stream.WriteBool(false));
+        Assert.True(stream.WriteScalar(1.5f));
+        Assert.True(stream.WritePackedUInt32(0xfd));
+        Assert.True(stream.WritePackedUInt32(0xfe));
+        Assert.True(stream.WritePackedUInt32(0x10000));
+
+        using var data = stream.CopyToData();
+        Assert.Equal(
+            "AABB0A125634DEBC9A7848692D3432303030343230303141312E323501000000C03FFDFEFE00FF00000100",
+            Convert.ToHexString(data.ToArray()));
+        Assert.Equal(data.Size, stream.BytesWritten);
+        Assert.Equal(1, SKWStream.GetSizeOfPackedUInt32(0xfd));
+        Assert.Equal(3, SKWStream.GetSizeOfPackedUInt32(0xfe));
+        Assert.Equal(3, SKWStream.GetSizeOfPackedUInt32(ushort.MaxValue));
+        Assert.Equal(5, SKWStream.GetSizeOfPackedUInt32(0x10000));
+        Assert.Equal(5, SKWStream.GetSizeOfPackedUInt32(uint.MaxValue));
+    }
+
+    [Fact]
+    public void ScalarFormattingPreservesSkiaSpecialValuesAndUnsignedBigDecimal()
+    {
+        using var stream = new SKDynamicMemoryWStream();
+
+        Assert.True(stream.WriteBigDecimalAsText(-42, 5));
+        Assert.True(stream.WriteText("|"));
+        Assert.True(stream.WriteHexAsText(0xabcdef, 2));
+        Assert.True(stream.WriteText("|"));
+        Assert.True(stream.WriteScalarAsText(-0f));
+        Assert.True(stream.WriteText("|"));
+        Assert.True(stream.WriteScalarAsText(float.PositiveInfinity));
+        Assert.True(stream.WriteText("|"));
+        Assert.True(stream.WriteScalarAsText(float.NaN));
+
+        using var data = stream.CopyToData();
+        Assert.Equal(
+            "18446744073709551574|ABCDEF|-0|inf|nan",
+            System.Text.Encoding.UTF8.GetString(data.AsSpan()));
+    }
+
+    [Fact]
+    public void ManagedAndDynamicStreamsPreserveOwnershipCopyAndDetachContracts()
+    {
+        using var output = new MemoryStream();
+        using (var writer = new SKManagedWStream(output))
+        {
+            Assert.True(writer.Write8(1));
+        }
+
+        Assert.True(output.CanWrite);
+        using (var writer = new SKManagedWStream(output, disposeManagedStream: true))
+        {
+            Assert.True(writer.Write8(2));
+        }
+
+        Assert.False(output.CanWrite);
+
+        using var dynamicStream = new SKDynamicMemoryWStream();
+        Assert.True(dynamicStream.Write(new byte[] { 3, 4, 5, 6 }, 4));
+        var destination = new byte[6];
+        dynamicStream.CopyTo(destination);
+        Assert.Equal(new byte[] { 3, 4, 5, 6, 0, 0 }, destination);
+        using (var copy = dynamicStream.CopyToData())
+        {
+            Assert.Equal(new byte[] { 3, 4, 5, 6 }, copy.ToArray());
+        }
+
+        using (var detached = dynamicStream.DetachAsData())
+        {
+            Assert.Equal(new byte[] { 3, 4, 5, 6 }, detached.ToArray());
+        }
+
+        Assert.Equal(0, dynamicStream.BytesWritten);
+        Assert.True(dynamicStream.Write(new byte[] { 7, 8, 9 }, 3));
+        using var detachedStream = dynamicStream.DetachAsStream();
+        var detachedBytes = new byte[4];
+        Assert.Equal(3, detachedStream.Read(detachedBytes, detachedBytes.Length));
+        Assert.Equal(new byte[] { 7, 8, 9, 0 }, detachedBytes);
+        Assert.Equal(0, dynamicStream.BytesWritten);
+    }
+
+    [Fact]
+    public void StreamAndFileAdaptersUseBoundedSafeFailureSemantics()
+    {
+        using var output = new SKDynamicMemoryWStream();
+        using var input = new SKManagedStream(new MemoryStream(new byte[] { 1, 2 }));
+        Assert.True(output.WriteStream(input, 4));
+        using (var data = output.CopyToData())
+        {
+            Assert.Equal(new byte[] { 1, 2, 0, 0 }, data.ToArray());
+        }
+
+        var path = Path.Combine(Path.GetTempPath(), $"progpu-{Guid.NewGuid():N}.bin");
+        try
+        {
+            using (var file = new SKFileWStream(path))
+            {
+                Assert.True(file.IsValid);
+                Assert.True(file.Write32(0x12345678));
+                file.Flush();
+                Assert.Equal(4, file.BytesWritten);
+            }
+
+            Assert.Equal(new byte[] { 0x78, 0x56, 0x34, 0x12 }, File.ReadAllBytes(path));
+            using var invalid = new SKFileWStream(string.Empty);
+            Assert.False(invalid.IsValid);
+            Assert.False(invalid.Write8(1));
+            Assert.Null(SKFileWStream.OpenStream(null!));
+            Assert.True(SKFileWStream.IsPathSupported(null!));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}

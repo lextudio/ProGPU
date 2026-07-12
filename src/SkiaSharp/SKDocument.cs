@@ -1,39 +1,459 @@
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Text;
 using ProGPU.Scene;
 
 namespace SkiaSharp;
 
-public abstract class SKWStream : IDisposable
+public abstract class SKWStream : SKObject
 {
-    internal abstract Stream BaseStream { get; }
-
-    public long BytesWritten => BaseStream.CanSeek ? BaseStream.Position : 0;
-
-    public bool Write(byte[] buffer)
+    private sealed class WStreamAdapter : Stream
     {
+        private readonly SKWStream _owner;
+
+        public WStreamAdapter(SKWStream owner) => _owner = owner;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _owner.BytesWritten;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => _owner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+            ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            if (offset > buffer.Length - count)
+            {
+                throw new ArgumentException("Offset and count exceed the buffer length.");
+            }
+
+            if (!_owner.WriteCore(buffer.AsSpan(offset, count)))
+            {
+                throw new IOException("The Skia write stream rejected the data.");
+            }
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (!_owner.WriteCore(buffer))
+            {
+                throw new IOException("The Skia write stream rejected the data.");
+            }
+        }
+    }
+
+    internal SKWStream()
+        : base(SKObjectHandle.Create(), owns: true)
+    {
+    }
+
+    internal virtual Stream? BaseStream => null;
+    internal Stream ManagedStream => BaseStream ?? new WStreamAdapter(this);
+
+    public virtual int BytesWritten
+    {
+        get
+        {
+            ThrowIfDisposed();
+            if (this is SKAbstractManagedWStream managedStream)
+            {
+                return unchecked((int)managedStream.OnBytesWritten());
+            }
+
+            return BaseStream is { CanSeek: true } stream
+                ? unchecked((int)stream.Position)
+                : 0;
+        }
+    }
+
+    public virtual bool Write(byte[] buffer, int size)
+    {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(buffer);
-        BaseStream.Write(buffer, 0, buffer.Length);
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        if (size > buffer.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        return WriteCore(buffer.AsSpan(0, size));
+    }
+
+    public bool NewLine() => WriteCore("\n"u8);
+
+    public virtual void Flush()
+    {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedWStream managedStream)
+        {
+            managedStream.OnFlush();
+            return;
+        }
+
+        BaseStream?.Flush();
+    }
+
+    public bool Write8(byte value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(byte)];
+        bytes[0] = value;
+        return WriteCore(bytes);
+    }
+
+    public bool Write16(ushort value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(ushort)];
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes, value);
+        return WriteCore(bytes);
+    }
+
+    public bool Write32(uint value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
+        return WriteCore(bytes);
+    }
+
+    public bool WriteText(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return WriteCore(Encoding.UTF8.GetBytes(value));
+    }
+
+    public bool WriteDecimalAsTest(int value) =>
+        WriteText(value.ToString(CultureInfo.InvariantCulture));
+
+    public bool WriteBigDecimalAsText(long value, int digits)
+    {
+        var text = unchecked((ulong)value).ToString(CultureInfo.InvariantCulture);
+        return WriteText(digits > text.Length ? text.PadLeft(digits, '0') : text);
+    }
+
+    public bool WriteHexAsText(uint value, int digits)
+    {
+        var text = value.ToString("X", CultureInfo.InvariantCulture);
+        return WriteText(digits > text.Length ? text.PadLeft(digits, '0') : text);
+    }
+
+    public bool WriteScalarAsText(float value)
+    {
+        var text = float.IsNaN(value)
+            ? "nan"
+            : float.IsPositiveInfinity(value)
+                ? "inf"
+                : float.IsNegativeInfinity(value)
+                    ? "-inf"
+                    : value.ToString("R", CultureInfo.InvariantCulture);
+        return WriteText(text);
+    }
+
+    public bool WriteBool(bool value) => Write8(value ? (byte)1 : (byte)0);
+
+    public bool WriteScalar(float value) => Write32(BitConverter.SingleToUInt32Bits(value));
+
+    public bool WritePackedUInt32(uint value)
+    {
+        Span<byte> bytes = stackalloc byte[5];
+        int length;
+        if (value <= 0xfd)
+        {
+            bytes[0] = (byte)value;
+            length = 1;
+        }
+        else if (value <= ushort.MaxValue)
+        {
+            bytes[0] = 0xfe;
+            BinaryPrimitives.WriteUInt16LittleEndian(bytes[1..], (ushort)value);
+            length = 3;
+        }
+        else
+        {
+            bytes[0] = 0xff;
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes[1..], value);
+            length = 5;
+        }
+
+        return WriteCore(bytes[..length]);
+    }
+
+    public unsafe bool WriteStream(SKStream input, int length)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        if (length == 0)
+        {
+            return true;
+        }
+
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Min(length, 81920));
+        try
+        {
+            var remaining = length;
+            var inputEnded = false;
+            while (remaining > 0)
+            {
+                var count = Math.Min(remaining, buffer.Length);
+                var chunk = buffer.AsSpan(0, count);
+                chunk.Clear();
+                if (!inputEnded)
+                {
+                    var readTotal = 0;
+                    fixed (byte* pointer = chunk)
+                    {
+                        while (readTotal < count)
+                        {
+                            var read = input.Read((IntPtr)(pointer + readTotal), count - readTotal);
+                            if (read == 0)
+                            {
+                                inputEnded = true;
+                                break;
+                            }
+
+                            readTotal += read;
+                        }
+                    }
+                }
+
+                if (!WriteCore(chunk))
+                {
+                    return false;
+                }
+
+                remaining -= count;
+            }
+
+            return true;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    public static int GetSizeOfPackedUInt32(uint value) =>
+        value <= 0xfd ? 1 : value <= ushort.MaxValue ? 3 : 5;
+
+    protected unsafe virtual bool WriteCore(ReadOnlySpan<byte> buffer)
+    {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedWStream managedStream)
+        {
+            fixed (byte* pointer = buffer)
+            {
+                return managedStream.OnWrite((IntPtr)pointer, (IntPtr)buffer.Length);
+            }
+        }
+
+        if (BaseStream is not { } stream)
+        {
+            return false;
+        }
+
+        stream.Write(buffer);
         return true;
     }
 
-    public virtual void Flush() => BaseStream.Flush();
-    public abstract void Dispose();
+    protected void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(IsDisposed, this);
 }
 
-public sealed class SKFileWStream : SKWStream
+public abstract class SKAbstractManagedWStream : SKWStream
 {
-    private readonly FileStream _stream;
+    protected SKAbstractManagedWStream()
+        : this(owns: true)
+    {
+    }
+
+    protected SKAbstractManagedWStream(bool owns)
+    {
+    }
+
+    protected internal abstract bool OnWrite(IntPtr buffer, IntPtr size);
+    protected internal abstract void OnFlush();
+    protected internal abstract IntPtr OnBytesWritten();
+}
+
+public class SKManagedWStream : SKAbstractManagedWStream
+{
+    private Stream? _stream;
+    private readonly bool _disposeStream;
+
+    public SKManagedWStream(Stream managedStream)
+        : this(managedStream, disposeManagedStream: false)
+    {
+    }
+
+    public SKManagedWStream(Stream managedStream, bool disposeManagedStream)
+    {
+        ArgumentNullException.ThrowIfNull(managedStream);
+        _stream = managedStream;
+        _disposeStream = disposeManagedStream;
+    }
+
+    internal override Stream? BaseStream => _stream;
+
+    protected internal unsafe override bool OnWrite(IntPtr buffer, IntPtr size)
+    {
+        var stream = _stream ?? throw new ObjectDisposedException(nameof(SKManagedWStream));
+        stream.Write(new ReadOnlySpan<byte>(buffer.ToPointer(), checked((int)size)));
+        return true;
+    }
+
+    protected internal override void OnFlush() =>
+        (_stream ?? throw new ObjectDisposedException(nameof(SKManagedWStream))).Flush();
+
+    protected internal override IntPtr OnBytesWritten() =>
+        (IntPtr)(_stream ?? throw new ObjectDisposedException(nameof(SKManagedWStream))).Position;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && _disposeStream)
+        {
+            _stream?.Dispose();
+            _stream = null;
+        }
+
+        base.Dispose(disposing);
+    }
+}
+
+public class SKFileWStream : SKWStream
+{
+    private readonly Stream _stream;
 
     public SKFileWStream(string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        _stream = File.Create(path);
+        try
+        {
+            _stream = string.IsNullOrEmpty(path)
+                ? Stream.Null
+                : new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+            IsValid = !ReferenceEquals(_stream, Stream.Null);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            _stream = Stream.Null;
+        }
     }
 
     internal override Stream BaseStream => _stream;
-    public override void Dispose() => _stream.Dispose();
+    public bool IsValid { get; }
+
+    public static bool IsPathSupported(string path) => true;
+
+    public static SKWStream OpenStream(string path)
+    {
+        var stream = new SKFileWStream(path);
+        if (stream.IsValid)
+        {
+            return stream;
+        }
+
+        stream.Dispose();
+        return null!;
+    }
+
+    protected override bool WriteCore(ReadOnlySpan<byte> buffer) =>
+        IsValid && base.WriteCore(buffer);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _stream.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+}
+
+public class SKDynamicMemoryWStream : SKWStream
+{
+    private readonly MemoryStream _stream = new();
+
+    internal override Stream BaseStream => _stream;
+
+    public SKData CopyToData() => new(_stream.ToArray());
+
+    public SKStreamAsset DetachAsStream() => new SKStreamAssetImplementation(DetachBytes());
+
+    public SKData DetachAsData() => new(DetachBytes());
+
+    public void CopyTo(IntPtr data)
+    {
+        ThrowIfDisposed();
+        var count = BytesWritten;
+        if (count == 0)
+        {
+            return;
+        }
+
+        if (data == IntPtr.Zero)
+        {
+            throw new ArgumentNullException(nameof(data));
+        }
+
+        Marshal.Copy(_stream.GetBuffer(), 0, data, count);
+    }
+
+    public void CopyTo(Span<byte> data)
+    {
+        ThrowIfDisposed();
+        var count = BytesWritten;
+        if (data.Length < count)
+        {
+            throw new Exception($"Not enough space to copy. Expected at least {count}, but received {data.Length}.");
+        }
+
+        _stream.GetBuffer().AsSpan(0, count).CopyTo(data);
+    }
+
+    public bool CopyTo(SKWStream dst)
+    {
+        ArgumentNullException.ThrowIfNull(dst);
+        ThrowIfDisposed();
+        return dst.Write(_stream.GetBuffer(), BytesWritten);
+    }
+
+    public bool CopyTo(Stream dst)
+    {
+        ArgumentNullException.ThrowIfNull(dst);
+        using var stream = new SKManagedWStream(dst);
+        return CopyTo(stream);
+    }
+
+    private byte[] DetachBytes()
+    {
+        ThrowIfDisposed();
+        var bytes = _stream.ToArray();
+        _stream.SetLength(0);
+        _stream.Position = 0;
+        return bytes;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _stream.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
 }
 
 public static class SKSvgCanvas
@@ -41,7 +461,7 @@ public static class SKSvgCanvas
     public static SKCanvas Create(SKRect bounds, SKWStream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return CreateCore(bounds, stream.BaseStream);
+        return CreateCore(bounds, stream.ManagedStream);
     }
 
     public static SKCanvas Create(SKRect bounds, Stream stream)
@@ -110,7 +530,7 @@ public sealed class SKDocument : IDisposable
     public static SKDocument CreatePdf(SKWStream stream, float dpi = DefaultRasterDpi)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return new SKDocument(stream.BaseStream, DocumentKind.Pdf);
+        return new SKDocument(stream.ManagedStream, DocumentKind.Pdf);
     }
 
     public static SKDocument CreatePdf(Stream stream, float dpi = DefaultRasterDpi)
@@ -122,7 +542,7 @@ public sealed class SKDocument : IDisposable
     public static SKDocument CreateXps(SKWStream stream, float dpi = DefaultRasterDpi)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return new SKDocument(stream.BaseStream, DocumentKind.Xps);
+        return new SKDocument(stream.ManagedStream, DocumentKind.Xps);
     }
 
     public static SKDocument CreateXps(Stream stream, float dpi = DefaultRasterDpi)
