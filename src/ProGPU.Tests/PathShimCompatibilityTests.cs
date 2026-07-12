@@ -86,6 +86,79 @@ public sealed class PathShimCompatibilityTests
     }
 
     [Fact]
+    public void SkPaintFillPathIncludesMiteredRectangleCorners()
+    {
+        using var source = new SKPath();
+        source.AddRect(new SKRect(35f, 110f, 445f, 150f));
+        using var widened = new SKPath();
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 20f,
+            StrokeJoin = SKStrokeJoin.Miter,
+            StrokeMiter = 4f
+        };
+
+        Assert.True(paint.GetFillPath(source, widened));
+        Assert.True(widened.Contains(25.5f, 100.5f));
+        Assert.True(widened.Contains(454.5f, 159.5f));
+        Assert.False(widened.Contains(24.5f, 100.5f));
+    }
+
+    [Theory]
+    [InlineData(SKStrokeJoin.Miter, 30f, 14f, true)]
+    [InlineData(SKStrokeJoin.Round, 30f, 14f, false)]
+    [InlineData(SKStrokeJoin.Round, 30f, 15.5f, true)]
+    [InlineData(SKStrokeJoin.Bevel, 30f, 15.5f, false)]
+    public void SkPaintFillPathPreservesStrokeJoinShape(
+        SKStrokeJoin strokeJoin,
+        float sampleX,
+        float sampleY,
+        bool expected)
+    {
+        using var source = new SKPath();
+        source.MoveTo(10f, 40f);
+        source.LineTo(30f, 20f);
+        source.LineTo(30f, 20f);
+        source.LineTo(50f, 40f);
+        using var widened = new SKPath();
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 10f,
+            StrokeJoin = strokeJoin,
+            StrokeMiter = 4f
+        };
+
+        Assert.True(paint.GetFillPath(source, widened));
+        Assert.Equal(expected, widened.Contains(sampleX, sampleY));
+    }
+
+    [Theory]
+    [InlineData(SKStrokeCap.Square, 5.5f, 15.5f)]
+    [InlineData(SKStrokeCap.Round, 6.5f, 20f)]
+    public void SkPaintFillPathIncludesOpenStrokeCaps(
+        SKStrokeCap strokeCap,
+        float sampleX,
+        float sampleY)
+    {
+        using var source = new SKPath();
+        source.MoveTo(10f, 20f);
+        source.LineTo(50f, 20f);
+        using var widened = new SKPath();
+        using var paint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 10f,
+            StrokeCap = strokeCap
+        };
+
+        Assert.True(paint.GetFillPath(source, widened));
+        Assert.True(widened.Contains(sampleX, sampleY));
+        Assert.False(widened.Contains(4.5f, 20f));
+    }
+
+    [Fact]
     public void SkPathTransformUpdatesNativeArcParameters()
     {
         using var path = new SKPath();

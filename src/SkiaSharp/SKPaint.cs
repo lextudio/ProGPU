@@ -242,6 +242,14 @@ public class SKPaint : IDisposable
             }
 
             var points = FlattenFigure(figure);
+            RemoveConsecutiveDuplicatePoints(points);
+            if (figure.IsClosed &&
+                points.Count > 1 &&
+                Vector2.DistanceSquared(points[0], points[^1]) <= 0.0000001f)
+            {
+                points.RemoveAt(points.Count - 1);
+            }
+
             if (!figure.IsClosed && figure.Segments.Count > 0 && IsDegenerateFigure(points))
             {
                 if (StrokeCap == SKStrokeCap.Round)
@@ -276,16 +284,134 @@ public class SKPaint : IDisposable
                 AddStrokeSegment(destination, points[^1], points[0], halfWidth);
             }
 
-            if (StrokeJoin == SKStrokeJoin.Round || StrokeCap == SKStrokeCap.Round)
+            AddStrokeJoins(destination, points, figure.IsClosed, halfWidth * 2f);
+            if (!figure.IsClosed)
             {
-                foreach (var point in points)
-                {
-                    destination.AddCircle(point.X, point.Y, halfWidth);
-                }
+                AddStrokeCaps(destination, points, halfWidth * 2f);
             }
         }
 
         return !destination.IsEmpty;
+    }
+
+    private static void RemoveConsecutiveDuplicatePoints(List<Vector2> points)
+    {
+        var writeIndex = 1;
+        for (var readIndex = 1; readIndex < points.Count; readIndex++)
+        {
+            if (Vector2.DistanceSquared(points[writeIndex - 1], points[readIndex]) > 0.0000001f)
+            {
+                points[writeIndex++] = points[readIndex];
+            }
+        }
+
+        if (writeIndex < points.Count)
+        {
+            points.RemoveRange(writeIndex, points.Count - writeIndex);
+        }
+    }
+
+    private void AddStrokeJoins(
+        SKPath destination,
+        IReadOnlyList<Vector2> points,
+        bool isClosed,
+        float strokeWidth)
+    {
+        if (points.Count < 3)
+        {
+            return;
+        }
+
+        var first = isClosed ? 0 : 1;
+        var end = isClosed ? points.Count : points.Count - 1;
+        var lineJoin = MapStrokeJoin(StrokeJoin);
+        for (var index = first; index < end; index++)
+        {
+            var previous = points[(index - 1 + points.Count) % points.Count];
+            var current = points[index];
+            var next = points[(index + 1) % points.Count];
+            AddStrokeTriangles(
+                destination,
+                StrokeJoinGeometry.CreateLineJoin(
+                    lineJoin,
+                    strokeWidth,
+                    StrokeMiter,
+                    previous,
+                    current,
+                    next));
+        }
+    }
+
+    private void AddStrokeCaps(
+        SKPath destination,
+        IReadOnlyList<Vector2> points,
+        float strokeWidth)
+    {
+        if (points.Count < 2 || StrokeCap == SKStrokeCap.Butt)
+        {
+            return;
+        }
+
+        var lineCap = MapStrokeCap(StrokeCap);
+        if (TryFindDistinctPoint(points, 0, 1, out var firstNeighbor))
+        {
+            AddStrokeTriangles(
+                destination,
+                StrokeCapGeometry.CreateLineCap(
+                    lineCap,
+                    strokeWidth,
+                    points[0],
+                    firstNeighbor,
+                    isStart: true));
+        }
+
+        if (TryFindDistinctPoint(points, points.Count - 1, -1, out var lastNeighbor))
+        {
+            AddStrokeTriangles(
+                destination,
+                StrokeCapGeometry.CreateLineCap(
+                    lineCap,
+                    strokeWidth,
+                    lastNeighbor,
+                    points[^1],
+                    isStart: false));
+        }
+    }
+
+    private static bool TryFindDistinctPoint(
+        IReadOnlyList<Vector2> points,
+        int originIndex,
+        int step,
+        out Vector2 point)
+    {
+        var origin = points[originIndex];
+        for (var index = originIndex + step;
+             index >= 0 && index < points.Count;
+             index += step)
+        {
+            point = points[index];
+            if (Vector2.DistanceSquared(origin, point) > 0.0000001f)
+            {
+                return true;
+            }
+        }
+
+        point = default;
+        return false;
+    }
+
+    private static void AddStrokeTriangles(
+        SKPath destination,
+        IReadOnlyList<StrokeJoinTriangle> triangles)
+    {
+        for (var index = 0; index < triangles.Count; index++)
+        {
+            var triangle = triangles[index];
+            destination.MoveTo(triangle.P0.X, triangle.P0.Y);
+            destination.LineTo(triangle.P1.X, triangle.P1.Y);
+            destination.LineTo(triangle.P2.X, triangle.P2.Y);
+            destination.Close();
+        }
     }
 
     private static bool IsDegenerateFigure(IReadOnlyList<Vector2> points)

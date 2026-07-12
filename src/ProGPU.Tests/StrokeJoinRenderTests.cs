@@ -285,6 +285,45 @@ public sealed class StrokeJoinRenderTests
     }
 
     [Fact]
+    public void PictureShaderStrokePreservesMiterCorners()
+    {
+        using var recorder = new SKPictureRecorder();
+        var recordingCanvas = recorder.BeginRecording(new SKRect(0f, 0f, 2f, 2f));
+        using (var tilePaint = new SKPaint { Color = SKColors.Red })
+        {
+            recordingCanvas.DrawRect(new SKRect(0f, 0f, 2f, 2f), tilePaint);
+        }
+
+        using var picture = recorder.EndRecording();
+        using var shader = picture.ToShader(
+            SKShaderTileMode.Repeat,
+            SKShaderTileMode.Repeat,
+            SKMatrix.Identity,
+            new SKRect(0f, 0f, 2f, 2f));
+        using var stroke = new SKPaint
+        {
+            Shader = shader,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 20f,
+            StrokeJoin = SKStrokeJoin.Miter,
+            StrokeMiter = 4f
+        };
+        using var path = new SKPath();
+        path.AddRect(new SKRect(30f, 30f, 66f, 66f));
+        using var surface = SKSurface.Create(
+            new SKImageInfo(96, 96, SKColorType.Rgba8888, SKAlphaType.Premul));
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.DrawPath(path, stroke);
+        surface.Flush();
+
+        using var snapshot = surface.Snapshot();
+        var pixels = snapshot.Texture.ReadPixels();
+        AssertRed(pixels, 96, 21, 21);
+        AssertRed(pixels, 96, 74, 74);
+        AssertTransparent(pixels, 96, 19, 19);
+    }
+
+    [Fact]
     public void PictureShaderRasterizesSubcommandsBeforeTiling()
     {
         using var recorder = new SKPictureRecorder();
