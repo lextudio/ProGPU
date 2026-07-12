@@ -43,6 +43,8 @@ public sealed class SkiaSharpPrimitiveContractTests
         Assert.Equal(3, (int)SKTextEncoding.GlyphId);
         Assert.Equal(0, (int)SKColorChannel.R);
         Assert.Equal(3, (int)SKColorChannel.A);
+        Assert.Equal(3, (int)SKRegionOperation.XOR);
+        Assert.Equal("XOR", Enum.GetName(SKRegionOperation.XOR));
     }
 
     [Theory]

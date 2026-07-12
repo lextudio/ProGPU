@@ -707,7 +707,7 @@ public class SKRegion : IDisposable
             case SKRegionOperation.ReverseDifference:
                 ReverseDifferenceWith(rect);
                 break;
-            case SKRegionOperation.Xor:
+            case SKRegionOperation.XOR:
                 XorWith(rect);
                 break;
             default:
