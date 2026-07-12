@@ -3048,9 +3048,15 @@ public class SKCanvas : IDisposable
         return fillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd;
     }
 
-    public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint? paint)
+    [Obsolete("Use the overload with SKSamplingOptions instead.")]
+    public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint? paint = null)
     {
-        DrawImageCore(image, source, dest, TextureSamplingMode.Linear, paint);
+        DrawImage(
+            image,
+            source,
+            dest,
+            paint?.GetLegacyFilterQualitySampling() ?? SKSamplingOptions.Default,
+            paint);
     }
 
     private void DrawImageCore(
@@ -3062,6 +3068,7 @@ public class SKCanvas : IDisposable
         Vector2? cubicCoefficients = null,
         byte maxAnisotropy = 1)
     {
+        ArgumentNullException.ThrowIfNull(image);
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
         var retainedTexture = RetainImageTexture(
             image,
@@ -3146,7 +3153,7 @@ public class SKCanvas : IDisposable
         SKRect source,
         SKRect dest,
         SKSamplingOptions sampling,
-        SKPaint? paint)
+        SKPaint? paint = null)
     {
         var samplingMode = MapSampling(sampling);
         DrawImageCore(
@@ -3163,22 +3170,50 @@ public class SKCanvas : IDisposable
         SKImage image,
         SKRect destination,
         SKSamplingOptions sampling,
-        SKPaint? paint) =>
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
         DrawImage(
             image,
             new SKRect(0f, 0f, image.Width, image.Height),
             destination,
             sampling,
             paint);
-
-    public void DrawImage(SKImage image, float x, float y, SKPaint? paint)
-    {
-        DrawImage(image, new SKRect(0, 0, image.Width, image.Height), new SKRect(x, y, x + image.Width, y + image.Height), paint);
     }
 
-    public void DrawImage(SKImage image, SKRect destination)
+    [Obsolete("Use the overload with SKSamplingOptions instead.")]
+    public void DrawImage(SKImage image, float x, float y, SKPaint? paint = null)
     {
-        using var paint = new SKPaint();
+        ArgumentNullException.ThrowIfNull(image);
+        DrawImage(
+            image,
+            new SKRect(0f, 0f, image.Width, image.Height),
+            new SKRect(x, y, x + image.Width, y + image.Height),
+            paint);
+    }
+
+    public void DrawImage(SKImage image, float x, float y, SKSamplingOptions sampling, SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        DrawImage(
+            image,
+            new SKRect(0f, 0f, image.Width, image.Height),
+            new SKRect(x, y, x + image.Width, y + image.Height),
+            sampling,
+            paint);
+    }
+
+    [Obsolete("Use the overload with SKSamplingOptions instead.")]
+    public void DrawImage(SKImage image, SKPoint point, SKPaint? paint = null) =>
+        DrawImage(image, point.X, point.Y, paint);
+
+    public void DrawImage(SKImage image, SKPoint point, SKSamplingOptions sampling, SKPaint? paint = null) =>
+        DrawImage(image, point.X, point.Y, sampling, paint);
+
+    [Obsolete("Use the overload with SKSamplingOptions instead.")]
+    public void DrawImage(SKImage image, SKRect destination, SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
         DrawImage(
             image,
             new SKRect(0f, 0f, image.Width, image.Height),

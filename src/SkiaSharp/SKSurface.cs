@@ -465,14 +465,8 @@ public class SKSurface : IDisposable
     {
         ArgumentNullException.ThrowIfNull(canvas);
         using var image = Snapshot();
-        if (paint != null)
-        {
-            canvas.DrawImage(image, x, y, paint);
-            return;
-        }
-
-        using var defaultPaint = new SKPaint();
-        canvas.DrawImage(image, x, y, defaultPaint);
+        var sampling = paint?.GetLegacyFilterQualitySampling() ?? SKSamplingOptions.Default;
+        canvas.DrawImage(image, x, y, sampling, paint);
     }
 
     private static unsafe void CopyPixelToRgbaPremultiplied(byte* sourceRow, byte* destinationRow, int x, SKColorType colorType, SKAlphaType alphaType)
