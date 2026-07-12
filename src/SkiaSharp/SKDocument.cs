@@ -498,7 +498,116 @@ public static class SKSvgCanvas
     }
 }
 
-public sealed class SKDocument : IDisposable
+public struct SKDocumentPdfMetadata : IEquatable<SKDocumentPdfMetadata>
+{
+    public const float DefaultRasterDpi = 72f;
+    public const int DefaultEncodingQuality = 101;
+
+    public static readonly SKDocumentPdfMetadata Default = new()
+    {
+        RasterDpi = DefaultRasterDpi,
+        PdfA = false,
+        EncodingQuality = DefaultEncodingQuality,
+    };
+
+    public string? Title { readonly get; set; }
+    public string? Author { readonly get; set; }
+    public string? Subject { readonly get; set; }
+    public string? Keywords { readonly get; set; }
+    public string? Creator { readonly get; set; }
+    public string? Producer { readonly get; set; }
+    public DateTime? Creation { readonly get; set; }
+    public DateTime? Modified { readonly get; set; }
+    public float RasterDpi { readonly get; set; }
+    public bool PdfA { readonly get; set; }
+    public int EncodingQuality { readonly get; set; }
+
+    public SKDocumentPdfMetadata(float rasterDpi)
+        : this(rasterDpi, DefaultEncodingQuality)
+    {
+    }
+
+    public SKDocumentPdfMetadata(int encodingQuality)
+        : this(DefaultRasterDpi, encodingQuality)
+    {
+    }
+
+    public SKDocumentPdfMetadata(float rasterDpi, int encodingQuality)
+    {
+        Title = null;
+        Author = null;
+        Subject = null;
+        Keywords = null;
+        Creator = null;
+        Producer = null;
+        Creation = null;
+        Modified = null;
+        RasterDpi = rasterDpi;
+        PdfA = false;
+        EncodingQuality = encodingQuality;
+    }
+
+    public readonly bool Equals(SKDocumentPdfMetadata other) =>
+        Title == other.Title &&
+        Author == other.Author &&
+        Subject == other.Subject &&
+        Keywords == other.Keywords &&
+        Creator == other.Creator &&
+        Producer == other.Producer &&
+        Creation == other.Creation &&
+        Modified == other.Modified &&
+        RasterDpi == other.RasterDpi &&
+        PdfA == other.PdfA &&
+        EncodingQuality == other.EncodingQuality;
+
+    public override readonly bool Equals(object? obj) =>
+        obj is SKDocumentPdfMetadata other && Equals(other);
+
+    public override readonly int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Title);
+        hash.Add(Author);
+        hash.Add(Subject);
+        hash.Add(Keywords);
+        hash.Add(Creator);
+        hash.Add(Producer);
+        hash.Add(Creation);
+        hash.Add(Modified);
+        hash.Add(RasterDpi);
+        hash.Add(PdfA);
+        hash.Add(EncodingQuality);
+        return hash.ToHashCode();
+    }
+
+    public static bool operator ==(SKDocumentPdfMetadata left, SKDocumentPdfMetadata right) =>
+        left.Equals(right);
+
+    public static bool operator !=(SKDocumentPdfMetadata left, SKDocumentPdfMetadata right) =>
+        !left.Equals(right);
+}
+
+public struct SKDocumentXpsOptions : IEquatable<SKDocumentXpsOptions>
+{
+    public float Dpi { readonly get; set; }
+    public bool AllowNoPngs { readonly get; set; }
+
+    public readonly bool Equals(SKDocumentXpsOptions other) =>
+        Dpi == other.Dpi && AllowNoPngs == other.AllowNoPngs;
+
+    public override readonly bool Equals(object? obj) =>
+        obj is SKDocumentXpsOptions other && Equals(other);
+
+    public override readonly int GetHashCode() => HashCode.Combine(Dpi, AllowNoPngs);
+
+    public static bool operator ==(SKDocumentXpsOptions left, SKDocumentXpsOptions right) =>
+        left.Equals(right);
+
+    public static bool operator !=(SKDocumentXpsOptions left, SKDocumentXpsOptions right) =>
+        !left.Equals(right);
+}
+
+public class SKDocument : SKObject
 {
     private enum DocumentKind
     {
@@ -518,42 +627,150 @@ public sealed class SKDocument : IDisposable
 
     private readonly Stream _stream;
     private readonly DocumentKind _kind;
+    private readonly SKDocumentPdfMetadata _pdfMetadata;
+    private readonly SKDocumentXpsOptions _xpsOptions;
     private readonly List<Page> _pages = new();
+    private IDisposable? _ownedStream;
     private bool _closed;
+    private bool _aborted;
 
-    private SKDocument(Stream stream, DocumentKind kind)
+    private SKDocument(
+        Stream stream,
+        DocumentKind kind,
+        SKDocumentPdfMetadata pdfMetadata = default,
+        SKDocumentXpsOptions xpsOptions = default)
+        : base(SKObjectHandle.Create(), owns: true)
     {
         _stream = stream;
         _kind = kind;
+        _pdfMetadata = pdfMetadata;
+        _xpsOptions = xpsOptions;
     }
 
-    public static SKDocument CreatePdf(SKWStream stream, float dpi = DefaultRasterDpi)
+    public static SKDocument CreatePdf(string path)
     {
-        ArgumentNullException.ThrowIfNull(stream);
-        return new SKDocument(stream.ManagedStream, DocumentKind.Pdf);
+        ArgumentNullException.ThrowIfNull(path);
+        var stream = SKFileWStream.OpenStream(path);
+        var document = CreatePdf(stream);
+        document._ownedStream = stream;
+        return document;
     }
 
-    public static SKDocument CreatePdf(Stream stream, float dpi = DefaultRasterDpi)
+    public static SKDocument CreatePdf(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return new SKDocument(stream, DocumentKind.Pdf);
+        return new SKDocument(stream, DocumentKind.Pdf, SKDocumentPdfMetadata.Default);
     }
 
-    public static SKDocument CreateXps(SKWStream stream, float dpi = DefaultRasterDpi)
+    public static SKDocument CreatePdf(SKWStream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return new SKDocument(stream.ManagedStream, DocumentKind.Xps);
+        return new SKDocument(stream.ManagedStream, DocumentKind.Pdf, SKDocumentPdfMetadata.Default);
     }
 
-    public static SKDocument CreateXps(Stream stream, float dpi = DefaultRasterDpi)
+    public static SKDocument CreatePdf(string path, float dpi)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        var stream = SKFileWStream.OpenStream(path);
+        var document = CreatePdf(stream, dpi);
+        document._ownedStream = stream;
+        return document;
+    }
+
+    public static SKDocument CreatePdf(Stream stream, float dpi) =>
+        CreatePdf(stream, new SKDocumentPdfMetadata(dpi));
+
+    public static SKDocument CreatePdf(SKWStream stream, float dpi) =>
+        CreatePdf(stream, new SKDocumentPdfMetadata(dpi));
+
+    public static SKDocument CreatePdf(string path, SKDocumentPdfMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        var stream = SKFileWStream.OpenStream(path);
+        var document = CreatePdf(stream, metadata);
+        document._ownedStream = stream;
+        return document;
+    }
+
+    public static SKDocument CreatePdf(Stream stream, SKDocumentPdfMetadata metadata)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return new SKDocument(stream, DocumentKind.Xps);
+        return new SKDocument(stream, DocumentKind.Pdf, metadata);
+    }
+
+    public static SKDocument CreatePdf(SKWStream stream, SKDocumentPdfMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return new SKDocument(stream.ManagedStream, DocumentKind.Pdf, metadata);
+    }
+
+    public static SKDocument CreateXps(string path) => CreateXps(path, DefaultRasterDpi);
+
+    public static SKDocument CreateXps(Stream stream) => CreateXps(stream, DefaultRasterDpi);
+
+    public static SKDocument CreateXps(SKWStream stream) => CreateXps(stream, DefaultRasterDpi);
+
+    public static SKDocument CreateXps(string path, float dpi)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        var stream = SKFileWStream.OpenStream(path);
+        var document = CreateXps(stream, dpi);
+        document._ownedStream = stream;
+        return document;
+    }
+
+    public static SKDocument CreateXps(Stream stream, float dpi)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return new SKDocument(
+            stream,
+            DocumentKind.Xps,
+            xpsOptions: new SKDocumentXpsOptions { Dpi = dpi });
+    }
+
+    public static SKDocument CreateXps(SKWStream stream, float dpi)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return new SKDocument(
+            stream.ManagedStream,
+            DocumentKind.Xps,
+            xpsOptions: new SKDocumentXpsOptions { Dpi = dpi });
+    }
+
+    public static SKDocument CreateXps(string path, SKDocumentXpsOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        var stream = SKFileWStream.OpenStream(path);
+        var document = CreateXps(stream, options);
+        document._ownedStream = stream;
+        return document;
+    }
+
+    public static SKDocument CreateXps(Stream stream, SKDocumentXpsOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return new SKDocument(stream, DocumentKind.Xps, xpsOptions: options);
+    }
+
+    public static SKDocument CreateXps(SKWStream stream, SKDocumentXpsOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return new SKDocument(stream.ManagedStream, DocumentKind.Xps, xpsOptions: options);
     }
 
     public SKCanvas BeginPage(float width, float height)
     {
-        ObjectDisposedException.ThrowIf(_closed, this);
+        return BeginPageCore(width, height, content: null);
+    }
+
+    public SKCanvas BeginPage(float width, float height, SKRect content)
+    {
+        return BeginPageCore(width, height, content);
+    }
+
+    private SKCanvas BeginPageCore(float width, float height, SKRect? content)
+    {
+        ObjectDisposedException.ThrowIf(_closed || IsDisposed, this);
         if (!(width > 0f) || !(height > 0f))
         {
             throw new ArgumentOutOfRangeException(nameof(width), "Page dimensions must be positive.");
@@ -566,12 +783,18 @@ public sealed class SKDocument : IDisposable
             Context = new DrawingContext(),
         };
         _pages.Add(page);
-        return new SKCanvas(
+        var canvas = new SKCanvas(
             page.Context,
             width,
             height,
             SKContextHelper.GetContext(),
             () => Capture(page));
+        if (content is { } contentRect)
+        {
+            canvas.ClipRect(contentRect);
+        }
+
+        return canvas;
     }
 
     public void EndPage()
@@ -589,36 +812,63 @@ public sealed class SKDocument : IDisposable
             return;
         }
 
-        foreach (var page in _pages)
+        if (!_aborted)
         {
-            Capture(page);
+            foreach (var page in _pages)
+            {
+                Capture(page);
+            }
+
+            if (_pages.Count > 0 && _kind == DocumentKind.Pdf)
+            {
+                WritePdf();
+            }
+            else if (_pages.Count > 0)
+            {
+                WriteXps();
+            }
+
+            _stream.Flush();
         }
 
-        if (_kind == DocumentKind.Pdf)
-        {
-            WritePdf();
-        }
-        else
-        {
-            WriteXps();
-        }
-
-        _stream.Flush();
         _closed = true;
     }
 
-    private static void Capture(Page page)
+    public void Abort()
     {
+        if (_closed)
+        {
+            return;
+        }
+
+        _aborted = true;
+        _closed = true;
+        _pages.Clear();
+    }
+
+    private void Capture(Page page)
+    {
+        var dpi = _kind == DocumentKind.Pdf ? _pdfMetadata.RasterDpi : _xpsOptions.Dpi;
+        if (!(dpi > 0f) || !float.IsFinite(dpi))
+        {
+            dpi = DefaultRasterDpi;
+        }
+
+        var scale = dpi / DefaultRasterDpi;
         page.Captured ??= SKOutputRasterizer.Capture(
             page.Context,
-            Math.Max(1, (int)MathF.Ceiling(page.Width)),
-            Math.Max(1, (int)MathF.Ceiling(page.Height)));
+            Math.Max(1, (int)MathF.Ceiling(page.Width * scale)),
+            Math.Max(1, (int)MathF.Ceiling(page.Height * scale)),
+            scale);
     }
 
     private void WritePdf()
     {
         var pageCount = _pages.Count;
-        var objectCount = 2 + pageCount * 3;
+        var infoEntries = CreatePdfInfoEntries(_pdfMetadata);
+        var hasInfo = infoEntries.Length > 0;
+        var infoId = hasInfo ? 3 + pageCount * 3 : 0;
+        var objectCount = 2 + pageCount * 3 + (hasInfo ? 1 : 0);
         var objects = new byte[objectCount + 1][];
         objects[1] = Ascii("<< /Type /Catalog /Pages 2 0 R >>");
 
@@ -652,6 +902,11 @@ public sealed class SKDocument : IDisposable
                 $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Resources << /XObject << /Im{i + 1} {imageId} 0 R >> >> /Contents {contentId} 0 R >>");
         }
 
+        if (hasInfo)
+        {
+            objects[infoId] = Ascii($"<< {infoEntries} >>");
+        }
+
         using var document = new MemoryStream();
         document.Write(Ascii("%PDF-1.4\n%\u00e2\u00e3\u00cf\u00d3\n"));
         var offsets = new long[objectCount + 1];
@@ -670,10 +925,58 @@ public sealed class SKDocument : IDisposable
             document.Write(Ascii($"{offsets[id]:D10} 00000 n \n"));
         }
 
-        document.Write(Ascii($"trailer\n<< /Size {objectCount + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"));
+        var infoReference = hasInfo ? $" /Info {infoId} 0 R" : string.Empty;
+        document.Write(Ascii($"trailer\n<< /Size {objectCount + 1} /Root 1 0 R{infoReference} >>\nstartxref\n{xref}\n%%EOF\n"));
         document.Position = 0;
         document.CopyTo(_stream);
     }
+
+    private static string CreatePdfInfoEntries(SKDocumentPdfMetadata metadata)
+    {
+        var entries = new StringBuilder();
+        AppendPdfInfo(entries, "Title", metadata.Title);
+        AppendPdfInfo(entries, "Author", metadata.Author);
+        AppendPdfInfo(entries, "Subject", metadata.Subject);
+        AppendPdfInfo(entries, "Keywords", metadata.Keywords);
+        AppendPdfInfo(entries, "Creator", metadata.Creator);
+        AppendPdfInfo(entries, "Producer", metadata.Producer);
+        AppendPdfInfo(entries, "CreationDate", FormatPdfDate(metadata.Creation));
+        AppendPdfInfo(entries, "ModDate", FormatPdfDate(metadata.Modified));
+        return entries.ToString().TrimEnd();
+    }
+
+    private static void AppendPdfInfo(StringBuilder entries, string key, string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return;
+        }
+
+        entries.Append('/').Append(key).Append(" (").Append(EscapePdfString(value)).Append(") ");
+    }
+
+    private static string? FormatPdfDate(DateTime? value)
+    {
+        if (value is not { } date)
+        {
+            return null;
+        }
+
+        var offset = TimeZoneInfo.Local.GetUtcOffset(date);
+        var sign = offset < TimeSpan.Zero ? '-' : '+';
+        offset = offset.Duration();
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"D:{date:yyyyMMddHHmmss}{sign}{offset.Hours:00}'{offset.Minutes:00}'");
+    }
+
+    private static string EscapePdfString(string value) =>
+        value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("(", "\\(", StringComparison.Ordinal)
+            .Replace(")", "\\)", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
 
     private void WriteXps()
     {
@@ -746,14 +1049,24 @@ public sealed class SKDocument : IDisposable
         stream.Write(content, 0, content.Length);
     }
 
-    public void Dispose() => Close();
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            Close();
+            _ownedStream?.Dispose();
+            _ownedStream = null;
+        }
+
+        base.Dispose(disposing);
+    }
 }
 
 internal static class SKOutputRasterizer
 {
     internal sealed record PageData(int Width, int Height, byte[] Rgba, byte[] Png);
 
-    public static PageData Capture(DrawingContext context, int width, int height)
+    public static PageData Capture(DrawingContext context, int width, int height, float scale = 1f)
     {
         using var bitmap = new SKBitmap(new SKImageInfo(
             width,
@@ -762,6 +1075,11 @@ internal static class SKOutputRasterizer
             SKAlphaType.Premul));
         using (var canvas = new SKCanvas(bitmap))
         {
+            if (scale != 1f)
+            {
+                canvas.Scale(scale, scale);
+            }
+
             canvas.Context.Append(context);
             canvas.Flush();
         }
