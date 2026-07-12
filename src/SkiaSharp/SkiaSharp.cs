@@ -492,29 +492,53 @@ public struct SKPoint3 : IEquatable<SKPoint3>
     public override readonly int GetHashCode() => HashCode.Combine(_x, _y, _z);
 }
 
-public struct SKSize
+public partial struct SKSize : IEquatable<SKSize>
 {
-    public float Width;
-    public float Height;
+    private float _width;
+    private float _height;
+
+    public float Width
+    {
+        readonly get => _width;
+        set => _width = value;
+    }
+
+    public float Height
+    {
+        readonly get => _height;
+        set => _height = value;
+    }
 
     public SKSize(float width, float height)
     {
-        Width = width;
-        Height = height;
+        _width = width;
+        _height = height;
     }
 
     public static readonly SKSize Empty = new(0, 0);
 }
 
-public struct SKSizeI
+public partial struct SKSizeI : IEquatable<SKSizeI>
 {
-    public int Width;
-    public int Height;
+    private int _width;
+    private int _height;
+
+    public int Width
+    {
+        readonly get => _width;
+        set => _width = value;
+    }
+
+    public int Height
+    {
+        readonly get => _height;
+        set => _height = value;
+    }
 
     public SKSizeI(int width, int height)
     {
-        Width = width;
-        Height = height;
+        _width = width;
+        _height = height;
     }
 
     public static readonly SKSizeI Empty = new(0, 0);
