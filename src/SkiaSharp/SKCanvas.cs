@@ -700,7 +700,8 @@ public class SKCanvas : IDisposable
                         ToRect(image.Destination),
                         ToRect(image.Source),
                         Matrix4x4.Identity,
-                        MapSampling(image.Sampling)));
+                        MapSampling(image.Sampling),
+                        MapCubicSampling(image.Sampling)));
                 if (!preserveSourceColorSpace)
                 {
                     result = ConvertOwnedFilterTextureToSrgb(result, image.Image.ColorSpace);
@@ -1373,6 +1374,13 @@ public class SKCanvas : IDisposable
                 : sampling.FilterMode == SKFilterMode.Nearest
                     ? TextureSamplingMode.Nearest
                     : TextureSamplingMode.Linear;
+
+    private static Vector2? MapCubicSampling(SKSamplingOptions sampling) =>
+        sampling.UseCubic &&
+        float.IsFinite(sampling.CubicResampler.B) &&
+        float.IsFinite(sampling.CubicResampler.C)
+            ? new Vector2(sampling.CubicResampler.B, sampling.CubicResampler.C)
+            : null;
 
     private static Vector4 ToVector4(SKColor color)
     {
@@ -2815,7 +2823,8 @@ public class SKCanvas : IDisposable
         SKRect source,
         SKRect dest,
         TextureSamplingMode samplingMode,
-        SKPaint? paint)
+        SKPaint? paint,
+        Vector2? cubicCoefficients = null)
     {
         var opacity = paint != null ? paint.Color.A / 255f : 1f;
         var retainedTexture = RetainImageTexture(
@@ -2873,6 +2882,8 @@ public class SKCanvas : IDisposable
                     source.Height + sourceExtensionY),
                 Transform = _currentMatrix.ToMatrix4x4(),
                 TextureSamplingMode = samplingMode,
+                TextureCubicCoefficients = cubicCoefficients.GetValueOrDefault(),
+                HasTextureCubicCoefficients = cubicCoefficients.HasValue,
                 IsEdgeAliased = paint is { IsAntialias: false }
             });
 
@@ -2900,14 +2911,8 @@ public class SKCanvas : IDisposable
         SKSamplingOptions sampling,
         SKPaint? paint)
     {
-        var samplingMode = sampling.UseCubic
-            ? TextureSamplingMode.Cubic
-            : sampling.MipmapMode != SKMipmapMode.None
-                ? TextureSamplingMode.LinearMipmap
-            : sampling.FilterMode == SKFilterMode.Nearest
-                ? TextureSamplingMode.Nearest
-                : TextureSamplingMode.Linear;
-        DrawImageCore(image, source, dest, samplingMode, paint);
+        var samplingMode = MapSampling(sampling);
+        DrawImageCore(image, source, dest, samplingMode, paint, MapCubicSampling(sampling));
     }
 
     public void DrawImage(

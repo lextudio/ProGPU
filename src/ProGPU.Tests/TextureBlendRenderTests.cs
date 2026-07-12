@@ -16,6 +16,59 @@ namespace ProGPU.Tests;
 public sealed class TextureBlendRenderTests
 {
     [Fact]
+    public void TextureShaderEvaluatesMitchellNetravaliCoefficients()
+    {
+        Assert.Contains("fn cubic_weight(x: f32, b: f32, c: f32)", Shaders.TextureShader);
+        Assert.Contains("sample_bicubic(input.texCoord, input.cubicResampler)", Shaders.TextureShader);
+        Assert.Contains("12.0 - 9.0 * b - 6.0 * c", Shaders.TextureShader);
+        Assert.Contains("if (b == 0.0 && c == 0.5)", Shaders.TextureShader);
+
+        var window = HeadlessWindow.Shared;
+        window.Resize(64, 32);
+        using var texture = new GpuTexture(
+            window.Context,
+            4,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Cubic Resampler Coefficient Test",
+            alphaMode: GpuTextureAlphaMode.Straight);
+        texture.WritePixels<byte>(
+        [
+            0, 0, 0, 255,
+            255, 255, 255, 255,
+            0, 0, 0, 255,
+            255, 255, 255, 255
+        ]);
+        window.Content = new CubicResamplerVisual(texture);
+
+        try
+        {
+            window.Render();
+
+            var vertices = GetTextureVertices(window.Compositor);
+            var drawVertices = vertices.Skip(vertices.Count - 8).Take(8).ToArray();
+            Assert.All(drawVertices[..4], vertex => Assert.Equal(new Vector2(1f / 3f), vertex.ShapeSize));
+            Assert.All(drawVertices[4..], vertex => Assert.Equal(new Vector2(0f, 0.5f), vertex.ShapeSize));
+
+            var pixels = window.ReadPixels();
+            var totalDifference = 0;
+            for (var x = 0; x < 32; x++)
+            {
+                var mitchell = ReadPixel(pixels, window.Width, x, 16);
+                var catmullRom = ReadPixel(pixels, window.Width, x + 32, 16);
+                totalDifference += Math.Abs(mitchell.R - catmullRom.R);
+            }
+
+            Assert.True(totalDifference > 100, $"Expected distinct cubic kernels, total channel difference was {totalDifference}.");
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
     public void DefaultUploadedTextureUsesSourceAlphaForColorBlend()
     {
         var window = HeadlessWindow.Shared;
@@ -295,6 +348,37 @@ public sealed class TextureBlendRenderTests
                 null,
                 new Rect(0f, 0f, 32f, 32f));
             context.DrawTexture(_texture, new Rect(0f, 0f, 32f, 32f));
+        }
+    }
+
+    private sealed class CubicResamplerVisual : FrameworkElement
+    {
+        private readonly GpuTexture _texture;
+
+        public CubicResamplerVisual(GpuTexture texture)
+        {
+            _texture = texture;
+            Width = 64f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            var source = new Rect(0f, 0f, 4f, 1f);
+            context.DrawTexture(
+                _texture,
+                new Rect(0f, 0f, 32f, 32f),
+                source,
+                Matrix4x4.Identity,
+                TextureSamplingMode.Cubic,
+                new Vector2(1f / 3f));
+            context.DrawTexture(
+                _texture,
+                new Rect(32f, 0f, 32f, 32f),
+                source,
+                Matrix4x4.Identity,
+                TextureSamplingMode.Cubic,
+                new Vector2(0f, 0.5f));
         }
     }
 

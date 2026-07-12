@@ -2207,6 +2207,28 @@ public sealed class SkCanvasStateTests
     }
 
     [Fact]
+    public void DrawImagePreservesCubicResamplerCoefficients()
+    {
+        var context = new DrawingContext();
+        using var canvas = new SKCanvas(context, 32f, 32f);
+        using var bitmap = new SKBitmap(4, 4);
+        using var image = SKImage.FromBitmap(bitmap);
+        var sampling = new SKSamplingOptions(new SKCubicResampler(0.25f, 0.75f));
+
+        canvas.DrawImage(
+            image,
+            new SKRect(0f, 0f, 4f, 4f),
+            new SKRect(0f, 0f, 32f, 32f),
+            sampling,
+            null);
+
+        var command = GetDrawTextureCommand(context.Commands);
+        Assert.Equal(TextureSamplingMode.Cubic, command.TextureSamplingMode);
+        Assert.True(command.HasTextureCubicCoefficients);
+        Assert.Equal(new Vector2(0.25f, 0.75f), command.TextureCubicCoefficients);
+    }
+
+    [Fact]
     public void DrawImageRetainsSourceTextureForDeferredFlush()
     {
         var context = new DrawingContext();

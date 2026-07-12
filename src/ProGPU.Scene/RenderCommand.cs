@@ -356,6 +356,8 @@ public struct RenderCommand
     public GpuTexture? Texture;
     public Rect SrcRect;
     public TextureSamplingMode TextureSamplingMode;
+    public Vector2 TextureCubicCoefficients;
+    public bool HasTextureCubicCoefficients;
 
     // Vector render options
     public bool IsEdgeAliased;
@@ -1002,7 +1004,8 @@ public class DrawingContext : IRenderDataProvider
         Rect rect,
         Rect sourceRect,
         Matrix4x4 transform,
-        TextureSamplingMode samplingMode = TextureSamplingMode.Linear)
+        TextureSamplingMode samplingMode = TextureSamplingMode.Linear,
+        Vector2? cubicCoefficients = null)
     {
         Commands.Add(new RenderCommand
         {
@@ -1011,7 +1014,9 @@ public class DrawingContext : IRenderDataProvider
             SrcRect = sourceRect,
             Transform = transform,
             Texture = texture,
-            TextureSamplingMode = samplingMode
+            TextureSamplingMode = samplingMode,
+            TextureCubicCoefficients = cubicCoefficients.GetValueOrDefault(),
+            HasTextureCubicCoefficients = cubicCoefficients.HasValue
         });
     }
 

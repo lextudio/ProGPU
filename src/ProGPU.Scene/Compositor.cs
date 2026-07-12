@@ -8155,6 +8155,11 @@ SceneStateUploadComplete:
             isPremultiplied ? 1f : 0f,
             premultipliedOpacityScale,
             textureOpacity);
+        var cubicCoefficients = cmd.HasTextureCubicCoefficients &&
+            float.IsFinite(cmd.TextureCubicCoefficients.X) &&
+            float.IsFinite(cmd.TextureCubicCoefficients.Y)
+                ? cmd.TextureCubicCoefficients
+                : new Vector2(0f, 0.5f);
 
         var v0 = Vector2.Transform(new Vector2(r.X, r.Y), transform);
         var v1 = Vector2.Transform(new Vector2(r.X + r.Width, r.Y), transform);
@@ -8222,10 +8227,10 @@ SceneStateUploadComplete:
         CollectionsMarshal.SetCount(_textureVerticesList, originalVertexCount + 4);
         var vertexSpan = CollectionsMarshal.AsSpan(_textureVerticesList).Slice(originalVertexCount, 4);
 
-        vertexSpan[0] = new VectorVertex(v0, color, uv0);
-        vertexSpan[1] = new VectorVertex(v1, color, uv1);
-        vertexSpan[2] = new VectorVertex(v2, color, uv2);
-        vertexSpan[3] = new VectorVertex(v3, color, uv3);
+        vertexSpan[0] = new VectorVertex(v0, color, uv0, shapeSize: cubicCoefficients);
+        vertexSpan[1] = new VectorVertex(v1, color, uv1, shapeSize: cubicCoefficients);
+        vertexSpan[2] = new VectorVertex(v2, color, uv2, shapeSize: cubicCoefficients);
+        vertexSpan[3] = new VectorVertex(v3, color, uv3, shapeSize: cubicCoefficients);
 
         int originalIndexCount = _textureIndicesList.Count;
         CollectionsMarshal.SetCount(_textureIndicesList, originalIndexCount + 6);
