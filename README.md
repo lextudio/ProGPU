@@ -161,6 +161,14 @@ graph TD
 5. **WinUI Framework Layer (Layer 5)**: Implements cached `Measure` and `Arrange`, controls, input, and CPU visual-tree hit testing. The WinUI host disables the compositor's duplicate GPU hit-test index while direct compositor consumers retain it by default.
 6. **Application Layer (Layer 6)**: Hosts gallery pages, diagnostics, and opt-in performance workloads. Sample animation and status updates invalidate only the visuals that actually changed.
 
+### Shader Source and Startup Contract
+
+Fixed GPU programs live as individual `.wgsl`, `.glsl`, or `.hlsl` files under the owning project's `Shaders/` directory. `Directory.Build.props` embeds these resources into each assembly, and `ShaderResource` decodes each source once into a process-wide cache. Pipeline owners retain the returned reference in `static readonly` fields, so rendering and compute hot paths perform no shader file I/O, manifest lookup, UTF-8 decoding, helper concatenation, or per-frame source allocation.
+
+Each resource documents its algorithm, time complexity, and storage or bandwidth complexity at the top of the file. Final render and compute modules are self-contained, including analytic curve helpers that were previously concatenated from C# strings. Dynamic systems keep only input-dependent generation in C#: the DirectX HLSL translator emits WGSL from caller programs, WPF effects generate active sampler declarations, and ShaderToy appends user code. Their fixed headers and fragment wrappers are still resource-backed and cached.
+
+`ShaderResourceTests` verifies that every source file is present in its assembly, loaded text matches the checked-in resource, required cost-model documentation exists, and fixed production stage modules do not reappear as C# literals. This keeps shader reuse and performance properties enforceable as the renderer evolves.
+
 ---
 
 ## Current Frame Architecture and Performance Baseline

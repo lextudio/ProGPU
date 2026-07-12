@@ -30,6 +30,18 @@ When creating or refactoring UI controls:
 * **Dynamic Brushes**: Always bind brushes dynamically using `new ThemeResourceBrush("BrushKey")`. This registers the resource with the control's theme map (`_localThemeResources` / `_styleThemeResources`) so they automatically invalidate and re-resolve against the palette during theme switches (Light/Dark).
 * **Property Invalidation**: Ensure visual elements invalidate both their measure/arrange states and visual caches on theme updates to force high-DPI assets and colors to repaint.
 
+### D. Mandatory Shader Source and Complexity Contract
+
+Static production shader source must be reusable, reviewable source code rather than a C# string literal.
+
+* Put each fixed WGSL, GLSL, or HLSL module or composition template in its owning project's `Shaders/` directory, using the proper `.wgsl`, `.glsl`, or `.hlsl` extension. Keep one logical module or template per file.
+* Load embedded shader source through `ProGPU.Backend.ShaderResource` into a `static readonly string`. The shared build glob in `Directory.Build.props` embeds the files, and the loader caches UTF-8 decoding by assembly and filename. Never open a manifest stream, read a shader file, concatenate fixed helpers, or decode source in a frame, draw, dispatch, atlas, or pipeline-cache hot path.
+* Every shader file must begin with meaningful `// Algorithm:`, `// Time complexity:`, and `// Space complexity:` lines. Describe the actual algorithm, define symbols such as segment count or kernel radius, state average and worst-case behavior when they differ, and include material private-storage, output-storage, texture-sample, or bandwidth costs.
+* Document fixed loop bounds, workgroup dimensions, numerical assumptions, alpha conventions, and quality-sensitive approximations next to the relevant shader code. Complexity documentation must be updated when an algorithm, sample footprint, loop bound, or storage layout changes.
+* Runtime generation is allowed only when the output structurally depends on caller input, such as HLSL translation, dynamic WPF sampler declarations, or user ShaderToy code. Move every fixed prefix, wrapper, and helper used by that generator to a shader resource, cache it, and document the generated algorithm and cost model. Do not use generation as an exception for ordinary fixed shaders.
+* Small test-only shader literals may remain inline when they are the direct input under test. Reusable fixtures and all production modules belong in shader files.
+* Run `ShaderResourceTests` after adding or moving a shader. Its source audit rejects new inline production stage modules and verifies that every resource is embedded and carries the required algorithm and complexity contract.
+
 ---
 
 ## 2. Rendering Performance Regression Contract
@@ -69,7 +81,7 @@ dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj -c Release
 dotnet test src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj -c Release
 ```
 
-The current baseline is 1,160 renderer tests and 149 headless tests. Update these counts only when tests are intentionally added or removed.
+The current baseline is 1,164 renderer tests and 149 headless tests. Update these counts only when tests are intentionally added or removed.
 
 Build once, then measure the exact final binaries:
 

@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using ProGPU.Backend;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
@@ -3966,7 +3967,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.Wgsl,
-            Source = CreateTexturePixelShader(),
+            Source = TexturePixelShader,
             EntryPoint = "fs_main",
             Label = "SciChart Texture Pixel"
         });
@@ -4122,7 +4123,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.Wgsl,
-            Source = CreateBatchedTexturePixelShader(),
+            Source = BatchedTexturePixelShader,
             EntryPoint = "fs_main",
             Label = "SciChart Batched Texture Pixel"
         });
@@ -4185,7 +4186,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.Wgsl,
-            Source = CreateBatchedTexturePixelShader(),
+            Source = BatchedTexturePixelShader,
             EntryPoint = "fs_main",
             Label = "SciChart Batched Texture Pixel"
         });
@@ -4223,7 +4224,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.Wgsl,
-            Source = CreateBatchedTexturePixelShader(),
+            Source = BatchedTexturePixelShader,
             EntryPoint = "fs_main",
             Label = "SciChart Batched Texture Pixel"
         });
@@ -4261,7 +4262,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.Wgsl,
-            Source = CreateShapedHeatmapPixelShader(),
+            Source = ShapedHeatmapPixelShader,
             EntryPoint = "fs_main",
             Label = "SciChart Shaped Heatmap Pixel"
         });
@@ -4303,7 +4304,7 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         {
             Stage = DxShaderStage.Pixel,
             SourceKind = DxShaderSourceKind.Wgsl,
-            Source = CreateHeightTextureContourPixelShader(),
+            Source = HeightTextureContourPixelShader,
             EntryPoint = "fs_main",
             Label = "SciChart Height Contour Pixel"
         });
@@ -5434,243 +5435,23 @@ public sealed class ProGpuDirectXSciChartRenderContext2D : IDisposable
         vertexData.Add(((colorArgb >> 24) & 0xFF) / 255f);
     }
 
-    private static string CreateTexturePixelShader()
-    {
-        return $$"""
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(DxShaderStage.Pixel, 0)}}) var SourceTexture: texture_2d<f32>;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetSamplerBinding(DxShaderStage.Pixel, 0)}}) var SourceSampler: sampler;
+    private static readonly string TexturePixelShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "TexturePixel.wgsl");
 
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
+    private static readonly string BatchedTexturePixelShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "BatchedTexturePixel.wgsl");
 
-@fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(SourceTexture, SourceSampler, input.uv);
-}
-""";
-    }
+    private static readonly string InstancedSpriteVertexShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "InstancedSpriteVertex.wgsl");
 
-    private static string CreateBatchedTexturePixelShader()
-    {
-        return $$"""
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(DxShaderStage.Pixel, 0)}}) var SourceTexture: texture_2d<f32>;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetSamplerBinding(DxShaderStage.Pixel, 0)}}) var SourceSampler: sampler;
+    private static readonly string ShapedHeatmapPixelShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "ShapedHeatmapPixel.wgsl");
 
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
+    private static readonly string HeightTextureContourPixelShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "HeightTextureContourPixel.wgsl");
 
-@fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(SourceTexture, SourceSampler, input.uv) * input.color;
-}
-""";
-    }
+    private static readonly string TextureVertexShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "TextureVertex.wgsl");
 
-    private static string InstancedSpriteVertexShader => """
-struct VertexIn {
-    @location(0) corner: vec2<f32>,
-    @location(1) rect: vec4<f32>,
-    @location(2) color: vec4<f32>,
-};
+    private static readonly string LineVertexShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "LineVertex.wgsl");
 
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
+    private static readonly string LinePixelShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "LinePixel.wgsl");
 
-@vertex
-fn vs_main(input: VertexIn) -> VertexOut {
-    var output: VertexOut;
-    let position = input.rect.xy + ((input.rect.zw - input.rect.xy) * input.corner);
-    output.position = vec4<f32>(position, 0.0, 1.0);
-    output.uv = input.corner;
-    output.color = input.color;
-    return output;
-}
-""";
-
-    private static string CreateShapedHeatmapPixelShader()
-    {
-        return $$"""
-struct HeatmapParams {
-    colorMapMin: f32,
-    colorMapInvRange: f32,
-    heightTextureWidth: f32,
-    heightTextureHeight: f32,
-};
-
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetConstantBufferBinding(DxShaderStage.Pixel, 0)}}) var<uniform> Heatmap: HeatmapParams;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(DxShaderStage.Pixel, 0)}}) var<storage, read> Heights: array<f32>;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(DxShaderStage.Pixel, 1)}}) var GradientTexture: texture_2d<f32>;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetSamplerBinding(DxShaderStage.Pixel, 0)}}) var SourceSampler: sampler;
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
-
-@fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    let heightSize = vec2<i32>(i32(Heatmap.heightTextureWidth), i32(Heatmap.heightTextureHeight));
-    let heightCoord = clamp(
-        vec2<i32>(input.uv * vec2<f32>(heightSize)),
-        vec2<i32>(0, 0),
-        heightSize - vec2<i32>(1, 1));
-    let heightIndex = u32(heightCoord.y * heightSize.x + heightCoord.x);
-    let height = Heights[heightIndex];
-    let gradientU = clamp((height - Heatmap.colorMapMin) * Heatmap.colorMapInvRange, 0.0, 1.0);
-    return textureSample(GradientTexture, SourceSampler, vec2<f32>(gradientU, 0.5)) * input.color;
-}
-""";
-    }
-
-    private static string CreateHeightTextureContourPixelShader()
-    {
-        return $$"""
-struct ContourParams {
-    zMin: f32,
-    zMax: f32,
-    zStep: f32,
-    strokeThickness: f32,
-    opacity: f32,
-    heightTextureWidth: f32,
-    heightTextureHeight: f32,
-    _pad0: f32,
-    color: vec4<f32>,
-};
-
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetConstantBufferBinding(DxShaderStage.Pixel, 0)}}) var<uniform> Contour: ContourParams;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(DxShaderStage.Pixel, 0)}}) var<storage, read> Heights: array<f32>;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetShaderResourceBinding(DxShaderStage.Pixel, 1)}}) var ContourTexture: texture_2d<f32>;
-@group(0) @binding({{ProGpuDirectXNativeBindingMap.GetSamplerBinding(DxShaderStage.Pixel, 0)}}) var SourceSampler: sampler;
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-fn load_height(coord: vec2<i32>, heightSize: vec2<i32>) -> f32 {
-    let clampedCoord = clamp(coord, vec2<i32>(0, 0), heightSize - vec2<i32>(1, 1));
-    let heightIndex = u32(clampedCoord.y * heightSize.x + clampedCoord.x);
-    return Heights[heightIndex];
-}
-
-@fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    let heightSize = vec2<i32>(i32(Contour.heightTextureWidth), i32(Contour.heightTextureHeight));
-    let centerCoord = clamp(
-        vec2<i32>(input.uv * vec2<f32>(heightSize)),
-        vec2<i32>(0, 0),
-        heightSize - vec2<i32>(1, 1));
-    let height = load_height(centerCoord, heightSize);
-    if (height < Contour.zMin || height > Contour.zMax) {
-        discard;
-    }
-
-    let contourIndex = round((height - Contour.zMin) / Contour.zStep);
-    let contourHeight = Contour.zMin + contourIndex * Contour.zStep;
-    if (contourHeight < Contour.zMin || contourHeight > Contour.zMax) {
-        discard;
-    }
-
-    let heightDx = abs(load_height(centerCoord + vec2<i32>(1, 0), heightSize) - height);
-    let heightDy = abs(load_height(centerCoord + vec2<i32>(0, 1), heightSize) - height);
-    let heightPerPixel = max(max(heightDx, heightDy), Contour.zStep * 0.001);
-    let threshold = heightPerPixel * max(Contour.strokeThickness, 1.0);
-    let distanceToContour = abs(height - contourHeight);
-    var lineAlpha = 1.0 - smoothstep(threshold, threshold * 2.0, distanceToContour);
-    let contourMask = textureSample(ContourTexture, SourceSampler, input.uv);
-    lineAlpha = lineAlpha * clamp(Contour.opacity, 0.0, 1.0) * Contour.color.a * contourMask.a;
-    if (lineAlpha <= 0.001) {
-        discard;
-    }
-
-    return vec4<f32>(Contour.color.rgb, lineAlpha);
-}
-""";
-    }
-
-    private static string TextureVertexShader => """
-struct VertexIn {
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@vertex
-fn vs_main(input: VertexIn) -> VertexOut {
-    var output: VertexOut;
-    output.position = vec4<f32>(input.position, 0.0, 1.0);
-    output.uv = input.uv;
-    return output;
-}
-""";
-
-    private static string LineVertexShader => """
-struct VertexIn {
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-};
-
-@vertex
-fn vs_main(input: VertexIn) -> VertexOut {
-    var output: VertexOut;
-    output.position = vec4<f32>(input.position, 0.0, 1.0);
-    output.color = input.color;
-    return output;
-}
-""";
-
-    private static string LinePixelShader => """
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-};
-
-@fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    return input.color;
-}
-""";
-
-    private static string BatchedTextureVertexShader => """
-struct VertexIn {
-    @location(0) position: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
-
-@vertex
-fn vs_main(input: VertexIn) -> VertexOut {
-    var output: VertexOut;
-    output.position = vec4<f32>(input.position, 0.0, 1.0);
-    output.uv = input.uv;
-    output.color = input.color;
-    return output;
-}
-""";
+    private static readonly string BatchedTextureVertexShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext2D), "BatchedTextureVertex.wgsl");
 
     private void DisposeTransientResources()
     {
@@ -6961,59 +6742,9 @@ public sealed class ProGpuDirectXSciChartRenderContext3D : IDisposable
             LerpChannel(startArgb, endArgb, 0, amount);
     }
 
-    private static string SciChart3DVertexShader => """
-struct Camera {
-    worldViewProjection: mat4x4<f32>,
-    lightDirection: vec4<f32>,
-};
+    private static readonly string SciChart3DVertexShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext3D), "SciChart3DVertex.wgsl");
 
-@group(0) @binding(0) var<uniform> CameraData: Camera;
-
-struct VertexIn {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec4<f32>,
-};
-
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec3<f32>,
-};
-
-@vertex
-fn vs_main(input: VertexIn) -> VertexOut {
-    var output: VertexOut;
-    output.position = CameraData.worldViewProjection * vec4<f32>(input.position, 1.0);
-    output.color = input.color;
-    output.normal = input.normal;
-    return output;
-}
-""";
-
-    private static string SciChart3DPixelShader => """
-struct VertexOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec3<f32>,
-};
-
-struct Camera {
-    worldViewProjection: mat4x4<f32>,
-    lightDirection: vec4<f32>,
-};
-
-@group(0) @binding(0) var<uniform> CameraData: Camera;
-
-@fragment
-fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
-    let normal = normalize(input.normal);
-    let light = normalize(CameraData.lightDirection.xyz);
-    let diffuse = max(dot(normal, light), 0.0);
-    let shaded = input.color.rgb * (0.25 + diffuse * 0.75);
-    return vec4<f32>(shaded, input.color.a);
-}
-""";
+    private static readonly string SciChart3DPixelShader = ShaderResource.Load(typeof(ProGpuDirectXSciChartRenderContext3D), "SciChart3DPixel.wgsl");
 
     private void DisposeTransientResources()
     {
