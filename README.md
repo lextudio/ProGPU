@@ -147,6 +147,8 @@ Image metadata uses the complete `SKImageInfo` value contract and SkiaSharp 4.14
 
 Svg.Skia renders SVG 1.1 documents and its supported static SVG 2 subset through a SkiaSharp-shaped canvas. Its W3C and resvg test lanes also exercise `ProGPU.SkiaSharp`, providing broad compatibility and rendering-parity coverage for the shim.
 
+The `Svg.Skia parity` workflow pins the exact Svg.Skia source commit and runs separate native-SkiaSharp and ProGPU-shim checkouts on macOS. The native W3C lane must remain 530 passes with 3 skips; resvg and the non-W3C remainder must stay fully green through the shim. The ProGPU W3C lane validates its exact reviewed difference inventory and uploads both TRX files plus actual PNGs. A resolved row, a new failure, or a changed failure set intentionally fails the inventory gate until the images are reviewed and `eng/svg-skia-w3c-known-differences.txt` is updated in the same change.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `Svg.Skia` | Core SVG-to-SkiaSharp renderer. | [![NuGet](https://img.shields.io/nuget/vpre/Svg.Skia.svg)](https://www.nuget.org/packages/Svg.Skia/) |

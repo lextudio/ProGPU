@@ -1,0 +1,149 @@
+name: Svg.Skia parity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - src/SkiaSharp/**
+      - src/ProGPU.Scene/**
+      - src/ProGPU.Text/**
+      - src/ProGPU.Vector/**
+      - eng/svg-skia-w3c-known-differences.txt
+      - eng/progpu-verify-svg-skia-results.ps1
+      - .github/workflows/svg-skia-parity.yml
+  push:
+    branches:
+      - main
+    paths:
+      - src/SkiaSharp/**
+      - src/ProGPU.Scene/**
+      - src/ProGPU.Text/**
+      - src/ProGPU.Vector/**
+      - eng/svg-skia-w3c-known-differences.txt
+      - eng/progpu-verify-svg-skia-results.ps1
+      - .github/workflows/svg-skia-parity.yml
+
+permissions:
+  contents: read
+
+env:
+  SVG_SKIA_COMMIT: 03f64b67badfca9fca216dc25896d0c0ee04e7b7
+  SVG_TEST_PROJECT: tests/Svg.Skia.UnitTests/Svg.Skia.UnitTests.csproj
+
+jobs:
+  image-parity:
+    name: Native and ProGPU image parity
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout ProGPU
+        uses: actions/checkout@v7
+
+      - name: Checkout Svg.Skia native lane
+        uses: actions/checkout@v7
+        with:
+          repository: wieslawsoltes/Svg.Skia
+          ref: ${{ env.SVG_SKIA_COMMIT }}
+          path: external/Svg.Skia-native
+          submodules: recursive
+
+      - name: Checkout Svg.Skia ProGPU lane
+        uses: actions/checkout@v7
+        with:
+          repository: wieslawsoltes/Svg.Skia
+          ref: ${{ env.SVG_SKIA_COMMIT }}
+          path: external/Svg.Skia-progpu
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore native Svg.Skia tests
+        working-directory: external/Svg.Skia-native
+        run: dotnet restore ${{ env.SVG_TEST_PROJECT }}
+
+      - name: Run native W3C baseline
+        working-directory: external/Svg.Skia-native
+        run: >-
+          dotnet test ${{ env.SVG_TEST_PROJECT }}
+          --framework net10.0
+          --configuration Release
+          --no-restore
+          --filter FullyQualifiedName~W3CTestSuiteTests
+          --logger "trx;LogFileName=native-w3c.trx"
+          --results-directory "${{ github.workspace }}/artifacts/svg-skia/native"
+
+      - name: Restore ProGPU Svg.Skia tests
+        working-directory: external/Svg.Skia-progpu
+        run: >-
+          dotnet restore ${{ env.SVG_TEST_PROJECT }}
+          -p:UseProGpuSkiaSharpShim=true
+          -p:ProGpuSourceRoot="${{ github.workspace }}"
+
+      - name: Run ProGPU resvg inventory
+        working-directory: external/Svg.Skia-progpu
+        run: >-
+          dotnet test ${{ env.SVG_TEST_PROJECT }}
+          --framework net10.0
+          --configuration Release
+          --no-restore
+          -p:UseProGpuSkiaSharpShim=true
+          -p:ProGpuSourceRoot="${{ github.workspace }}"
+          --filter FullyQualifiedName~resvgTests
+          --logger "trx;LogFileName=progpu-resvg.trx"
+          --results-directory "${{ github.workspace }}/artifacts/svg-skia/progpu"
+
+      - name: Run remaining ProGPU Svg.Skia tests
+        working-directory: external/Svg.Skia-progpu
+        run: >-
+          dotnet test ${{ env.SVG_TEST_PROJECT }}
+          --framework net10.0
+          --configuration Release
+          --no-build
+          --no-restore
+          -p:UseProGpuSkiaSharpShim=true
+          -p:ProGpuSourceRoot="${{ github.workspace }}"
+          --filter "FullyQualifiedName!~W3CTestSuiteTests&FullyQualifiedName!~resvgTests"
+          --logger "trx;LogFileName=progpu-remaining.trx"
+          --results-directory "${{ github.workspace }}/artifacts/svg-skia/progpu"
+
+      - name: Run ProGPU W3C comparison
+        id: progpu-w3c
+        continue-on-error: true
+        working-directory: external/Svg.Skia-progpu
+        run: >-
+          dotnet test ${{ env.SVG_TEST_PROJECT }}
+          --framework net10.0
+          --configuration Release
+          --no-build
+          --no-restore
+          -p:UseProGpuSkiaSharpShim=true
+          -p:ProGpuSourceRoot="${{ github.workspace }}"
+          --filter FullyQualifiedName~W3CTestSuiteTests
+          --logger "trx;LogFileName=progpu-w3c.trx"
+          --results-directory "${{ github.workspace }}/artifacts/svg-skia/progpu"
+
+      - name: Verify native and ProGPU W3C inventories
+        shell: pwsh
+        run: >-
+          ./eng/progpu-verify-svg-skia-results.ps1
+          -NativeResults "artifacts/svg-skia/native/native-w3c.trx"
+          -ProGpuResults "artifacts/svg-skia/progpu/progpu-w3c.trx"
+          -KnownDifferences "eng/svg-skia-w3c-known-differences.txt"
+
+      - name: Upload Svg.Skia parity artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: svg-skia-parity-${{ github.sha }}
+          path: |
+            artifacts/svg-skia/**/*.trx
+            external/Svg.Skia-native/tests/Tests/**/* (Actual).png
+            external/Svg.Skia-progpu/tests/Tests/**/* (Actual).png
+          if-no-files-found: warn
+
