@@ -29,14 +29,18 @@ public class SKFileStream : SKStreamAsset
         return null!;
     }
 
-    private static (byte[] Data, bool IsValid) ReadFile(string path)
+    private static (byte[] Data, bool IsValid) ReadFile(string? path)
     {
-        ArgumentNullException.ThrowIfNull(path);
+        if (string.IsNullOrEmpty(path))
+        {
+            return (Array.Empty<byte>(), false);
+        }
+
         try
         {
             return (File.ReadAllBytes(path), true);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
         {
             return (Array.Empty<byte>(), false);
         }

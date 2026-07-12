@@ -96,7 +96,13 @@ public sealed class SkStreamAndCanvasCompatibilityTests
             Assert.False(missing.IsValid);
             Assert.Equal(0, missing.Length);
             Assert.Null(SKFileStream.OpenStream(path + ".missing"));
+            using var empty = new SKFileStream(string.Empty);
+            using var nullPath = new SKFileStream(null!);
+            Assert.False(empty.IsValid);
+            Assert.False(nullPath.IsValid);
+            Assert.Null(SKFileStream.OpenStream(null!));
             Assert.True(SKFileStream.IsPathSupported(string.Empty));
+            Assert.True(SKFileStream.IsPathSupported(null!));
         }
         finally
         {
