@@ -109,4 +109,111 @@ public sealed class SkStreamAndCanvasCompatibilityTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void AbstractManagedStreamDispatchesNativeCallbackContract()
+    {
+        Assert.Equal(typeof(SKAbstractManagedStream), typeof(SKManagedStream).BaseType);
+
+        var stream = new CallbackManagedStream(new byte[] { 1, 2, 3, 4, 5 });
+        Assert.NotEqual(IntPtr.Zero, stream.Handle);
+        Assert.True(stream.HasPosition);
+        Assert.True(stream.HasLength);
+        Assert.Equal(5, stream.Length);
+        Assert.False(stream.IsAtEnd);
+        Assert.Equal(1, stream.ReadByte());
+        Assert.Equal(1, stream.Position);
+
+        var peek = Marshal.AllocHGlobal(2);
+        try
+        {
+            Assert.Equal(2, stream.Peek(peek, 2));
+            Assert.Equal(2, Marshal.ReadByte(peek));
+            Assert.Equal(3, Marshal.ReadByte(peek, 1));
+            Assert.Equal(1, stream.Position);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(peek);
+        }
+
+        Assert.Equal(1, stream.Skip(1));
+        Assert.Equal(2, stream.Position);
+        Assert.True(stream.Move(1));
+        Assert.Equal(3, stream.Position);
+        Assert.Equal(4, stream.ReadByte());
+        Assert.True(stream.Seek(1));
+        using (var data = stream.GetData())
+        {
+            Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, data.ToArray());
+        }
+
+        Assert.Equal(1, stream.Position);
+        Assert.True(stream.Rewind());
+        Assert.Equal(0, stream.Position);
+        stream.Dispose();
+        Assert.Equal(IntPtr.Zero, stream.Handle);
+        Assert.Throws<ObjectDisposedException>(() => stream.ReadByte());
+    }
+
+    private sealed class CallbackManagedStream : SKAbstractManagedStream
+    {
+        private readonly byte[] _data;
+        private int _position;
+
+        public CallbackManagedStream(byte[] data)
+        {
+            _data = data;
+        }
+
+        protected internal override IntPtr OnRead(IntPtr buffer, IntPtr size)
+        {
+            var requested = checked((int)size.ToInt64());
+            ArgumentOutOfRangeException.ThrowIfNegative(requested);
+            var count = Math.Min(requested, _data.Length - _position);
+            if (buffer != IntPtr.Zero && count > 0)
+            {
+                Marshal.Copy(_data, _position, buffer, count);
+            }
+
+            _position += count;
+            return (IntPtr)count;
+        }
+
+        protected internal override IntPtr OnPeek(IntPtr buffer, IntPtr size)
+        {
+            var position = _position;
+            var read = OnRead(buffer, size);
+            _position = position;
+            return read;
+        }
+
+        protected internal override bool OnIsAtEnd() => _position >= _data.Length;
+        protected internal override bool OnHasPosition() => true;
+        protected internal override bool OnHasLength() => true;
+
+        protected internal override bool OnRewind()
+        {
+            _position = 0;
+            return true;
+        }
+
+        protected internal override IntPtr OnGetPosition() => (IntPtr)_position;
+        protected internal override IntPtr OnGetLength() => (IntPtr)_data.Length;
+
+        protected internal override bool OnSeek(IntPtr position)
+        {
+            var value = checked((int)position.ToInt64());
+            if (value < 0 || value > _data.Length)
+            {
+                return false;
+            }
+
+            _position = value;
+            return true;
+        }
+
+        protected internal override bool OnMove(int offset) => OnSeek((IntPtr)(_position + offset));
+        protected internal override IntPtr OnCreateNew() => IntPtr.Zero;
+    }
 }

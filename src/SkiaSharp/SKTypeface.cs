@@ -530,10 +530,10 @@ public abstract class SKStreamAsset : SKStreamSeekable
 
     internal byte[] Data => _data;
 
-    protected override Stream BackingStream => _stream;
+    protected override Stream? BackingStream => _stream;
     protected override ReadOnlyMemory<byte>? BackingMemory => _data;
 
-    public override IntPtr GetMemoryBase()
+    internal IntPtr GetMemoryBaseCore()
     {
         if (_data.Length == 0)
         {
@@ -550,7 +550,7 @@ public abstract class SKStreamAsset : SKStreamSeekable
         return _pin.AddrOfPinnedObject();
     }
 
-    public override void Dispose()
+    protected override void DisposeManaged()
     {
         if (_pin.IsAllocated)
         {
@@ -558,6 +558,7 @@ public abstract class SKStreamAsset : SKStreamSeekable
         }
 
         _stream.Dispose();
+        base.DisposeManaged();
     }
 }
 

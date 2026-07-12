@@ -2663,10 +2663,11 @@ public class SKBitmap : SKObject
     }
 }
 
-public class SKManagedStream : SKStream
+public class SKManagedStream : SKAbstractManagedStream
 {
     private Stream? _stream;
     private readonly bool _disposeStream;
+    private bool _isAtEnd;
 
     protected override Stream? BackingStream => _stream;
 
@@ -2713,7 +2714,115 @@ public class SKManagedStream : SKStream
         return destination.DetachAsStream();
     }
 
-    public override void Dispose()
+    protected internal override unsafe IntPtr OnRead(IntPtr buffer, IntPtr size)
+    {
+        var requested = checked((int)size.ToInt64());
+        ArgumentOutOfRangeException.ThrowIfNegative(requested);
+        if (requested == 0)
+        {
+            return IntPtr.Zero;
+        }
+
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        var rented = ArrayPool<byte>.Shared.Rent(requested);
+        try
+        {
+            var read = source.Read(rented, 0, requested);
+            if (buffer != IntPtr.Zero)
+            {
+                rented.AsSpan(0, read).CopyTo(new Span<byte>(buffer.ToPointer(), read));
+            }
+
+            if (!source.CanSeek && read <= requested)
+            {
+                _isAtEnd = true;
+            }
+
+            return (IntPtr)read;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    protected internal override IntPtr OnPeek(IntPtr buffer, IntPtr size)
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        if (!source.CanSeek)
+        {
+            return IntPtr.Zero;
+        }
+
+        var position = source.Position;
+        var read = OnRead(buffer, size);
+        source.Position = position;
+        return read;
+    }
+
+    protected internal override bool OnIsAtEnd()
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        return source.CanSeek ? source.Position >= source.Length : _isAtEnd;
+    }
+
+    protected internal override bool OnHasPosition() =>
+        (_stream ?? throw new ObjectDisposedException(nameof(SKManagedStream))).CanSeek;
+
+    protected internal override bool OnHasLength() =>
+        (_stream ?? throw new ObjectDisposedException(nameof(SKManagedStream))).CanSeek;
+
+    protected internal override bool OnRewind()
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        if (!source.CanSeek)
+        {
+            return false;
+        }
+
+        source.Position = 0;
+        return true;
+    }
+
+    protected internal override IntPtr OnGetPosition()
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        return source.CanSeek ? (IntPtr)source.Position : IntPtr.Zero;
+    }
+
+    protected internal override IntPtr OnGetLength()
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        return source.CanSeek ? (IntPtr)source.Length : IntPtr.Zero;
+    }
+
+    protected internal override bool OnSeek(IntPtr position)
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        if (!source.CanSeek)
+        {
+            return false;
+        }
+
+        source.Position = position.ToInt64();
+        return true;
+    }
+
+    protected internal override bool OnMove(int offset)
+    {
+        var source = _stream ?? throw new ObjectDisposedException(nameof(SKManagedStream));
+        if (!source.CanSeek)
+        {
+            return false;
+        }
+
+        source.Position += offset;
+        return true;
+    }
+
+    protected internal override IntPtr OnCreateNew() => IntPtr.Zero;
+
+    protected override void DisposeManaged()
     {
         var stream = _stream;
         _stream = null;
@@ -2722,6 +2831,6 @@ public class SKManagedStream : SKStream
             stream?.Dispose();
         }
 
-        base.Dispose();
+        base.DisposeManaged();
     }
 }

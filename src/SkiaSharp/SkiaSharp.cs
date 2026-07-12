@@ -2722,25 +2722,81 @@ public struct SKImageInfo : IEquatable<SKImageInfo>
     public static bool operator !=(SKImageInfo left, SKImageInfo right) => !left.Equals(right);
 }
 
-public abstract class SKStream : IDisposable
+public abstract class SKStream : SKObject
 {
+    internal SKStream()
+        : base(SKObjectHandle.Create(), owns: true)
+    {
+    }
+
+    internal SKStream(IntPtr handle, bool owns)
+        : base(handle, owns)
+    {
+    }
+
     protected virtual Stream? BackingStream => null;
     protected virtual ReadOnlyMemory<byte>? BackingMemory => null;
 
-    public bool IsAtEnd => BackingStream is not { } stream ||
-        (stream.CanSeek && stream.Position >= stream.Length);
-    public bool HasPosition => BackingStream?.CanSeek == true;
+    public bool IsAtEnd
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return this is SKAbstractManagedStream managed
+                ? managed.OnIsAtEnd()
+                : BackingStream is not { } stream ||
+                  (stream.CanSeek && stream.Position >= stream.Length);
+        }
+    }
+
+    public bool HasPosition
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return this is SKAbstractManagedStream managed
+                ? managed.OnHasPosition()
+                : BackingStream?.CanSeek == true;
+        }
+    }
+
     public int Position
     {
-        get => BackingStream is { CanSeek: true } stream
-            ? checked((int)stream.Position)
-            : 0;
+        get
+        {
+            ThrowIfDisposed();
+            return this is SKAbstractManagedStream managed
+                ? checked((int)managed.OnGetPosition())
+                : BackingStream is { CanSeek: true } stream
+                    ? checked((int)stream.Position)
+                    : 0;
+        }
         set => Seek(value);
     }
-    public bool HasLength => BackingStream?.CanSeek == true;
-    public int Length => BackingStream is { CanSeek: true } stream
-        ? checked((int)stream.Length)
-        : 0;
+
+    public bool HasLength
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return this is SKAbstractManagedStream managed
+                ? managed.OnHasLength()
+                : BackingStream?.CanSeek == true;
+        }
+    }
+
+    public int Length
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return this is SKAbstractManagedStream managed
+                ? checked((int)managed.OnGetLength())
+                : BackingStream is { CanSeek: true } stream
+                    ? checked((int)stream.Length)
+                    : 0;
+        }
+    }
 
     public sbyte ReadSByte() => ReadSByte(out var value) ? value : (sbyte)0;
     public short ReadInt16() => ReadInt16(out var value) ? value : (short)0;
@@ -2775,9 +2831,10 @@ public abstract class SKStream : IDisposable
 
     public bool ReadByte(out byte value)
     {
-        var raw = BackingStream?.ReadByte() ?? -1;
-        value = raw >= 0 ? (byte)raw : (byte)0;
-        return raw >= 0;
+        Span<byte> bytes = stackalloc byte[sizeof(byte)];
+        var success = ReadExactly(bytes);
+        value = success ? bytes[0] : (byte)0;
+        return success;
     }
 
     public bool ReadUInt16(out ushort value)
@@ -2805,24 +2862,39 @@ public abstract class SKStream : IDisposable
 
     public int Read(byte[] buffer, int size)
     {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(buffer);
-        return size > 0 && BackingStream is { } stream
-            ? stream.Read(buffer, 0, Math.Min(size, buffer.Length))
+        return size > 0
+            ? ReadCore(buffer.AsSpan(0, Math.Min(size, buffer.Length)))
             : 0;
     }
 
     public unsafe int Read(IntPtr buffer, int size)
     {
-        if (buffer == IntPtr.Zero || size <= 0 || BackingStream is not { } stream)
+        ThrowIfDisposed();
+        if (size <= 0)
         {
             return 0;
         }
 
-        return stream.Read(new Span<byte>(buffer.ToPointer(), size));
+        if (this is SKAbstractManagedStream managed)
+        {
+            return checked((int)managed.OnRead(buffer, (IntPtr)size));
+        }
+
+        return buffer != IntPtr.Zero && BackingStream is { } stream
+            ? stream.Read(new Span<byte>(buffer.ToPointer(), size))
+            : 0;
     }
 
     public int Peek(IntPtr buffer, int size)
     {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedStream managed)
+        {
+            return checked((int)managed.OnPeek(buffer, (IntPtr)size));
+        }
+
         if (!HasPosition)
         {
             return 0;
@@ -2836,7 +2908,18 @@ public abstract class SKStream : IDisposable
 
     public int Skip(int size)
     {
-        if (size <= 0 || BackingStream is not { } stream)
+        ThrowIfDisposed();
+        if (size <= 0)
+        {
+            return 0;
+        }
+
+        if (this is SKAbstractManagedStream managed)
+        {
+            return checked((int)managed.OnRead(IntPtr.Zero, (IntPtr)size));
+        }
+
+        if (BackingStream is not { } stream)
         {
             return 0;
         }
@@ -2864,10 +2947,22 @@ public abstract class SKStream : IDisposable
         return skipped;
     }
 
-    public bool Rewind() => Seek(0);
+    public bool Rewind()
+    {
+        ThrowIfDisposed();
+        return this is SKAbstractManagedStream managed
+            ? managed.OnRewind()
+            : Seek(0);
+    }
 
     public bool Seek(int position)
     {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedStream managed)
+        {
+            return managed.OnSeek((IntPtr)position);
+        }
+
         if (position < 0 || BackingStream is not { CanSeek: true } stream || position > stream.Length)
         {
             return false;
@@ -2882,14 +2977,56 @@ public abstract class SKStream : IDisposable
 
     public bool Move(int offset)
     {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedStream managed)
+        {
+            return managed.OnMove(offset);
+        }
+
         var target = (long)Position + offset;
         return target >= 0 && target <= int.MaxValue && Seek((int)target);
     }
 
-    public virtual IntPtr GetMemoryBase() => IntPtr.Zero;
+    public IntPtr GetMemoryBase()
+    {
+        ThrowIfDisposed();
+        return this is SKStreamAsset asset
+            ? asset.GetMemoryBaseCore()
+            : IntPtr.Zero;
+    }
 
     public SKData GetData()
     {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedStream)
+        {
+            var managedPosition = HasPosition ? Position : 0;
+            if (HasPosition)
+            {
+                Rewind();
+            }
+
+            using var managedCopy = new MemoryStream();
+            var buffer = new byte[81920];
+            try
+            {
+                int read;
+                while ((read = Read(buffer, buffer.Length)) > 0)
+                {
+                    managedCopy.Write(buffer, 0, read);
+                }
+            }
+            finally
+            {
+                if (HasPosition)
+                {
+                    Seek(managedPosition);
+                }
+            }
+
+            return new SKData(managedCopy.ToArray());
+        }
+
         if (BackingMemory is { } memory)
         {
             return new SKData(memory.ToArray());
@@ -2918,15 +3055,10 @@ public abstract class SKStream : IDisposable
 
     private bool ReadExactly(Span<byte> destination)
     {
-        if (BackingStream is not { } stream)
-        {
-            return false;
-        }
-
         var read = 0;
         while (read < destination.Length)
         {
-            var count = stream.Read(destination[read..]);
+            var count = ReadCore(destination[read..]);
             if (count == 0)
             {
                 return false;
@@ -2938,15 +3070,35 @@ public abstract class SKStream : IDisposable
         return true;
     }
 
-    public virtual void Dispose() { }
+    private unsafe int ReadCore(Span<byte> destination)
+    {
+        ThrowIfDisposed();
+        if (this is SKAbstractManagedStream managed)
+        {
+            fixed (byte* buffer = destination)
+            {
+                return checked((int)managed.OnRead((IntPtr)buffer, (IntPtr)destination.Length));
+            }
+        }
+
+        return BackingStream?.Read(destination) ?? 0;
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(IsDisposed, this);
 }
 
 public abstract class SKStreamRewindable : SKStream
 {
+    internal SKStreamRewindable()
+    {
+    }
 }
 
 public abstract class SKStreamSeekable : SKStreamRewindable
 {
+    internal SKStreamSeekable()
+    {
+    }
 }
 
 public class SKCodec : SKObject
