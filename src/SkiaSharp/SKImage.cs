@@ -1083,15 +1083,16 @@ public class SKBitmap : IDisposable
 
     public static SKBitmap Decode(SKData data)
     {
-        var result = SKEncodedImageDecoder.Decode(data.Bytes);
-        var bmp = new SKBitmap(new SKImageInfo(
-            result.Width,
-            result.Height,
-            SKColorType.Rgba8888,
-            SKAlphaType.Unpremul,
-            result.ColorSpace));
-        Marshal.Copy(result.Pixels, 0, bmp.GetPixels(), result.Pixels.Length);
-        return bmp;
+        ArgumentNullException.ThrowIfNull(data);
+        using var codec = SKCodec.Create(data);
+        return codec is null ? null! : Decode(codec);
+    }
+
+    public static SKBitmap Decode(SKData data, SKImageInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        using var codec = SKCodec.Create(data);
+        return codec is null ? null! : Decode(codec, info);
     }
 
     public static SKBitmap FromImage(SKImage image)
@@ -1117,49 +1118,87 @@ public class SKBitmap : IDisposable
     public static SKBitmap Decode(Stream? stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        using var data = SKData.Create(stream);
-        return Decode(data);
+        using var codec = SKCodec.Create(stream);
+        return codec is null ? null! : Decode(codec);
+    }
+
+    public static SKBitmap Decode(Stream? stream, SKImageInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var codec = SKCodec.Create(stream);
+        return codec is null ? null! : Decode(codec, info);
+    }
+
+    public static SKBitmap Decode(SKStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var codec = SKCodec.Create(stream);
+        return codec is null ? null! : Decode(codec);
+    }
+
+    public static SKBitmap Decode(SKStream stream, SKImageInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var codec = SKCodec.Create(stream);
+        return codec is null ? null! : Decode(codec, info);
+    }
+
+    public static SKBitmap Decode(SKCodec codec)
+    {
+        ArgumentNullException.ThrowIfNull(codec);
+        var info = codec.Info;
+        if (info.AlphaType == SKAlphaType.Unpremul)
+        {
+            info.AlphaType = SKAlphaType.Premul;
+        }
+
+        return Decode(codec, info);
     }
 
     public static SKBitmap Decode(SKCodec codec, SKImageInfo info)
     {
-        var result = SKEncodedImageDecoder.Decode(codec.EncodedBytes);
-        var targetInfo = info.Width > 0 && info.Height > 0
-            ? info
-            : new SKImageInfo(result.Width, result.Height, info.ColorType, info.AlphaType, info.ColorSpace);
-        var bitmap = new SKBitmap(targetInfo);
+        ArgumentNullException.ThrowIfNull(codec);
+        if (info.IsEmpty || !SupportsResizeColorType(info.ColorType))
+        {
+            return null!;
+        }
+
+        var result = codec.DecodedImage;
+        var bitmap = new SKBitmap(info);
 
         unsafe
         {
             fixed (byte* src = result.Pixels)
             {
                 byte* dst = (byte*)bitmap.GetPixels();
-                for (int y = 0; y < targetInfo.Height; y++)
+                for (int y = 0; y < info.Height; y++)
                 {
-                    int srcY = targetInfo.Height == result.Height
+                    int srcY = info.Height == result.Height
                         ? y
-                        : Math.Clamp((int)((long)y * result.Height / targetInfo.Height), 0, result.Height - 1);
+                        : Math.Clamp((int)((long)y * result.Height / info.Height), 0, result.Height - 1);
                     byte* dstRow = dst + y * bitmap.RowBytes;
 
-                    for (int x = 0; x < targetInfo.Width; x++)
+                    for (int x = 0; x < info.Width; x++)
                     {
-                        int srcX = targetInfo.Width == result.Width
+                        int srcX = info.Width == result.Width
                             ? x
-                            : Math.Clamp((int)((long)x * result.Width / targetInfo.Width), 0, result.Width - 1);
+                            : Math.Clamp((int)((long)x * result.Width / info.Width), 0, result.Width - 1);
                         byte* srcPixel = src + (srcY * result.Width + srcX) * 4;
-                        byte* dstPixel = dstRow + x * targetInfo.BytesPerPixel;
-                        byte alpha = targetInfo.AlphaType == SKAlphaType.Opaque ? (byte)255 : srcPixel[3];
-                        byte red = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[0], alpha) : srcPixel[0];
-                        byte green = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[1], alpha) : srcPixel[1];
-                        byte blue = targetInfo.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[2], alpha) : srcPixel[2];
+                        byte* dstPixel = dstRow + x * info.BytesPerPixel;
+                        byte alpha = info.AlphaType == SKAlphaType.Opaque || info.ColorType == SKColorType.Rgb888x
+                            ? (byte)255
+                            : srcPixel[3];
+                        byte red = info.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[0], alpha) : srcPixel[0];
+                        byte green = info.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[1], alpha) : srcPixel[1];
+                        byte blue = info.AlphaType == SKAlphaType.Premul ? Premultiply(srcPixel[2], alpha) : srcPixel[2];
 
-                        if (targetInfo.ColorType == SKColorType.Rgb565)
+                        if (info.ColorType == SKColorType.Rgb565)
                         {
                             ushort value = PackRgb565(red, green, blue);
                             dstPixel[0] = (byte)value;
                             dstPixel[1] = (byte)(value >> 8);
                         }
-                        else if (targetInfo.ColorType == SKColorType.Bgra8888)
+                        else if (info.ColorType == SKColorType.Bgra8888)
                         {
                             dstPixel[0] = blue;
                             dstPixel[1] = green;
@@ -1179,6 +1218,87 @@ public class SKBitmap : IDisposable
         }
 
         return bitmap;
+    }
+
+    public static SKBitmap Decode(byte[] buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        return Decode(buffer.AsSpan());
+    }
+
+    public static SKBitmap Decode(byte[] buffer, SKImageInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        return Decode(buffer.AsSpan(), info);
+    }
+
+    public static SKBitmap Decode(ReadOnlySpan<byte> buffer)
+    {
+        using var data = SKData.CreateCopy(buffer);
+        using var codec = SKCodec.Create(data);
+        return Decode(codec);
+    }
+
+    public static SKBitmap Decode(ReadOnlySpan<byte> buffer, SKImageInfo info)
+    {
+        using var data = SKData.CreateCopy(buffer);
+        using var codec = SKCodec.Create(data);
+        return Decode(codec, info);
+    }
+
+    public static SKBitmap Decode(string filename)
+    {
+        ArgumentNullException.ThrowIfNull(filename);
+        using var codec = SKCodec.Create(filename);
+        return codec is null ? null! : Decode(codec);
+    }
+
+    public static SKBitmap Decode(string filename, SKImageInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(filename);
+        using var codec = SKCodec.Create(filename);
+        return codec is null ? null! : Decode(codec, info);
+    }
+
+    public static SKImageInfo DecodeBounds(Stream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var codec = SKCodec.Create(stream);
+        return codec?.Info ?? SKImageInfo.Empty;
+    }
+
+    public static SKImageInfo DecodeBounds(SKStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        using var codec = SKCodec.Create(stream);
+        return codec?.Info ?? SKImageInfo.Empty;
+    }
+
+    public static SKImageInfo DecodeBounds(SKData data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        using var codec = SKCodec.Create(data);
+        return codec?.Info ?? SKImageInfo.Empty;
+    }
+
+    public static SKImageInfo DecodeBounds(string filename)
+    {
+        ArgumentNullException.ThrowIfNull(filename);
+        using var codec = SKCodec.Create(filename);
+        return codec?.Info ?? SKImageInfo.Empty;
+    }
+
+    public static SKImageInfo DecodeBounds(byte[] buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        return DecodeBounds(buffer.AsSpan());
+    }
+
+    public static SKImageInfo DecodeBounds(ReadOnlySpan<byte> buffer)
+    {
+        using var data = SKData.CreateCopy(buffer);
+        using var codec = SKCodec.Create(data);
+        return codec?.Info ?? SKImageInfo.Empty;
     }
 
     public SKPixmap PeekPixels()

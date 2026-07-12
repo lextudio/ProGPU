@@ -15,10 +15,10 @@ public sealed class SkiaSharpIconDecoderTests
             xorPixels: [0, 0, 255, 0, 255, 0, 0, 0],
             andMask: [0x40, 0, 0, 0]);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(new SKColor(255, 0, 0, 255), bitmap.GetPixel(0, 0));
-        Assert.Equal(new SKColor(0, 255, 0, 0), bitmap.GetPixel(1, 0));
+        Assert.Equal(new SKColor(0, 0, 0, 0), bitmap.GetPixel(1, 0));
     }
 
     [Fact]
@@ -37,10 +37,10 @@ public sealed class SkiaSharpIconDecoderTests
             palette: palette,
             colorCount: 3);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(new SKColor(255, 0, 0, 255), bitmap.GetPixel(0, 0));
-        Assert.Equal(new SKColor(0, 255, 0, 0), bitmap.GetPixel(1, 0));
+        Assert.Equal(new SKColor(0, 0, 0, 0), bitmap.GetPixel(1, 0));
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class SkiaSharpIconDecoderTests
             palette: [0, 0, 0, 0, 255, 255, 255, 0],
             colorCount: 2);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Black, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.White, bitmap.GetPixel(1, 0));
@@ -74,7 +74,7 @@ public sealed class SkiaSharpIconDecoderTests
             ],
             colorCount: 3);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -97,10 +97,10 @@ public sealed class SkiaSharpIconDecoderTests
             compression: 2,
             imageByteCount: 0);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
-        Assert.Equal(new SKColor(0, 255, 0, 0), bitmap.GetPixel(1, 0));
+        Assert.Equal(new SKColor(0, 0, 0, 0), bitmap.GetPixel(1, 0));
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class SkiaSharpIconDecoderTests
             colorCount: 3,
             compression: 1);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -142,7 +142,7 @@ public sealed class SkiaSharpIconDecoderTests
             compression: 2,
             width: 5);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -169,7 +169,7 @@ public sealed class SkiaSharpIconDecoderTests
             width: 4,
             height: 2);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(3, 0));
@@ -195,7 +195,8 @@ public sealed class SkiaSharpIconDecoderTests
             colorCount: 3,
             compression: 2);
 
-        Assert.Throws<InvalidOperationException>(() => SKBitmap.Decode(SKData.CreateCopy(icon)));
+        using var data = SKData.CreateCopy(icon);
+        Assert.Null(SKBitmap.Decode(data));
     }
 
     [Fact]
@@ -206,7 +207,7 @@ public sealed class SkiaSharpIconDecoderTests
             xorPixels: [0x00, 0x7c, 0xe0, 0x03],
             andMask: [0, 0, 0, 0]);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -226,7 +227,7 @@ public sealed class SkiaSharpIconDecoderTests
             compression: 3,
             bitFieldMasks: masks);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -240,10 +241,10 @@ public sealed class SkiaSharpIconDecoderTests
             xorPixels: [0, 0, 255, 0, 0, 255, 0, 0],
             andMask: [0x40, 0, 0, 0]);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
-        Assert.Equal(new SKColor(0, 255, 0, 0), bitmap.GetPixel(1, 0));
+        Assert.Equal(new SKColor(0, 0, 0, 0), bitmap.GetPixel(1, 0));
     }
 
     [Fact]
@@ -254,7 +255,7 @@ public sealed class SkiaSharpIconDecoderTests
             xorPixels: [0, 0, 255, 128, 0, 255, 0, 255],
             andMask: [0xc0, 0, 0, 0]);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(new SKColor(255, 0, 0, 128), bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -275,7 +276,7 @@ public sealed class SkiaSharpIconDecoderTests
             compression: 6,
             bitFieldMasks: masks);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(new SKColor(255, 0, 0, 128), bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -292,7 +293,7 @@ public sealed class SkiaSharpIconDecoderTests
         BinaryPrimitives.WriteUInt16LittleEndian(cursor.AsSpan(10), 1);
         BinaryPrimitives.WriteUInt16LittleEndian(cursor.AsSpan(12), 1);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(cursor));
+        using var bitmap = SKBitmap.Decode(cursor);
 
         Assert.Equal(new SKColor(255, 0, 0, 128), bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -306,10 +307,10 @@ public sealed class SkiaSharpIconDecoderTests
             xorPixels: [0, 0, 255, 0, 255, 0, 0, 0],
             andMask: [0x40, 0, 0, 0]);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
-        Assert.Equal(new SKColor(0, 255, 0, 0), bitmap.GetPixel(1, 0));
+        Assert.Equal(new SKColor(0, 0, 0, 0), bitmap.GetPixel(1, 0));
     }
 
     [Fact]
@@ -327,7 +328,7 @@ public sealed class SkiaSharpIconDecoderTests
             ],
             colorCount: 3);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -341,7 +342,7 @@ public sealed class SkiaSharpIconDecoderTests
             xorPixels: [0, 0, 255, 0, 255, 0, 0, 0],
             andMask: []);
 
-        using var bitmap = SKBitmap.Decode(SKData.CreateCopy(icon));
+        using var bitmap = SKBitmap.Decode(icon);
 
         Assert.Equal(SKColors.Red, bitmap.GetPixel(0, 0));
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(1, 0));
@@ -361,7 +362,8 @@ public sealed class SkiaSharpIconDecoderTests
             compression: 3,
             bitFieldMasks: masks);
 
-        Assert.Throws<InvalidOperationException>(() => SKBitmap.Decode(SKData.CreateCopy(icon)));
+        using var data = SKData.CreateCopy(icon);
+        Assert.Null(SKBitmap.Decode(data));
     }
 
     private static byte[] CreateIcon(

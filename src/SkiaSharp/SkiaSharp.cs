@@ -1668,18 +1668,20 @@ public abstract class SKStreamSeekable : SKStreamRewindable
 public class SKCodec : IDisposable
 {
     private readonly byte[] _data;
+    private readonly SKEncodedImageDecoder.DecodedImage _decoded;
     internal byte[] EncodedBytes => _data;
+    internal SKEncodedImageDecoder.DecodedImage DecodedImage => _decoded;
 
     private SKCodec(byte[] data)
     {
         _data = data;
-        var decoded = SKEncodedImageDecoder.Decode(data);
+        _decoded = SKEncodedImageDecoder.Decode(data);
         Info = new SKImageInfo(
-            decoded.Width,
-            decoded.Height,
+            _decoded.Width,
+            _decoded.Height,
             SKColorType.Rgba8888,
             SKAlphaType.Unpremul,
-            decoded.ColorSpace);
+            _decoded.ColorSpace);
     }
 
     public SKImageInfo Info { get; }
@@ -1698,25 +1700,52 @@ public class SKCodec : IDisposable
 
     public static SKCodec Create(SKData data)
     {
-        return new SKCodec(data.Bytes);
+        ArgumentNullException.ThrowIfNull(data);
+        return CreateCore(data.Bytes);
     }
 
     public static SKCodec Create(SKStream stream)
     {
-        using (var data = SKData.Create(stream))
-        {
-            return new SKCodec(data.Bytes);
-        }
+        ArgumentNullException.ThrowIfNull(stream);
+        using var data = SKData.Create(stream);
+        return data is null ? null! : CreateCore(data.Bytes);
     }
 
     public static SKCodec Create(Stream stream)
     {
+        ArgumentNullException.ThrowIfNull(stream);
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
-        return new SKCodec(ms.ToArray());
+        return CreateCore(ms.ToArray());
+    }
+
+    public static SKCodec Create(string filename)
+    {
+        ArgumentNullException.ThrowIfNull(filename);
+        using var data = SKData.Create(filename);
+        return data is null ? null! : CreateCore(data.Bytes);
     }
 
     public void Dispose() { }
+
+    private static SKCodec CreateCore(byte[] data)
+    {
+        try
+        {
+            return new SKCodec(data);
+        }
+        catch (Exception exception) when (IsInvalidEncodedImageException(exception))
+        {
+            return null!;
+        }
+    }
+
+    private static bool IsInvalidEncodedImageException(Exception exception) =>
+        exception is InvalidOperationException or
+            ArgumentException or
+            FormatException or
+            IndexOutOfRangeException or
+            NotSupportedException;
 }
 
 public class SKSurfaceProperties : IDisposable
