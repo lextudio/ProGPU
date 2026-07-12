@@ -28,6 +28,7 @@ public static unsafe class MainWindowController
 {
     public static void Start(Window window)
     {
+        SamplePerformanceBenchmark.AttachWindow(window);
         AppState._window = window.SilkWindow;
         AppState._wgpuContext = window.WgpuContext;
         AppState._screenCompositor = window.Compositor;
@@ -379,8 +380,22 @@ public static unsafe class MainWindowController
             AppState._navigationView.SettingsItem.PageFactory = SettingsPage.Create;
         }
 
-        // Select default category
-        AppState._navigationView.SelectedItem = mesh3DViewerItem;
+        // Select default category or an environment-requested performance probe page.
+        var initialItem = mesh3DViewerItem;
+        if (SamplePerformanceBenchmark.RequestedPage is { } requestedPage)
+        {
+            foreach (var menuItem in AppState._navigationView.MenuItems)
+            {
+                if (string.Equals(menuItem.Text, requestedPage, StringComparison.OrdinalIgnoreCase))
+                {
+                    initialItem = menuItem;
+                    break;
+                }
+            }
+        }
+
+        AppState._navigationView.SelectedItem = initialItem;
+        SamplePerformanceBenchmark.StartRequestedWorkload(initialItem.Text);
 
         AppState._rootGrid.AddChild(AppState._navigationView);
         Microsoft.UI.Xaml.Controls.Grid.SetRow(AppState._navigationView, 1);
@@ -458,17 +473,14 @@ public static unsafe class MainWindowController
 
     private static void OnWindowUpdate(double delta)
     {
+        long updateStart = Stopwatch.GetTimestamp();
         UIThread.RunPending();
-
-        AppState._rootGrid?.UpdateAnimations((float)delta);
         AppState._rootGrid?.UpdateSampleAnimations((float)delta);
-        AppState._rootGrid?.Invalidate();
 
-        if (AppState._animateGear)
+        if (AppState._animateGear && IsGearPageActive())
         {
             AppState._gearRotation += (float)delta * 1.2f;
             if (AppState._gearRotation > Math.PI * 2) AppState._gearRotation -= (float)(Math.PI * 2);
-            AppState._rootGrid?.Invalidate();
         }
 
         // Keep active focused control tracking updated
@@ -483,6 +495,13 @@ public static unsafe class MainWindowController
         {
             AppState._activeFocusedName = "None";
         }
+
+        SamplePerformanceBenchmark.RecordHostUpdate(Stopwatch.GetElapsedTime(updateStart));
+    }
+
+    private static bool IsGearPageActive()
+    {
+        return AppState._activeCategory is "Compute FX" or "Image Effects" or "Image & Buttons";
     }
 
     public static void OnWindowRender(double delta)
@@ -508,7 +527,7 @@ public static unsafe class MainWindowController
         AppState._frameStopwatch.Restart();
 
         // Update animated cogs if currently in Compute FX, Image Effects, or Image & Buttons (ImageRepeatShowcasePage)
-        if ((AppState._activeCategory == "Compute FX" || AppState._activeCategory == "Image Effects" || AppState._activeCategory == "Image & Buttons") && AppState._gearCanvasVisual != null)
+        if (IsGearPageActive() && AppState._gearCanvasVisual != null)
         {
             Vector2 logicalWindowSize = AppState._topLevelGrid.Size;
             if ((logicalWindowSize.X <= 0f || logicalWindowSize.Y <= 0f) && AppState._window != null)
@@ -556,14 +575,16 @@ public static unsafe class MainWindowController
         
         AppState._frameCount++;
         AppState._fpsAccumulator += delta;
+        bool updateStats = false;
         if (AppState._fpsAccumulator >= 0.5)
         {
             AppState._currentFps = AppState._frameCount / AppState._fpsAccumulator;
             AppState._frameCount = 0;
             AppState._fpsAccumulator = 0;
+            updateStats = true;
         }
 
-        if (AppState._statsText != null)
+        if (updateStats && AppState._statsText != null)
         {
             AppState._statsText.Inlines.Clear();
             
@@ -594,7 +615,10 @@ public static unsafe class MainWindowController
             AppState._statsText.Inlines.Add(new Bold(new Run($"{AppState._activeFocusedName,-12}")) { Foreground = new SolidColorBrush(0x0078D4FF) });
             
             AppState._statsText.PerformRichLayout(1200f);
+            AppState._statsText.Invalidate();
         }
+
+        SamplePerformanceBenchmark.ObserveFrame(delta);
     }
 
     private static void Cleanup()

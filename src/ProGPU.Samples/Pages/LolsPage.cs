@@ -19,6 +19,9 @@ namespace ProGPU.Samples;
 
 public static class LolsPage
 {
+    private const int VSyncPendingElements = 100;
+    private const int UncappedPendingElements = 200;
+
     private static int _count = 0;
     private static int _max = 500;
     private static bool _isRunning = false;
@@ -30,6 +33,13 @@ public static class LolsPage
     private static Microsoft.UI.Xaml.Controls.Canvas? _canvas;
     private static Button? _startStopBtn;
     private static Run? _startStopRun;
+    private static int _pendingElementCount;
+    private static int _drainScheduled;
+
+    internal static int ActiveElementCount => _canvas?.Children.Count ?? 0;
+    internal static int MaximumElementCount => _max;
+    internal static int TotalRenderedCount => Volatile.Read(ref _count);
+    internal static bool IsReady => _canvas != null;
 
     public static FrameworkElement Create()
     {
@@ -194,6 +204,7 @@ public static class LolsPage
     public static void Start()
     {
         if (_isRunning) return;
+        Interlocked.Exchange(ref _pendingElementCount, 0);
         _isRunning = true;
         _stopwatch.Restart();
         _count = 0;
@@ -209,6 +220,7 @@ public static class LolsPage
     {
         if (!_isRunning) return;
         _isRunning = false;
+        Interlocked.Exchange(ref _pendingElementCount, 0);
         _timer.Stop();
         _stopwatch.Stop();
 
@@ -277,30 +289,60 @@ public static class LolsPage
 
     private static void RunBenchmarkLoop()
     {
-        var random = Random.Shared;
-
         while (_isRunning)
         {
-            if (UIThread.PendingCount > 100)
+            int maxPendingElements = AppState._wgpuContext?.VSync == true
+                ? VSyncPendingElements
+                : UncappedPendingElements;
+            int pending = Volatile.Read(ref _pendingElementCount);
+            if (pending >= maxPendingElements)
             {
                 Thread.Sleep(1);
                 continue;
             }
 
-            float width = _canvas != null ? _canvas.Size.X : 800f;
-            float height = _canvas != null ? _canvas.Size.Y : 600f;
-
-            if (width <= 0) width = 800f;
-            if (height <= 0) height = 600f;
-
-            UIThread.Post(() =>
+            if (Interlocked.CompareExchange(ref _pendingElementCount, pending + 1, pending) != pending)
             {
-                if (!_isRunning || _canvas == null) return;
+                continue;
+            }
 
-                var rgb = new byte[3];
-                random.NextBytes(rgb);
-                var foreground = new SolidColorBrush(new Vector4(rgb[0] / 255.0f, rgb[1] / 255.0f, rgb[2] / 255.0f, 1.0f));
-                double rotation = random.NextDouble() * 360d;
+            SchedulePendingDrain();
+        }
+    }
+
+    private static void SchedulePendingDrain()
+    {
+        if (Interlocked.CompareExchange(ref _drainScheduled, 1, 0) == 0)
+        {
+            UIThread.Post(ProcessPendingElements);
+        }
+    }
+
+    private static void ProcessPendingElements()
+    {
+        int count = Interlocked.Exchange(ref _pendingElementCount, 0);
+        try
+        {
+            if (!_isRunning || _canvas == null)
+            {
+                return;
+            }
+
+            float width = _canvas.Size.X > 0f ? _canvas.Size.X : 800f;
+            float height = _canvas.Size.Y > 0f ? _canvas.Size.Y : 600f;
+            var random = Random.Shared;
+
+            for (int i = 0; i < count; i++)
+            {
+                int red = random.Next(256);
+                int green = random.Next(256);
+                int blue = random.Next(256);
+                var foreground = new SolidColorBrush(new Vector4(
+                    red / 255f,
+                    green / 255f,
+                    blue / 255f,
+                    1f));
+                float rotation = (float)(random.NextDouble() * Math.PI * 2d);
 
                 var textControl = TextDisplayFactory.Rent();
                 TextDisplayFactory.SetText(textControl, "lol?");
@@ -309,7 +351,7 @@ public static class LolsPage
                 textControl.Width = 80f;
                 textControl.Height = 40f;
                 textControl.CenterPoint = new Vector3(40f, 20f, 0f);
-                textControl.Rotation = (float)(rotation * Math.PI / 180f);
+                textControl.Rotation = rotation;
 
                 float left = (float)(random.NextDouble() * (width - 80f));
                 float top = (float)(random.NextDouble() * (height - 40f));
@@ -328,7 +370,15 @@ public static class LolsPage
 
                 _canvas.AddChild(textControl);
                 _count++;
-            });
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _drainScheduled, 0);
+            if (_isRunning && Volatile.Read(ref _pendingElementCount) > 0)
+            {
+                SchedulePendingDrain();
+            }
         }
     }
 }

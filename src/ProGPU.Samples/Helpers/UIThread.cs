@@ -5,13 +5,16 @@ namespace ProGPU.Samples;
 
 public static class UIThread
 {
-    private static readonly Queue<Action> _queue = new();
+    private static readonly object s_gate = new();
+    private static Queue<Action> s_queue = new();
+    private static Queue<Action> s_processingQueue = new();
+    private static bool s_isProcessing;
 
     public static void Post(Action action)
     {
-        lock (_queue)
+        lock (s_gate)
         {
-            _queue.Enqueue(action);
+            s_queue.Enqueue(action);
         }
     }
 
@@ -19,37 +22,45 @@ public static class UIThread
     {
         get
         {
-            lock (_queue)
+            lock (s_gate)
             {
-                return _queue.Count;
+                return s_queue.Count;
             }
         }
     }
 
     public static void RunPending()
     {
-        List<Action>? local = null;
-        lock (_queue)
+        lock (s_gate)
         {
-            if (_queue.Count > 0)
+            if (s_isProcessing || s_queue.Count == 0)
             {
-                local = new List<Action>(_queue);
-                _queue.Clear();
+                return;
             }
+
+            (s_queue, s_processingQueue) = (s_processingQueue, s_queue);
+            s_isProcessing = true;
         }
 
-        if (local != null)
+        try
         {
-            foreach (var act in local)
+            while (s_processingQueue.TryDequeue(out var action))
             {
                 try
                 {
-                    act();
+                    action();
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error running posted UI action: {ex.Message}");
                 }
+            }
+        }
+        finally
+        {
+            lock (s_gate)
+            {
+                s_isProcessing = false;
             }
         }
     }
