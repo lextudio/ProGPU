@@ -232,12 +232,17 @@ public enum SKPathAddMode
 public enum SKPixelGeometry
 {
     Unknown = 0,
-    UnknownHorizontal = 1,
-    UnknownVertical = 2,
-    RgbHorizontal = 3,
-    RgbVertical = 4,
-    BgrHorizontal = 5,
-    BgrVertical = 6,
+    RgbHorizontal = 1,
+    BgrHorizontal = 2,
+    RgbVertical = 3,
+    BgrVertical = 4,
+}
+
+[Flags]
+public enum SKSurfacePropsFlags
+{
+    None = 0,
+    UseDeviceIndependentFonts = 1,
 }
 
 public enum SKEncodedImageFormat
@@ -3463,17 +3468,27 @@ public class SKCodec : SKObject
             NotSupportedException;
 }
 
-public class SKSurfaceProperties : IDisposable
+public class SKSurfaceProperties : SKObject
 {
+    public SKSurfacePropsFlags Flags { get; }
     public SKPixelGeometry PixelGeometry { get; }
+    public bool IsUseDeviceIndependentFonts => Flags.HasFlag(SKSurfacePropsFlags.UseDeviceIndependentFonts);
 
     public SKSurfaceProperties(SKPixelGeometry pixelGeometry)
+        : this(SKSurfacePropsFlags.None, pixelGeometry)
     {
-        PixelGeometry = pixelGeometry;
     }
 
-    public void Dispose()
+    public SKSurfaceProperties(uint flags, SKPixelGeometry pixelGeometry)
+        : this((SKSurfacePropsFlags)flags, pixelGeometry)
     {
+    }
+
+    public SKSurfaceProperties(SKSurfacePropsFlags flags, SKPixelGeometry pixelGeometry)
+        : base(IntPtr.Zero, owns: true)
+    {
+        Flags = flags;
+        PixelGeometry = pixelGeometry;
     }
 }
 

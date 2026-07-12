@@ -135,6 +135,8 @@ Image metadata uses the complete `SKImageInfo` value contract and SkiaSharp 4.14
 
 `SKRotationScaleMatrix` provides the complete SkiaSharp 4.148 identity, translation, uniform-scale, radian rotation, degree rotation, anchored rotation-scale, and matrix-conversion factories used by RSXform text and atlas placement. Every factory is allocation-free `O(1)` CPU math. Combined transforms preserve native operation order: degree conversion multiplies by the pre-divided float radians-per-degree constant, sine and cosine are evaluated in double precision and then cast to float, and anchor compensation is applied in the original float expression order. This keeps all four stored components bit-identical to native without initializing WebGPU.
 
+`SKSurfaceProperties` retains SkiaSharp 4.148 surface metadata as an `O(1)` managed value holder over the normal `SKObject` lifetime. `SKPixelGeometry` uses the native five-value numbering (`Unknown`, RGB/BGR horizontal, RGB/BGR vertical), and `SKSurfacePropsFlags` preserves both the device-independent-font bit and unknown caller bits supplied through the `uint` constructor. Construction and property queries allocate no GPU resource and do not initialize WebGPU; consumers may use the metadata when selecting text rasterization behavior without remapping enum values.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
