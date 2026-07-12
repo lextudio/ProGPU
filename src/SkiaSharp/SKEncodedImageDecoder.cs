@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Numerics;
 
 namespace SkiaSharp;
 
@@ -100,9 +101,20 @@ internal static class SKEncodedImageDecoder
         var dibHeight = BinaryPrimitives.ReadInt32LittleEndian(payload.Slice(8, 4));
         var bitCount = BinaryPrimitives.ReadUInt16LittleEndian(payload.Slice(14, 2));
         var compression = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(16, 4));
-        if (headerSize < 40 || headerSize > payload.Length || compression != 0 || bitCount is not (24 or 32))
+        var isUncompressed = compression == 0;
+        var usesBitFields = compression is 3 or 6;
+        if (headerSize < 40
+            || headerSize > payload.Length
+            || (!(isUncompressed && bitCount is 1 or 4 or 8 or 16 or 24 or 32)
+                && !(usesBitFields && bitCount is 16 or 32)))
         {
-            throw new NotSupportedException("Only uncompressed 24-bit and 32-bit ICO bitmap frames are supported.");
+            throw new NotSupportedException(
+                "Only uncompressed indexed, 16-bit, 24-bit, 32-bit, and 16/32-bit bitfield ICO bitmap frames are supported.");
+        }
+
+        if (dibWidth == int.MinValue || dibHeight == int.MinValue)
+        {
+            throw new InvalidOperationException("ICO bitmap dimensions are invalid.");
         }
 
         var width = Math.Abs(dibWidth);
@@ -112,39 +124,204 @@ internal static class SKEncodedImageDecoder
             throw new InvalidOperationException("ICO bitmap dimensions are invalid.");
         }
 
-        var bytesPerPixel = bitCount / 8;
+        var pixelOffset = headerSize;
+        var redMask = bitCount == 16 && isUncompressed ? 0x7c00u : 0u;
+        var greenMask = bitCount == 16 && isUncompressed ? 0x03e0u : 0u;
+        var blueMask = bitCount == 16 && isUncompressed ? 0x001fu : 0u;
+        var alphaMask = 0u;
+        if (usesBitFields)
+        {
+            if (headerSize >= 52)
+            {
+                redMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(40, 4));
+                greenMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(44, 4));
+                blueMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(48, 4));
+                if (headerSize >= 56)
+                {
+                    alphaMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(52, 4));
+                }
+            }
+            else
+            {
+                var maskCount = compression == 6 ? 4 : 3;
+                var maskByteCount = checked(maskCount * 4);
+                if (pixelOffset > payload.Length - maskByteCount)
+                {
+                    throw new InvalidOperationException("ICO bitfield masks are truncated.");
+                }
+
+                redMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(pixelOffset, 4));
+                greenMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(pixelOffset + 4, 4));
+                blueMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(pixelOffset + 8, 4));
+                if (maskCount == 4)
+                {
+                    alphaMask = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(pixelOffset + 12, 4));
+                }
+
+                pixelOffset += maskByteCount;
+            }
+
+            ValidateBitFieldMasks(bitCount, compression, redMask, greenMask, blueMask, alphaMask);
+        }
+
+        ReadOnlySpan<byte> palette = default;
+        if (bitCount <= 8)
+        {
+            var maximumColorCount = 1 << bitCount;
+            var declaredColorCount = BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(32, 4));
+            var colorCount = declaredColorCount == 0
+                ? maximumColorCount
+                : checked((int)declaredColorCount);
+            if (colorCount <= 0 || colorCount > maximumColorCount)
+            {
+                throw new InvalidOperationException("ICO color table size is invalid.");
+            }
+
+            var paletteByteCount = checked(colorCount * 4);
+            if (pixelOffset > payload.Length - paletteByteCount)
+            {
+                throw new InvalidOperationException("ICO color table is truncated.");
+            }
+
+            palette = payload.Slice(pixelOffset, paletteByteCount);
+            pixelOffset += paletteByteCount;
+        }
+
         var xorRowBytes = checked(((width * bitCount + 31) / 32) * 4);
         var xorByteCount = checked(xorRowBytes * height);
-        if (headerSize + xorByteCount > payload.Length)
+        if (pixelOffset > payload.Length - xorByteCount)
         {
             throw new InvalidOperationException("ICO bitmap pixels are truncated.");
         }
 
         var rgba = new byte[checked(width * height * 4)];
         var bottomUp = dibHeight > 0;
-        var hasAlpha = false;
+        var usesPixelAlpha = (bitCount == 32 && isUncompressed) || alphaMask != 0;
+        var hasNonZeroAlpha = false;
         for (var y = 0; y < height; y++)
         {
             var sourceY = bottomUp ? height - 1 - y : y;
-            var sourceRow = payload.Slice(headerSize + sourceY * xorRowBytes, xorRowBytes);
+            var sourceRow = payload.Slice(pixelOffset + sourceY * xorRowBytes, xorRowBytes);
             for (var x = 0; x < width; x++)
             {
-                var source = x * bytesPerPixel;
                 var destination = (y * width + x) * 4;
-                rgba[destination] = sourceRow[source + 2];
-                rgba[destination + 1] = sourceRow[source + 1];
-                rgba[destination + 2] = sourceRow[source];
-                rgba[destination + 3] = bytesPerPixel == 4 ? sourceRow[source + 3] : (byte)255;
-                hasAlpha |= rgba[destination + 3] != 0;
+                if (bitCount <= 8)
+                {
+                    var colorIndex = bitCount switch
+                    {
+                        1 => (sourceRow[x >> 3] >> (7 - (x & 7))) & 0x01,
+                        4 => (sourceRow[x >> 1] >> (x % 2 == 0 ? 4 : 0)) & 0x0f,
+                        _ => sourceRow[x]
+                    };
+                    var paletteOffset = colorIndex * 4;
+                    if (paletteOffset + 4 > palette.Length)
+                    {
+                        throw new InvalidOperationException("ICO bitmap references a missing color table entry.");
+                    }
+
+                    rgba[destination] = palette[paletteOffset + 2];
+                    rgba[destination + 1] = palette[paletteOffset + 1];
+                    rgba[destination + 2] = palette[paletteOffset];
+                    rgba[destination + 3] = 255;
+                    continue;
+                }
+
+                if (bitCount == 16)
+                {
+                    var packed = BinaryPrimitives.ReadUInt16LittleEndian(sourceRow.Slice(x * 2, 2));
+                    rgba[destination] = ExtractMaskedChannel(packed, redMask);
+                    rgba[destination + 1] = ExtractMaskedChannel(packed, greenMask);
+                    rgba[destination + 2] = ExtractMaskedChannel(packed, blueMask);
+                    rgba[destination + 3] = ExtractMaskedChannel(packed, alphaMask, 255);
+                    hasNonZeroAlpha |= rgba[destination + 3] != 0;
+                    continue;
+                }
+
+                if (bitCount == 24)
+                {
+                    var source = x * 3;
+                    rgba[destination] = sourceRow[source + 2];
+                    rgba[destination + 1] = sourceRow[source + 1];
+                    rgba[destination + 2] = sourceRow[source];
+                    rgba[destination + 3] = 255;
+                    continue;
+                }
+
+                var source32 = x * 4;
+                if (usesBitFields)
+                {
+                    var packed = BinaryPrimitives.ReadUInt32LittleEndian(sourceRow.Slice(source32, 4));
+                    rgba[destination] = ExtractMaskedChannel(packed, redMask);
+                    rgba[destination + 1] = ExtractMaskedChannel(packed, greenMask);
+                    rgba[destination + 2] = ExtractMaskedChannel(packed, blueMask);
+                    rgba[destination + 3] = ExtractMaskedChannel(packed, alphaMask, 255);
+                }
+                else
+                {
+                    rgba[destination] = sourceRow[source32 + 2];
+                    rgba[destination + 1] = sourceRow[source32 + 1];
+                    rgba[destination + 2] = sourceRow[source32];
+                    rgba[destination + 3] = sourceRow[source32 + 3];
+                }
+
+                hasNonZeroAlpha |= rgba[destination + 3] != 0;
             }
         }
 
-        if (!hasAlpha && bytesPerPixel == 4)
+        if (!usesPixelAlpha || !hasNonZeroAlpha)
         {
-            ApplyIconMask(payload, headerSize + xorByteCount, rgba, width, height, bottomUp);
+            ApplyIconMask(payload, pixelOffset + xorByteCount, rgba, width, height, bottomUp);
         }
 
         return new DecodedImage(width, height, rgba, null);
+    }
+
+    private static byte ExtractMaskedChannel(uint packed, uint mask, byte defaultValue = 0)
+    {
+        if (mask == 0)
+        {
+            return defaultValue;
+        }
+
+        var shift = BitOperations.TrailingZeroCount(mask);
+        var maximum = mask >> shift;
+        var value = (packed & mask) >> shift;
+        return (byte)(((ulong)value * 255UL + maximum / 2UL) / maximum);
+    }
+
+    private static void ValidateBitFieldMasks(
+        ushort bitCount,
+        uint compression,
+        uint redMask,
+        uint greenMask,
+        uint blueMask,
+        uint alphaMask)
+    {
+        var validBits = bitCount == 32 ? uint.MaxValue : (1u << bitCount) - 1u;
+        if (redMask == 0
+            || greenMask == 0
+            || blueMask == 0
+            || compression == 6 && alphaMask == 0
+            || ((redMask | greenMask | blueMask | alphaMask) & ~validBits) != 0
+            || !IsContiguousMask(redMask)
+            || !IsContiguousMask(greenMask)
+            || !IsContiguousMask(blueMask)
+            || alphaMask != 0 && !IsContiguousMask(alphaMask)
+            || (redMask & greenMask) != 0
+            || (redMask & blueMask) != 0
+            || (redMask & alphaMask) != 0
+            || (greenMask & blueMask) != 0
+            || (greenMask & alphaMask) != 0
+            || (blueMask & alphaMask) != 0)
+        {
+            throw new InvalidOperationException("ICO bitfield channel masks are invalid.");
+        }
+    }
+
+    private static bool IsContiguousMask(uint mask)
+    {
+        var normalized = mask >> BitOperations.TrailingZeroCount(mask);
+        return (normalized & (normalized + 1u)) == 0;
     }
 
     private static SKColorSpace? ReadPngColorSpace(ReadOnlySpan<byte> data)
