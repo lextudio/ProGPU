@@ -1910,6 +1910,15 @@ public class SKCanvas : IDisposable
         }
     }
 
+    public void DrawDrawable(SKDrawable drawable, in SKMatrix matrix) =>
+        drawable.Draw(this, in matrix);
+
+    public void DrawDrawable(SKDrawable drawable, SKPoint point) =>
+        drawable.Draw(this, point.X, point.Y);
+
+    public void DrawDrawable(SKDrawable drawable, float x, float y) =>
+        drawable.Draw(this, x, y);
+
     public void DrawLine(float x0, float y0, float x1, float y1, SKPaint paint)
     {
         using var path = new SKPath();
