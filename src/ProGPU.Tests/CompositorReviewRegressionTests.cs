@@ -182,17 +182,34 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
             "GetTextPathCoverageGamma",
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(method);
+        var rasterizationMethod = typeof(Compositor).GetMethod(
+            "ResolveTextRasterization",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(rasterizationMethod);
 
-        float GetGamma(float fontSize, Matrix4x4 transform) =>
-            Assert.IsType<float>(method.Invoke(
+        float GetGamma(
+            float fontSize,
+            Matrix4x4 transform,
+            float dpiScale = 1f,
+            float staticZoom = 1f)
+        {
+            var rasterization = Assert.IsType<ValueTuple<float, float, float>>(rasterizationMethod.Invoke(
                 null,
-                [fontSize, transform, TransformMetrics.GetStrokeScale(transform)]));
+                [fontSize, transform, dpiScale, staticZoom]));
+            return Assert.IsType<float>(method.Invoke(
+                null,
+                [fontSize, transform, TransformMetrics.GetStrokeScale(transform), rasterization.Item1]));
+        }
 
         Assert.Equal(0.72f, GetGamma(18f, Matrix4x4.Identity));
         Assert.Equal(0.61f, GetGamma(32f, Matrix4x4.Identity));
         Assert.Equal(0.61f, GetGamma(18f, Matrix4x4.CreateScale(2f, 3f, 1f)));
-        Assert.Equal(0.875f, GetGamma(32f, Matrix4x4.CreateRotationZ(MathF.PI / 4f)));
-        Assert.Equal(0.875f, GetGamma(32f, Matrix4x4.CreateScale(-1f, 1f, 1f)));
+        Assert.Equal(0.72f, GetGamma(12f, Matrix4x4.Identity, dpiScale: 1.999f));
+        Assert.Equal(0.61f, GetGamma(12f, Matrix4x4.Identity, dpiScale: 2f));
+        Assert.Equal(0.72f, GetGamma(12f, Matrix4x4.Identity, staticZoom: 1.999f));
+        Assert.Equal(0.61f, GetGamma(12f, Matrix4x4.Identity, staticZoom: 2f));
+        Assert.Equal(0.875f, GetGamma(32f, Matrix4x4.CreateRotationZ(MathF.PI / 4f), dpiScale: 2f));
+        Assert.Equal(0.875f, GetGamma(32f, Matrix4x4.CreateScale(-1f, 1f, 1f), staticZoom: 2f));
 
         var shear = Matrix4x4.Identity;
         shear.M21 = 0.25f;

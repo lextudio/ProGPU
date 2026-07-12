@@ -7615,7 +7615,11 @@ SceneStateUploadComplete:
             staticZoom);
         var transformScale = TransformMetrics.GetStrokeScale(activeTransform);
         var atlasUpscale = atlasToLogicalScale * transformScale * staticZoom;
-        var textPathCoverageGamma = GetTextPathCoverageGamma(cmd.FontSize, activeTransform, transformScale);
+        var textPathCoverageGamma = GetTextPathCoverageGamma(
+            cmd.FontSize,
+            activeTransform,
+            transformScale,
+            dpiScale);
         bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
                          activeTransform.M11 < 0.0f ||
@@ -7794,7 +7798,11 @@ SceneStateUploadComplete:
             staticZoom);
         var transformScale = TransformMetrics.GetStrokeScale(activeTransform);
         var atlasUpscale = atlasToLogicalScale * transformScale * staticZoom;
-        var textPathCoverageGamma = GetTextPathCoverageGamma(cmd.FontSize, activeTransform, transformScale);
+        var textPathCoverageGamma = GetTextPathCoverageGamma(
+            cmd.FontSize,
+            activeTransform,
+            transformScale,
+            dpiScale);
 
         bool isRotated = MathF.Abs(activeTransform.M12) > 0.0001f ||
                          MathF.Abs(activeTransform.M21) > 0.0001f ||
@@ -8007,7 +8015,11 @@ SceneStateUploadComplete:
         }, placementTransform);
     }
 
-    private static float GetTextPathCoverageGamma(float fontSize, Matrix4x4 transform, float transformScale)
+    private static float GetTextPathCoverageGamma(
+        float fontSize,
+        Matrix4x4 transform,
+        float transformScale,
+        float effectiveDpiScale)
     {
         const float epsilon = 0.0001f;
         var hasNonAxisAlignedBasis = MathF.Abs(transform.M12) > epsilon ||
@@ -8018,7 +8030,7 @@ SceneStateUploadComplete:
             return TransformedTextPathCoverageGamma;
         }
 
-        var pixelSize = MathF.Abs(fontSize) * transformScale;
+        var pixelSize = MathF.Abs(fontSize) * transformScale * effectiveDpiScale;
         return float.IsFinite(pixelSize) && pixelSize >= LargeTextPathCoveragePixelThreshold
             ? LargeTextPathCoverageGamma
             : SmallTextPathCoverageGamma;
