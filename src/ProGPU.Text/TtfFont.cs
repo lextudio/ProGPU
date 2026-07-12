@@ -139,10 +139,8 @@ public class TtfFont
     public bool IsItalic { get; private set; }
     public bool HasTrueTypeOutlines { get; private set; }
     public bool HasCffOutlines => _cffTypeface is not null;
-    public bool HasBitmapGlyphs =>
-        _tables.ContainsKey("sbix") ||
-        (_tables.ContainsKey("CBLC") && _tables.ContainsKey("CBDT")) ||
-        (_tables.ContainsKey("bloc") && _tables.ContainsKey("bdat"));
+    public bool HasBitmapGlyphs { get; }
+    public bool HasColorGlyphs { get; }
     public bool UsesSymbolCharacterMap => _face.UsesSymbolCharacterMap;
 
     // Font parameters
@@ -205,6 +203,13 @@ public class TtfFont
         SubfamilyName = GetName(SfntNameIds.PreferredSubfamilyName, SfntNameIds.SubfamilyName) ?? string.Empty;
         FullName = GetName(SfntNameIds.FullName) ?? FamilyName;
         ParseTableDirectory();
+        HasBitmapGlyphs =
+            _tables.ContainsKey("sbix") ||
+            (_tables.ContainsKey("CBLC") && _tables.ContainsKey("CBDT")) ||
+            (_tables.ContainsKey("bloc") && _tables.ContainsKey("bdat"));
+        HasColorGlyphs =
+            (_tables.ContainsKey("COLR") && _tables.ContainsKey("CPAL")) ||
+            _tables.ContainsKey("SVG ");
         if (_tables.ContainsKey("CFF "))
         {
             byte[] cffFontData = _face.BaseOffset == 0

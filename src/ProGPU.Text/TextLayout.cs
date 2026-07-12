@@ -16,6 +16,7 @@ public struct TextRunGlyph
 {
     public char Character;
     public uint CodePoint;
+    public ushort GlyphIndex;
     public Vector2 Position; // Top-Left screen coordinates of the glyph box
     public GlyphInfo Glyph;
     public TtfFont Font; // The font that owns/defines this glyph
@@ -275,7 +276,7 @@ public class TextLayout
                         cursorX += Font.GetKerning(prevCodePoint, codePoint, FontSize);
                     }
                     var glyphPos = new Vector2(cursorX + glyph.BearX, cursorY + fontAscent + glyph.BearY);
-                    Glyphs.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, Position = glyphPos, Glyph = glyph, Font = resolvedFont });
+                    Glyphs.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, GlyphIndex = glyphIdx, Position = glyphPos, Glyph = glyph, Font = resolvedFont });
                     cursorX += glyph.Advance;
                     prevCodePoint = codePoint;
                     lastWordStartIndex = currentLineStart;
@@ -297,7 +298,7 @@ public class TextLayout
 
             // Position calculation (Y is offset by the ascender height so baseline aligns perfectly)
             var pos = new Vector2(cursorX + glyph.BearX, cursorY + fontAscent + glyph.BearY);
-            Glyphs.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, Position = pos, Glyph = glyph, Font = resolvedFont });
+            Glyphs.Add(new TextRunGlyph { Character = c, CodePoint = codePoint, GlyphIndex = glyphIdx, Position = pos, Glyph = glyph, Font = resolvedFont });
             cursorX += glyph.Advance;
             prevCodePoint = codePoint;
         }

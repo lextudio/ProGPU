@@ -202,6 +202,11 @@ public class RichTextBlock : FrameworkElement
     private TextAlignment _textAlignment = TextAlignment.Left;
     private readonly List<PositionedRichChar> _positionedChars = new();
     private readonly List<TableVisualDecoration> _tableDecorations = new();
+    private readonly DrawingContext _renderCommandCache = new();
+    private bool _isRenderCommandCacheDirty = true;
+    private int _cachedSelectionStart = -1;
+    private int _cachedSelectionLength;
+    private Hyperlink? _cachedHoveredHyperlink;
 
     public List<Inline> Inlines { get; } = new();
 
@@ -228,12 +233,14 @@ public class RichTextBlock : FrameworkElement
     public void InvalidateLayout()
     {
         _isLayoutDirty = true;
+        _isRenderCommandCacheDirty = true;
         InvalidateMeasure();
     }
 
     public new void Invalidate()
     {
         _isLayoutDirty = true;
+        _isRenderCommandCacheDirty = true;
         base.Invalidate();
         InvalidateMeasure();
     }
@@ -241,6 +248,7 @@ public class RichTextBlock : FrameworkElement
     protected override void OnThemeChanged()
     {
         _isLayoutDirty = true;
+        _isRenderCommandCacheDirty = true;
         base.OnThemeChanged();
     }
 
@@ -441,6 +449,7 @@ public class RichTextBlock : FrameworkElement
             this, 
             AddChild, 
             RemoveChild);
+        _isRenderCommandCacheDirty = true;
     }
 
     public void AccumulateInlines(Inline inline, List<RichChar> list, Brush defaultFg, float defaultSize, bool isBold, bool isItalic, bool isUnderline, Inline? parentInline = null, float leftIndent = 0f)
@@ -451,16 +460,38 @@ public class RichTextBlock : FrameworkElement
     public override void OnRender(DrawingContext context)
     {
         var activeFont = ActiveFont;
-        if (activeFont == null || _positionedChars.Count == 0) return;
+        if (activeFont == null || _positionedChars.Count == 0)
+        {
+            _renderCommandCache.Clear();
+            _isRenderCommandCacheDirty = false;
+            return;
+        }
 
-        TextLayoutEngine.Render(
-            context, 
-            _positionedChars, 
-            _tableDecorations, 
-            activeFont, 
-            SelectionStart, 
-            SelectionLength, 
-            _hoveredHyperlink);
+        if (_cachedSelectionStart != SelectionStart ||
+            _cachedSelectionLength != SelectionLength ||
+            !ReferenceEquals(_cachedHoveredHyperlink, _hoveredHyperlink))
+        {
+            _isRenderCommandCacheDirty = true;
+        }
+
+        if (_isRenderCommandCacheDirty)
+        {
+            _renderCommandCache.Clear();
+            TextLayoutEngine.Render(
+                _renderCommandCache,
+                _positionedChars,
+                _tableDecorations,
+                activeFont,
+                SelectionStart,
+                SelectionLength,
+                _hoveredHyperlink);
+            _cachedSelectionStart = SelectionStart;
+            _cachedSelectionLength = SelectionLength;
+            _cachedHoveredHyperlink = _hoveredHyperlink;
+            _isRenderCommandCacheDirty = false;
+        }
+
+        context.Commands.AddRange(_renderCommandCache.Commands);
 
         base.OnRender(context);
     }

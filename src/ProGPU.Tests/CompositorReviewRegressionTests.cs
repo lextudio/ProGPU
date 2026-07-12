@@ -227,6 +227,21 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public void PathAtlasPreservesCacheWhenFrameReservationCannotFitEvenWhenEmpty()
+    {
+        using var atlas = new PathAtlas(HeadlessWindow.Shared.Context, atlasSize: 256);
+        atlas.GetOrCreatePath(
+            PrimitivePathGeometry.CreateRectangle(0f, 0f, 32f, 32f),
+            scale: 1f);
+        ulong generation = atlas.Generation;
+
+        atlas.CleanupFrame(anticipatedWidth: 200, anticipatedHeight: 200);
+
+        Assert.Equal(1, atlas.CachedPathCount);
+        Assert.Equal(generation, atlas.Generation);
+    }
+
+    [Fact]
     public void AcisSolidPipelineUsesAlreadyComposedTransformOnce()
     {
         var compositor = CreateUninitializedCompositorForExtensionCompile();
@@ -1072,6 +1087,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     public void DrawGlyphRunFlushesActualTextCountBeforeColorLayerPaths()
     {
         var font = new TtfFont(BuildColorLayerFont());
+        Assert.True(font.HasColorGlyphs);
+        Assert.False(font.HasBitmapGlyphs);
         var window = HeadlessWindow.Shared;
         window.Resize(96, 48);
         window.Content = new MixedColorGlyphRunVisual(font);
@@ -1112,6 +1129,9 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     public void GlyphAtlasDoesNotTreatMissingGlyphIdAsWhitespace()
     {
         var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        Assert.False(font.HasColorGlyphs);
+        var layout = new TextLayout("A", font, 24f);
+        Assert.Equal(font.GetGlyphIndex('A'), Assert.Single(layout.Glyphs).GlyphIndex);
         GlyphAtlas atlas = HeadlessWindow.Shared.Compositor.Atlas;
 
         GlyphInfo tab = atlas.GetOrCreateGlyph(font, '\t', 24f);
@@ -1121,6 +1141,24 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(0u, tab.Height);
         Assert.True(missing.Width > 0, "Expected missing-glyph ID 0 to keep its outline width.");
         Assert.True(missing.Height > 0, "Expected missing-glyph ID 0 to keep its outline height.");
+    }
+
+    [Fact]
+    public void GlyphAtlasGenerationChangesWhenCapacityResetMovesEntries()
+    {
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        using var atlas = new GlyphAtlas(HeadlessWindow.Shared.Context, atlasSize: 64);
+        ulong generation = atlas.Generation;
+
+        for (int size = 8; size <= 20 && atlas.Generation == generation; size++)
+        {
+            for (byte subpixel = 0; subpixel < 4; subpixel++)
+            {
+                atlas.GetOrCreateGlyph(font, 'A', size, subpixel);
+            }
+        }
+
+        Assert.True(atlas.Generation > generation);
     }
 
     [Fact]
@@ -2068,6 +2106,68 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(
             options.InitialIndexCount * sizeof(uint),
             GetCompositorField<GpuBuffer>(compositor, "_vectorIndexBuffer").Size);
+    }
+
+    [Fact]
+    public unsafe void CompositorCanDisableGpuHitTestIndexCompilation()
+    {
+        using var window = new HeadlessWindow(32, 32);
+        using var target = new GpuTexture(
+            window.Context,
+            32,
+            32,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "GPU Hit Test Disabled Target");
+        using var compositor = new Compositor(
+            window.Context,
+            TextureFormat.Rgba8Unorm,
+            CompositorOptions.Default with { EnableGpuHitTesting = false });
+        var visual = new DrawingVisual();
+        visual.Context.DrawRectangle(
+            new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+            null,
+            new Rect(0f, 0f, 32f, 32f));
+
+        compositor.RenderScene(visual, 32, 32, target.ViewPtr);
+
+        Assert.Null(compositor.LastHitTestIndex);
+        Assert.Null(compositor.LastHitTestDeviceIndex);
+    }
+
+    [Fact]
+    public void RichTextBlockReusesCommandsUntilContentIsInvalidated()
+    {
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        var block = new RichTextBlock
+        {
+            Font = font,
+            FontSize = 14f,
+            Foreground = new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f))
+        };
+        block.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run("abc"));
+        block.Measure(new Vector2(200f, 50f));
+        block.Arrange(new Rect(0f, 0f, 200f, 50f));
+
+        var first = new DrawingContext();
+        block.OnRender(first);
+        var firstText = Assert.Single(first.Commands, command => command.Type == RenderCommandType.DrawText).Text;
+
+        var second = new DrawingContext();
+        block.OnRender(second);
+        var secondText = Assert.Single(second.Commands, command => command.Type == RenderCommandType.DrawText).Text;
+        Assert.Same(firstText, secondText);
+
+        var green = new SolidColorBrush(new Vector4(0f, 1f, 0f, 1f));
+        block.Foreground = green;
+        block.Measure(new Vector2(200f, 50f));
+        block.Arrange(new Rect(0f, 0f, 200f, 50f));
+        var updated = new DrawingContext();
+        block.OnRender(updated);
+
+        Assert.Same(
+            green,
+            Assert.Single(updated.Commands, command => command.Type == RenderCommandType.DrawText).Brush);
     }
 
     [Fact]
