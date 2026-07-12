@@ -185,7 +185,7 @@ public unsafe class Compositor : IDisposable
     private const float QuadrilateralStripEndSdfShapeType = 17f;
     private const float AffineStrokeArcMaxAngleRadians = MathF.PI / 24f;
     // Matches Skia grayscale edge weight for axis-aligned vector glyphs rasterized at 8x8 coverage.
-    private const float SmallTextPathCoverageGamma = 0.65f;
+    private const float SmallTextPathCoverageGamma = 0.72f;
     private const float LargeTextPathCoverageGamma = 0.61f;
     private const float LargeTextPathCoveragePixelThreshold = 24f;
     private const float TransformedTextPathCoverageGamma = 0.875f;

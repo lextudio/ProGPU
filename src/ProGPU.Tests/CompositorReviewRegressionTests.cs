@@ -188,7 +188,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 null,
                 [fontSize, transform, TransformMetrics.GetStrokeScale(transform)]));
 
-        Assert.Equal(0.65f, GetGamma(18f, Matrix4x4.Identity));
+        Assert.Equal(0.72f, GetGamma(18f, Matrix4x4.Identity));
         Assert.Equal(0.61f, GetGamma(32f, Matrix4x4.Identity));
         Assert.Equal(0.61f, GetGamma(18f, Matrix4x4.CreateScale(2f, 3f, 1f)));
         Assert.Equal(0.875f, GetGamma(32f, Matrix4x4.CreateRotationZ(MathF.PI / 4f)));
