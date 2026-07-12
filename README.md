@@ -137,6 +137,8 @@ Image metadata uses the complete `SKImageInfo` value contract and SkiaSharp 4.14
 
 `SKSurfaceProperties` retains SkiaSharp 4.148 surface metadata as an `O(1)` managed value holder over the normal `SKObject` lifetime. `SKPixelGeometry` uses the native five-value numbering (`Unknown`, RGB/BGR horizontal, RGB/BGR vertical), and `SKSurfacePropsFlags` preserves both the device-independent-font bit and unknown caller bits supplied through the `uint` constructor. Construction and property queries allocate no GPU resource and do not initialize WebGPU; consumers may use the metadata when selecting text rasterization behavior without remapping enum values.
 
+`SKFontStyle` mirrors SkiaSharp 4.148 as an `SKObject`-owned immutable style descriptor. The default constructor produces normal weight/width with upright slant, integer constructors retain caller values without normalization, and the `Normal`, `Bold`, `Italic`, and `BoldItalic` properties return stable process-wide instances. Public disposal is protected for those shared instances while ordinary constructed styles release their managed compatibility handle. Construction, property access, and singleton lookup are `O(1)` and do not initialize WebGPU or inspect font files.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
