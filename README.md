@@ -180,7 +180,7 @@ graph TD
 
 1. **System & Windowing (Layer 1)**: Interacts with the operating system event queue and monitors display boundaries via Silk.NET and GLFW. It handles window load, resize, rendering loops, and low-level mouse and keyboard input events.
 2. **Graphics Infrastructure (Layer 2)**: Manages physical GPU adapter querying, logical device creation, graphics command queues, and swapchain surface configuration.
-3. **Compositor, Text & GPGPU Rasterizer (Layer 3)**: Validates and reuses compiled scenes when their visual versions, target configuration, atlas generations, overlays, and cached layers are unchanged. Cache misses compile high-level commands into ordered draw lists and reusable GPU buffers. The text path retains shaped glyph indices, caches font feature availability, and rasterizes glyph and vector outlines analytically in WGSL at physical-pixel resolution.
+3. **Compositor, Text & GPGPU Rasterizer (Layer 3)**: Validates and reuses compiled scenes when their visual versions, target configuration, atlas generations, overlays, and cached layers are unchanged. Cache misses compile high-level commands into ordered draw lists and reusable GPU buffers. Framework adapters retain shaped glyph indices and positions as one glyph-run command; the compositor caches font feature availability and rasterizes glyph and vector outlines analytically in WGSL at physical-pixel resolution.
 4. **Scene Graph & Effects Layer (Layer 4)**: Establishes the retained `ContainerVisual`, `DrawingVisual`, and `Visual` hierarchy. Mutations propagate `ChangeVersion` and dirty state so layout, compiled-scene, and `CacheAsLayer` reuse remain correct. Mask and effect passes use offscreen textures and intentionally stay on the dynamic compilation path.
 5. **WinUI Framework Layer (Layer 5)**: Implements cached `Measure` and `Arrange`, controls, input, and CPU visual-tree hit testing. The WinUI host disables the compositor's duplicate GPU hit-test index while direct compositor consumers retain it by default.
 6. **Application Layer (Layer 6)**: Hosts gallery pages, diagnostics, and opt-in performance workloads. Sample animation and status updates invalidate only the visuals that actually changed.
@@ -230,10 +230,10 @@ The opt-in sample harness reports wall-clock FPS, per-phase timings, allocation 
 
 | Workload | VSync | Wall FPS | Workload throughput | Scene cache |
 | --- | ---: | ---: | ---: | ---: |
-| LOL/s Benchmark | On | 120.21 | 11,996 LOL/s | Dynamic, 0/480 hits |
-| LOL/s Benchmark | Off | 216.48 | 43,224 LOL/s | Dynamic, 0/600 hits |
-| Markdown Playground | Off | 526.83 | Static after warmup | 299/300 hits |
-| DXF CAD Viewer | Off | 478.22 | Static after warmup | 299/300 hits |
+| LOL/s Benchmark | On | 120.26 | 12,001 LOL/s | Dynamic, 0/480 hits |
+| LOL/s Benchmark | Off | 202.48 | 40,429 LOL/s | Dynamic, 0/600 hits |
+| Markdown Playground | Off | 519.43 | Static after warmup | 299/300 hits |
+| DXF CAD Viewer | Off | 484.09 | Static after warmup | 299/300 hits |
 
 Run the same deterministic workload from the repository root:
 
@@ -249,7 +249,9 @@ dotnet run --project src/ProGPU.Samples/ProGPU.Samples.csproj -c Release --no-bu
 
 Set `PROGPU_SAMPLE_BENCHMARK_VSYNC=false` for uncapped throughput, or change the page to `Markdown Playground` or `DXF CAD Viewer` to verify static-scene reuse. The first measured static frame may populate the cache; subsequent frames should report hits unless the page intentionally animates or invalidates.
 
-Rendering quality remains part of the performance contract. The optimized text path retains the glyph index chosen during layout, hoists transform/raster invariants out of glyph loops, and skips color/bitmap table probes only when the parsed font has no such tables. Vector glyphs keep 8x8 path-atlas coverage and use a device-pixel-size transfer calibrated against native Skia: small axis-aligned text preserves fine edge detail, large text receives the slightly stronger coverage needed to match Skia's visual weight, and rotated/reflected text keeps its separately calibrated branch. The physical-size classification includes display DPI, transform scale, and static-buffer zoom, and is computed once per text command for reuse by every glyph. Glyph geometry, subpixel placement, physical DPI rasterization, winding rules, and blend behavior remain unchanged.
+Rendering quality remains part of the performance contract. The optimized text path retains the glyph index chosen during layout, hoists transform/raster invariants out of glyph loops, and skips color/bitmap table probes only when the parsed font has no such tables. Avalonia solid outline text records one retained glyph run instead of one path per glyph: shaped indices are retained, `Vector2` positions are converted once when the platform glyph run is created, and redraws reuse both arrays. Recording is O(1) with no glyph-count-dependent allocation; compositor compilation is O(G) for G glyphs. Gradient brushes and color/bitmap fonts keep their path or texture fallbacks.
+
+Vector glyphs keep 8x8 path-atlas coverage and use a device-pixel-size transfer calibrated against native Skia: small axis-aligned text preserves fine edge detail, large text receives the slightly stronger coverage needed to match Skia's visual weight, and rotated/reflected text keeps its separately calibrated branch. The physical-size classification includes display DPI, transform scale, and static-buffer zoom, and is computed once per text command for reuse by every glyph. Glyph geometry, subpixel placement, physical DPI rasterization, winding rules, brush opacity, and blend behavior remain unchanged.
 
 Texture resampling follows the same contract. SkiaSharp cubic draws retain the requested `SKCubicResampler` B/C coefficients through the recorded command and texture vertices, and the WGSL texture shader evaluates the full Mitchell-Netravali kernel. Mitchell (`1/3, 1/3`), Catmull-Rom (`0, 1/2`), and custom kernels therefore remain distinct. The common Catmull-Rom path keeps its original compact polynomial and pixel output, while coefficient-aware sampling is paid for only by draws that request another cubic kernel.
 
@@ -815,22 +817,26 @@ To support instantaneous zoom transitions on massive CAD models containing thous
 
 3. **WebGPU Queue & Driver Submission Batching**:
    - *Problem*: Previously, rasterizing each new glyph synchronously created a temporary uniform buffer, constructed a WebGPU bind group, instantiated a command encoder, and immediately executed a sequential queue submission (`QueueSubmit`). For drawings with thousands of characters, this sequential driver loop caused severe CPU/GPU Metal synchronization bottlenecks on macOS.
-   - *Solution*: Implemented batching APIs (`BeginBatch` / `EndBatch`) in `GlyphAtlas.cs` to lazily pool and combine multiple glyph compute dispatches. All rasterizations are now recorded into a single `CommandEncoder` and executed in **one** unified `QueueSubmit` at the end of the compile pass, yielding a $1000\times+$ reduction in driver submission overhead.
+   - *Solution*: Implemented nestable batching APIs (`BeginBatch` / `EndBatch`) in `GlyphAtlas.cs` to pool and combine glyph compute dispatches. A normal scene records all new glyphs into one `CommandEncoder` and executes one `QueueSubmit`. The 256 KB uniform ring stores 1,024 256-byte-aligned dispatch records; exceptionally large batches flush before wrap and continue with a fresh encoder, so an unsubmitted dispatch can never observe overwritten uniforms. Submission complexity is $O(\lceil G / 1024 \rceil)$ for $G$ new glyphs, while raster work remains $O(P)$ for $P$ covered glyph pixels.
+
+4. **Stable Atlas Coordinates and Capacity Fallback**:
+   - *Problem*: Clearing a full atlas during compilation relocates UVs that earlier text vertices and static buffers still reference. Clearing proactively near capacity can also turn every changing frame into a full glyph re-rasterization cycle.
+   - *Solution*: Atlas allocation is transactional: a failed shelf placement does not mutate packing state, cached coordinates, or `Generation`. Existing glyphs remain reusable and the new glyph is rendered from its outline through the high-quality vector path. This avoids missing letters and cache thrash while preserving the same geometry and coverage policy. Capacity probing is O(1); an uncached fallback is O(S + P), where S is outline segment count and P is covered path pixels.
 
 ---
 
-### 17. Pre-Allocated Ring Uniform Buffers (Glyph & Path Atlases)
+### 17. Batched Uniform Storage (Glyph & Path Atlases)
 
-To eliminate the continuous CPU memory allocation overhead of creating small, temporary GPU uniform buffers on every render pass, we implemented a **Pre-allocated Ring Uniform Buffer** pattern in both `GlyphAtlas` and `PathAtlas`:
-* **Single Bulk Pre-allocation**: Allocates a single large `GpuBuffer` of `256KB` once at system startup. This pre-allocated ring buffer acts as the backing storage for up to 4,000 active glyph or vector path dispatches.
+To eliminate one temporary GPU buffer per rasterized item, `GlyphAtlas` uses a fixed aligned ring while `PathAtlas` packs each pending batch into shared uniform, record, and segment buffers:
+* **Single Bulk Pre-allocation**: Allocates a `256KB` glyph uniform `GpuBuffer` once at startup. At WebGPU's 256-byte binding alignment this stores 1,024 dispatch records. Path batches use shared packed storage/record/segment uploads sized to their pending work rather than one buffer per path.
 * **256-Byte Alignment Compliance**: Follows the WebGPU standard (`minUniformBufferOffsetAlignment` boundary constraint of 256 bytes) by rounding up structural uniform offsets with a fast bitwise operation:
   $$\text{alignedSize} = (\text{SizeOf<Uniforms>} + 255) \& \sim 255$$
-* **Fast Queue Copy-on-Write**: Inside batch rasterization and pending path loops, parameters are written directly to the pre-allocated ring buffer at the current `_ringOffset` using `QueueWriteBuffer`, completely avoiding buffer creation/destruction:
+* **Fast Queue Copy-on-Write**: Inside glyph batch rasterization, parameters are written directly to the pre-allocated ring buffer at the current `_ringOffset` using `QueueWriteBuffer`, avoiding one buffer allocation per glyph:
   ```csharp
   _context.Wgpu.QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr, _ringOffset, &uniforms, (uint)Marshal.SizeOf<GlyphUniforms>());
   ```
-* **Binding Slice Offsets**: Dynamic bind groups are configured pointing to the exact slice within the ring buffer using `Offset = _ringOffset` and `Size = Marshal.SizeOf<Uniforms>()`. On each batch completion, `_ringOffset` is incremented by `alignedSize`, and it resets to `0` at the start of a new batch loop. This achieves **zero CPU allocations** inside dynamic rasterization loops.
-* **Generation-Tracked Reuse**: `GlyphAtlas.Generation` changes on clear, and `PathAtlas.Generation` changes on clear or repack. The compiled-scene cache records both values so it never reuses UVs after atlas contents move.
+* **Binding Slice Offsets**: Dynamic bind groups point to exact ring slices using `Offset = _ringOffset` and `Size = Marshal.SizeOf<Uniforms>()`. The batch is submitted before the next aligned slice would wrap, then continues from offset zero in a new encoder. Normal scenes still require one submission and the hot loop creates no temporary uniform buffers.
+* **Generation-Tracked Reuse**: `GlyphAtlas.Generation` changes only on an explicit clear, and `PathAtlas.Generation` changes on clear or repack. The compiled-scene cache records both values so it never reuses UVs after atlas contents move. Glyph capacity exhaustion preserves coordinates and therefore does not increment the generation.
 * **Capacity-Safe Path Reservation**: Frame reservation first proves that the requested entries can fit in an empty atlas. An impossible high-DPI reservation is ignored instead of resetting the atlas every frame, preserving static path reuse and avoiding repeated compute rasterization.
 
 ---

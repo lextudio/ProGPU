@@ -67,6 +67,7 @@ Required focused tests live in `LayerRenderTests` and `CompositorReviewRegressio
 * Do not update animations twice. `Window.RenderFrameCore` owns the core `UpdateAnimations` call; sample callbacks should update only sample-specific state.
 * Keep status/diagnostic text updates rate-limited. Rebuilding `RichTextBlock` inlines every frame defeats both its command cache and whole-scene reuse.
 * Preserve `TextRunGlyph.GlyphIndex`; do not repeat character-map lookup during compositor compilation. Cache font table capability flags and hoist transform, raster-size, basis, and bold invariants out of glyph loops.
+* Framework backends must record ordinary solid outline text as one retained `DrawGlyphRun` command. Preserve the shaped glyph-index array, convert shaped positions once when the platform glyph run is created, and reuse both arrays across invalidations. Never expand common text into one `DrawPath` command or one path-atlas entry per glyph. Recording must stay O(1) with no glyph-count-dependent allocation; compositor compilation remains O(G) for G glyphs. Gradient brushes and color/bitmap fonts may use their dedicated path or texture fallbacks.
 * Classify vector-text coverage once per text command, reusing the already computed transform scale. Physical size must include font size, transform scale, current display DPI, and static-buffer zoom. Keep the calibrated small/large device-pixel policy and transformed-text branch out of per-glyph loops.
 * Preserve Skia font-transform separation. `GetGlyphPath`/`GetTextPath` materialize `x' = x * ScaleX + y * SkewX`, while retained fill glyph runs bypass those APIs and carry the same local transform on the command. Never feed an already transformed path through the command shear again. Neither representation may rescale explicit glyph-run positions or shaped advances a second time. Include local stretch and shear in vector glyph cache keys, and use the existing atlas vertex stretch/shear fields instead of allocating transformed position or outline arrays in the common fill-text path. Keep y-up TrueType and y-down SVG color-glyph shear signs explicit and covered by CPU-only tests.
 * Preserve `SKFont` encoded-text semantics. Validate an entire UTF-8/16/32 run before producing partial output, count supplementary scalars once, treat glyph-ID buffers as native-endian 16-bit values, and return consumed code units/bytes from `BreakText`. Keep span overloads allocation-free, array overloads single-allocation, caller tails untouched, and undersized outputs guarded instead of reproducing native wrapper overreads. Path fallbacks, intercepts, and `GetGlyphPaths` receive already transformed outlines. Text-on-path must cache repeated glyph paths and morph contour points; do not replace it with a single tangent transform per glyph.
@@ -84,6 +85,8 @@ Required focused tests live in `LayerRenderTests` and `CompositorReviewRegressio
 * Preserve the allocation-free double-queue dispatcher. Do not copy the pending queue into a new `List<Action>` per frame, execute newly posted work recursively in the same drain, or enqueue one delegate per benchmark element.
 * Keep producer backpressure bounded. The LOL/s workload batches element mutations and limits pending work separately for VSync and uncapped runs so background production cannot starve rendering.
 * Before reserving atlas capacity, prove that the requested entries fit in an empty atlas. An impossible reservation must not reset a useful atlas every frame.
+* Never clear or repack the glyph atlas automatically while retained scenes or static buffers can reference its UVs. Capacity exhaustion must preserve every existing coordinate and generation, then render an uncached outline through the vector fallback. Tests must sample a color channel against the clear color; opaque target alpha cannot prove that a glyph was drawn.
+* Glyph rasterization batches are nestable. Keep the normal compile path to one queue submission, but flush before the 256-byte-aligned uniform ring wraps; never reuse a uniform offset while an unsubmitted command encoder still references it. For G newly rasterized glyphs and ring capacity R, submission count is O(ceil(G/R)), raster work is O(total glyph pixels), and transient bind-group storage is O(min(G, R)).
 
 ### C. Required Performance and Quality Gates
 
@@ -94,7 +97,7 @@ dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj -c Release
 dotnet test src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj -c Release
 ```
 
-The current baseline is 1,242 renderer tests and 149 headless tests. Update these counts only when tests are intentionally added or removed.
+The current baseline is 1,249 renderer tests and 149 headless tests. Update these counts only when tests are intentionally added or removed.
 
 Build once, then measure the exact final binaries:
 
@@ -114,7 +117,7 @@ PROGPU_SAMPLE_BENCHMARK_VSYNC=false \
 dotnet run --project src/ProGPU.Samples/ProGPU.Samples.csproj -c Release --no-build
 ```
 
-On the current 120 Hz reference machine, the protected targets are about 120 FPS and 12,000 LOL/s with VSync, and at least 36,000 LOL/s uncapped. The current measured values are 11,996 and 43,224 LOL/s. Compare on the same machine and window state; investigate a repeatable drop greater than 10% before merging.
+On the current 120 Hz reference machine, the protected targets are about 120 FPS and 12,000 LOL/s with VSync, and at least 36,000 LOL/s uncapped. The current measured values are 12,001 and 40,429 LOL/s. Compare on the same machine and window state; investigate a repeatable drop greater than 10% before merging.
 
 Also run `Markdown Playground` and `DXF CAD Viewer` uncapped. Stable pages should miss once and then report nearly all `sceneCacheHits`; animated pages and LOL/s should report a useful miss reason rather than a false hit.
 
