@@ -57,9 +57,6 @@ function Assert-Counts($Run, [int] $Total, [int] $Passed, [int] $Failed, [int] $
 $native = Read-TestRun $NativeResults
 $progpu = Read-TestRun $ProGpuResults
 
-Assert-Counts $native 533 530 0 3 'Native W3C'
-Assert-Counts $progpu 533 483 47 3 'ProGPU W3C'
-
 $expectedFixtures = @(
     Get-Content -LiteralPath $KnownDifferences |
         ForEach-Object { $_.Trim() } |
@@ -73,4 +70,7 @@ if ($difference.Count -ne 0) {
     throw "The ProGPU W3C difference inventory changed:`n$($formatted -join [Environment]::NewLine)"
 }
 
-Write-Host "Svg.Skia W3C parity inventory verified: native 530/533 with 3 skips; ProGPU 483/533 with 47 reviewed differences and 3 skips."
+Assert-Counts $native 533 530 0 3 'Native W3C'
+Assert-Counts $progpu 533 482 48 3 'ProGPU W3C'
+
+Write-Host "Svg.Skia W3C parity inventory verified: native 530/533 with 3 skips; ProGPU 482/533 with 48 reviewed differences and 3 skips."
