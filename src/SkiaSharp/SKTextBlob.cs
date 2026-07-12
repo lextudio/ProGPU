@@ -29,7 +29,7 @@ public sealed class SKTextBlobRun
     }
 }
 
-public class SKTextBlob : IDisposable
+public partial class SKTextBlob : IDisposable
 {
     public IntPtr Handle { get; } = SKObjectHandle.Create();
     public SKTextBlobRun[] Runs { get; }
@@ -69,12 +69,6 @@ public class SKTextBlob : IDisposable
             Array.Copy(run.GlyphPositions, 0, GlyphPositions, offset, run.GlyphPositions.Length);
             offset += run.GlyphIndices.Length;
         }
-    }
-
-    public float[] GetIntercepts(float lowerLimit, float upperLimit)
-    {
-        // Intercepts are used for text underline/strikeout intersections; we return an empty array for basic support.
-        return Array.Empty<float>();
     }
 
     public static SKTextBlob? CreatePositioned(
