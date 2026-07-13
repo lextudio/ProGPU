@@ -693,6 +693,10 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             if (isHairline)
             {
                 point = Vector2.Transform(point, transform);
+                if (command.IsEdgeAliased)
+                {
+                    point = new Vector2(MathF.Floor(point.X) + 0.5f, MathF.Floor(point.Y) + 0.5f);
+                }
             }
 
             var min = new Vector2(point.X - radius, point.Y - radius);

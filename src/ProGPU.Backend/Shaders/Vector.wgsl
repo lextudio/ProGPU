@@ -551,7 +551,11 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         // Algorithm: expand a retained point center by the encoded corner offset
         // after static/GPU transforms so a zero-width Skia hairline stays one
         // device pixel. Time and local-space complexity are O(1) per vertex.
-        worldPos = inPos + inTexCoord;
+        let hairlineCenter = select(
+            inPos,
+            floor(inPos) + vec2<f32>(0.5),
+            aliasedEdge);
+        worldPos = hairlineCenter + inTexCoord;
         texCoord = inTexCoord;
         outputShapeType = select(0u, 1u, sType == 20u);
     } else if (sType == 3u) {

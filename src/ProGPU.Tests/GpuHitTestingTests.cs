@@ -509,14 +509,15 @@ public sealed class GpuHitTestingTests
             Brush = new SolidColorBrush(Vector4.One),
             PolylinePoints = [new Vector2(4f, 5f)],
             RadiusX = 0f,
+            IsEdgeAliased = true,
         }, Matrix4x4.CreateScale(4f, 4f, 1f), id: 4323);
 
         var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
 
         var primitive = Assert.Single(index.Primitives);
         Assert.Equal(GpuHitTestPrimitiveKind.RectangleFill, primitive.Kind);
-        Assert.Equal(new Vector2(15.5f, 19.5f), primitive.BoundsMin);
-        Assert.Equal(new Vector2(16.5f, 20.5f), primitive.BoundsMax);
+        Assert.Equal(new Vector2(16f, 20f), primitive.BoundsMin);
+        Assert.Equal(new Vector2(17f, 21f), primitive.BoundsMax);
     }
 
     [Fact]

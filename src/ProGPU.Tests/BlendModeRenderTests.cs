@@ -290,6 +290,10 @@ public sealed class BlendModeRenderTests
 
         public override void OnRender(DrawingContext context)
         {
+            context.DrawRectangle(
+                new SolidColorBrush(new Vector4(0f, 0f, 0f, 1f)),
+                null,
+                new Rect(0f, 0f, 32f, 32f));
             context.DrawPointBatch(
                 new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
                 SquarePoint,
