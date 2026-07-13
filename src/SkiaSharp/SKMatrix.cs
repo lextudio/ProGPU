@@ -173,11 +173,13 @@ public partial struct SKMatrix
 
     public readonly bool TryInvert(out SKMatrix inverse)
     {
-        inverse = Identity;
         if (IsIdentity)
         {
+            inverse = Identity;
             return true;
         }
+
+        inverse = Empty;
 
         if (!HasPerspective && _skewX == 0f && _skewY == 0f)
         {
@@ -231,7 +233,13 @@ public partial struct SKMatrix
                 0f,
                 1f);
 
-        return inverse.AreValuesFinite;
+        if (inverse.AreValuesFinite)
+        {
+            return true;
+        }
+
+        inverse = Empty;
+        return false;
     }
 
     public readonly SKMatrix Invert() => TryInvert(out var inverse) ? inverse : Empty;

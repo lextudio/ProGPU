@@ -1020,7 +1020,7 @@ public struct SKRotationScaleMatrix : IEquatable<SKRotationScaleMatrix>
 
     public static SKRotationScaleMatrix CreateTranslation(float x, float y) => new(1f, 0f, x, y);
 
-    public static SKRotationScaleMatrix CreateScale(float scale) => new(scale, 0f, 0f, 0f);
+    public static SKRotationScaleMatrix CreateScale(float s) => new(s, 0f, 0f, 0f);
 
     public static SKRotationScaleMatrix CreateRotation(float radians, float anchorX, float anchorY) =>
         Create(1f, radians, 0f, 0f, anchorX, anchorY);

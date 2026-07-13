@@ -1772,7 +1772,7 @@ public class SKBitmap : SKObject
 
     public void SetImmutable() => _isImmutable = true;
 
-    public bool CanCopyTo(SKColorType type) => type is
+    public bool CanCopyTo(SKColorType colorType) => colorType is
         SKColorType.Alpha8 or
         SKColorType.Rgb565 or
         SKColorType.Argb4444 or

@@ -87,7 +87,7 @@ public sealed class SkPictureApiCompatibilityTests
         Assert.NotEqual(inner.UniqueId, outer.UniqueId);
         Assert.Equal(outer.Picture.Commands.Length, outer.ApproximateOperationCount);
         Assert.Equal(
-            outer.Picture.Commands.Length + inner.Picture.Commands.Length,
+            outer.Picture.Commands.Length - 1 + inner.Picture.Commands.Length,
             outer.GetApproximateOperationCount(includeNested: true));
         Assert.True(inner.ApproximateBytesUsed > 0);
         Assert.True(outer.ApproximateBytesUsed > 0);

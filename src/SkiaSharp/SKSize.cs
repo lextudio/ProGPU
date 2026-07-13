@@ -6,10 +6,10 @@ public partial struct SKSize
 {
     public readonly bool IsEmpty => Equals(Empty);
 
-    public SKSize(SKPoint point)
+    public SKSize(SKPoint pt)
     {
-        _width = point.X;
-        _height = point.Y;
+        _width = pt.X;
+        _height = pt.Y;
     }
 
     public readonly SKPoint ToPoint() => new(_width, _height);

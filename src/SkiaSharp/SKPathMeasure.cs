@@ -183,14 +183,23 @@ public class SKPathMeasure : SKObject
         var startLocation = contour.GetLocation(clampedStart);
         var stopLocation = contour.GetLocation(clampedStop);
         var startPoint = contour.GetPoint(startLocation);
+        var destinationWasEmpty = dst.IsEmpty;
 
         if (startWithMoveTo)
         {
             dst.MoveTo(ToPoint(startPoint));
         }
-        if (MathF.Abs(clampedStop - clampedStart) <= Epsilon)
+        else if (!destinationWasEmpty)
         {
             dst.LineTo(ToPoint(startPoint));
+        }
+        if (MathF.Abs(clampedStop - clampedStart) <= Epsilon)
+        {
+            if (startWithMoveTo || destinationWasEmpty)
+            {
+                dst.LineTo(ToPoint(startPoint));
+            }
+
             return true;
         }
 

@@ -80,7 +80,7 @@ public sealed class SkMatrixCompatibilityTests
         var singular = new SKMatrix(1f, 2f, 3f, 2f, 4f, 6f, 0f, 0f, 1f);
         Assert.False(singular.IsInvertible);
         Assert.False(singular.TryInvert(out var failed));
-        Assert.Equal(SKMatrix.Identity, failed);
+        Assert.Equal(SKMatrix.Empty, failed);
         Assert.Equal(SKMatrix.Empty, singular.Invert());
 
         var tiny = SKMatrix.CreateScale(1e-20f, 1e-20f);

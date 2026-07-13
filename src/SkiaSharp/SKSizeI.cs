@@ -16,7 +16,7 @@ public partial struct SKSizeI
 
     public override readonly string ToString() => $"{{Width={_width}, Height={_height}}}";
 
-    public static SKSizeI Add(SKSizeI first, SKSizeI second) => first + second;
+    public static SKSizeI Add(SKSizeI sz1, SKSizeI sz2) => sz1 + sz2;
 
     public static SKSizeI Subtract(SKSizeI first, SKSizeI second) => first - second;
 

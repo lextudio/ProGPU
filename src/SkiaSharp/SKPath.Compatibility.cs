@@ -5,19 +5,6 @@ using ProGPU.Vector;
 
 namespace SkiaSharp;
 
-public enum SKPath1DPathEffectStyle
-{
-    Translate = 0,
-    Rotate = 1,
-    Morph = 2,
-}
-
-public enum SKTrimPathEffectMode
-{
-    Normal = 0,
-    Inverted = 1,
-}
-
 internal sealed class RationalConicQuadraticSegment : QuadraticBezierSegment
 {
     public RationalConicQuadraticSegment(

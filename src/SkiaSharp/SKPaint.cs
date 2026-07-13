@@ -351,16 +351,19 @@ public partial class SKPaint : SKObject
         ArgumentNullException.ThrowIfNull(src);
         ArgumentNullException.ThrowIfNull(dst);
 
-        // Skia's builder overload starts from a source snapshot. If a device-dependent
-        // hairline cannot be materialized, that snapshot is the observable fallback.
-        dst.ReplaceWith(new SKPath(src));
         if (!TryCreateFillPath(src, NormalizeResolutionScale(resScale), out var result))
         {
             result.Dispose();
+            dst.ReplaceWith(new SKPath(src));
             return false;
         }
 
-        dst.ReplaceWith(result);
+        using (result)
+        {
+            dst.FillType = result.FillType;
+            dst.AddPath(result);
+        }
+
         return true;
     }
 

@@ -56,7 +56,7 @@ public partial struct SKPoint
 
     public static SKPoint Add(SKPoint point, SKSizeI size) => point + size;
 
-    public static SKPoint Add(SKPoint point, SKSize size) => point + size;
+    public static SKPoint Add(SKPoint pt, SKSize sz) => pt + sz;
 
     public static SKPoint Add(SKPoint point, SKPointI size) => point + size;
 

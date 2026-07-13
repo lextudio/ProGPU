@@ -689,7 +689,6 @@ public class SKRoundRect : IDisposable
 
     public SKRoundRect(SKRoundRect rrect)
     {
-        ArgumentNullException.ThrowIfNull(rrect);
         _rect = rrect._rect;
         _type = rrect._type;
         Array.Copy(rrect._radii, _radii, _radii.Length);

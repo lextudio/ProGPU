@@ -149,11 +149,15 @@ public readonly partial struct SKColorF
 
     public override string ToString() => ((SKColor)this).ToString();
 
-    public static implicit operator SKColorF(SKColor color) => new(
-        color.Red / 255f,
-        color.Green / 255f,
-        color.Blue / 255f,
-        color.Alpha / 255f);
+    public static implicit operator SKColorF(SKColor color)
+    {
+        const float oneOver255 = 1f / 255f;
+        return new SKColorF(
+            color.Red * oneOver255,
+            color.Green * oneOver255,
+            color.Blue * oneOver255,
+            color.Alpha * oneOver255);
+    }
 
     public static explicit operator SKColor(SKColorF color) => new(
         ToByte(color._red),

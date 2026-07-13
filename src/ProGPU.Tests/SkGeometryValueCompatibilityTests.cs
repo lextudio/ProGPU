@@ -99,7 +99,7 @@ public sealed class SkGeometryValueCompatibilityTests
         Assert.Equal(new SKSize(5.75f, 7.25f), size + new SKSize(2f, 3f));
         Assert.Equal(new SKSize(1.75f, 1.25f), SKSize.Subtract(size, new SKSize(2f, 3f)));
         Assert.False(new SKSize(-1f, -1f).IsEmpty);
-        Assert.Equal($"{{Width={size.Width}, Height={size.Height}}}", size.ToString());
+        Assert.Equal("{Width=3.75, Height=4.25}", size.ToString());
         Assert.Throws<OverflowException>(() => new SKSize(float.PositiveInfinity, 1f).ToSizeI());
 
         var integer = new SKSizeI(new SKPointI(5, 7));

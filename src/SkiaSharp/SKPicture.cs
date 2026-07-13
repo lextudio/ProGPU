@@ -65,48 +65,48 @@ public partial class SKPicture : SKObject
             SKMatrix.Identity,
             CullRect);
 
-    public SKShader ToShader(SKShaderTileMode tileModeX, SKShaderTileMode tileModeY) =>
-        ToShader(tileModeX, tileModeY, SKFilterMode.Nearest, SKMatrix.Identity, CullRect);
+    public SKShader ToShader(SKShaderTileMode tmx, SKShaderTileMode tmy) =>
+        ToShader(tmx, tmy, SKFilterMode.Nearest, SKMatrix.Identity, CullRect);
 
     public SKShader ToShader(
-        SKShaderTileMode tileModeX,
-        SKShaderTileMode tileModeY,
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
         SKFilterMode filterMode) =>
-        ToShader(tileModeX, tileModeY, filterMode, SKMatrix.Identity, CullRect);
+        ToShader(tmx, tmy, filterMode, SKMatrix.Identity, CullRect);
 
     public SKShader ToShader(
-        SKShaderTileMode tileModeX,
-        SKShaderTileMode tileModeY,
-        SKRect tileRect) =>
-        ToShader(tileModeX, tileModeY, SKFilterMode.Nearest, SKMatrix.Identity, tileRect);
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
+        SKRect tile) =>
+        ToShader(tmx, tmy, SKFilterMode.Nearest, SKMatrix.Identity, tile);
 
     public SKShader ToShader(
-        SKShaderTileMode tileModeX,
-        SKShaderTileMode tileModeY,
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
         SKFilterMode filterMode,
-        SKRect tileRect) =>
-        ToShader(tileModeX, tileModeY, filterMode, SKMatrix.Identity, tileRect);
+        SKRect tile) =>
+        ToShader(tmx, tmy, filterMode, SKMatrix.Identity, tile);
 
     public SKShader ToShader(
-        SKShaderTileMode tileModeX,
-        SKShaderTileMode tileModeY,
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
         SKMatrix localMatrix,
-        SKRect tileRect) =>
-        ToShader(tileModeX, tileModeY, SKFilterMode.Nearest, localMatrix, tileRect);
+        SKRect tile) =>
+        ToShader(tmx, tmy, SKFilterMode.Nearest, localMatrix, tile);
 
     public SKShader ToShader(
-        SKShaderTileMode tileModeX,
-        SKShaderTileMode tileModeY,
+        SKShaderTileMode tmx,
+        SKShaderTileMode tmy,
         SKFilterMode filterMode,
         SKMatrix localMatrix,
-        SKRect tileRect) =>
+        SKRect tile) =>
         SKShader.CreatePicture(
             Picture.Clone(),
-            tileModeX,
-            tileModeY,
+            tmx,
+            tmy,
             filterMode,
             localMatrix,
-            tileRect);
+            tile);
 
     private static int GetApproximateOperationCount(GpuPicture picture, bool includeNested)
     {
