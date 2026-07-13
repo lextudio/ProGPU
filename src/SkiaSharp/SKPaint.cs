@@ -970,10 +970,17 @@ public class SKShader : IDisposable
         GpuPicture picture,
         SKShaderTileMode tileModeX,
         SKShaderTileMode tileModeY,
+        SKFilterMode filterMode,
         SKMatrix localMatrix,
         SKRect tileRect)
     {
-        return new SKShader(new PictureShaderData(picture, tileModeX, tileModeY, localMatrix, tileRect));
+        return new SKShader(new PictureShaderData(
+            picture,
+            tileModeX,
+            tileModeY,
+            filterMode,
+            localMatrix,
+            tileRect));
     }
 
     internal static SKShader CreateImage(
@@ -1393,12 +1400,14 @@ public class SKShader : IDisposable
             GpuPicture picture,
             SKShaderTileMode tileModeX,
             SKShaderTileMode tileModeY,
+            SKFilterMode filterMode,
             SKMatrix localMatrix,
             SKRect tileRect)
         {
             Picture = picture;
             TileModeX = tileModeX;
             TileModeY = tileModeY;
+            FilterMode = filterMode;
             LocalMatrix = localMatrix;
             TileRect = tileRect;
         }
@@ -1406,6 +1415,7 @@ public class SKShader : IDisposable
         public GpuPicture Picture { get; }
         public SKShaderTileMode TileModeX { get; }
         public SKShaderTileMode TileModeY { get; }
+        public SKFilterMode FilterMode { get; }
         public SKMatrix LocalMatrix { get; }
         public SKRect TileRect { get; }
 
