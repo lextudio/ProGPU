@@ -2207,6 +2207,7 @@ public struct SKColorSpaceXyz : IEquatable<SKColorSpaceXyz>
 
 public struct SKMatrix
 {
+    public static readonly SKMatrix Empty;
     public float ScaleX;
     public float SkewX;
     public float TransX;

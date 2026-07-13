@@ -36,31 +36,31 @@ public partial class SKPath : SKObject
     {
     }
 
-    public SKPath(SKPath source)
+    public SKPath(SKPath path)
         : base(SKObjectHandle.Create(), owns: true)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(path);
         PathFigure? copiedCurrentFigure = null;
-        foreach (var figure in source.Geometry.Figures)
+        foreach (var figure in path.Geometry.Figures)
         {
             var copiedFigure = CloneFigure(figure, Vector2.Zero);
             Geometry.Figures.Add(copiedFigure);
-            if (ReferenceEquals(figure, source._currentFigure))
+            if (ReferenceEquals(figure, path._currentFigure))
             {
                 copiedCurrentFigure = copiedFigure;
             }
         }
 
         _currentFigure = copiedCurrentFigure;
-        _currentPoint = source._currentPoint;
-        _contourStart = source._contourStart;
-        FillType = source.FillType;
+        _currentPoint = path._currentPoint;
+        _contourStart = path._contourStart;
+        FillType = path.FillType;
     }
 
-    public static SKPath ParseSvgPathData(string pathData)
+    public static SKPath ParseSvgPathData(string svgPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(pathData);
-        var geometry = PathGeometry.Parse(pathData);
+        ArgumentException.ThrowIfNullOrWhiteSpace(svgPath);
+        var geometry = PathGeometry.Parse(svgPath);
         var path = new SKPath
         {
             FillType = geometry.FillRule == FillRule.EvenOdd
@@ -292,7 +292,7 @@ public partial class SKPath : SKObject
         _contourStart = point;
     }
 
-    public void MoveTo(SKPoint p) => MoveTo(p.X, p.Y);
+    public void MoveTo(SKPoint point) => MoveTo(point.X, point.Y);
 
     public void LineTo(float x, float y)
     {
@@ -302,7 +302,7 @@ public partial class SKPath : SKObject
         _currentPoint = point;
     }
 
-    public void LineTo(SKPoint p) => LineTo(p.X, p.Y);
+    public void LineTo(SKPoint point) => LineTo(point.X, point.Y);
 
     public void QuadTo(float x0, float y0, float x1, float y1)
     {
@@ -312,7 +312,8 @@ public partial class SKPath : SKObject
         _currentPoint = point;
     }
 
-    public void QuadTo(SKPoint p0, SKPoint p1) => QuadTo(p0.X, p0.Y, p1.X, p1.Y);
+    public void QuadTo(SKPoint point0, SKPoint point1) =>
+        QuadTo(point0.X, point0.Y, point1.X, point1.Y);
 
     public void CubicTo(float x0, float y0, float x1, float y1, float x2, float y2)
     {
@@ -322,9 +323,10 @@ public partial class SKPath : SKObject
         _currentPoint = point;
     }
 
-    public void CubicTo(SKPoint p0, SKPoint p1, SKPoint p2) => CubicTo(p0.X, p0.Y, p1.X, p1.Y, p2.X, p2.Y);
+    public void CubicTo(SKPoint point0, SKPoint point1, SKPoint point2) =>
+        CubicTo(point0.X, point0.Y, point1.X, point1.Y, point2.X, point2.Y);
 
-    public void ArcTo(float rx, float ry, float xAxisRotation, SKPathArcSize largeArc, SKPathDirection sweep, float x, float y)
+    public void ArcTo(float rx, float ry, float xAxisRotate, SKPathArcSize largeArc, SKPathDirection sweep, float x, float y)
     {
         EnsureFigure();
         var point = new Vector2(x, y);
@@ -335,7 +337,7 @@ public partial class SKPath : SKObject
         }
 
         var sd = sweep == SKPathDirection.Clockwise ? SweepDirection.Clockwise : SweepDirection.Counterclockwise;
-        _currentFigure!.Segments.Add(new ArcSegment(point, new Vector2(MathF.Abs(rx), MathF.Abs(ry)), xAxisRotation, largeArc == SKPathArcSize.Large, sd));
+        _currentFigure!.Segments.Add(new ArcSegment(point, new Vector2(MathF.Abs(rx), MathF.Abs(ry)), xAxisRotate, largeArc == SKPathArcSize.Large, sd));
         _currentPoint = point;
     }
 
@@ -356,9 +358,9 @@ public partial class SKPath : SKObject
         FillType = SKPathFillType.Winding;
     }
 
-    public void AddCircle(float x, float y, float radius, SKPathDirection direction = SKPathDirection.Clockwise)
+    public void AddCircle(float x, float y, float radius, SKPathDirection dir = SKPathDirection.Clockwise)
     {
-        AddOval(new SKRect(x - radius, y - radius, x + radius, y + radius), direction);
+        AddOval(new SKRect(x - radius, y - radius, x + radius, y + radius), dir);
     }
 
     public void AddOval(SKRect rect, SKPathDirection direction = SKPathDirection.Clockwise)
@@ -367,9 +369,9 @@ public partial class SKPath : SKObject
         Close();
     }
 
-    public void ConicTo(SKPoint control, SKPoint end, float weight)
+    public void ConicTo(SKPoint point0, SKPoint point1, float w)
     {
-        ConicTo(control.X, control.Y, end.X, end.Y, weight);
+        ConicTo(point0.X, point0.Y, point1.X, point1.Y, w);
     }
 
     public bool Contains(float x, float y)
@@ -404,19 +406,19 @@ public partial class SKPath : SKObject
             direction,
             direction == SKPathDirection.Clockwise ? 6u : 7u);
 
-    public void AddRoundRect(SKRect rect, float rx, float ry, SKPathDirection direction = SKPathDirection.Clockwise)
+    public void AddRoundRect(SKRect rect, float rx, float ry, SKPathDirection dir = SKPathDirection.Clockwise)
     {
-        AddRoundRect(new SKRoundRect(rect, rx, ry), direction);
+        AddRoundRect(new SKRoundRect(rect, rx, ry), dir);
     }
 
     public void AddPath(
         SKPath other,
-        float x,
-        float y,
+        float dx,
+        float dy,
         SKPathAddMode mode = SKPathAddMode.Append)
     {
         ArgumentNullException.ThrowIfNull(other);
-        AddPathCore(other, new Vector2(x, y), mode);
+        AddPathCore(other, new Vector2(dx, dy), mode);
     }
 
     public void AddPath(SKPath other, SKPathAddMode mode = SKPathAddMode.Append) =>

@@ -42,6 +42,8 @@ public sealed class SKPathMeasure : IDisposable
 
     public bool IsClosed => _contour?.IsClosed ?? false;
 
+    public void SetPath(SKPath? path) => SetPath(path, forceClosed: false);
+
     public void SetPath(SKPath? path, bool forceClosed)
     {
         _path?.Dispose();
@@ -75,6 +77,9 @@ public sealed class SKPathMeasure : IDisposable
         return true;
     }
 
+    public SKPoint GetPosition(float distance) =>
+        GetPosition(distance, out var position) ? position : SKPoint.Empty;
+
     public bool GetTangent(float distance, out SKPoint tangent)
     {
         if (!TryGetSample(distance, out _, out var direction))
@@ -86,6 +91,9 @@ public sealed class SKPathMeasure : IDisposable
         tangent = new SKPoint(direction.X, direction.Y);
         return true;
     }
+
+    public SKPoint GetTangent(float distance) =>
+        GetTangent(distance, out var tangent) ? tangent : SKPoint.Empty;
 
     public bool GetPositionAndTangent(float distance, out SKPoint position, out SKPoint tangent)
     {
@@ -104,7 +112,7 @@ public sealed class SKPathMeasure : IDisposable
     public bool GetMatrix(
         float distance,
         out SKMatrix matrix,
-        SKPathMeasureMatrixFlags flags = SKPathMeasureMatrixFlags.GetPositionAndTangent)
+        SKPathMeasureMatrixFlags flags)
     {
         if (!TryGetSample(distance, out var point, out var tangent))
         {
@@ -130,48 +138,79 @@ public sealed class SKPathMeasure : IDisposable
         return true;
     }
 
+    public SKMatrix GetMatrix(float distance, SKPathMeasureMatrixFlags flags) =>
+        GetMatrix(distance, out var matrix, flags) ? matrix : SKMatrix.Empty;
+
+    [Obsolete("Use the SKPathBuilder overload instead.")]
     public bool GetSegment(
-        float startDistance,
-        float stopDistance,
-        SKPath destination,
+        float start,
+        float stop,
+        SKPath dst,
         bool startWithMoveTo)
     {
-        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(dst);
+        using var builder = new SKPathBuilder();
+        if (!GetSegment(start, stop, builder, startWithMoveTo))
+        {
+            return false;
+        }
+
+        using var segment = builder.Detach();
+        dst.Reset();
+        dst.AddPath(segment);
+        return true;
+    }
+
+    public bool GetSegment(
+        float start,
+        float stop,
+        SKPathBuilder dst,
+        bool startWithMoveTo)
+    {
+        ArgumentNullException.ThrowIfNull(dst);
         var contour = _contour;
-        if (contour == null || contour.Length <= Epsilon || !float.IsFinite(startDistance) || !float.IsFinite(stopDistance))
+        if (contour == null || contour.Length <= Epsilon || !float.IsFinite(start) || !float.IsFinite(stop))
         {
             return false;
         }
 
-        var start = Math.Clamp(startDistance, 0f, contour.Length);
-        var stop = Math.Clamp(stopDistance, 0f, contour.Length);
-        if (stop <= start + Epsilon)
+        var clampedStart = Math.Clamp(start, 0f, contour.Length);
+        var clampedStop = Math.Clamp(stop, 0f, contour.Length);
+        if (clampedStop <= clampedStart + Epsilon)
         {
             return false;
         }
 
-        var startPoint = contour.GetPoint(start);
-        if (startWithMoveTo || destination.IsEmpty)
+        var startPoint = contour.GetPoint(clampedStart);
+        if (startWithMoveTo || dst.IsEmpty)
         {
-            destination.MoveTo(startPoint.X, startPoint.Y);
+            dst.MoveTo(startPoint.X, startPoint.Y);
         }
         else
         {
-            destination.LineTo(startPoint.X, startPoint.Y);
+            dst.LineTo(startPoint.X, startPoint.Y);
         }
 
         for (var i = 1; i < contour.Samples.Count - 1; i++)
         {
             var sample = contour.Samples[i];
-            if (sample.Distance > start + Epsilon && sample.Distance < stop - Epsilon)
+            if (sample.Distance > clampedStart + Epsilon && sample.Distance < clampedStop - Epsilon)
             {
-                destination.LineTo(sample.Point.X, sample.Point.Y);
+                dst.LineTo(sample.Point.X, sample.Point.Y);
             }
         }
 
-        var stopPoint = contour.GetPoint(stop);
-        destination.LineTo(stopPoint.X, stopPoint.Y);
+        var stopPoint = contour.GetPoint(clampedStop);
+        dst.LineTo(stopPoint.X, stopPoint.Y);
         return true;
+    }
+
+    public SKPath? GetSegment(float start, float stop, bool startWithMoveTo)
+    {
+        using var builder = new SKPathBuilder();
+        return GetSegment(start, stop, builder, startWithMoveTo)
+            ? builder.Detach()
+            : null;
     }
 
     private bool TryGetSample(float distance, out Vector2 point, out Vector2 tangent)

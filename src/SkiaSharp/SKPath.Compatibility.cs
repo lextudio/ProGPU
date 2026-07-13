@@ -131,10 +131,10 @@ public partial class SKPath
     public void AddArc(SKRect oval, float startAngle, float sweepAngle) =>
         AppendOvalArc(oval, startAngle, sweepAngle, forceMoveTo: true);
 
-    public void AddPathReverse(SKPath path)
+    public void AddPathReverse(SKPath other)
     {
-        ArgumentNullException.ThrowIfNull(path);
-        var figures = path.Geometry.Figures;
+        ArgumentNullException.ThrowIfNull(other);
+        var figures = other.Geometry.Figures;
         for (var index = figures.Count - 1; index >= 0; index--)
         {
             var reversed = ReverseFigure(figures[index]);
@@ -181,12 +181,12 @@ public partial class SKPath
         ArcTo(point1.X, point1.Y, point2.X, point2.Y, radius);
 
     public void ArcTo(
-        SKPoint radii,
+        SKPoint r,
         float xAxisRotate,
         SKPathArcSize largeArc,
         SKPathDirection sweep,
-        SKPoint end) =>
-        ArcTo(radii.X, radii.Y, xAxisRotate, largeArc, sweep, end.X, end.Y);
+        SKPoint xy) =>
+        ArcTo(r.X, r.Y, xAxisRotate, largeArc, sweep, xy.X, xy.Y);
 
     public void ArcTo(SKRect oval, float startAngle, float sweepAngle, bool forceMoveTo) =>
         AppendOvalArc(oval, startAngle, sweepAngle, forceMoveTo);
@@ -244,7 +244,7 @@ public partial class SKPath
 
     public SKRect ComputeTightBounds() => TightBounds;
 
-    public void ConicTo(float x0, float y0, float x1, float y1, float weight)
+    public void ConicTo(float x0, float y0, float x1, float y1, float w)
     {
         EnsureFigure();
         AppendConicSpans(
@@ -252,13 +252,13 @@ public partial class SKPath
             _currentPoint,
             new Vector2(x0, y0),
             new Vector2(x1, y1),
-            weight);
+            w);
         _currentPoint = new Vector2(x1, y1);
     }
 
-    public bool GetBounds(out SKRect bounds)
+    public bool GetBounds(out SKRect rect)
     {
-        bounds = Bounds;
+        rect = Bounds;
         return !IsEmpty;
     }
 
@@ -321,9 +321,9 @@ public partial class SKPath
     public SKRoundRect GetRoundRect() =>
         TryGetRoundRect(out var roundRect) ? roundRect : new SKRoundRect();
 
-    public bool GetTightBounds(out SKRect bounds)
+    public bool GetTightBounds(out SKRect result)
     {
-        bounds = TightBounds;
+        result = TightBounds;
         return !IsEmpty;
     }
 
@@ -336,12 +336,12 @@ public partial class SKPath
     }
 
     public void RArcTo(
-        SKPoint radii,
+        SKPoint r,
         float xAxisRotate,
         SKPathArcSize largeArc,
         SKPathDirection sweep,
-        SKPoint end) =>
-        RArcTo(radii.X, radii.Y, xAxisRotate, largeArc, sweep, end.X, end.Y);
+        SKPoint xy) =>
+        RArcTo(r.X, r.Y, xAxisRotate, largeArc, sweep, xy.X, xy.Y);
 
     public void RArcTo(
         float rx,
@@ -349,24 +349,24 @@ public partial class SKPath
         float xAxisRotate,
         SKPathArcSize largeArc,
         SKPathDirection sweep,
-        float dx,
-        float dy)
+        float x,
+        float y)
     {
         var start = _currentPoint;
-        ArcTo(rx, ry, xAxisRotate, largeArc, sweep, start.X + dx, start.Y + dy);
+        ArcTo(rx, ry, xAxisRotate, largeArc, sweep, start.X + x, start.Y + y);
     }
 
-    public void RConicTo(SKPoint control, SKPoint end, float weight) =>
-        RConicTo(control.X, control.Y, end.X, end.Y, weight);
+    public void RConicTo(SKPoint point0, SKPoint point1, float w) =>
+        RConicTo(point0.X, point0.Y, point1.X, point1.Y, w);
 
-    public void RConicTo(float dx0, float dy0, float dx1, float dy1, float weight)
+    public void RConicTo(float dx0, float dy0, float dx1, float dy1, float w)
     {
         var start = _currentPoint;
-        ConicTo(start.X + dx0, start.Y + dy0, start.X + dx1, start.Y + dy1, weight);
+        ConicTo(start.X + dx0, start.Y + dy0, start.X + dx1, start.Y + dy1, w);
     }
 
-    public void RCubicTo(SKPoint control0, SKPoint control1, SKPoint end) =>
-        RCubicTo(control0.X, control0.Y, control1.X, control1.Y, end.X, end.Y);
+    public void RCubicTo(SKPoint point0, SKPoint point1, SKPoint point2) =>
+        RCubicTo(point0.X, point0.Y, point1.X, point1.Y, point2.X, point2.Y);
 
     public void RCubicTo(float dx0, float dy0, float dx1, float dy1, float dx2, float dy2)
     {
@@ -388,8 +388,8 @@ public partial class SKPath
 
     public void RMoveTo(float dx, float dy) => MoveTo(_currentPoint.X + dx, _currentPoint.Y + dy);
 
-    public void RQuadTo(SKPoint control, SKPoint end) =>
-        RQuadTo(control.X, control.Y, end.X, end.Y);
+    public void RQuadTo(SKPoint point0, SKPoint point1) =>
+        RQuadTo(point0.X, point0.Y, point1.X, point1.Y);
 
     public void RQuadTo(float dx0, float dy0, float dx1, float dy1)
     {
@@ -503,43 +503,43 @@ public partial class SKPath
         TransformCore(matrix, destination);
 
     public static int ConvertConicToQuads(
-        SKPoint point0,
-        SKPoint point1,
-        SKPoint point2,
-        float weight,
-        SKPoint[] points,
+        SKPoint p0,
+        SKPoint p1,
+        SKPoint p2,
+        float w,
+        SKPoint[] pts,
         int pow2)
     {
-        ArgumentNullException.ThrowIfNull(points);
-        var converted = ConvertConicToQuads(point0, point1, point2, weight, pow2);
-        Array.Copy(converted, points, Math.Min(converted.Length, points.Length));
+        ArgumentNullException.ThrowIfNull(pts);
+        var converted = ConvertConicToQuads(p0, p1, p2, w, pow2);
+        Array.Copy(converted, pts, Math.Min(converted.Length, pts.Length));
         return 1 << ValidateConicPow2(pow2);
     }
 
     public static SKPoint[] ConvertConicToQuads(
-        SKPoint point0,
-        SKPoint point1,
-        SKPoint point2,
-        float weight,
+        SKPoint p0,
+        SKPoint p1,
+        SKPoint p2,
+        float w,
         int pow2)
     {
         pow2 = ValidateConicPow2(pow2);
         var conicCount = 1 << pow2;
         var result = new SKPoint[conicCount * 2 + 1];
-        result[0] = point0;
-        WriteChoppedConic(point0, point1, point2, weight, pow2, result, 0);
+        result[0] = p0;
+        WriteChoppedConic(p0, p1, p2, w, pow2, result, 0);
         return result;
     }
 
     public static int ConvertConicToQuads(
-        SKPoint point0,
-        SKPoint point1,
-        SKPoint point2,
-        float weight,
-        out SKPoint[] points,
+        SKPoint p0,
+        SKPoint p1,
+        SKPoint p2,
+        float w,
+        out SKPoint[] pts,
         int pow2)
     {
-        points = ConvertConicToQuads(point0, point1, point2, weight, pow2);
+        pts = ConvertConicToQuads(p0, p1, p2, w, pow2);
         return 1 << pow2;
     }
 

@@ -19,6 +19,8 @@ public class SKPathBuilder : SKObject
         set => _path.FillType = value;
     }
 
+    internal bool IsEmpty => _path.IsEmpty;
+
     public SKPathBuilder()
         : base(SKObjectHandle.Create(), owns: true)
     {
