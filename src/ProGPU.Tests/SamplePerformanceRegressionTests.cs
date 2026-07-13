@@ -139,6 +139,23 @@ public sealed class SamplePerformanceRegressionTests
     }
 
     [Fact]
+    public void MotionMarkAnimationIsDiscoveredThroughTheAttachedSampleTree()
+    {
+        var visual = new ProGPU.Samples.MotionMarkShowcaseVisual();
+        var root = new Grid();
+        root.AddChild(visual);
+        root.Measure(new Vector2(900f, 620f));
+        root.Arrange(new Rect(0f, 0f, 900f, 620f));
+        var visualVersion = visual.ChangeVersion;
+        var rootVersion = root.ChangeVersion;
+
+        ProGPU.Samples.VisualExtensions.UpdateSampleAnimations(root, 1f / 60f);
+
+        Assert.True(visual.ChangeVersion > visualVersion);
+        Assert.True(root.ChangeVersion > rootVersion);
+    }
+
+    [Fact]
     public void MarkdownRelayoutsWhenItsAvailableWidthChanges()
     {
         var markdown = new MarkdownTextBlock
