@@ -18,6 +18,7 @@ public partial class SKPaint : SKObject
     private const float HairlineStrokeWidth = 1f;
     private SKShader? _shader;
     private SKBlender? _blender;
+    private SKPathEffect? _pathEffect;
     private float _strokeWidth;
 
     public SKPaintStyle Style { get; set; } = SKPaintStyle.Fill;
@@ -61,7 +62,21 @@ public partial class SKPaint : SKObject
     }
     public SKColorFilter? ColorFilter { get; set; }
     public SKImageFilter? ImageFilter { get; set; }
-    public SKPathEffect? PathEffect { get; set; }
+    public SKPathEffect? PathEffect
+    {
+        get => _pathEffect;
+        set
+        {
+            if (ReferenceEquals(_pathEffect, value))
+            {
+                return;
+            }
+
+            value?.AddReference();
+            _pathEffect?.ReleaseReference();
+            _pathEffect = value;
+        }
+    }
     public SKBlender? Blender
     {
         get => _blender;
@@ -257,6 +272,7 @@ public partial class SKPaint : SKObject
     protected override void Dispose(bool disposing)
     {
         Shader = null;
+        PathEffect = null;
         Blender = null;
         _legacyFont.Dispose();
         base.Dispose(disposing);
@@ -2684,26 +2700,6 @@ public partial class SKImageFilter : SKObject
     internal sealed record PointLightData(SKPoint3 Location, SKColor Color, float SurfaceScale, float Constant, float Shininess);
     internal sealed record SpotLightData(SKPoint3 Location, SKPoint3 Target, float SpecularExponent, float CutoffAngle, SKColor Color, float SurfaceScale, float Constant, float Shininess);
     internal sealed record TileData(SKRect Source, SKRect Destination);
-}
-
-public class SKPathEffect : IDisposable
-{
-    public IntPtr Handle { get; } = SKObjectHandle.Create();
-    public float[] Intervals { get; }
-    public float Phase { get; }
-
-    private SKPathEffect(float[] intervals, float phase)
-    {
-        Intervals = (float[])intervals.Clone();
-        Phase = phase;
-    }
-
-    public static SKPathEffect CreateDash(float[] intervals, float phase)
-    {
-        return new SKPathEffect(intervals, phase);
-    }
-
-    public void Dispose() { }
 }
 
 public class SKMaskFilter : IDisposable
