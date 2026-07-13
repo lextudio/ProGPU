@@ -1080,7 +1080,7 @@ internal static class SKOutputRasterizer
                 canvas.Scale(scale, scale);
             }
 
-            canvas.Context.Append(context);
+            canvas.DrawingContext.Append(context);
             canvas.Flush();
         }
 

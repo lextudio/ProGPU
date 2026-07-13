@@ -38,6 +38,7 @@ public class SKCanvas : IDisposable
     private readonly SKBitmap? _bitmap;
     private readonly bool _isPictureRecording;
     private SKSurface? _surface;
+    private GRRecordingContext? _recordingContext;
     private SKMatrix _currentMatrix = SKMatrix.Identity;
     private float _currentOpacity = 1f;
     private ClipState _clipState;
@@ -117,6 +118,10 @@ public class SKCanvas : IDisposable
 
     public bool IsClipRect => !_clipState.IsEmpty && _clipState.IsRect;
 
+    public SKSurface? Surface => _surface;
+
+    public GRRecordingContext? Context => _recordingContext;
+
     public SKCanvas(
         DrawingContext context,
         float width,
@@ -156,6 +161,7 @@ public class SKCanvas : IDisposable
         _gpuContext = gpuContext;
         _flush = flush;
         _isPictureRecording = isPictureRecording;
+        _recordingContext = gpuContext == null ? null : new GRContext(gpuContext);
         _clipState = new ClipState(
             new SKRectI(0, 0, ToCanvasExtent(width), ToCanvasExtent(height)),
             IsRect: true);
@@ -169,15 +175,21 @@ public class SKCanvas : IDisposable
             SKContextHelper.GetContext())
     {
         _bitmap = bitmap;
+        _recordingContext = null;
         bitmap.AttachCanvas(this);
     }
 
-    internal DrawingContext Context => _context;
+    internal DrawingContext DrawingContext => _context;
 
     internal void AttachSurface(SKSurface surface)
     {
         ArgumentNullException.ThrowIfNull(surface);
         _surface = surface;
+    }
+
+    internal void AttachRecordingContext(GRRecordingContext? recordingContext)
+    {
+        _recordingContext = recordingContext;
     }
 
     internal void DetachSurface(SKSurface surface)
@@ -4740,7 +4752,7 @@ public class SKCanvas : IDisposable
         }
 
         using var surface = SKSurface.Create(_bitmap.Info, _bitmap.GetPixels(), _bitmap.RowBytes);
-        surface.Canvas.Context.Append(_context);
+        surface.Canvas.DrawingContext.Append(_context);
         surface.Flush();
         _context.Clear();
     }

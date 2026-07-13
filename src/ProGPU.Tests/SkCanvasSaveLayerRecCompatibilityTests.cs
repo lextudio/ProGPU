@@ -64,7 +64,7 @@ public sealed class SkCanvasSaveLayerRecCompatibilityTests
         layerPaint.Color = SKColors.Green;
 
         Assert.Equal(1, restoreCount);
-        Assert.NotSame(context, canvas.Context);
+        Assert.NotSame(context, canvas.DrawingContext);
         Assert.Equal(new SKRect(5f, 6f, 70f, 60f), canvas.CurrentLayerBounds);
         Assert.Same(backdrop, canvas.CurrentLayerBackdrop);
         Assert.Equal(record.Flags, canvas.CurrentLayerFlags);
