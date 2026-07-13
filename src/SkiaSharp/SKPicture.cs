@@ -77,6 +77,9 @@ public sealed class SKPictureRecorder : IDisposable
         return picture;
     }
 
+    public SKDrawable EndRecordingAsDrawable() =>
+        new SKRecordedPictureDrawable(EndRecording());
+
     public void Dispose()
     {
         _canvas?.Dispose();

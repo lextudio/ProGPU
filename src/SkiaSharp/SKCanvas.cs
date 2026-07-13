@@ -1906,6 +1906,24 @@ public class SKCanvas : IDisposable
         }
     }
 
+    public void DrawDrawable(SKDrawable drawable, in SKMatrix matrix)
+    {
+        ArgumentNullException.ThrowIfNull(drawable);
+        drawable.Draw(this, matrix);
+    }
+
+    public void DrawDrawable(SKDrawable drawable, float x, float y)
+    {
+        ArgumentNullException.ThrowIfNull(drawable);
+        DrawDrawable(drawable, SKMatrix.CreateTranslation(x, y));
+    }
+
+    public void DrawDrawable(SKDrawable drawable, SKPoint p)
+    {
+        ArgumentNullException.ThrowIfNull(drawable);
+        DrawDrawable(drawable, SKMatrix.CreateTranslation(p.X, p.Y));
+    }
+
     public void DrawLine(float x0, float y0, float x1, float y1, SKPaint paint)
     {
         using var path = new SKPath();
