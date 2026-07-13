@@ -8,10 +8,9 @@ using Silk.NET.WebGPU;
 
 namespace SkiaSharp;
 
-public class SKImage : IDisposable
+public partial class SKImage : SKObject
 {
-    public IntPtr Handle { get; } = SKObjectHandle.Create();
-    public GpuTexture Texture { get; }
+    internal GpuTexture Texture { get; }
     private readonly bool _ownsTexture;
     private readonly SKImageInfo _info;
     public int Width => (int)Texture.Width;
@@ -24,12 +23,13 @@ public class SKImage : IDisposable
     public bool IsLazyGenerated => false;
     public bool IsTextureBacked => true;
 
-    public SKImage(GpuTexture texture)
+    internal SKImage(GpuTexture texture)
         : this(texture, ownsTexture: false, CreateTextureInfo(texture))
     {
     }
 
     private SKImage(GpuTexture texture, bool ownsTexture, SKImageInfo info)
+        : base(SKObjectHandle.Create(), owns: true)
     {
         Texture = texture;
         _ownsTexture = ownsTexture;
@@ -216,7 +216,7 @@ public class SKImage : IDisposable
         SKColorType colorType) =>
         FromAdoptedTexture(context, texture, GRSurfaceOrigin.TopLeft, colorType);
 
-    public static SKImage FromTexture(GpuTexture texture)
+    internal static SKImage FromTexture(GpuTexture texture)
     {
         ArgumentNullException.ThrowIfNull(texture);
         if (!texture.Usage.HasFlag(TextureUsage.CopySrc))
@@ -286,187 +286,48 @@ public class SKImage : IDisposable
         return ToShader(tileModeX, tileModeY, SKMatrix.Identity);
     }
 
-    public void ScalePixels(SKPixmap dst, SKSamplingOptions sampling)
+    public unsafe bool ScalePixels(SKPixmap dst, SKSamplingOptions sampling)
     {
         ArgumentNullException.ThrowIfNull(dst);
         if (dst.GetPixels() == IntPtr.Zero)
         {
-            throw new ArgumentException("Destination pixmap must provide a pixel buffer.", nameof(dst));
+            return false;
         }
 
         if (dst.Info.Width <= 0 || dst.Info.Height <= 0 || Width <= 0 || Height <= 0)
         {
-            return;
-        }
-
-        int dstRowBytes = dst.RowBytes > 0 ? dst.RowBytes : dst.Info.RowBytes;
-        int minDstRowBytes = dst.Info.Width * 4;
-        if (dstRowBytes < minDstRowBytes)
-        {
-            throw new ArgumentException("Destination row bytes must be large enough for one row.", nameof(dst));
+            return false;
         }
 
         byte[] src = ReadTexturePixelsAsRgba8888();
-        bool sourcePremultiplied = Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied;
-        bool targetPremultiplied = dst.Info.AlphaType == SKAlphaType.Premul;
-        bool forceOpaqueAlpha = dst.Info.AlphaType == SKAlphaType.Opaque;
-
-        unsafe
+        fixed (byte* srcBase = src)
         {
-            fixed (byte* srcBase = src)
-            {
-                byte* dstBase = (byte*)dst.GetPixels();
-                for (int y = 0; y < dst.Info.Height; y++)
-                {
-                    int srcY = Math.Clamp((int)((long)y * Height / dst.Info.Height), 0, Height - 1);
-                    byte* dstRow = dstBase + y * dstRowBytes;
-
-                    for (int x = 0; x < dst.Info.Width; x++)
-                    {
-                        int srcX = Math.Clamp((int)((long)x * Width / dst.Info.Width), 0, Width - 1);
-                        byte* srcPixel = srcBase + (srcY * Width + srcX) * 4;
-                        byte* dstPixel = dstRow + x * 4;
-
-                        byte alpha = srcPixel[3];
-                        byte red = srcPixel[0];
-                        byte green = srcPixel[1];
-                        byte blue = srcPixel[2];
-
-                        if (sourcePremultiplied && !targetPremultiplied)
-                        {
-                            red = UnpremultiplyChannel(red, alpha);
-                            green = UnpremultiplyChannel(green, alpha);
-                            blue = UnpremultiplyChannel(blue, alpha);
-                        }
-                        else if (!sourcePremultiplied && targetPremultiplied)
-                        {
-                            red = PremultiplyChannel(red, alpha);
-                            green = PremultiplyChannel(green, alpha);
-                            blue = PremultiplyChannel(blue, alpha);
-                        }
-
-                        if (forceOpaqueAlpha)
-                        {
-                            alpha = 255;
-                        }
-
-                        if (dst.Info.ColorType == SKColorType.Bgra8888)
-                        {
-                            dstPixel[0] = blue;
-                            dstPixel[1] = green;
-                            dstPixel[2] = red;
-                            dstPixel[3] = alpha;
-                        }
-                        else
-                        {
-                            dstPixel[0] = red;
-                            dstPixel[1] = green;
-                            dstPixel[2] = blue;
-                            dstPixel[3] = alpha;
-                        }
-                    }
-                }
-            }
+            using var source = new SKPixmap(CreateReadbackInfo(), (IntPtr)srcBase, checked(Width * 4));
+            return source.ScalePixels(dst, sampling);
         }
     }
 
-    public void ReadPixels(SKImageInfo dstInfo, IntPtr dstPixels, int dstRowBytes, int srcX, int srcY, SKImageCachingHint cachingHint)
+    public unsafe bool ReadPixels(
+        SKImageInfo dstInfo,
+        IntPtr dstPixels,
+        int dstRowBytes,
+        int srcX,
+        int srcY,
+        SKImageCachingHint cachingHint)
     {
         if (dstPixels == IntPtr.Zero)
         {
-            throw new ArgumentNullException(nameof(dstPixels));
+            return false;
         }
 
         byte[] pixels = ReadTexturePixelsAsRgba8888();
-        int srcWidth = Width;
-        int srcHeight = Height;
-        
-        int copySrcX = Math.Max(0, srcX);
-        int copySrcY = Math.Max(0, srcY);
-        int dstStartX = copySrcX - srcX;
-        int dstStartY = copySrcY - srcY;
-        int copyWidth = Math.Min(dstInfo.Width - dstStartX, srcWidth - copySrcX);
-        int copyHeight = Math.Min(dstInfo.Height - dstStartY, srcHeight - copySrcY);
-        
-        if (copyWidth <= 0 || copyHeight <= 0) return;
-        
-        int actualDstRowBytes = dstRowBytes > 0 ? dstRowBytes : dstInfo.Width * 4;
-        int minimumDstRowBytes = checked((dstStartX + copyWidth) * 4);
-        if (actualDstRowBytes < minimumDstRowBytes)
+        fixed (byte* sourcePixels = pixels)
         {
-            throw new ArgumentException("Destination row bytes must cover the copied pixel range.", nameof(dstRowBytes));
-        }
-
-        bool forceOpaqueAlpha = dstInfo.AlphaType == SKAlphaType.Opaque;
-        bool convertAlpha = forceOpaqueAlpha
-            || (Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied
-            ? dstInfo.AlphaType == SKAlphaType.Unpremul
-            : dstInfo.AlphaType == SKAlphaType.Premul);
-        
-        unsafe
-        {
-            fixed (byte* src = pixels)
-            {
-                byte* dst = (byte*)dstPixels;
-                for (int y = 0; y < copyHeight; y++)
-                {
-                    int srcRowY = copySrcY + y;
-                    byte* srcRow = src + (srcRowY * srcWidth + copySrcX) * 4;
-                    byte* dstRow = dst + (dstStartY + y) * actualDstRowBytes + dstStartX * 4;
-                    
-                    if (dstInfo.ColorType == SKColorType.Bgra8888 || convertAlpha)
-                    {
-                        for (int x = 0; x < copyWidth; x++)
-                        {
-                            int srcIdx = x * 4;
-                            int dstIdx = x * 4;
-                            byte alpha = srcRow[srcIdx + 3];
-                            byte red = srcRow[srcIdx];
-                            byte green = srcRow[srcIdx + 1];
-                            byte blue = srcRow[srcIdx + 2];
-
-                            if (Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied
-                                && (dstInfo.AlphaType == SKAlphaType.Unpremul || forceOpaqueAlpha))
-                            {
-                                red = UnpremultiplyChannel(red, alpha);
-                                green = UnpremultiplyChannel(green, alpha);
-                                blue = UnpremultiplyChannel(blue, alpha);
-                            }
-                            else if (Texture.AlphaMode == GpuTextureAlphaMode.Straight
-                                && dstInfo.AlphaType == SKAlphaType.Premul)
-                            {
-                                red = PremultiplyChannel(red, alpha);
-                                green = PremultiplyChannel(green, alpha);
-                                blue = PremultiplyChannel(blue, alpha);
-                            }
-
-                            if (forceOpaqueAlpha)
-                            {
-                                alpha = 255;
-                            }
-
-                            if (dstInfo.ColorType == SKColorType.Bgra8888)
-                            {
-                                dstRow[dstIdx] = blue;
-                                dstRow[dstIdx + 1] = green;
-                                dstRow[dstIdx + 2] = red;
-                                dstRow[dstIdx + 3] = alpha;
-                            }
-                            else
-                            {
-                                dstRow[dstIdx] = red;
-                                dstRow[dstIdx + 1] = green;
-                                dstRow[dstIdx + 2] = blue;
-                                dstRow[dstIdx + 3] = alpha;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        System.Buffer.MemoryCopy(srcRow, dstRow, actualDstRowBytes, copyWidth * 4);
-                    }
-                }
-            }
+            using var source = new SKPixmap(
+                CreateReadbackInfo(),
+                (IntPtr)sourcePixels,
+                checked(Width * 4));
+            return source.ReadPixels(dstInfo, dstPixels, dstRowBytes, srcX, srcY);
         }
     }
 
@@ -558,13 +419,24 @@ public class SKImage : IDisposable
         return (byte)((value * alpha + 127) / 255);
     }
 
-    public void Dispose()
+    protected override void DisposeManaged()
     {
         if (_ownsTexture)
         {
             Texture.Dispose();
         }
+
+        base.DisposeManaged();
     }
+
+    private SKImageInfo CreateReadbackInfo() => new(
+        Width,
+        Height,
+        SKColorType.Rgba8888,
+        Texture.AlphaMode == GpuTextureAlphaMode.Straight
+            ? SKAlphaType.Unpremul
+            : SKAlphaType.Premul,
+        ColorSpace);
 
     private static SKImageInfo CreateTextureInfo(GpuTexture texture)
     {

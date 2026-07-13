@@ -285,7 +285,7 @@ public sealed class SkImageBitmapTests
     }
 
     [Fact]
-    public void ReadPixelsRejectsDestinationStrideTooSmallForCopiedRange()
+    public void ReadPixelsReturnsFalseWhenDestinationStrideIsTooSmallForCopiedRange()
     {
         using var bitmap = new SKBitmap(new SKImageInfo(2, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
         WriteBytes(bitmap.GetPixels(), new byte[]
@@ -296,16 +296,17 @@ public sealed class SkImageBitmapTests
         var dst = Marshal.AllocHGlobal(8);
         try
         {
-            var exception = Assert.Throws<ArgumentException>(
-                () => image.ReadPixels(
-                    new SKImageInfo(3, 1, SKColorType.Rgba8888, SKAlphaType.Premul),
-                    dst,
-                    dstRowBytes: 8,
-                    srcX: -1,
-                    srcY: 0,
-                    SKImageCachingHint.Allow));
+            WriteBytes(dst, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
 
-            Assert.Equal("dstRowBytes", exception.ParamName);
+            Assert.False(image.ReadPixels(
+                new SKImageInfo(3, 1, SKColorType.Rgba8888, SKAlphaType.Premul),
+                dst,
+                dstRowBytes: 8,
+                srcX: -1,
+                srcY: 0,
+                SKImageCachingHint.Allow));
+
+            Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, ReadBytes(dst, 8));
         }
         finally
         {
@@ -314,22 +315,19 @@ public sealed class SkImageBitmapTests
     }
 
     [Fact]
-    public void ReadPixelsRejectsZeroDestinationPointer()
+    public void ReadPixelsReturnsFalseForZeroDestinationPointer()
     {
         using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul));
         WriteBytes(bitmap.GetPixels(), new byte[] { 255, 0, 0, 255 });
         using var image = SKImage.FromBitmap(bitmap);
 
-        var exception = Assert.Throws<ArgumentNullException>(
-            () => image.ReadPixels(
-                new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul),
-                IntPtr.Zero,
-                dstRowBytes: 4,
-                srcX: 0,
-                srcY: 0,
-                SKImageCachingHint.Allow));
-
-        Assert.Equal("dstPixels", exception.ParamName);
+        Assert.False(image.ReadPixels(
+            new SKImageInfo(1, 1, SKColorType.Rgba8888, SKAlphaType.Premul),
+            IntPtr.Zero,
+            dstRowBytes: 4,
+            srcX: 0,
+            srcY: 0,
+            SKImageCachingHint.Allow));
     }
 
     [Fact]
