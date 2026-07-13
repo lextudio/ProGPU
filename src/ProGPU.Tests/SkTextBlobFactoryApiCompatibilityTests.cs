@@ -9,6 +9,24 @@ namespace ProGPU.Tests;
 public sealed class SkTextBlobFactoryApiCompatibilityTests
 {
     [Fact]
+    public void TextBlobUsesSkObjectLifetime()
+    {
+        Assert.Equal(typeof(SKObject), typeof(SKTextBlob).BaseType);
+        Assert.Empty(typeof(SKTextBlob).GetConstructors(
+            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+        Assert.False(typeof(SKTextBlobRun).IsPublic);
+        Assert.False(typeof(SKTextBlobBuilderCache).IsPublic);
+        using var font = new SKFont(SKTypeface.Default, 16f);
+        using var blob = SKTextBlob.Create("A", font);
+        Assert.NotNull(blob);
+        Assert.NotEqual(IntPtr.Zero, blob.Handle);
+
+        blob.Dispose();
+
+        Assert.Equal(IntPtr.Zero, blob.Handle);
+    }
+
+    [Fact]
     public void TextBlobFactoriesExposeNativeSignatures()
     {
         Assert.Equal(4, GetFactoryOverloads(nameof(SKTextBlob.Create)).Length);

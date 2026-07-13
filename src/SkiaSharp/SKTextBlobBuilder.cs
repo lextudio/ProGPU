@@ -229,9 +229,14 @@ public sealed class SKRotationScaleTextRunBuffer : SKTextRunBuffer
     public void SetPositions(ReadOnlySpan<SKRotationScaleMatrix> positions) => positions.CopyTo(Positions);
 }
 
-public class SKTextBlobBuilder : IDisposable
+public class SKTextBlobBuilder : SKObject
 {
     private readonly List<SKTextBlobBuilderRun> _runs = new();
+
+    public SKTextBlobBuilder()
+        : base(SKObjectHandle.Create(), owns: true)
+    {
+    }
 
     public void AddRun(ReadOnlySpan<ushort> glyphs, SKFont font, SKPoint origin = default)
     {
@@ -500,7 +505,14 @@ public class SKTextBlobBuilder : IDisposable
         return new SKTextBlob(snapshots);
     }
 
-    public void Dispose() => _runs.Clear();
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _runs.Clear();
+        }
+        base.Dispose(disposing);
+    }
 
     private SKTextBlobBuilderRun AllocateDefaultRun(
         SKFont font,

@@ -9,6 +9,7 @@ public sealed class SkTextBlobBuilderApiCompatibilityTests
     [Fact]
     public void BuilderExposesNativeRunBufferSignatures()
     {
+        Assert.Equal(typeof(SKObject), typeof(SKTextBlobBuilder).BaseType);
         AssertParameterNames(
             GetBuilderMethod(
                 nameof(SKTextBlobBuilder.AllocateRun),

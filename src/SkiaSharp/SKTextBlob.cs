@@ -3,7 +3,7 @@ using System.Threading;
 
 namespace SkiaSharp;
 
-public sealed class SKTextBlobRun
+internal sealed class SKTextBlobRun
 {
     public SKFont Font { get; }
     public ushort[] GlyphIndices { get; }
@@ -28,26 +28,26 @@ public sealed class SKTextBlobRun
     }
 }
 
-public partial class SKTextBlob : IDisposable
+public partial class SKTextBlob : SKObject
 {
     private static int s_nextUniqueId;
     private SKRect? _bounds;
 
-    public IntPtr Handle { get; } = SKObjectHandle.Create();
-    public SKTextBlobRun[] Runs { get; }
-    public SKFont Font => Runs[0].Font;
-    public ushort[] GlyphIndices { get; }
-    public SKPoint[] GlyphPositions { get; }
+    internal SKTextBlobRun[] Runs { get; }
+    internal SKFont Font => Runs[0].Font;
+    internal ushort[] GlyphIndices { get; }
+    internal SKPoint[] GlyphPositions { get; }
     public SKRect Bounds => _bounds ??= ComputeBounds();
     public uint UniqueId { get; } = unchecked((uint)Interlocked.Increment(ref s_nextUniqueId));
     internal bool HasEmboldenedRuns { get; }
 
-    public SKTextBlob(SKFont font, ushort[] glyphIndices, SKPoint[] glyphPositions)
+    internal SKTextBlob(SKFont font, ushort[] glyphIndices, SKPoint[] glyphPositions)
         : this(new[] { new SKTextBlobRun(font, glyphIndices, glyphPositions) })
     {
     }
 
-    public SKTextBlob(SKTextBlobRun[] runs)
+    internal SKTextBlob(SKTextBlobRun[] runs)
+        : base(SKObjectHandle.Create(), owns: true)
     {
         ArgumentNullException.ThrowIfNull(runs);
         if (runs.Length == 0)
@@ -448,10 +448,9 @@ public partial class SKTextBlob : IDisposable
         return hasBounds ? bounds : SKRect.Empty;
     }
 
-    public void Dispose() { }
 }
 
-public class SKTextBlobBuilderCache
+internal sealed class SKTextBlobBuilderCache
 {
     private static readonly SKTextBlobBuilderCache _shared = new();
     public static SKTextBlobBuilderCache Shared => _shared;
