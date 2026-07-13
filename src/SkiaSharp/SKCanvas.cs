@@ -2187,6 +2187,43 @@ public class SKCanvas : IDisposable
         }
     }
 
+    public void DrawArc(
+        SKRect oval,
+        float startAngle,
+        float sweepAngle,
+        bool useCenter,
+        SKPaint paint)
+    {
+        ArgumentNullException.ThrowIfNull(paint);
+        if (!float.IsFinite(oval.Left) ||
+            !float.IsFinite(oval.Top) ||
+            !float.IsFinite(oval.Right) ||
+            !float.IsFinite(oval.Bottom) ||
+            !float.IsFinite(startAngle) ||
+            !float.IsFinite(sweepAngle) ||
+            oval.Width <= 0f ||
+            oval.Height <= 0f ||
+            sweepAngle == 0f)
+        {
+            return;
+        }
+
+        var boundedSweep = Math.Clamp(sweepAngle, -360f, 360f);
+        using var path = new SKPath();
+        if (useCenter)
+        {
+            path.MoveTo(oval.MidX, oval.MidY);
+            path.ArcTo(oval, startAngle, boundedSweep, forceMoveTo: false);
+            path.Close();
+        }
+        else
+        {
+            path.ArcTo(oval, startAngle, boundedSweep, forceMoveTo: true);
+        }
+
+        DrawPath(path, paint);
+    }
+
     public void DrawCircle(float cx, float cy, float radius, SKPaint paint)
     {
         if (HasSpecialShader(paint.Shader))
