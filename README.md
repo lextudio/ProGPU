@@ -163,6 +163,8 @@ Surface draw overloads snapshot once, preserve legacy or explicit sampling, and 
 
 `SKTextBlob` intercept queries use the same path-boundary algorithm as Skia for underline and strike-through avoidance. Each positioned glyph independently tests line, quadratic, and cubic crossings at both horizontal band boundaries, expands the interval with path points strictly inside the band, and returns at most one ordered pair without merging overlaps from neighboring glyphs. `ScaleX`, `SkewX`, vertical placement, and synthetic emboldening are included; rotation-scale runs are intentionally ignored like native Skia. Array, span, and count overloads share the CPU-only engine, with short spans receiving the available prefix. For `G` glyphs and `S` path segments, time is `O(G * S)`, root-solving workspace is `O(1)`, and returned storage is at most `O(G)`.
 
+Path-positioned text blobs reproduce SkiaSharp's non-warped text-on-path algorithm. Glyph midpoint distances are aligned over a measured contour, clipped to its half-open length, sampled for position/tangent, shifted back by half advance, and offset along the path normal before becoming rotation-scale matrices. For `G` glyphs and path-measure setup cost `P`, time is `O(G + P)`, storage is `O(G)`, and drawing stays on the retained glyph-run path without per-glyph GPU submission or readback.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
