@@ -242,31 +242,114 @@ public partial class SKPaint : SKObject
         base.Dispose(disposing);
     }
 
-    public bool GetFillPath(SKPath source, SKPath destination)
+    public SKPath? GetFillPath(SKPath src) =>
+        GetFillPathResult(src);
+
+    public SKPath? GetFillPath(SKPath src, float resScale) =>
+        GetFillPathResult(src);
+
+    public SKPath? GetFillPath(SKPath src, SKMatrix matrix) =>
+        GetFillPathResult(src);
+
+    public SKPath? GetFillPath(SKPath src, SKRect cullRect) =>
+        GetFillPathResult(src);
+
+    public SKPath? GetFillPath(SKPath src, SKRect cullRect, float resScale) =>
+        GetFillPathResult(src);
+
+    public SKPath? GetFillPath(SKPath src, SKRect cullRect, SKMatrix matrix) =>
+        GetFillPathResult(src);
+
+    public bool GetFillPath(SKPath src, SKPath dst) =>
+        GetFillPathCore(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPath dst, float resScale) =>
+        GetFillPathCore(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPath dst, SKMatrix matrix) =>
+        GetFillPathCore(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPath dst, SKRect cullRect) =>
+        GetFillPathCore(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPath dst, SKRect cullRect, float resScale) =>
+        GetFillPathCore(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPath dst, SKRect cullRect, SKMatrix matrix) =>
+        GetFillPathCore(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPathBuilder dst) =>
+        GetFillPathBuilder(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPathBuilder dst, float resScale) =>
+        GetFillPathBuilder(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPathBuilder dst, SKMatrix matrix) =>
+        GetFillPathBuilder(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPathBuilder dst, SKRect cullRect) =>
+        GetFillPathBuilder(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPathBuilder dst, SKRect cullRect, float resScale) =>
+        GetFillPathBuilder(src, dst);
+
+    public bool GetFillPath(SKPath src, SKPathBuilder dst, SKRect cullRect, SKMatrix matrix) =>
+        GetFillPathBuilder(src, dst);
+
+    private SKPath? GetFillPathResult(SKPath src)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(destination);
-        destination.Reset();
+        ArgumentNullException.ThrowIfNull(src);
+        var result = new SKPath();
+        if (GetFillPathCore(src, result))
+        {
+            return result;
+        }
+
+        result.Dispose();
+        return null;
+    }
+
+    private bool GetFillPathBuilder(SKPath src, SKPathBuilder dst)
+    {
+        ArgumentNullException.ThrowIfNull(src);
+        ArgumentNullException.ThrowIfNull(dst);
+        using var result = new SKPath();
+        if (!GetFillPathCore(src, result))
+        {
+            return false;
+        }
+
+        dst.AddPath(result);
+        return true;
+    }
+
+    private bool GetFillPathCore(SKPath src, SKPath dst)
+    {
+        ArgumentNullException.ThrowIfNull(src);
+        ArgumentNullException.ThrowIfNull(dst);
+        using var sourceCopy = ReferenceEquals(src, dst) ? new SKPath(src) : null;
+        src = sourceCopy ?? src;
+        dst.Reset();
         if (Style == SKPaintStyle.Fill)
         {
-            destination.AddPath(source);
+            dst.AddPath(src);
             return true;
         }
 
         if (Style == SKPaintStyle.StrokeAndFill)
         {
-            destination.AddPath(source);
+            dst.AddPath(src);
         }
 
         if (!float.IsFinite(StrokeWidth) || StrokeWidth <= 0f)
         {
-            return !destination.IsEmpty;
+            return !dst.IsEmpty;
         }
 
         var halfWidth = StrokeWidth / 2f;
-        foreach (var figure in source.Geometry.Figures)
+        foreach (var figure in src.Geometry.Figures)
         {
-            if (TryAddOvalStroke(destination, figure, halfWidth))
+            if (TryAddOvalStroke(dst, figure, halfWidth))
             {
                 continue;
             }
@@ -284,11 +367,11 @@ public partial class SKPaint : SKObject
             {
                 if (StrokeCap == SKStrokeCap.Round)
                 {
-                    destination.AddCircle(figure.StartPoint.X, figure.StartPoint.Y, halfWidth);
+                    dst.AddCircle(figure.StartPoint.X, figure.StartPoint.Y, halfWidth);
                 }
                 else if (StrokeCap == SKStrokeCap.Square)
                 {
-                    destination.AddRect(new SKRect(
+                    dst.AddRect(new SKRect(
                         figure.StartPoint.X - halfWidth,
                         figure.StartPoint.Y - halfWidth,
                         figure.StartPoint.X + halfWidth,
@@ -300,28 +383,28 @@ public partial class SKPaint : SKObject
 
             if (PathEffect is { Intervals.Length: > 0 } pathEffect)
             {
-                AddDashedStrokeSegments(destination, points, figure.IsClosed, halfWidth, pathEffect);
+                AddDashedStrokeSegments(dst, points, figure.IsClosed, halfWidth, pathEffect);
                 continue;
             }
 
             for (var i = 1; i < points.Count; i++)
             {
-                AddStrokeSegment(destination, points[i - 1], points[i], halfWidth);
+                AddStrokeSegment(dst, points[i - 1], points[i], halfWidth);
             }
 
             if (figure.IsClosed && points.Count > 1)
             {
-                AddStrokeSegment(destination, points[^1], points[0], halfWidth);
+                AddStrokeSegment(dst, points[^1], points[0], halfWidth);
             }
 
-            AddStrokeJoins(destination, points, figure.IsClosed, halfWidth * 2f);
+            AddStrokeJoins(dst, points, figure.IsClosed, halfWidth * 2f);
             if (!figure.IsClosed)
             {
-                AddStrokeCaps(destination, points, halfWidth * 2f);
+                AddStrokeCaps(dst, points, halfWidth * 2f);
             }
         }
 
-        return !destination.IsEmpty;
+        return !dst.IsEmpty;
     }
 
     internal static void NormalizeStrokeWinding(SKPath source, SKPath stroke)
