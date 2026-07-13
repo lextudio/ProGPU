@@ -142,6 +142,9 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             case RenderCommandType.DrawVertexMesh:
                 AddVertexMesh(command, activeTransform, primitiveId, zIndex);
                 break;
+            case RenderCommandType.DrawPointBatch:
+                AddPointBatch(command, activeTransform, primitiveId, zIndex);
+                break;
             case RenderCommandType.FillQuad:
                 AddQuadFill(command, activeTransform, primitiveId, zIndex);
                 break;
@@ -671,6 +674,44 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                 transform,
                 id,
                 zIndex + triangle * 0.001f);
+        }
+    }
+
+    private void AddPointBatch(RenderCommand command, Matrix4x4 transform, int id, float zIndex)
+    {
+        if (command.Brush is null || command.PolylinePoints is not { Length: > 0 } points)
+        {
+            return;
+        }
+
+        var isHairline = command.RadiusX <= 0f;
+        var radius = isHairline ? 0.5f : command.RadiusX;
+        var diameter = radius * 2f;
+        for (var index = 0; index < points.Length; index++)
+        {
+            var point = points[index];
+            if (isHairline)
+            {
+                point = Vector2.Transform(point, transform);
+            }
+
+            var min = new Vector2(point.X - radius, point.Y - radius);
+            var max = min + new Vector2(diameter);
+            var pointZIndex = zIndex + index * 0.0001f;
+            AddPrimitive(command.IntParam != 0
+                ? GpuHitTestPrimitive.EllipseFill(
+                    id,
+                    min,
+                    max,
+                    isHairline ? Matrix4x4.Identity : transform,
+                    pointZIndex)
+                : GpuHitTestPrimitive.RectangleFill(
+                    id,
+                    min,
+                    max,
+                    Vector2.Zero,
+                    isHairline ? Matrix4x4.Identity : transform,
+                    pointZIndex));
         }
     }
 

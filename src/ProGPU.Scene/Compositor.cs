@@ -184,6 +184,8 @@ public unsafe class Compositor : IDisposable
     private const float QuadrilateralStripStartSdfShapeType = 16f;
     private const float QuadrilateralStripEndSdfShapeType = 17f;
     private const float VertexMeshShapeType = 18f;
+    private const float SquarePointHairlineShapeType = 19f;
+    private const float RoundPointHairlineShapeType = 20f;
     private const float AffineStrokeArcMaxAngleRadians = MathF.PI / 24f;
     // Matches Skia grayscale edge weight for axis-aligned vector glyphs rasterized at 8x8 coverage.
     private const float SmallTextPathCoverageGamma = 0.72f;
@@ -2142,6 +2144,9 @@ public unsafe class Compositor : IDisposable
                         case RenderCommandType.DrawVertexMesh:
                             CompileVertexMeshCommand(cmd, activeTransform);
                             break;
+                        case RenderCommandType.DrawPointBatch:
+                            CompilePointBatchCommand(cmd, activeTransform);
+                            break;
                         case RenderCommandType.FillQuad:
                             CompileFillQuadCommand(cmd, activeTransform);
                             break;
@@ -3581,6 +3586,9 @@ SceneStateUploadComplete:
                     case RenderCommandType.DrawVertexMesh:
                         CompileVertexMeshCommand(cmd, activeTransform);
                         break;
+                    case RenderCommandType.DrawPointBatch:
+                        CompilePointBatchCommand(cmd, activeTransform);
+                        break;
                     case RenderCommandType.FillQuad:
                         CompileFillQuadCommand(cmd, activeTransform);
                         break;
@@ -3855,6 +3863,9 @@ SceneStateUploadComplete:
                 case RenderCommandType.DrawVertexMesh:
                     CompileVertexMeshCommand(cmd, activeTransform);
                     break;
+                case RenderCommandType.DrawPointBatch:
+                    CompilePointBatchCommand(cmd, activeTransform);
+                    break;
                 case RenderCommandType.FillQuad:
                     CompileFillQuadCommand(cmd, activeTransform);
                     break;
@@ -3976,7 +3987,8 @@ SceneStateUploadComplete:
             RenderCommandType.DrawEllipse or
             RenderCommandType.DrawCircle or
             RenderCommandType.DrawRoundedRect or
-            RenderCommandType.DrawPath;
+            RenderCommandType.DrawPath or
+            RenderCommandType.DrawPointBatch;
     }
 
     private static void ScaleCommandPen(ref RenderCommand command, float strokeScale)
@@ -6991,6 +7003,119 @@ SceneStateUploadComplete:
         }
 
         CollectionsMarshal.SetCount(_vectorIndicesList, originalIndexCount + writtenIndexCount);
+
+        if (_activeClipRect.HasValue)
+        {
+            for (var index = 0; index < vertices.Length; index++)
+            {
+                var vertex = vertices[index];
+                vertex.Position = ClampToClip(vertex.Position);
+                vertices[index] = vertex;
+            }
+        }
+    }
+
+    private void CompilePointBatchCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        if (cmd.Brush is null || cmd.PolylinePoints is not { Length: > 0 } points)
+        {
+            return;
+        }
+
+        SwitchBatch(BatchType.Vector);
+        var isHairline = cmd.RadiusX <= 0f;
+        var radius = isHairline ? 0.5f : cmd.RadiusX;
+        var diameter = radius * 2f;
+        var shapeSize = new Vector2(diameter, diameter);
+        var padding = cmd.IsEdgeAliased ? 0f : 1.5f;
+        var round = cmd.IntParam != 0;
+        var shapeType = EncodeShapeType(
+            cmd,
+            isHairline
+                ? round ? RoundPointHairlineShapeType : SquarePointHairlineShapeType
+                : round ? 1f : 0f);
+        var brushIndex = RegisterBrush(cmd.Brush);
+        var isSolid = cmd.Brush is SolidColorBrush;
+        var solidColor = isSolid ? ((SolidColorBrush)cmd.Brush).Color : default;
+        var originalVertexCount = _vectorVerticesList.Count;
+        var originalIndexCount = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, checked(originalVertexCount + points.Length * 4));
+        CollectionsMarshal.SetCount(_vectorIndicesList, checked(originalIndexCount + points.Length * 6));
+        var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList).Slice(originalVertexCount, points.Length * 4);
+        var indices = CollectionsMarshal.AsSpan(_vectorIndicesList).Slice(originalIndexCount, points.Length * 6);
+
+        for (var pointIndex = 0; pointIndex < points.Length; pointIndex++)
+        {
+            var center = points[pointIndex];
+            var extent = radius + padding;
+            var color = isSolid ? solidColor : new Vector4(center.X, center.Y, 0f, 0f);
+            var vertexOffset = pointIndex * 4;
+            Vector2 position0;
+            Vector2 position1;
+            Vector2 position2;
+            Vector2 position3;
+            if (isHairline)
+            {
+                var transformedCenter = Vector2.Transform(center, transform);
+                position0 = transformedCenter;
+                position1 = transformedCenter;
+                position2 = transformedCenter;
+                position3 = transformedCenter;
+            }
+            else
+            {
+                position0 = Vector2.Transform(center + new Vector2(-extent, -extent), transform);
+                position1 = Vector2.Transform(center + new Vector2(extent, -extent), transform);
+                position2 = Vector2.Transform(center + new Vector2(extent, extent), transform);
+                position3 = Vector2.Transform(center + new Vector2(-extent, extent), transform);
+            }
+
+            vertices[vertexOffset] = new VectorVertex(
+                position0,
+                color,
+                new Vector2(-extent, -extent),
+                brushIndex,
+                shapeSize,
+                0f,
+                0f,
+                shapeType);
+            vertices[vertexOffset + 1] = new VectorVertex(
+                position1,
+                color,
+                new Vector2(extent, -extent),
+                brushIndex,
+                shapeSize,
+                0f,
+                0f,
+                shapeType);
+            vertices[vertexOffset + 2] = new VectorVertex(
+                position2,
+                color,
+                new Vector2(extent, extent),
+                brushIndex,
+                shapeSize,
+                0f,
+                0f,
+                shapeType);
+            vertices[vertexOffset + 3] = new VectorVertex(
+                position3,
+                color,
+                new Vector2(-extent, extent),
+                brushIndex,
+                shapeSize,
+                0f,
+                0f,
+                shapeType);
+
+            var baseVertex = checked((uint)(originalVertexCount + vertexOffset));
+            var indexOffset = pointIndex * 6;
+            indices[indexOffset] = baseVertex;
+            indices[indexOffset + 1] = baseVertex + 1;
+            indices[indexOffset + 2] = baseVertex + 2;
+            indices[indexOffset + 3] = baseVertex;
+            indices[indexOffset + 4] = baseVertex + 2;
+            indices[indexOffset + 5] = baseVertex + 3;
+        }
 
         if (_activeClipRect.HasValue)
         {
@@ -10604,6 +10729,9 @@ SceneStateUploadComplete:
                     case RenderCommandType.DrawVertexMesh:
                         CompileVertexMeshCommand(cmd, Matrix4x4.Identity);
                         break;
+                    case RenderCommandType.DrawPointBatch:
+                        CompilePointBatchCommand(cmd, Matrix4x4.Identity);
+                        break;
                     case RenderCommandType.FillQuad:
                         CompileFillQuadCommand(cmd, Matrix4x4.Identity);
                         break;
@@ -11032,6 +11160,9 @@ SceneStateUploadComplete:
                         break;
                     case RenderCommandType.DrawVertexMesh:
                         CompileVertexMeshCommand(cmd, Matrix4x4.Identity);
+                        break;
+                    case RenderCommandType.DrawPointBatch:
+                        CompilePointBatchCommand(cmd, Matrix4x4.Identity);
                         break;
                     case RenderCommandType.FillQuad:
                         CompileFillQuadCommand(cmd, Matrix4x4.Identity);

@@ -512,7 +512,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
                 if (sType == 6u) {
                     inColor = vec4<f32>((uniforms.view * vec4<f32>(input.color.rg, 0.0, 1.0)).xy, input.color.b, input.color.a);
                 }
-            } else if (sType < 3u) {
+            } else if (sType < 3u || sType == 19u || sType == 20u) {
                 let bIdx = u32(round(input.brushIndex));
                 let brush = brushes[bIdx];
                 if (brush.brushType > 0u) {
@@ -531,7 +531,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
                 if (sType == 6u) {
                     inColor = vec4<f32>((uniforms.mvp * vec4<f32>(input.color.rg, 0.0, 1.0)).xy, input.color.b, input.color.a);
                 }
-            } else if (sType < 3u) {
+            } else if (sType < 3u || sType == 19u || sType == 20u) {
                 let bIdx = u32(round(input.brushIndex));
                 let brush = brushes[bIdx];
                 if (brush.brushType > 0u) {
@@ -545,8 +545,16 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     var texCoord = inTexCoord;
     var gridIndex = 0.0;
     var outputCornerRadius = input.cornerRadius;
+    var outputShapeType = sType;
 
-    if (sType == 3u) {
+    if (sType == 19u || sType == 20u) {
+        // Algorithm: expand a retained point center by the encoded corner offset
+        // after static/GPU transforms so a zero-width Skia hairline stays one
+        // device pixel. Time and local-space complexity are O(1) per vertex.
+        worldPos = inPos + inTexCoord;
+        texCoord = inTexCoord;
+        outputShapeType = select(0u, 1u, sType == 20u);
+    } else if (sType == 3u) {
         // GPU Stroke Expansion
         var miterN = vec2<f32>(0.0, 0.0);
         var miterScale: f32 = 1.0;
@@ -687,7 +695,10 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
     output.shapeSize = inShapeSize;
     output.cornerRadius = outputCornerRadius;
     output.strokeThickness = input.strokeThickness;
-    output.shapeType = select(f32(sType), f32(sType) + 1000.0, aliasedEdge);
+    output.shapeType = select(
+        f32(outputShapeType),
+        f32(outputShapeType) + 1000.0,
+        aliasedEdge);
     output.gridIndex = gridIndex;
     return output;
 }

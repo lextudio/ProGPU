@@ -462,6 +462,63 @@ public sealed class GpuHitTestingTests
         Assert.Equal(new Vector2(45f, 66f), primitive.BoundsMax);
     }
 
+    [Theory]
+    [InlineData(false, GpuHitTestPrimitiveKind.RectangleFill)]
+    [InlineData(true, GpuHitTestPrimitiveKind.EllipseFill)]
+    public void RenderCommandCacheBuildsPrecisePointBatchPrimitives(
+        bool round,
+        GpuHitTestPrimitiveKind expectedKind)
+    {
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPointBatch,
+            Brush = new SolidColorBrush(Vector4.One),
+            PolylinePoints = [new Vector2(5f, 7f), new Vector2(11f, 13f)],
+            RadiusX = 2f,
+            IntParam = round ? 1 : 0,
+        }, Matrix4x4.CreateTranslation(3f, 4f, 0f), id: 4322);
+
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        Assert.Collection(
+            index.Primitives,
+            first =>
+            {
+                Assert.Equal(4322, first.Id);
+                Assert.Equal(expectedKind, first.Kind);
+                Assert.Equal(new Vector2(6f, 9f), first.BoundsMin);
+                Assert.Equal(new Vector2(10f, 13f), first.BoundsMax);
+            },
+            second =>
+            {
+                Assert.Equal(4322, second.Id);
+                Assert.Equal(expectedKind, second.Kind);
+                Assert.Equal(new Vector2(12f, 15f), second.BoundsMin);
+                Assert.Equal(new Vector2(16f, 19f), second.BoundsMax);
+            });
+    }
+
+    [Fact]
+    public void RenderCommandCacheKeepsHairlineBoundsInDeviceSpace()
+    {
+        var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPointBatch,
+            Brush = new SolidColorBrush(Vector4.One),
+            PolylinePoints = [new Vector2(4f, 5f)],
+            RadiusX = 0f,
+        }, Matrix4x4.CreateScale(4f, 4f, 1f), id: 4323);
+
+        var index = builder.BuildIndex(maxDepth: 2, maxPrimitivesPerNode: 1);
+
+        var primitive = Assert.Single(index.Primitives);
+        Assert.Equal(GpuHitTestPrimitiveKind.RectangleFill, primitive.Kind);
+        Assert.Equal(new Vector2(15.5f, 19.5f), primitive.BoundsMin);
+        Assert.Equal(new Vector2(16.5f, 20.5f), primitive.BoundsMax);
+    }
+
     [Fact]
     public void RenderCommandCacheBuildsPathPrimitiveSegments()
     {

@@ -45,7 +45,8 @@ public enum RenderCommandType
     PushBlendMode,
     PopBlendMode,
     DrawGlyphRun,
-    DrawVertexMesh
+    DrawVertexMesh,
+    DrawPointBatch
 }
 
 public enum VertexMeshTopology
@@ -1534,6 +1535,28 @@ public class DrawingContext : IRenderDataProvider
         });
     }
 
+    public void DrawPointBatch(
+        Brush brush,
+        Vector2[] points,
+        float radius,
+        bool round,
+        Matrix4x4 transform = default,
+        bool isEdgeAliased = false)
+    {
+        ArgumentNullException.ThrowIfNull(brush);
+        ArgumentNullException.ThrowIfNull(points);
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPointBatch,
+            Brush = brush,
+            PolylinePoints = points,
+            RadiusX = radius,
+            IntParam = round ? 1 : 0,
+            Transform = transform,
+            IsEdgeAliased = isEdgeAliased
+        });
+    }
+
     public void DrawStaticDxf(object staticBuffer)
     {
         DrawExtension(CompositorBuiltInExtensions.StaticDxf, dataParam: staticBuffer);
@@ -1887,7 +1910,8 @@ public class DrawingContext : IRenderDataProvider
                 }
                 else if (adjustedCmd.Type == RenderCommandType.PushGeometryClip ||
                          adjustedCmd.Type == RenderCommandType.DrawPath ||
-                         adjustedCmd.Type == RenderCommandType.DrawVertexMesh)
+                         adjustedCmd.Type == RenderCommandType.DrawVertexMesh ||
+                         adjustedCmd.Type == RenderCommandType.DrawPointBatch)
                 {
                     ComposeAppendTranslation(ref adjustedCmd, translation);
                 }

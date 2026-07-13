@@ -119,6 +119,60 @@ public sealed class BlendModeRenderTests
         }
     }
 
+    [Fact]
+    public void PointBatchRendersSquareAndRoundAnalyticCoverage()
+    {
+        var window = HeadlessWindow.Shared;
+        window.Resize(32, 32);
+        window.Content = new PointBatchVisual();
+
+        try
+        {
+            window.Render();
+            var pixels = window.ReadPixels();
+
+            var squareCenter = ReadPixel(pixels, window.Width, x: 8, y: 8);
+            Assert.InRange(squareCenter.R, 248, 255);
+            Assert.InRange(squareCenter.G, 0, 4);
+            Assert.InRange(squareCenter.B, 0, 4);
+
+            var squareCorner = ReadPixel(pixels, window.Width, x: 5, y: 5);
+            Assert.InRange(squareCorner.R, 248, 255);
+
+            var roundCenter = ReadPixel(pixels, window.Width, x: 20, y: 8);
+            Assert.InRange(roundCenter.R, 0, 4);
+            Assert.InRange(roundCenter.G, 0, 4);
+            Assert.InRange(roundCenter.B, 248, 255);
+
+            var roundCorner = ReadPixel(pixels, window.Width, x: 17, y: 5);
+            Assert.InRange(roundCorner.R, 0, 4);
+            Assert.InRange(roundCorner.G, 0, 4);
+            Assert.InRange(roundCorner.B, 0, 4);
+
+            var hairlineCenter = ReadPixel(pixels, window.Width, x: 16, y: 20);
+            Assert.InRange(hairlineCenter.R, 0, 4);
+            Assert.InRange(hairlineCenter.G, 248, 255);
+            Assert.InRange(hairlineCenter.B, 0, 4);
+            var hairlineNeighbor = ReadPixel(pixels, window.Width, x: 15, y: 20);
+            Assert.InRange(hairlineNeighbor.R, 0, 4);
+            Assert.InRange(hairlineNeighbor.G, 0, 4);
+            Assert.InRange(hairlineNeighbor.B, 0, 4);
+
+            var subpixelLeft = ReadPixel(pixels, window.Width, x: 7, y: 20);
+            Assert.InRange(subpixelLeft.R, 248, 255);
+            Assert.InRange(subpixelLeft.G, 248, 255);
+            Assert.InRange(subpixelLeft.B, 0, 4);
+            var subpixelOutside = ReadPixel(pixels, window.Width, x: 6, y: 20);
+            Assert.InRange(subpixelOutside.R, 0, 4);
+            Assert.InRange(subpixelOutside.G, 0, 4);
+            Assert.InRange(subpixelOutside.B, 0, 4);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
     private static RgbaPixel ReadPixel(byte[] pixels, uint width, int x, int y)
     {
         var index = ((y * (int)width) + x) * 4;
@@ -218,6 +272,52 @@ public sealed class BlendModeRenderTests
                 null,
                 new Rect(0f, 0f, 32f, 32f));
             context.PopBlendMode();
+        }
+    }
+
+    private sealed class PointBatchVisual : FrameworkElement
+    {
+        private static readonly Vector2[] SquarePoint = [new(8f, 8f)];
+        private static readonly Vector2[] RoundPoint = [new(20f, 8f)];
+        private static readonly Vector2[] HairlinePoint = [new(4f, 5f)];
+        private static readonly Vector2[] SubpixelPoint = [new(2f, 5f)];
+
+        public PointBatchVisual()
+        {
+            Width = 32f;
+            Height = 32f;
+        }
+
+        public override void OnRender(DrawingContext context)
+        {
+            context.DrawPointBatch(
+                new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+                SquarePoint,
+                radius: 3f,
+                round: false,
+                Matrix4x4.Identity,
+                isEdgeAliased: true);
+            context.DrawPointBatch(
+                new SolidColorBrush(new Vector4(0f, 0f, 1f, 1f)),
+                RoundPoint,
+                radius: 3f,
+                round: true,
+                Matrix4x4.Identity,
+                isEdgeAliased: true);
+            context.DrawPointBatch(
+                new SolidColorBrush(new Vector4(0f, 1f, 0f, 1f)),
+                HairlinePoint,
+                radius: 0f,
+                round: false,
+                Matrix4x4.CreateScale(4f, 4f, 1f),
+                isEdgeAliased: true);
+            context.DrawPointBatch(
+                new SolidColorBrush(new Vector4(1f, 1f, 0f, 1f)),
+                SubpixelPoint,
+                radius: 0.25f,
+                round: false,
+                Matrix4x4.CreateScale(4f, 4f, 1f),
+                isEdgeAliased: true);
         }
     }
 }

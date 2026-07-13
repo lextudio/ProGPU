@@ -1932,6 +1932,124 @@ public class SKCanvas : IDisposable
         DrawPath(path, paint);
     }
 
+    public void DrawPoints(SKPointMode mode, SKPoint[] points, SKPaint paint)
+    {
+        ArgumentNullException.ThrowIfNull(paint);
+        ArgumentNullException.ThrowIfNull(points);
+        DrawPointsCore(mode, points, paint);
+    }
+
+    public void DrawPoint(SKPoint p, SKPaint paint) => DrawPoint(p.X, p.Y, paint);
+
+    public void DrawPoint(float x, float y, SKPaint paint)
+    {
+        ArgumentNullException.ThrowIfNull(paint);
+        Span<SKPoint> point = stackalloc SKPoint[1];
+        point[0] = new SKPoint(x, y);
+        DrawPointsCore(SKPointMode.Points, point, paint);
+    }
+
+    public void DrawPoint(SKPoint p, SKColor color) => DrawPoint(p.X, p.Y, color);
+
+    public void DrawPoint(float x, float y, SKColor color)
+    {
+        using var paint = new SKPaint
+        {
+            Color = color,
+            BlendMode = SKBlendMode.Src,
+        };
+        DrawPoint(x, y, paint);
+    }
+
+    private void DrawPointsCore(SKPointMode mode, ReadOnlySpan<SKPoint> points, SKPaint paint)
+    {
+        if (points.IsEmpty)
+        {
+            return;
+        }
+
+        if (mode != SKPointMode.Points)
+        {
+            if (points.Length < 2)
+            {
+                return;
+            }
+
+            using var path = new SKPath();
+            if (mode == SKPointMode.Lines)
+            {
+                for (var index = 0; index + 1 < points.Length; index += 2)
+                {
+                    path.MoveTo(points[index]);
+                    path.LineTo(points[index + 1]);
+                }
+            }
+            else
+            {
+                path.MoveTo(points[0]);
+                for (var index = 1; index < points.Length; index++)
+                {
+                    path.LineTo(points[index]);
+                }
+            }
+
+            using var strokePaint = paint.Clone();
+            strokePaint.Style = SKPaintStyle.Stroke;
+            DrawPath(path, strokePaint);
+            return;
+        }
+
+        var radius = paint.StrokeWidth > 0f ? paint.StrokeWidth * 0.5f : 0f;
+        var round = paint.StrokeCap == SKStrokeCap.Round;
+        if (HasSpecialShader(paint.Shader))
+        {
+            using var path = new SKPath();
+            for (var index = 0; index < points.Length; index++)
+            {
+                var point = points[index];
+                if (round)
+                {
+                    path.AddCircle(point.X, point.Y, radius);
+                }
+                else
+                {
+                    path.AddRect(new SKRect(
+                        point.X - radius,
+                        point.Y - radius,
+                        point.X + radius,
+                        point.Y + radius));
+                }
+            }
+
+            using var fillPaint = paint.Clone();
+            fillPaint.Style = SKPaintStyle.Fill;
+            DrawPath(path, fillPaint);
+            return;
+        }
+
+        var converted = GC.AllocateUninitializedArray<Vector2>(points.Length);
+        for (var index = 0; index < points.Length; index++)
+        {
+            converted[index] = new Vector2(points[index].X, points[index].Y);
+        }
+
+        var pushedBlendMode = PushPaintBlendMode(paint);
+        try
+        {
+            _context.DrawPointBatch(
+                paint.ToFillBrush(),
+                converted,
+                radius,
+                round,
+                _currentMatrix.ToMatrix4x4(),
+                !paint.IsAntialias);
+        }
+        finally
+        {
+            PopPaintBlendMode(pushedBlendMode);
+        }
+    }
+
     public void DrawLine(SKPoint point0, SKPoint point1, SKPaint paint) =>
         DrawLine(point0.X, point0.Y, point1.X, point1.Y, paint);
 
