@@ -3064,9 +3064,14 @@ public class SKCanvas : IDisposable
         return fillType is SKPathFillType.InverseWinding or SKPathFillType.InverseEvenOdd;
     }
 
-    public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint? paint)
+    public void DrawImage(SKImage image, SKRect source, SKRect dest, SKPaint? paint = null)
     {
-        DrawImageCore(image, source, dest, TextureSamplingMode.Linear, paint);
+        DrawImage(
+            image,
+            source,
+            dest,
+            paint?.GetLegacyFilterQualitySampling() ?? SKSamplingOptions.Default,
+            paint);
     }
 
     private void DrawImageCore(
@@ -3077,13 +3082,33 @@ public class SKCanvas : IDisposable
         SKPaint? paint,
         Vector2? cubicCoefficients = null)
     {
-        var opacity = paint != null ? paint.Color.A / 255f : 1f;
+        ArgumentNullException.ThrowIfNull(image);
         var retainedTexture = RetainImageTexture(
             image,
             samplingMode == TextureSamplingMode.LinearMipmap);
+        DrawRetainedImageCore(
+            retainedTexture,
+            image.ColorSpace,
+            source,
+            dest,
+            samplingMode,
+            paint,
+            cubicCoefficients);
+    }
+
+    private void DrawRetainedImageCore(
+        GpuTexture retainedTexture,
+        SKColorSpace? sourceColorSpace,
+        SKRect source,
+        SKRect dest,
+        TextureSamplingMode samplingMode,
+        SKPaint? paint,
+        Vector2? cubicCoefficients = null)
+    {
+        var opacity = paint != null ? paint.Color.A / 255f : 1f;
         if (!_isPictureRecording)
         {
-            retainedTexture = ConvertImageTextureToSrgb(retainedTexture, image.ColorSpace);
+            retainedTexture = ConvertImageTextureToSrgb(retainedTexture, sourceColorSpace);
         }
         if (paint?.ColorFilter is { } colorFilter)
         {
@@ -3160,7 +3185,7 @@ public class SKCanvas : IDisposable
         SKRect source,
         SKRect dest,
         SKSamplingOptions sampling,
-        SKPaint? paint)
+        SKPaint? paint = null)
     {
         var samplingMode = MapSampling(sampling);
         DrawImageCore(image, source, dest, samplingMode, paint, MapCubicSampling(sampling));
@@ -3168,29 +3193,208 @@ public class SKCanvas : IDisposable
 
     public void DrawImage(
         SKImage image,
-        SKRect destination,
+        SKRect dest,
         SKSamplingOptions sampling,
-        SKPaint? paint) =>
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
         DrawImage(
             image,
             new SKRect(0f, 0f, image.Width, image.Height),
-            destination,
+            dest,
             sampling,
             paint);
-
-    public void DrawImage(SKImage image, float x, float y, SKPaint? paint)
-    {
-        DrawImage(image, new SKRect(0, 0, image.Width, image.Height), new SKRect(x, y, x + image.Width, y + image.Height), paint);
     }
 
-    public void DrawImage(SKImage image, SKRect destination)
+    public void DrawImage(SKImage image, SKPoint p, SKPaint? paint = null) =>
+        DrawImage(image, p.X, p.Y, paint);
+
+    public void DrawImage(
+        SKImage image,
+        SKPoint p,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null) =>
+        DrawImage(image, p.X, p.Y, sampling, paint);
+
+    public void DrawImage(SKImage image, float x, float y, SKPaint? paint = null)
     {
-        using var paint = new SKPaint();
+        ArgumentNullException.ThrowIfNull(image);
         DrawImage(
             image,
             new SKRect(0f, 0f, image.Width, image.Height),
-            destination,
+            new SKRect(x, y, x + image.Width, y + image.Height),
             paint);
+    }
+
+    public void DrawImage(
+        SKImage image,
+        float x,
+        float y,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        DrawImage(
+            image,
+            new SKRect(0f, 0f, image.Width, image.Height),
+            new SKRect(x, y, x + image.Width, y + image.Height),
+            sampling,
+            paint);
+    }
+
+    public void DrawImage(SKImage image, SKRect dest, SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        DrawImage(
+            image,
+            new SKRect(0f, 0f, image.Width, image.Height),
+            dest,
+            paint);
+    }
+
+    public void DrawBitmap(SKBitmap bitmap, SKPoint p, SKPaint? paint = null) =>
+        DrawBitmap(bitmap, p.X, p.Y, paint);
+
+    public void DrawBitmap(
+        SKBitmap bitmap,
+        SKPoint p,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null) =>
+        DrawBitmap(bitmap, p.X, p.Y, sampling, paint);
+
+    public void DrawBitmap(SKBitmap bitmap, float x, float y, SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        DrawBitmap(
+            bitmap,
+            new SKRect(0f, 0f, bitmap.Width, bitmap.Height),
+            new SKRect(x, y, x + bitmap.Width, y + bitmap.Height),
+            paint);
+    }
+
+    public void DrawBitmap(
+        SKBitmap bitmap,
+        float x,
+        float y,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        DrawBitmap(
+            bitmap,
+            new SKRect(0f, 0f, bitmap.Width, bitmap.Height),
+            new SKRect(x, y, x + bitmap.Width, y + bitmap.Height),
+            sampling,
+            paint);
+    }
+
+    public void DrawBitmap(SKBitmap bitmap, SKRect dest, SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        DrawBitmap(
+            bitmap,
+            new SKRect(0f, 0f, bitmap.Width, bitmap.Height),
+            dest,
+            paint);
+    }
+
+    public void DrawBitmap(
+        SKBitmap bitmap,
+        SKRect dest,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        DrawBitmap(
+            bitmap,
+            new SKRect(0f, 0f, bitmap.Width, bitmap.Height),
+            dest,
+            sampling,
+            paint);
+    }
+
+    public void DrawBitmap(
+        SKBitmap bitmap,
+        SKRect source,
+        SKRect dest,
+        SKPaint? paint = null) =>
+        DrawBitmap(
+            bitmap,
+            source,
+            dest,
+            paint?.GetLegacyFilterQualitySampling() ?? SKSamplingOptions.Default,
+            paint);
+
+    public void DrawBitmap(
+        SKBitmap bitmap,
+        SKRect source,
+        SKRect dest,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        if (bitmap.DrawsNothing)
+        {
+            return;
+        }
+
+        var samplingMode = MapSampling(sampling);
+        var retainedTexture = RetainBitmapTexture(
+            bitmap,
+            samplingMode == TextureSamplingMode.LinearMipmap);
+        DrawRetainedImageCore(
+            retainedTexture,
+            bitmap.ColorSpace,
+            source,
+            dest,
+            samplingMode,
+            paint,
+            MapCubicSampling(sampling));
+    }
+
+    public void DrawSurface(SKSurface surface, SKPoint p, SKPaint? paint = null) =>
+        DrawSurface(surface, p.X, p.Y, paint);
+
+    public void DrawSurface(
+        SKSurface surface,
+        SKPoint p,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null) =>
+        DrawSurface(surface, p.X, p.Y, sampling, paint);
+
+    public void DrawSurface(SKSurface surface, float x, float y, SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        using var image = surface.CreateBorrowedImageForDraw();
+        DrawImage(image, x, y, paint);
+    }
+
+    public void DrawSurface(
+        SKSurface surface,
+        float x,
+        float y,
+        SKSamplingOptions sampling,
+        SKPaint? paint = null)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        using var image = surface.CreateBorrowedImageForDraw();
+        DrawImage(image, x, y, sampling, paint);
+    }
+
+    private GpuTexture RetainBitmapTexture(SKBitmap bitmap, bool generateMipmaps)
+    {
+        var retainedTexture = SKImage.CreateTextureFromBitmap(
+            bitmap,
+            GetGpuContext(),
+            generateMipmaps,
+            "SKCanvas DrawBitmap Retained Source Texture");
+        if (bitmap.ColorSpace is { } bitmapColorSpace)
+        {
+            s_textureColorSpaces.Add(retainedTexture, new TextureColorSpace(bitmapColorSpace));
+        }
+
+        _context.RetainResource(retainedTexture);
+        return retainedTexture;
     }
 
     private GpuTexture RetainImageTexture(SKImage image, bool generateMipmaps = false)

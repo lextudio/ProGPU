@@ -461,18 +461,24 @@ public class SKSurface : IDisposable
             new SKImageInfo(_width, _height, _colorType, _alphaType, _colorSpace));
     }
 
+    internal SKImage CreateBorrowedImageForDraw()
+    {
+        if (_gpuTexture == null)
+        {
+            throw new InvalidOperationException("No backing texture for drawing the surface.");
+        }
+
+        Flush();
+        return SKImage.FromBorrowedTexture(
+            _gpuTexture,
+            new SKImageInfo(_width, _height, _colorType, _alphaType, _colorSpace));
+    }
+
     public void Draw(SKCanvas canvas, float x, float y, SKPaint? paint)
     {
         ArgumentNullException.ThrowIfNull(canvas);
-        using var image = Snapshot();
-        if (paint != null)
-        {
-            canvas.DrawImage(image, x, y, paint);
-            return;
-        }
-
-        using var defaultPaint = new SKPaint();
-        canvas.DrawImage(image, x, y, defaultPaint);
+        using var image = CreateBorrowedImageForDraw();
+        canvas.DrawImage(image, x, y, paint);
     }
 
     private static unsafe void CopyPixelToRgbaPremultiplied(byte* sourceRow, byte* destinationRow, int x, SKColorType colorType, SKAlphaType alphaType)

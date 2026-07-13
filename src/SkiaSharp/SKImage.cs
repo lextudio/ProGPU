@@ -43,29 +43,66 @@ public class SKImage : IDisposable
 
     public static SKImage FromBitmap(SKBitmap bitmap)
     {
-        // Upload CPU bitmap pixels to a GPU texture for zero-copy fast GPU drawing!
+        ArgumentNullException.ThrowIfNull(bitmap);
         var ctx = SKContextHelper.GetContext();
-        var texture = new GpuTexture(
+        var texture = CreateTextureFromBitmap(
+            bitmap,
             ctx,
+            generateMipmaps: false,
+            "SKImage Texture");
+
+        return new SKImage(texture, ownsTexture: true, bitmap.Info);
+    }
+
+    internal static GpuTexture CreateTextureFromBitmap(
+        SKBitmap bitmap,
+        WgpuContext context,
+        bool generateMipmaps,
+        string label)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        ArgumentNullException.ThrowIfNull(context);
+        var usage = TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc;
+        if (generateMipmaps)
+        {
+            usage |= TextureUsage.RenderAttachment;
+        }
+
+        var texture = new GpuTexture(
+            context,
             (uint)bitmap.Width,
             (uint)bitmap.Height,
             TextureFormat.Rgba8Unorm,
-            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
-            "SKImage Texture",
+            usage,
+            label,
             alphaMode: bitmap.AlphaType == SKAlphaType.Unpremul
                 ? GpuTextureAlphaMode.Straight
-                : GpuTextureAlphaMode.Premultiplied
-        );
+                : GpuTextureAlphaMode.Premultiplied,
+            mipLevelCount: generateMipmaps
+                ? CalculateMipLevelCount((uint)bitmap.Width, (uint)bitmap.Height)
+                : 1u);
 
-        byte[] buffer = bitmap.CopyRgba8888Rows();
-        if (bitmap.AlphaType == SKAlphaType.Opaque)
+        try
         {
-            ForceOpaqueAlpha(buffer);
+            byte[] buffer = bitmap.CopyRgba8888Rows();
+            if (bitmap.AlphaType == SKAlphaType.Opaque)
+            {
+                ForceOpaqueAlpha(buffer);
+            }
+
+            texture.WritePixels(new ReadOnlySpan<byte>(buffer));
+            if (generateMipmaps)
+            {
+                texture.GenerateMipmaps2DLinear();
+            }
+
+            return texture;
         }
-
-        texture.WritePixels(new ReadOnlySpan<byte>(buffer));
-
-        return new SKImage(texture, ownsTexture: true, bitmap.Info);
+        catch
+        {
+            texture.Dispose();
+            throw;
+        }
     }
 
     public static SKImage? FromEncodedData(byte[] data)
@@ -202,6 +239,24 @@ public class SKImage : IDisposable
     internal static SKImage FromOwnedTexture(GpuTexture texture, SKImageInfo? info = null)
     {
         return new SKImage(texture, ownsTexture: true, info ?? CreateTextureInfo(texture));
+    }
+
+    internal static SKImage FromBorrowedTexture(GpuTexture texture, SKImageInfo info)
+    {
+        return new SKImage(texture, ownsTexture: false, info);
+    }
+
+    private static uint CalculateMipLevelCount(uint width, uint height)
+    {
+        var dimension = Math.Max(width, height);
+        uint count = 1;
+        while (dimension > 1)
+        {
+            dimension /= 2;
+            count++;
+        }
+
+        return count;
     }
 
     internal SKImage CreateOwnedCopy()
