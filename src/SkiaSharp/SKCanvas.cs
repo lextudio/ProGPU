@@ -4514,7 +4514,7 @@ public class SKCanvas : IDisposable
         LimitTileRange(ref startY, ref endY);
 
         var texture = RetainImageTexture(imageShader.Image);
-        if (!_isPictureRecording)
+        if (!_isPictureRecording && !imageShader.IsRaw)
         {
             texture = ConvertImageTextureToSrgb(texture, imageShader.Image.ColorSpace);
         }

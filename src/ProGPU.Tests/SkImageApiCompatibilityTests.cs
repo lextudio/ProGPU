@@ -52,6 +52,31 @@ public sealed class SkImageApiCompatibilityTests
             typeof(SKImageCachingHint));
     }
 
+    [Fact]
+    public void RawImageShaderRetainsSamplingAndBypassesColorConversion()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(
+            1,
+            1,
+            SKColorType.Rgba8888,
+            SKAlphaType.Premul,
+            SKColorSpace.CreateSrgb()));
+        using var image = SKImage.FromBitmap(bitmap);
+        var sampling = new SKSamplingOptions(new SKCubicResampler(0.2f, 0.4f));
+
+        using var shader = image.ToRawShader(
+            SKShaderTileMode.Repeat,
+            SKShaderTileMode.Mirror,
+            sampling,
+            SKMatrix.CreateTranslation(2f, 3f));
+
+        Assert.NotNull(shader.Image);
+        Assert.True(shader.Image.IsRaw);
+        Assert.Equal(sampling, shader.Image.Sampling);
+        Assert.Equal(SKShaderTileMode.Repeat, shader.Image.TileModeX);
+        Assert.Equal(SKShaderTileMode.Mirror, shader.Image.TileModeY);
+    }
+
     private static void AssertMethod(string name, Type returnType, params Type[] parameterTypes)
     {
         var method = typeof(SKImage).GetMethod(

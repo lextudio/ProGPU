@@ -1199,9 +1199,10 @@ public partial class SKShader : SKObject
         SKShaderTileMode tileModeX,
         SKShaderTileMode tileModeY,
         SKMatrix localMatrix,
-        SKSamplingOptions sampling)
+        SKSamplingOptions sampling,
+        bool isRaw = false)
     {
-        return new SKShader(new ImageShaderData(image, tileModeX, tileModeY, localMatrix, sampling));
+        return new SKShader(new ImageShaderData(image, tileModeX, tileModeY, localMatrix, sampling, isRaw));
     }
 
     internal void AddReference()
@@ -1673,13 +1674,15 @@ public partial class SKShader : SKObject
             SKShaderTileMode tileModeX,
             SKShaderTileMode tileModeY,
             SKMatrix localMatrix,
-            SKSamplingOptions sampling)
+            SKSamplingOptions sampling,
+            bool isRaw = false)
         {
             Image = image;
             TileModeX = tileModeX;
             TileModeY = tileModeY;
             LocalMatrix = localMatrix;
             Sampling = sampling;
+            IsRaw = isRaw;
         }
 
         public SKImage Image { get; }
@@ -1687,6 +1690,7 @@ public partial class SKShader : SKObject
         public SKShaderTileMode TileModeY { get; }
         public SKMatrix LocalMatrix { get; }
         public SKSamplingOptions Sampling { get; }
+        public bool IsRaw { get; }
         public SKRect TileRect => new(0f, 0f, Image.Width, Image.Height);
 
         public void Dispose()

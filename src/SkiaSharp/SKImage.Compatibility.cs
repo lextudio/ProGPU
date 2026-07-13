@@ -48,29 +48,39 @@ public partial class SKImage
         ToShader(tileModeX, tileModeY, SamplingFromQuality((int)quality), localMatrix);
 #pragma warning restore CS0619
 
-    public SKShader ToRawShader() => ToShader();
+    public SKShader ToRawShader() => ToRawShader(
+        SKShaderTileMode.Clamp,
+        SKShaderTileMode.Clamp,
+        SKSamplingOptions.Default,
+        SKMatrix.Identity);
 
     public SKShader ToRawShader(SKShaderTileMode tileModeX, SKShaderTileMode tileModeY) =>
-        ToShader(tileModeX, tileModeY);
+        ToRawShader(tileModeX, tileModeY, SKSamplingOptions.Default, SKMatrix.Identity);
 
     public SKShader ToRawShader(
         SKShaderTileMode tileModeX,
         SKShaderTileMode tileModeY,
         SKMatrix localMatrix) =>
-        ToShader(tileModeX, tileModeY, localMatrix);
+        ToRawShader(tileModeX, tileModeY, SKSamplingOptions.Default, localMatrix);
 
     public SKShader ToRawShader(
         SKShaderTileMode tileModeX,
         SKShaderTileMode tileModeY,
         SKSamplingOptions sampling) =>
-        ToShader(tileModeX, tileModeY, sampling);
+        ToRawShader(tileModeX, tileModeY, sampling, SKMatrix.Identity);
 
     public SKShader ToRawShader(
         SKShaderTileMode tileModeX,
         SKShaderTileMode tileModeY,
         SKSamplingOptions sampling,
         SKMatrix localMatrix) =>
-        ToShader(tileModeX, tileModeY, sampling, localMatrix);
+        SKShader.CreateRetainedImage(
+            CreateOwnedCopy(),
+            tileModeX,
+            tileModeY,
+            localMatrix,
+            sampling,
+            isRaw: true);
 
     public bool ReadPixels(SKImageInfo dstInfo, IntPtr dstPixels) =>
         ReadPixels(dstInfo, dstPixels, dstInfo.RowBytes, 0, 0, SKImageCachingHint.Allow);
