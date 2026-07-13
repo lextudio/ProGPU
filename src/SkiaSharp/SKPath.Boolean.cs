@@ -1,5 +1,4 @@
 using System.Numerics;
-using ProGPU.Backend;
 using ProGPU.Vector;
 
 namespace SkiaSharp;
@@ -25,12 +24,8 @@ public partial class SKPath
             ApplySolvedGeometry(result, simplified);
             return true;
         }
-        if (TrySolveWithActiveGpu(windingOutput: false, out simplified))
-        {
-            ApplySolvedGeometry(result, simplified);
-            return true;
-        }
-
+        // The GPU path-op solver tessellates curves. Keep the exact curve segments in
+        // the fallback so process-wide GPU availability cannot change API output.
         using var copy = new SKPath(this)
         {
             FillType = FillType is SKPathFillType.InverseEvenOdd or SKPathFillType.InverseWinding
@@ -60,12 +55,8 @@ public partial class SKPath
             ApplySolvedGeometry(result, winding);
             return true;
         }
-        if (TrySolveWithActiveGpu(windingOutput: true, out winding))
-        {
-            ApplySolvedGeometry(result, winding);
-            return true;
-        }
-
+        // See Simplify: exact curve ownership is preferable to context-dependent
+        // tessellation when the linear solver cannot represent the source.
         using var copy = new SKPath(this)
         {
             FillType = FillType is SKPathFillType.InverseEvenOdd or SKPathFillType.InverseWinding
@@ -74,33 +65,6 @@ public partial class SKPath
         };
         CopyTo(copy, result);
         return true;
-    }
-
-    private bool TrySolveWithActiveGpu(
-        bool windingOutput,
-        out PathGeometry solved)
-    {
-        solved = null!;
-        if (WgpuContext.Current == null &&
-            !WgpuContext.TryGetFirstActiveContext(out _))
-        {
-            return false;
-        }
-
-        try
-        {
-            solved = PathOpGeometrySolver.Combine(
-                Geometry,
-                Geometry,
-                (int)SKPathOp.Union);
-            solved.FillRule = windingOutput ? FillRule.Nonzero : FillRule.EvenOdd;
-            return true;
-        }
-        catch
-        {
-            solved = null!;
-            return false;
-        }
     }
 
     private bool TrySimplifyLinearGeometry(
