@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using ProGPU.Vector;
 
 namespace SkiaSharp;
 
 public class SKPath : IDisposable
 {
+    private static readonly ConditionalWeakTable<QuadraticBezierSegment, ConicWeight> s_conicWeights = new();
+
     public IntPtr Handle { get; } = SKObjectHandle.Create();
     private PathFigure? _currentFigure;
     private SKPathFillType _fillType = SKPathFillType.Winding;
@@ -253,6 +256,7 @@ public class SKPath : IDisposable
         }
 
         var current = 0;
+        Span<Vector2> arcPoints = stackalloc Vector2[8];
         foreach (var figure in Geometry.Figures)
         {
             if (current++ == index)
@@ -299,7 +303,6 @@ public class SKPath : IDisposable
                         break;
 
                     case ArcSegment arc:
-                        Span<Vector2> arcPoints = stackalloc Vector2[8];
                         var arcPointCount = GetArcConicPoints(
                             segmentStart,
                             arc,
@@ -343,6 +346,7 @@ public class SKPath : IDisposable
 
         var limit = Math.Min(points.Length, max);
         var written = 0;
+        Span<Vector2> arcPoints = stackalloc Vector2[8];
         foreach (var figure in Geometry.Figures)
         {
             var segmentStart = figure.StartPoint;
@@ -364,7 +368,6 @@ public class SKPath : IDisposable
                         WritePoint(ToPoint(cubic.Point));
                         break;
                     case ArcSegment arc:
-                        Span<Vector2> arcPoints = stackalloc Vector2[8];
                         var arcPointCount = GetArcConicPoints(segmentStart, arc, arcPoints);
                         for (var pointIndex = 0; pointIndex < arcPointCount; pointIndex++)
                         {
@@ -448,7 +451,9 @@ public class SKPath : IDisposable
                 masks |= segment switch
                 {
                     LineSegment => SKPathSegmentMask.Line,
-                    QuadraticBezierSegment => SKPathSegmentMask.Quad,
+                    QuadraticBezierSegment quadratic => TryGetConicWeight(quadratic, out _)
+                        ? SKPathSegmentMask.Conic
+                        : SKPathSegmentMask.Quad,
                     CubicBezierSegment => SKPathSegmentMask.Cubic,
                     ArcSegment => SKPathSegmentMask.Conic,
                     _ => 0,
@@ -838,7 +843,8 @@ public class SKPath : IDisposable
     private static int GetArcConicPoints(
         Vector2 start,
         ArcSegment arc,
-        Span<Vector2> points)
+        Span<Vector2> points,
+        Span<float> weights = default)
     {
         if (!ArcSegmentGeometry.TryGetArcCenter(
                 start,
@@ -876,14 +882,40 @@ public class SKPath : IDisposable
             var segmentEnd = segmentStart + step;
             var middle = (segmentStart + segmentEnd) * 0.5f;
             var weight = MathF.Cos(step * 0.5f);
-            points[index * 2] = center +
-                (axisX * MathF.Cos(middle) + axisY * MathF.Sin(middle)) / weight;
+            if (index < weights.Length)
+            {
+                weights[index] = weight;
+            }
+            var controlCos = SnapUnitTrigonometricValue(MathF.Cos(middle) / weight);
+            var controlSin = SnapUnitTrigonometricValue(MathF.Sin(middle) / weight);
+            points[index * 2] = center + axisX * controlCos + axisY * controlSin;
             points[index * 2 + 1] = index == conicCount - 1
                 ? arc.Point
-                : center + axisX * MathF.Cos(segmentEnd) + axisY * MathF.Sin(segmentEnd);
+                : center +
+                    axisX * SnapUnitTrigonometricValue(MathF.Cos(segmentEnd)) +
+                    axisY * SnapUnitTrigonometricValue(MathF.Sin(segmentEnd));
         }
 
         return conicCount * 2;
+    }
+
+    private static float SnapUnitTrigonometricValue(float value)
+    {
+        const float epsilon = 1e-5f;
+        if (MathF.Abs(value) <= epsilon)
+        {
+            return 0f;
+        }
+        if (MathF.Abs(value - 1f) <= epsilon)
+        {
+            return 1f;
+        }
+        if (MathF.Abs(value + 1f) <= epsilon)
+        {
+            return -1f;
+        }
+
+        return value;
     }
 
     private static bool NearlyEqual(Vector2 left, Vector2 right) =>
@@ -1085,8 +1117,16 @@ public class SKPath : IDisposable
 
     public void ConicTo(SKPoint control, SKPoint end, float weight)
     {
-        QuadTo(control, end);
+        EnsureFigure();
+        var segment = new QuadraticBezierSegment(
+            new Vector2(control.X, control.Y),
+            new Vector2(end.X, end.Y));
+        _currentFigure!.Segments.Add(segment);
+        s_conicWeights.Add(segment, new ConicWeight(weight));
     }
+
+    public void ConicTo(float x0, float y0, float x1, float y1, float weight) =>
+        ConicTo(new SKPoint(x0, y0), new SKPoint(x1, y1), weight);
 
     public bool Contains(float x, float y)
     {
@@ -1109,9 +1149,9 @@ public class SKPath : IDisposable
             : contains;
     }
 
-    public SKPathRawIterator CreateIterator(bool forceClose)
+    public Iterator CreateIterator(bool forceClose)
     {
-        return new SKPathRawIterator(this, forceClose);
+        return new Iterator(this, forceClose);
     }
 
     public void AddRect(SKRect rect, SKPathDirection direction = SKPathDirection.Clockwise)
@@ -1238,7 +1278,7 @@ public class SKPath : IDisposable
         AddPoly(points.AsSpan(), close);
     }
 
-    public SKPathRawIterator CreateRawIterator() => new(this, forceClose: false);
+    public RawIterator CreateRawIterator() => new(this);
 
     private static PathFigure CloneFigure(PathFigure figure, Vector2 offset)
     {
@@ -1317,11 +1357,7 @@ public class SKPath : IDisposable
                 line.Point + offset,
                 line.IsSmoothJoin,
                 line.IsStroked),
-            QuadraticBezierSegment quad => new QuadraticBezierSegment(
-                quad.ControlPoint + offset,
-                quad.Point + offset,
-                quad.IsSmoothJoin,
-                quad.IsStroked),
+            QuadraticBezierSegment quad => CloneQuadraticSegment(quad, offset),
             CubicBezierSegment cubic => new CubicBezierSegment(
                 cubic.ControlPoint1 + offset,
                 cubic.ControlPoint2 + offset,
@@ -1338,6 +1374,37 @@ public class SKPath : IDisposable
                 arc.IsStroked),
             _ => throw new NotSupportedException($"Unsupported SKPath segment type '{segment.GetType().FullName}'.")
         };
+    }
+
+    private static QuadraticBezierSegment CloneQuadraticSegment(
+        QuadraticBezierSegment source,
+        Vector2 offset)
+    {
+        var clone = new QuadraticBezierSegment(
+            source.ControlPoint + offset,
+            source.Point + offset,
+            source.IsSmoothJoin,
+            source.IsStroked);
+        if (TryGetConicWeight(source, out var weight))
+        {
+            s_conicWeights.Add(clone, new ConicWeight(weight));
+        }
+
+        return clone;
+    }
+
+    private static bool TryGetConicWeight(
+        QuadraticBezierSegment segment,
+        out float weight)
+    {
+        if (s_conicWeights.TryGetValue(segment, out var metadata))
+        {
+            weight = metadata.Value;
+            return true;
+        }
+
+        weight = 1f;
+        return false;
     }
 
     public SKPath Op(SKPath other, SKPathOp op)
@@ -1379,6 +1446,336 @@ public class SKPath : IDisposable
             ? SKPathFillType.EvenOdd
             : SKPathFillType.Winding;
     }
+
+    private static List<PathIteratorOperation> BuildIteratorOperations(
+        SKPath path,
+        bool forceClose,
+        bool raw)
+    {
+        var operations = new List<PathIteratorOperation>();
+        Span<Vector2> arcPoints = stackalloc Vector2[8];
+        Span<float> arcWeights = stackalloc float[4];
+        foreach (var figure in path.Geometry.Figures)
+        {
+            var closesContour = figure.IsClosed || forceClose;
+            var current = figure.StartPoint;
+            operations.Add(new PathIteratorOperation(
+                SKPathVerb.Move,
+                current,
+                default,
+                default,
+                default,
+                0f,
+                IsCloseLine: false,
+                ClosesContour: closesContour));
+
+            foreach (var segment in figure.Segments)
+            {
+                switch (segment)
+                {
+                    case LineSegment line:
+                        operations.Add(new PathIteratorOperation(
+                            SKPathVerb.Line,
+                            current,
+                            line.Point,
+                            default,
+                            default,
+                            0f,
+                            IsCloseLine: false,
+                            ClosesContour: closesContour));
+                        current = line.Point;
+                        break;
+
+                    case QuadraticBezierSegment quadratic:
+                        var isConic = TryGetConicWeight(quadratic, out var conicWeight);
+                        operations.Add(new PathIteratorOperation(
+                            isConic ? SKPathVerb.Conic : SKPathVerb.Quad,
+                            current,
+                            quadratic.ControlPoint,
+                            quadratic.Point,
+                            default,
+                            conicWeight,
+                            IsCloseLine: false,
+                            ClosesContour: closesContour));
+                        current = quadratic.Point;
+                        break;
+
+                    case CubicBezierSegment cubic:
+                        operations.Add(new PathIteratorOperation(
+                            SKPathVerb.Cubic,
+                            current,
+                            cubic.ControlPoint1,
+                            cubic.ControlPoint2,
+                            cubic.Point,
+                            0f,
+                            IsCloseLine: false,
+                            ClosesContour: closesContour));
+                        current = cubic.Point;
+                        break;
+
+                    case ArcSegment arc:
+                        var arcPointCount = GetArcConicPoints(
+                            current,
+                            arc,
+                            arcPoints,
+                            arcWeights);
+                        if (arcPointCount == 1)
+                        {
+                            operations.Add(new PathIteratorOperation(
+                                SKPathVerb.Line,
+                                current,
+                                arc.Point,
+                                default,
+                                default,
+                                0f,
+                                IsCloseLine: false,
+                                ClosesContour: closesContour));
+                        }
+                        else
+                        {
+                            for (var pointIndex = 0; pointIndex < arcPointCount; pointIndex += 2)
+                            {
+                                var end = arcPoints[pointIndex + 1];
+                                operations.Add(new PathIteratorOperation(
+                                    SKPathVerb.Conic,
+                                    current,
+                                    arcPoints[pointIndex],
+                                    end,
+                                    default,
+                                    arcWeights[pointIndex / 2],
+                                    IsCloseLine: false,
+                                    ClosesContour: closesContour));
+                                current = end;
+                            }
+                        }
+
+                        current = arc.Point;
+                        break;
+                }
+            }
+
+            if (raw)
+            {
+                if (figure.IsClosed)
+                {
+                    operations.Add(new PathIteratorOperation(
+                        SKPathVerb.Close,
+                        default,
+                        default,
+                        default,
+                        default,
+                        0f,
+                        IsCloseLine: false,
+                        ClosesContour: true));
+                }
+
+                continue;
+            }
+
+            if (!closesContour)
+            {
+                continue;
+            }
+
+            if (!NearlyEqual(current, figure.StartPoint))
+            {
+                operations.Add(new PathIteratorOperation(
+                    SKPathVerb.Line,
+                    current,
+                    figure.StartPoint,
+                    default,
+                    default,
+                    0f,
+                    IsCloseLine: true,
+                    ClosesContour: closesContour));
+            }
+
+            operations.Add(new PathIteratorOperation(
+                SKPathVerb.Close,
+                figure.StartPoint,
+                default,
+                default,
+                default,
+                0f,
+                IsCloseLine: true,
+                ClosesContour: closesContour));
+        }
+
+        return operations;
+    }
+
+    private static void ValidateIteratorPoints(Span<SKPoint> points)
+    {
+        if (points.Length != 4)
+        {
+            throw new ArgumentException("Must be an array of four elements.", nameof(points));
+        }
+    }
+
+    private static void WriteIteratorPoints(
+        Span<SKPoint> points,
+        in PathIteratorOperation operation,
+        bool writeClosePoint)
+    {
+        var pointCount = operation.Verb switch
+        {
+            SKPathVerb.Move => 1,
+            SKPathVerb.Line => 2,
+            SKPathVerb.Quad or SKPathVerb.Conic => 3,
+            SKPathVerb.Cubic => 4,
+            SKPathVerb.Close when writeClosePoint => 1,
+            _ => 0,
+        };
+
+        if (pointCount > 0)
+        {
+            points[0] = ToPoint(operation.P0);
+        }
+        if (pointCount > 1)
+        {
+            points[1] = ToPoint(operation.P1);
+        }
+        if (pointCount > 2)
+        {
+            points[2] = ToPoint(operation.P2);
+        }
+        if (pointCount > 3)
+        {
+            points[3] = ToPoint(operation.P3);
+        }
+    }
+
+    public sealed class RawIterator : SKObject
+    {
+        private readonly List<PathIteratorOperation> _operations;
+        private int _index;
+        private float _conicWeight;
+
+        internal RawIterator(SKPath path)
+            : base(SKObjectHandle.Create(), owns: true)
+        {
+            _operations = BuildIteratorOperations(path, forceClose: false, raw: true);
+        }
+
+        public SKPathVerb Next(SKPoint[] points)
+        {
+            ArgumentNullException.ThrowIfNull(points);
+            return Next(points.AsSpan());
+        }
+
+        public SKPathVerb Next(Span<SKPoint> points)
+        {
+            ValidateIteratorPoints(points);
+            if (_index >= _operations.Count)
+            {
+                return SKPathVerb.Done;
+            }
+
+            var operation = _operations[_index++];
+            WriteIteratorPoints(points, operation, writeClosePoint: false);
+            if (operation.Verb == SKPathVerb.Conic)
+            {
+                _conicWeight = operation.ConicWeight;
+            }
+
+            return operation.Verb;
+        }
+
+        public float ConicWeight() => _conicWeight;
+
+        public SKPathVerb Peek() => _index < _operations.Count
+            ? _operations[_index].Verb
+            : SKPathVerb.Done;
+
+        protected override void DisposeManaged()
+        {
+            _operations.Clear();
+        }
+    }
+
+    public sealed class Iterator : SKObject
+    {
+        private readonly List<PathIteratorOperation> _operations;
+        private int _index;
+        private float _conicWeight;
+        private bool _isCloseLine;
+        private bool _isCloseContour;
+
+        internal Iterator(SKPath path, bool forceClose)
+            : base(SKObjectHandle.Create(), owns: true)
+        {
+            _operations = BuildIteratorOperations(path, forceClose, raw: false);
+        }
+
+        public SKPathVerb Next(SKPoint[] points)
+        {
+            ArgumentNullException.ThrowIfNull(points);
+            return Next(points.AsSpan());
+        }
+
+        public SKPathVerb Next(Span<SKPoint> points)
+        {
+            ValidateIteratorPoints(points);
+            if (_index >= _operations.Count)
+            {
+                return SKPathVerb.Done;
+            }
+
+            var operation = _operations[_index++];
+            WriteIteratorPoints(points, operation, writeClosePoint: true);
+            if (operation.Verb == SKPathVerb.Conic)
+            {
+                _conicWeight = operation.ConicWeight;
+            }
+            if (operation.Verb == SKPathVerb.Line)
+            {
+                _isCloseLine = operation.IsCloseLine;
+            }
+            if (operation.Verb == SKPathVerb.Move)
+            {
+                _isCloseContour = operation.ClosesContour;
+            }
+            else if (operation.Verb == SKPathVerb.Close)
+            {
+                _isCloseContour = _index < _operations.Count &&
+                    _operations[_index].Verb == SKPathVerb.Move &&
+                    _operations[_index].ClosesContour;
+            }
+
+            return operation.Verb;
+        }
+
+        public float ConicWeight() => _conicWeight;
+
+        public bool IsCloseLine() => _isCloseLine;
+
+        public bool IsCloseContour() => _isCloseContour;
+
+        protected override void DisposeManaged()
+        {
+            _operations.Clear();
+        }
+    }
+
+    private sealed class ConicWeight
+    {
+        public ConicWeight(float value)
+        {
+            Value = value;
+        }
+
+        public float Value { get; }
+    }
+
+    private readonly record struct PathIteratorOperation(
+        SKPathVerb Verb,
+        Vector2 P0,
+        Vector2 P1,
+        Vector2 P2,
+        Vector2 P3,
+        float ConicWeight,
+        bool IsCloseLine,
+        bool ClosesContour);
 
 
     public void Dispose() { }
@@ -1762,108 +2159,6 @@ public enum SKPathVerb
     Cubic = 4,
     Close = 5,
     Done = 6
-}
-
-public sealed class SKPathRawIterator : IDisposable
-{
-    private readonly List<PathOperation> _operations = new();
-    private int _index;
-    private float _conicWeight = 1f;
-
-    internal SKPathRawIterator(SKPath path, bool forceClose)
-    {
-        foreach (var figure in path.Geometry.Figures)
-        {
-            var current = figure.StartPoint;
-            _operations.Add(new PathOperation(SKPathVerb.Move, current, default, default, default));
-            foreach (var segment in figure.Segments)
-            {
-                switch (segment)
-                {
-                    case LineSegment line:
-                        _operations.Add(new PathOperation(SKPathVerb.Line, current, line.Point, default, default));
-                        current = line.Point;
-                        break;
-                    case QuadraticBezierSegment quadratic:
-                        _operations.Add(new PathOperation(
-                            SKPathVerb.Quad,
-                            current,
-                            quadratic.ControlPoint,
-                            quadratic.Point,
-                            default));
-                        current = quadratic.Point;
-                        break;
-                    case CubicBezierSegment cubic:
-                        _operations.Add(new PathOperation(
-                            SKPathVerb.Cubic,
-                            current,
-                            cubic.ControlPoint1,
-                            cubic.ControlPoint2,
-                            cubic.Point));
-                        current = cubic.Point;
-                        break;
-                    case ArcSegment arc:
-                        var flattened = ArcSegmentGeometry.FlattenArc(current, arc, MathF.PI / 32f);
-                        for (var i = 1; i < flattened.Length; i++)
-                        {
-                            _operations.Add(new PathOperation(
-                                SKPathVerb.Line,
-                                flattened[i - 1],
-                                flattened[i],
-                                default,
-                                default));
-                        }
-
-                        current = arc.Point;
-                        break;
-                }
-            }
-
-            if (figure.IsClosed || forceClose)
-            {
-                _operations.Add(new PathOperation(SKPathVerb.Close, current, figure.StartPoint, default, default));
-            }
-        }
-    }
-
-    public SKPathVerb Next(SKPoint[] points)
-    {
-        ArgumentNullException.ThrowIfNull(points);
-        if (_index >= _operations.Count)
-        {
-            return SKPathVerb.Done;
-        }
-
-        var operation = _operations[_index++];
-        SetPoint(points, 0, operation.P0);
-        SetPoint(points, 1, operation.P1);
-        SetPoint(points, 2, operation.P2);
-        SetPoint(points, 3, operation.P3);
-        _conicWeight = 1f;
-        return operation.Verb;
-    }
-
-    public float ConicWeight() => _conicWeight;
-
-    public void Dispose()
-    {
-        _operations.Clear();
-    }
-
-    private static void SetPoint(SKPoint[] points, int index, Vector2 value)
-    {
-        if (index < points.Length)
-        {
-            points[index] = new SKPoint(value.X, value.Y);
-        }
-    }
-
-    private readonly record struct PathOperation(
-        SKPathVerb Verb,
-        Vector2 P0,
-        Vector2 P1,
-        Vector2 P2,
-        Vector2 P3);
 }
 
 public sealed class SKRegionRectIterator : IDisposable
