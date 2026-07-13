@@ -18,6 +18,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
+using ProGPU.WinUI.Designer;
 using Button = Microsoft.UI.Xaml.Controls.Button;
 using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 using Window = Microsoft.UI.Xaml.Window;
@@ -41,6 +42,7 @@ public static unsafe class MainWindowController
         AppState._compute = new ComputeAccelerator(AppState._wgpuContext!);
 
         SampleFontLoader.EnsureLoaded();
+        VirtualizedCodeEditor.WarmUpSyntaxHighlighting();
 
         AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc,
@@ -85,6 +87,7 @@ public static unsafe class MainWindowController
         AppState._compute = new ComputeAccelerator(AppState._wgpuContext!);
 
         SampleFontLoader.EnsureLoaded("[ProGPU.Samples.Embedded]");
+        VirtualizedCodeEditor.WarmUpSyntaxHighlighting();
 
         AppState._canvasSourceTexture = new GpuTexture(AppState._wgpuContext!, 600, 600, TextureFormat.Rgba8Unorm, 
             TextureUsage.RenderAttachment | TextureUsage.TextureBinding | TextureUsage.StorageBinding | TextureUsage.CopySrc,
@@ -510,11 +513,6 @@ public static unsafe class MainWindowController
         if (AppState._screenCompositor == null || AppState._offscreenCompositor == null || AppState._compute == null) return;
 
         OnWindowUpdate(delta);
-
-        if (AppState._activeCategory == "MotionMark Showcase")
-        {
-            AppState._motionMarkVisual?.AdvanceAnimation();
-        }
 
         if (AppState._needsCloseDevTools)
         {

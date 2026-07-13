@@ -40,6 +40,10 @@ public class ComboBox : Control
         {
             if (_isDropDownOpen != value)
             {
+                if (value)
+                {
+                    DropDownOpening?.Invoke(this, EventArgs.Empty);
+                }
                 _isDropDownOpen = value;
                 UpdatePopupState();
             }
@@ -84,6 +88,7 @@ public class ComboBox : Control
     }
 
     public event EventHandler? SelectionChanged;
+    public event EventHandler? DropDownOpening;
 
     public ComboBox()
     {

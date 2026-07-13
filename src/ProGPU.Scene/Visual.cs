@@ -567,6 +567,28 @@ public class ContainerVisual : Visual
             layoutNode.InvalidateMeasure();
         }
     }
+
+    public void BringChildToFront(Visual child)
+    {
+        ArgumentNullException.ThrowIfNull(child);
+        bool reordered = false;
+        lock (_childrenLock)
+        {
+            if (ReferenceEquals(child.Parent, this) &&
+                _children.Count > 0 &&
+                !ReferenceEquals(_children[^1], child))
+            {
+                _children.Remove(child);
+                _children.Add(child);
+                reordered = true;
+            }
+        }
+
+        if (reordered)
+        {
+            Invalidate();
+        }
+    }
 }
 
 public class DrawingVisual : Visual

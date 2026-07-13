@@ -290,7 +290,6 @@ public static class SamplePagePresenter
         grid.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star));      // Column 1: Visual Canvas Card
 
         var visual = new MotionMarkShowcaseVisual();
-        AppState._motionMarkVisual = visual;
 
         // 1. Settings Card
         var settingsCard = new Border {
@@ -431,7 +430,7 @@ public static class SamplePagePresenter
         gpuToggleLabel.Inlines.Add(new Bold(new Run("Use individual retained paths:")));
         settingsStack.AddChild(gpuToggleLabel);
         
-        var gpuToggle = new ToggleSwitch { IsOn = true, Margin = new Thickness(0, 0, 0, 0) };
+        var gpuToggle = new ToggleSwitch { IsOn = false, Margin = new Thickness(0, 0, 0, 0) };
         gpuToggle.Toggled += (s, e) => {
             visual.UseIndividualPaths = gpuToggle.IsOn;
             visual.Invalidate();

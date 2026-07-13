@@ -165,6 +165,11 @@ public class VirtualizingPanel : Panel
         Invalidate();
     }
 
+    public virtual void RebindVisibleItems()
+    {
+        Invalidate();
+    }
+
     protected override void ArrangeOverride(Rect arrangeRect)
     {
         // Enforce boundary clipping to prevent scrolled-out items from leaking
@@ -179,8 +184,14 @@ public class VirtualizingPanel : Panel
         {
             _scrollbar.Size = new Vector2(arrangeRect.Width, arrangeRect.Height);
             
-            // Re-adding it moves it to the end of the children list, putting it on top of all item cards!
-            base.AddChild(_scrollbar);
+            if (_scrollbar.Parent == null)
+            {
+                base.AddChild(_scrollbar);
+            }
+            else
+            {
+                BringChildToFront(_scrollbar);
+            }
             
             _scrollbar.Measure(new Vector2(arrangeRect.Width, arrangeRect.Height));
             _scrollbar.Arrange(new Rect(0f, 0f, arrangeRect.Width, arrangeRect.Height));

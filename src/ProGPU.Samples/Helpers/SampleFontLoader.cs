@@ -66,6 +66,8 @@ public static class SampleFontLoader
                     "comic.ttf",
                     "/usr/share/fonts/truetype/comic-neue/ComicNeue-Regular.ttf"))
             ?? primary;
+
+        _ = FontApi.WarmUpSystemFontsAsync();
     }
 
     private static TtfFont LoadRequiredFont(string displayName, string[] fontNames, IEnumerable<string> pathCandidates)

@@ -155,6 +155,18 @@ public class ItemsControl : Control
         Invalidate();
     }
 
+    public void RefreshVisibleItems()
+    {
+        if (ItemsPanel is VirtualizingPanel virtualizingPanel)
+        {
+            virtualizingPanel.RebindVisibleItems();
+        }
+        else
+        {
+            RefreshItems();
+        }
+    }
+
     protected override Vector2 MeasureOverride(Vector2 availableSize)
     {
         if (HasTemplate)

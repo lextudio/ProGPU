@@ -31,9 +31,52 @@ public abstract class Block
 
 public abstract class TextElement : Block
 {
-    public Brush? Foreground { get; set; }
-    public float? FontSize { get; set; }
-    public TtfFont? Font { get; set; }
+    private Brush? _foreground;
+    private float? _fontSize;
+    private TtfFont? _font;
+
+    internal event Action? Changed;
+
+    protected void OnChanged() => Changed?.Invoke();
+
+    public Brush? Foreground
+    {
+        get => _foreground;
+        set
+        {
+            if (!ReferenceEquals(_foreground, value))
+            {
+                _foreground = value;
+                OnChanged();
+            }
+        }
+    }
+
+    public float? FontSize
+    {
+        get => _fontSize;
+        set
+        {
+            if (_fontSize != value)
+            {
+                _fontSize = value;
+                OnChanged();
+            }
+        }
+    }
+
+    public TtfFont? Font
+    {
+        get => _font;
+        set
+        {
+            if (!ReferenceEquals(_font, value))
+            {
+                _font = value;
+                OnChanged();
+            }
+        }
+    }
 }
 
 public abstract class Inline : TextElement
@@ -42,7 +85,21 @@ public abstract class Inline : TextElement
 
 public class Run : Inline
 {
-    public string Text { get; set; } = string.Empty;
+    private string _text = string.Empty;
+
+    public string Text
+    {
+        get => _text;
+        set
+        {
+            value ??= string.Empty;
+            if (!string.Equals(_text, value, StringComparison.Ordinal))
+            {
+                _text = value;
+                OnChanged();
+            }
+        }
+    }
 
     public Run() { }
     public Run(string text) { Text = text; }
@@ -219,6 +276,7 @@ public class RichTextBlock : FrameworkElement
     private TextAlignment _lastLayoutAlignment = TextAlignment.Left;
     private bool _isLayoutDirty = true;
     private List<Inline>? _lastLayoutInlines;
+    private readonly HashSet<TextElement> _observedTextElements = new(ReferenceEqualityComparer.Instance);
 
     protected override void OnPropertyChanged(Microsoft.UI.Xaml.DependencyProperty dp, object? oldValue, object? newValue)
     {
@@ -234,15 +292,19 @@ public class RichTextBlock : FrameworkElement
     {
         _isLayoutDirty = true;
         _isRenderCommandCacheDirty = true;
+        base.Invalidate();
         InvalidateMeasure();
+    }
+
+    public void InvalidateTextRendering()
+    {
+        _isRenderCommandCacheDirty = true;
+        base.Invalidate();
     }
 
     public new void Invalidate()
     {
-        _isLayoutDirty = true;
-        _isRenderCommandCacheDirty = true;
-        base.Invalidate();
-        InvalidateMeasure();
+        InvalidateLayout();
     }
 
     protected override void OnThemeChanged()
@@ -414,6 +476,11 @@ public class RichTextBlock : FrameworkElement
             _lastLayoutInlines = new List<Inline>(Inlines);
         }
 
+        if (inlinesChanged || force || _observedTextElements.Count == 0)
+        {
+            SynchronizeInlineSubscriptions();
+        }
+
         if (force)
         {
             _isLayoutDirty = true;
@@ -451,6 +518,59 @@ public class RichTextBlock : FrameworkElement
             AddChild, 
             RemoveChild);
         _isRenderCommandCacheDirty = true;
+    }
+
+    private void SynchronizeInlineSubscriptions()
+    {
+        foreach (var textElement in _observedTextElements)
+        {
+            textElement.Changed -= OnObservedTextElementChanged;
+        }
+        _observedTextElements.Clear();
+
+        for (var index = 0; index < Inlines.Count; index++)
+        {
+            ObserveInline(Inlines[index]);
+        }
+    }
+
+    private void ObserveInline(Inline inline)
+    {
+        if (_observedTextElements.Add(inline))
+        {
+            inline.Changed += OnObservedTextElementChanged;
+        }
+
+        switch (inline)
+        {
+            case ListBlock list:
+                for (var itemIndex = 0; itemIndex < list.Items.Count; itemIndex++)
+                {
+                    ObserveInline(list.Items[itemIndex]);
+                }
+                break;
+            case Table table:
+                for (var rowIndex = 0; rowIndex < table.Rows.Count; rowIndex++)
+                {
+                    var row = table.Rows[rowIndex];
+                    for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
+                    {
+                        ObserveInline(row.Cells[cellIndex]);
+                    }
+                }
+                break;
+            case Span span:
+                for (var childIndex = 0; childIndex < span.Inlines.Count; childIndex++)
+                {
+                    ObserveInline(span.Inlines[childIndex]);
+                }
+                break;
+        }
+    }
+
+    private void OnObservedTextElementChanged()
+    {
+        InvalidateLayout();
     }
 
     public void AccumulateInlines(Inline inline, List<RichChar> list, Brush defaultFg, float defaultSize, bool isBold, bool isItalic, bool isUnderline, Inline? parentInline = null, float leftIndent = 0f)
@@ -832,7 +952,8 @@ public class RichEditBox : Control
         {
             _selectionStart = value;
             _blockView.SelectionStart = value;
-            Invalidate();
+            _blockView.InvalidateTextRendering();
+            base.Invalidate();
         }
     }
 
@@ -843,7 +964,8 @@ public class RichEditBox : Control
         {
             _selectionLength = value;
             _blockView.SelectionLength = value;
-            Invalidate();
+            _blockView.InvalidateTextRendering();
+            base.Invalidate();
         }
     }
 
@@ -867,7 +989,7 @@ public class RichEditBox : Control
             if (_caretIndex != clamped)
             {
                 _caretIndex = clamped;
-                Invalidate();
+                base.Invalidate();
                 ScrollToCaret();
             }
         }

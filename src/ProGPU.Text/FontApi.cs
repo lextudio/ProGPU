@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace ProGPU.Text;
 
@@ -22,11 +23,23 @@ public static class FontApi
 {
     private static readonly object s_cachedSystemFontsLock = new();
     private static List<FontInfo>? s_cachedSystemFonts;
+    private static Task? s_systemFontWarmup;
     private static readonly ConcurrentDictionary<(string Path, int FaceIndex), Lazy<byte[]?>> s_characterMaps = new();
 
     public static List<FontInfo> GetSystemFonts()
     {
         return new List<FontInfo>(GetCachedSystemFonts());
+    }
+
+    public static Task WarmUpSystemFontsAsync()
+    {
+        lock (s_cachedSystemFontsLock)
+        {
+            return s_systemFontWarmup ??= Task.Run(static () =>
+            {
+                _ = GetCachedSystemFonts();
+            });
+        }
     }
 
     private static List<FontInfo> ScanSystemFonts()

@@ -46,7 +46,7 @@ public struct Element
     public PathGeometry CachedPath;
 }
 
-public class MotionMarkShowcaseVisual : FrameworkElement
+public class MotionMarkShowcaseVisual : FrameworkElement, IAnimatedElement
 {
     private readonly List<Element> _elements = new();
     private readonly List<PathGeometry> _groupPaths = new();
@@ -71,6 +71,7 @@ public class MotionMarkShowcaseVisual : FrameworkElement
     private int _cachedHudElementCount = -1;
     private int _cachedHudModeMask = -1;
     private bool _cachedHudIndividualPathMode;
+    private float _splitToggleBudget;
 
     // Exposed settings
     public int ElementCount = 1000;
@@ -81,7 +82,7 @@ public class MotionMarkShowcaseVisual : FrameworkElement
     public bool EnableLines = true;
     public bool EnableQuadBeziers = true;
     public bool EnableCubicBeziers = true;
-    public bool UseIndividualPaths = true;
+    public bool UseIndividualPaths = false;
 
     private static readonly (int, int)[] Offsets = { (-4, 0), (2, 0), (1, -2), (1, 2) };
 
@@ -117,20 +118,34 @@ public class MotionMarkShowcaseVisual : FrameworkElement
         HorizontalAlignment = HorizontalAlignment.Stretch;
     }
 
-    public void AdvanceAnimation()
+    public void Update(float delta)
     {
-        for (var index = 0; index < _elements.Count; index++)
+        if (_elements.Count == 0 || delta <= 0f)
         {
-            if (_rand.NextDouble() > 0.995)
-            {
-                var element = _elements[index];
-                element.Split ^= true;
-                _elements[index] = element;
-            }
+            return;
         }
 
+        // Preserve the original 0.5% per-60-Hz-frame split rate without scanning every element.
+        // Work is O(k), where k ~= elementCount * 0.005 * delta * 60, instead of O(elementCount).
+        _splitToggleBudget += _elements.Count * 0.3f * MathF.Min(delta, 0.1f);
+        var toggleCount = Math.Min(_elements.Count, (int)_splitToggleBudget);
+        if (toggleCount == 0)
+        {
+            return;
+        }
+
+        _splitToggleBudget -= toggleCount;
+        for (var toggle = 0; toggle < toggleCount; toggle++)
+        {
+            var index = _rand.Next(_elements.Count);
+            var element = _elements[index];
+            element.Split ^= true;
+            _elements[index] = element;
+        }
         Invalidate();
     }
+
+    public void AdvanceAnimation() => Update(1f / 60f);
 
     private GridPoint GetRandomPoint(GridPoint last)
     {
@@ -230,6 +245,7 @@ public class MotionMarkShowcaseVisual : FrameworkElement
     public void RegenerateSegments()
     {
         _elements.Clear();
+        _splitToggleBudget = 0f;
         Resize(ElementCount);
     }
 
@@ -431,7 +447,14 @@ public class MotionMarkShowcaseVisual : FrameworkElement
                 for (int k = i; k <= groupEnd; k++)
                 {
                     var elem = _elements[k];
-                    context.DrawPath(null, pen, elem.CachedPath);
+                    if (FillShapes)
+                    {
+                        context.DrawPath(groupStyleElement.CachedBrush, null, elem.CachedPath);
+                    }
+                    else
+                    {
+                        context.DrawPath(null, pen, elem.CachedPath);
+                    }
                 }
 
                 i = groupEnd + 1;

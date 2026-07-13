@@ -89,8 +89,6 @@ public static class AppState
     public static int _repeatCount = 0;
 
     public static GearCanvasVisual? _gearCanvasVisual;
-    public static MotionMarkShowcaseVisual? _motionMarkVisual;
-
     public static float GetBlurRadius() => _blurRadius;
     public static float GetShadowRadius() => _shadowRadius;
     public static TtfFont? GetFont() => _font;

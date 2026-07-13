@@ -19,6 +19,7 @@ public class VirtualizingScrollPanel : LayoutNode
     // Recycler pools (active and inactive)
     private readonly Stack<Visual> _recycledVisuals = new();
     private readonly Dictionary<int, Visual> _activeVisuals = new();
+    private readonly List<int> _indicesToRecycle = new();
 
     public float ScrollOffset
     {
@@ -99,16 +100,16 @@ public class VirtualizingScrollPanel : LayoutNode
         endIdx = Math.Clamp(endIdx, 0, ItemsCount - 1);
 
         // 2. Recycle items that scrolled out of view
-        var indicesToRecycle = new List<int>();
+        _indicesToRecycle.Clear();
         foreach (var key in _activeVisuals.Keys)
         {
             if (key < startIdx || key > endIdx)
             {
-                indicesToRecycle.Add(key);
+                _indicesToRecycle.Add(key);
             }
         }
 
-        foreach (var idx in indicesToRecycle)
+        foreach (var idx in _indicesToRecycle)
         {
             var vis = _activeVisuals[idx];
             _activeVisuals.Remove(idx);
@@ -162,6 +163,20 @@ public class VirtualizingScrollPanel : LayoutNode
     public void ForceRebind()
     {
         ClearActiveToRecycler();
+        Invalidate();
+    }
+
+    public void RebindVisibleItems()
+    {
+        if (BindVisualCallback == null)
+        {
+            return;
+        }
+
+        foreach (var pair in _activeVisuals)
+        {
+            BindVisualCallback(pair.Value, pair.Key);
+        }
         Invalidate();
     }
 }

@@ -251,4 +251,33 @@ public class UniformVirtualizingGridPanel : VirtualizingPanel
         ClearActiveToRecycler();
         base.ForceRebind();
     }
+
+    public override void RebindVisibleItems()
+    {
+        var itemsControl = ItemsControlOwner;
+        var ownerBindVisual = itemsControl?.BindVisualCallback;
+        var directBindVisual = _bindVisualCallback;
+        if (ownerBindVisual == null && directBindVisual == null)
+        {
+            return;
+        }
+
+        foreach (var pair in _activeVisuals)
+        {
+            if (itemsControl != null)
+            {
+                var item = itemsControl.GetItemAt(pair.Key);
+                if (item != null)
+                {
+                    ownerBindVisual!(pair.Value, item, pair.Key);
+                }
+            }
+            else
+            {
+                directBindVisual!(pair.Value, pair.Key);
+            }
+        }
+
+        Invalidate();
+    }
 }

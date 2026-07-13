@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
@@ -23,6 +25,10 @@ public class VirtualizedCodeEditor : Control
 {
     private const float GutterWidth = 45f;
 
+    private sealed record SyntaxResources(Registry Registry, IGrammar Grammar);
+
+    private static readonly ConcurrentDictionary<ThemeName, Lazy<Task<SyntaxResources?>>> s_syntaxResources = new();
+
     private readonly VirtualizingScrollPanel _panel;
     private readonly List<string> _lines = new();
     private float _scrollOffset = 0f;
@@ -36,6 +42,7 @@ public class VirtualizedCodeEditor : Control
     
     private Registry? _registry;
     private IGrammar? _grammar;
+    private Task<SyntaxResources?>? _pendingSyntaxResources;
     private string _rawCode = "";
     private readonly List<List<Run>> _tokenizedLines = new();
 
@@ -172,16 +179,72 @@ public class VirtualizedCodeEditor : Control
 
     private void InitializeTextMate()
     {
+        var themeName = ActualTheme == ElementTheme.Light ? ThemeName.LightPlus : ThemeName.DarkPlus;
+        var resourcesTask = GetSyntaxResourcesAsync(themeName);
+        if (resourcesTask.IsCompletedSuccessfully)
+        {
+            ApplySyntaxResources(resourcesTask.Result);
+            return;
+        }
+
+        if (!ReferenceEquals(_pendingSyntaxResources, resourcesTask))
+        {
+            _pendingSyntaxResources = resourcesTask;
+            _ = ApplySyntaxResourcesWhenReadyAsync(resourcesTask, themeName);
+        }
+    }
+
+    public static void WarmUpSyntaxHighlighting()
+    {
+        _ = GetSyntaxResourcesAsync(ThemeName.DarkPlus);
+        _ = GetSyntaxResourcesAsync(ThemeName.LightPlus);
+    }
+
+    private static Task<SyntaxResources?> GetSyntaxResourcesAsync(ThemeName themeName)
+    {
+        return s_syntaxResources.GetOrAdd(
+            themeName,
+            static name => new Lazy<Task<SyntaxResources?>>(
+                () => Task.Run(() => CreateSyntaxResources(name)),
+                isThreadSafe: true)).Value;
+    }
+
+    private async Task ApplySyntaxResourcesWhenReadyAsync(
+        Task<SyntaxResources?> resourcesTask,
+        ThemeName requestedTheme)
+    {
+        var resources = await resourcesTask.ConfigureAwait(false);
+        Microsoft.UI.Xaml.UIThread.Post(() =>
+        {
+            var currentTheme = ActualTheme == ElementTheme.Light ? ThemeName.LightPlus : ThemeName.DarkPlus;
+            if (!ReferenceEquals(_pendingSyntaxResources, resourcesTask) || currentTheme != requestedTheme)
+            {
+                return;
+            }
+
+            _pendingSyntaxResources = null;
+            ApplySyntaxResources(resources);
+            SetCode(_rawCode);
+        });
+    }
+
+    private void ApplySyntaxResources(SyntaxResources? resources)
+    {
+        _registry = resources?.Registry;
+        _grammar = resources?.Grammar;
+    }
+
+    private static SyntaxResources? CreateSyntaxResources(ThemeName themeName)
+    {
         try
         {
-            var themeName = ActualTheme == ElementTheme.Light ? ThemeName.LightPlus : ThemeName.DarkPlus;
-            var options = new RegistryOptions(themeName);
-            _registry = new Registry(options);
-            _grammar = _registry.LoadGrammar("source.cs");
+            var registry = new Registry(new RegistryOptions(themeName));
+            return new SyntaxResources(registry, registry.LoadGrammar("source.cs"));
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[VirtualizedCodeEditor] Error initializing TextMateSharp: {ex.Message}");
+            return null;
         }
     }
 
@@ -552,7 +615,7 @@ public class VirtualizedCodeEditor : Control
 
     private void UpdateSelectionOnVisuals()
     {
-        _panel.ForceRebind();
+        _panel.RebindVisibleItems();
     }
 
     public void ClearSelection()

@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using ProGPU.Scene;
 using ProGPU.Text;
 using ProGPU.Vector;
+using ProGPU.Virtualization;
 using Xunit;
 
 namespace ProGPU.Tests;
@@ -110,7 +111,8 @@ public sealed class SamplePerformanceRegressionTests
                 .Where(static command => command.Type == RenderCommandType.DrawPath)
                 .Select(static command => command.Path)
                 .ToArray();
-            Assert.Equal(visual.ElementCount, firstPaths.Length);
+            Assert.NotEmpty(firstPaths);
+            Assert.True(firstPaths.Length < visual.ElementCount);
             Assert.DoesNotContain(firstContext.Commands, static command =>
                 command.Type is RenderCommandType.DrawLine or RenderCommandType.DrawBezier or RenderCommandType.DrawCubicBezier);
 
@@ -127,12 +129,75 @@ public sealed class SamplePerformanceRegressionTests
             }
 
             var versionBeforeAdvance = visual.ChangeVersion;
-            visual.AdvanceAnimation();
+            Assert.IsAssignableFrom<ProGPU.Samples.IAnimatedElement>(visual).Update(1f / 60f);
             Assert.True(visual.ChangeVersion > versionBeforeAdvance);
         }
         finally
         {
             ProGPU.Samples.AppState._font = previousFont;
+        }
+    }
+
+    [Fact]
+    public void MutableRunInvalidatesAndRelayoutsItsOwningTextBlock()
+    {
+        var font = LoadTestFont();
+        var run = new Microsoft.UI.Xaml.Documents.Run("A");
+        var text = new RichTextBlock { Font = font, FontSize = 18f };
+        text.Inlines.Add(new Microsoft.UI.Xaml.Documents.Bold(run));
+        text.Measure(new Vector2(300f, 100f));
+        text.Arrange(new Rect(0f, 0f, 300f, 100f));
+        Assert.Single(text.PositionedChars);
+        var version = text.ChangeVersion;
+
+        run.Text = "AAAA";
+
+        Assert.True(text.ChangeVersion > version);
+        text.Measure(new Vector2(300f, 100f));
+        text.Arrange(new Rect(0f, 0f, 300f, 100f));
+        Assert.Equal(4, text.PositionedChars.Count);
+    }
+
+    [Fact]
+    public void RichEditCaretChangesReuseExistingTextLayout()
+    {
+        var editor = new RichEditBox { Font = LoadTestFont(), Text = "Caret layout remains retained." };
+        editor.Measure(new Vector2(400f, 160f));
+        editor.Arrange(new Rect(0f, 0f, 400f, 160f));
+        var scrollViewer = Assert.IsType<ScrollViewer>(Assert.Single(editor.Children));
+        var text = Assert.IsType<RichTextBlock>(scrollViewer.Content);
+        var firstPositionedCharacter = Assert.IsType<PositionedRichChar>(text.PositionedChars[0]);
+
+        editor.CaretIndex = 5;
+        editor.Measure(new Vector2(400f, 160f));
+        editor.Arrange(new Rect(0f, 0f, 400f, 160f));
+
+        Assert.Same(firstPositionedCharacter, text.PositionedChars[0]);
+    }
+
+    [Fact]
+    public void VirtualizedVisibleRebindPreservesRealizedVisuals()
+    {
+        var bindCount = 0;
+        var panel = new VirtualizingScrollPanel
+        {
+            ItemsCount = 1_000,
+            ItemHeight = 24f,
+            CreateVisualFactory = static () => new Border(),
+            BindVisualCallback = (_, _) => bindCount++
+        };
+        panel.Measure(new Vector2(320f, 120f));
+        panel.Arrange(new Rect(0f, 0f, 320f, 120f));
+        var realized = panel.Children.ToArray();
+        var initialBindCount = bindCount;
+
+        panel.RebindVisibleItems();
+
+        Assert.True(bindCount > initialBindCount);
+        Assert.Equal(realized.Length, panel.Children.Count);
+        for (var index = 0; index < realized.Length; index++)
+        {
+            Assert.Same(realized[index], panel.Children[index]);
         }
     }
 
@@ -169,6 +234,18 @@ public sealed class SamplePerformanceRegressionTests
         Assert.NotEqual(default, command.Transform);
         Assert.Contains(outline.Figures.SelectMany(static figure => figure.Segments), static segment =>
             segment is CubicBezierSegment or QuadraticBezierSegment or LineSegment);
+    }
+
+    private static TtfFont LoadTestFont()
+    {
+        var path = new[]
+        {
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        }.FirstOrDefault(File.Exists);
+        Assert.NotNull(path);
+        return new TtfFont(path!);
     }
 
     private sealed class ThrowingIndexedList : IList

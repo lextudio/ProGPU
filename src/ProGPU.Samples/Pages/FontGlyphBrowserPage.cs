@@ -90,15 +90,7 @@ public static class FontGlyphBrowserPage
     {
         // 1. Initial State Font Load
         _selectedFont = AppState._font ?? PopupService.DefaultFont;
-        try
-        {
-            _systemFonts = FontApi.GetSystemFonts();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[FontGlyphBrowserPage] System font scan error: {ex.Message}");
-            _systemFonts = new List<FontInfo>();
-        }
+        _systemFonts = new List<FontInfo>();
 
         // 2. Main Page Layout Root
         var mainGrid = new Grid
@@ -267,10 +259,29 @@ public static class FontGlyphBrowserPage
             HeightConstraint = 32f
         };
         
-        foreach (var fontInfo in _systemFonts)
+        var fontItemsLoaded = false;
+        fontCombo.DropDownOpening += (s, e) =>
         {
-            fontCombo.Items.Add(new ComboBoxItem { Text = fontInfo.Name, Tag = fontInfo });
-        }
+            if (fontItemsLoaded)
+            {
+                return;
+            }
+
+            fontItemsLoaded = true;
+            try
+            {
+                _systemFonts = FontApi.GetSystemFonts();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FontGlyphBrowserPage] System font scan error: {ex.Message}");
+                _systemFonts = new List<FontInfo>();
+            }
+            foreach (var fontInfo in _systemFonts)
+            {
+                fontCombo.Items.Add(new ComboBoxItem { Text = fontInfo.Name, Tag = fontInfo });
+            }
+        };
 
         fontCombo.SelectionChanged += (s, e) =>
         {
@@ -576,7 +587,7 @@ public static class FontGlyphBrowserPage
             UpdateSelectedGlyph((ushort)idx);
             
             // Re-render only active border items to refresh selected outline highlights
-            _itemsControl?.RefreshItems();
+            _itemsControl?.RefreshVisibleItems();
         }
     }
 
