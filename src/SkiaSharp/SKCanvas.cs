@@ -2169,6 +2169,47 @@ public class SKCanvas : IDisposable
         return regions;
     }
 
+    public void DrawAnnotation(SKRect rect, string key, SKData? value)
+    {
+        // Raster canvases intentionally ignore document-only annotation metadata.
+    }
+
+    public void DrawUrlAnnotation(SKRect rect, SKData? value)
+    {
+        // Raster canvases intentionally ignore document-only annotation metadata.
+    }
+
+    public SKData DrawUrlAnnotation(SKRect rect, string value)
+    {
+        var data = SKData.FromCString(value);
+        DrawUrlAnnotation(rect, data);
+        return data;
+    }
+
+    public void DrawNamedDestinationAnnotation(SKPoint point, SKData? value)
+    {
+        // Raster canvases intentionally ignore document-only annotation metadata.
+    }
+
+    public SKData DrawNamedDestinationAnnotation(SKPoint point, string value)
+    {
+        var data = SKData.FromCString(value);
+        DrawNamedDestinationAnnotation(point, data);
+        return data;
+    }
+
+    public void DrawLinkDestinationAnnotation(SKRect rect, SKData? value)
+    {
+        // Raster canvases intentionally ignore document-only annotation metadata.
+    }
+
+    public SKData DrawLinkDestinationAnnotation(SKRect rect, string value)
+    {
+        var data = SKData.FromCString(value);
+        DrawLinkDestinationAnnotation(rect, data);
+        return data;
+    }
+
     private static SKRect MapRectToBounds(SKRect rect, Matrix4x4 matrix)
     {
         var topLeft = Vector2.Transform(new Vector2(rect.Left, rect.Top), matrix);
