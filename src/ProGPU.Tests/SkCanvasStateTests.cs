@@ -663,6 +663,7 @@ public sealed class SkCanvasStateTests
             new SKPointI(1, 0),
             SKShaderTileMode.Repeat,
             convolveAlpha: true,
+            input: null,
             cropRect: new SKRect(2f, 0f, 4f, 2f));
         using var layerPaint = new SKPaint { ImageFilter = convolution };
         using var red = new SKPaint { Color = SKColors.Red, IsAntialias = false };

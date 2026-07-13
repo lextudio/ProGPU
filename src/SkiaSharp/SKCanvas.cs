@@ -763,13 +763,18 @@ public class SKCanvas : IDisposable
             }
             case SKImageFilter.FilterKind.Merge:
             {
-                var filters = (SKImageFilter[])filter.Parameters!;
+                var filters = (SKImageFilter?[])filter.Parameters!;
                 var inputs = new GpuTexture[filters.Length];
                 var width = sourceTexture.Width;
                 var height = sourceTexture.Height;
                 for (var i = 0; i < filters.Length; i++)
                 {
-                    inputs[i] = EvaluateImageFilter(sourceTexture, filters[i], cache, filterTransform, preserveSourceColorSpace);
+                    inputs[i] = EvaluateOptionalInput(
+                        sourceTexture,
+                        filters[i],
+                        cache,
+                        filterTransform,
+                        preserveSourceColorSpace);
                     width = Math.Max(width, inputs[i].Width);
                     height = Math.Max(height, inputs[i].Height);
                 }
@@ -791,7 +796,12 @@ public class SKCanvas : IDisposable
             case SKImageFilter.FilterKind.Arithmetic:
             {
                 var arithmetic = (SKImageFilter.ArithmeticData)filter.Parameters!;
-                var background = EvaluateImageFilter(sourceTexture, arithmetic.Background, cache, filterTransform, preserveSourceColorSpace);
+                var background = EvaluateOptionalInput(
+                    sourceTexture,
+                    arithmetic.Background,
+                    cache,
+                    filterTransform,
+                    preserveSourceColorSpace);
                 var foreground = EvaluateOptionalInput(sourceTexture, arithmetic.Foreground, cache, filterTransform, preserveSourceColorSpace);
                 result = RenderArithmeticComposite(background, foreground, arithmetic);
                 break;
@@ -839,9 +849,42 @@ public class SKCanvas : IDisposable
             case SKImageFilter.FilterKind.BlendMode:
             {
                 var blend = (SKImageFilter.BlendModeData)filter.Parameters!;
-                var background = EvaluateImageFilter(sourceTexture, blend.Background, cache, filterTransform, preserveSourceColorSpace);
+                var background = EvaluateOptionalInput(
+                    sourceTexture,
+                    blend.Background,
+                    cache,
+                    filterTransform,
+                    preserveSourceColorSpace);
                 var foreground = EvaluateOptionalInput(sourceTexture, blend.Foreground, cache, filterTransform, preserveSourceColorSpace);
-                result = RenderImageBlend(background, foreground, blend.Mode);
+                if (blend.Blender?.Arithmetic is { } arithmetic)
+                {
+                    result = RenderArithmeticComposite(
+                        background,
+                        foreground,
+                        new SKImageFilter.ArithmeticData(
+                            arithmetic.K1,
+                            arithmetic.K2,
+                            arithmetic.K3,
+                            arithmetic.K4,
+                            arithmetic.EnforcePremul,
+                            null,
+                            null));
+                }
+                else
+                {
+                    var mode = blend.Mode;
+                    if (!mode.HasValue &&
+                        blend.Blender?.TryGetBlendMode(out var blenderMode) == true)
+                    {
+                        mode = blenderMode;
+                    }
+
+                    result = RenderImageBlend(
+                        background,
+                        foreground,
+                        mode ?? throw new NotSupportedException(
+                            "The SKBlender image filter is not supported."));
+                }
                 break;
             }
             case SKImageFilter.FilterKind.Image:
@@ -1351,11 +1394,20 @@ public class SKCanvas : IDisposable
     }
 
     private GpuTexture RenderShaderFilter(
-        SKShader shader,
+        SKShader? shader,
         Matrix4x4 filterTransform,
         uint width,
         uint height)
     {
+        if (shader == null)
+        {
+            return RenderFilterPass(
+                "SKImageFilter Empty Shader",
+                width,
+                height,
+                static _ => { });
+        }
+
         return RenderFilterPass(
             "SKImageFilter Shader",
             width,

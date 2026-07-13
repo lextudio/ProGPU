@@ -2133,7 +2133,7 @@ public class SKColorFilter : IDisposable
     }
 }
 
-public class SKImageFilter : IDisposable
+public partial class SKImageFilter : SKObject
 {
     internal enum FilterKind
     {
@@ -2161,6 +2161,7 @@ public class SKImageFilter : IDisposable
     }
 
     private SKImageFilter(FilterKind kind, object? parameters, SKImageFilter? input, SKRect? cropRect)
+        : base(SKObjectHandle.Create(), owns: true)
     {
         Kind = kind;
         Parameters = parameters;
@@ -2168,7 +2169,6 @@ public class SKImageFilter : IDisposable
         CropRect = cropRect;
     }
 
-    public IntPtr Handle { get; } = SKObjectHandle.Create();
     internal FilterKind Kind { get; }
     internal object? Parameters { get; }
     internal SKImageFilter? Input { get; }
@@ -2193,7 +2193,7 @@ public class SKImageFilter : IDisposable
     public SKColor ShadowColor => Parameters is DropShadowData shadow ? shadow.Color : SKColor.Empty;
 
     public static SKImageFilter CreateBlur(float sigmaX, float sigmaY, SKImageFilter? input = null) =>
-        new(FilterKind.Blur, new BlurData(sigmaX, sigmaY, SKShaderTileMode.Clamp), input, null);
+        new(FilterKind.Blur, new BlurData(sigmaX, sigmaY, SKShaderTileMode.Decal), input, null);
 
     public static SKImageFilter CreateBlur(
         float sigmaX,
@@ -2263,23 +2263,23 @@ public class SKImageFilter : IDisposable
         float k3,
         float k4,
         bool enforcePremultipliedColor,
-        SKImageFilter background,
+        SKImageFilter? background,
         SKImageFilter? foreground = null,
         SKRect? cropRect = null) =>
         new(FilterKind.Arithmetic, new ArithmeticData(k1, k2, k3, k4, enforcePremultipliedColor, background, foreground), null, cropRect);
 
     public static SKImageFilter CreateBlendMode(
         SKBlendMode mode,
-        SKImageFilter background,
+        SKImageFilter? background,
         SKImageFilter? foreground = null,
         SKRect? cropRect = null) =>
-        new(FilterKind.BlendMode, new BlendModeData(mode, background, foreground), null, cropRect);
+        new(FilterKind.BlendMode, new BlendModeData(mode, null, background, foreground), null, cropRect);
 
     public static SKImageFilter CreateColorFilter(
-        SKColorFilter colorFilter,
+        SKColorFilter cf,
         SKImageFilter? input = null,
         SKRect? cropRect = null) =>
-        new(FilterKind.ColorFilter, colorFilter ?? throw new ArgumentNullException(nameof(colorFilter)), input, cropRect);
+        new(FilterKind.ColorFilter, cf ?? throw new ArgumentNullException(nameof(cf)), input, cropRect);
 
     public static SKImageFilter CreateDilate(
         float radiusX,
@@ -2295,7 +2295,15 @@ public class SKImageFilter : IDisposable
         SKImageFilter displacement,
         SKImageFilter? input = null,
         SKRect? cropRect = null) =>
-        new(FilterKind.DisplacementMap, new DisplacementData(xChannelSelector, yChannelSelector, scale, displacement), input, cropRect);
+        new(
+            FilterKind.DisplacementMap,
+            new DisplacementData(
+                xChannelSelector,
+                yChannelSelector,
+                scale,
+                displacement ?? throw new ArgumentNullException(nameof(displacement))),
+            input,
+            cropRect);
 
     public static SKImageFilter CreateDistantLitDiffuse(
         SKPoint3 direction,
@@ -2327,30 +2335,15 @@ public class SKImageFilter : IDisposable
         SKImage image,
         SKRect source,
         SKRect destination,
-        SKSamplingOptions sampling) =>
-        new(FilterKind.Image, new ImageData(image, source, destination, sampling), null, null);
-
-    public static SKImageFilter CreateMatrixConvolution(
-        SKSizeI kernelSize,
-        float[] kernel,
-        float gain,
-        float bias,
-        SKPointI kernelOffset,
-        SKShaderTileMode tileMode,
-        bool convolveAlpha,
-        SKImageFilter? input = null,
-        SKRect? cropRect = null) =>
-        new(FilterKind.MatrixConvolution, new MatrixConvolutionData(
-            kernelSize,
-            (float[])(kernel ?? throw new ArgumentNullException(nameof(kernel))).Clone(),
-            gain,
-            bias,
-            kernelOffset,
-            tileMode,
-            convolveAlpha), input, cropRect);
-
-    public static SKImageFilter CreateMerge(SKImageFilter[] filters, SKRect? cropRect = null) =>
-        new(FilterKind.Merge, (SKImageFilter[])(filters ?? throw new ArgumentNullException(nameof(filters))).Clone(), null, cropRect);
+        SKSamplingOptions sampling)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        return new SKImageFilter(
+            FilterKind.Image,
+            new ImageData(image, source, destination, sampling),
+            null,
+            null);
+    }
 
     public static SKImageFilter CreateOffset(
         float dx,
@@ -2359,8 +2352,8 @@ public class SKImageFilter : IDisposable
         SKRect? cropRect = null) =>
         new(FilterKind.Offset, new OffsetData(dx, dy), input, cropRect);
 
-    public static SKImageFilter CreateShader(SKShader shader, bool dither, SKRect? cropRect = null) =>
-        new(FilterKind.Shader, new ShaderData(shader ?? throw new ArgumentNullException(nameof(shader)), dither), null, cropRect);
+    public static SKImageFilter CreateShader(SKShader? shader, bool dither, SKRect? cropRect = null) =>
+        new(FilterKind.Shader, new ShaderData(shader, dither), null, cropRect);
 
     public static SKImageFilter CreatePicture(SKPicture picture, SKRect targetRect) =>
         new(FilterKind.Picture, new PictureData(picture ?? throw new ArgumentNullException(nameof(picture)), targetRect), null, null);
@@ -2410,21 +2403,75 @@ public class SKImageFilter : IDisposable
         new(FilterKind.SpotLitSpecular, new SpotLightData(location, target, specularExponent, cutoffAngle, lightColor, surfaceScale, ks, shininess), input, cropRect);
 
     public static SKImageFilter CreateTile(SKRect source, SKRect destination, SKImageFilter? input = null) =>
-        new(FilterKind.Tile, new TileData(source, destination), input, null);
+        new(
+            FilterKind.Tile,
+            new TileData(source, destination),
+            input ?? throw new ArgumentNullException(nameof(input)),
+            null);
 
-    public void Dispose() { }
+    private static SKImageFilter CreateMatrixConvolutionCore(
+        SKSizeI kernelSize,
+        ReadOnlySpan<float> kernel,
+        float gain,
+        float bias,
+        SKPointI kernelOffset,
+        SKShaderTileMode tileMode,
+        bool convolveAlpha,
+        SKImageFilter? input,
+        SKRect? cropRect)
+    {
+        var requiredLength = checked(kernelSize.Width * kernelSize.Height);
+        if (kernel.Length != requiredLength)
+        {
+            throw new ArgumentException(
+                "Kernel length must match the dimensions of the kernel size (Width * Height).",
+                nameof(kernel));
+        }
+
+        return new SKImageFilter(
+            FilterKind.MatrixConvolution,
+            new MatrixConvolutionData(
+                kernelSize,
+                kernel.ToArray(),
+                gain,
+                bias,
+                kernelOffset,
+                tileMode,
+                convolveAlpha),
+            input,
+            cropRect);
+    }
+
+    private static SKImageFilter CreateMergeCore(
+        ReadOnlySpan<SKImageFilter> filters,
+        SKRect? cropRect)
+    {
+        var copy = new SKImageFilter?[filters.Length];
+        for (var index = 0; index < filters.Length; index++)
+        {
+            copy[index] = filters[index];
+        }
+
+        return new SKImageFilter(FilterKind.Merge, copy, null, cropRect);
+    }
+
+    private static SKImageFilter CreateMergeCore(
+        SKImageFilter? first,
+        SKImageFilter? second,
+        SKRect? cropRect) =>
+        new(FilterKind.Merge, new SKImageFilter?[] { first, second }, null, cropRect);
 
     internal sealed record BlurData(float SigmaX, float SigmaY, SKShaderTileMode TileMode);
     internal sealed record DropShadowData(float Dx, float Dy, float SigmaX, float SigmaY, SKColor Color, bool ShadowOnly);
-    internal sealed record ArithmeticData(float K1, float K2, float K3, float K4, bool EnforcePremultipliedColor, SKImageFilter Background, SKImageFilter? Foreground);
-    internal sealed record BlendModeData(SKBlendMode Mode, SKImageFilter Background, SKImageFilter? Foreground);
+    internal sealed record ArithmeticData(float K1, float K2, float K3, float K4, bool EnforcePremultipliedColor, SKImageFilter? Background, SKImageFilter? Foreground);
+    internal sealed record BlendModeData(SKBlendMode? Mode, SKBlender? Blender, SKImageFilter? Background, SKImageFilter? Foreground);
     internal sealed record MorphologyData(float RadiusX, float RadiusY);
     internal sealed record DisplacementData(SKColorChannel XChannel, SKColorChannel YChannel, float Scale, SKImageFilter Displacement);
     internal sealed record DistantLightData(SKPoint3 Direction, SKColor Color, float SurfaceScale, float Constant, float Shininess);
     internal sealed record ImageData(SKImage Image, SKRect Source, SKRect Destination, SKSamplingOptions Sampling);
     internal sealed record MatrixConvolutionData(SKSizeI KernelSize, float[] Kernel, float Gain, float Bias, SKPointI KernelOffset, SKShaderTileMode TileMode, bool ConvolveAlpha);
     internal sealed record OffsetData(float Dx, float Dy);
-    internal sealed record ShaderData(SKShader Shader, bool Dither);
+    internal sealed record ShaderData(SKShader? Shader, bool Dither);
     internal sealed record PictureData(SKPicture Picture, SKRect TargetRect);
     internal sealed record PointLightData(SKPoint3 Location, SKColor Color, float SurfaceScale, float Constant, float Shininess);
     internal sealed record SpotLightData(SKPoint3 Location, SKPoint3 Target, float SpecularExponent, float CutoffAngle, SKColor Color, float SurfaceScale, float Constant, float Shininess);
