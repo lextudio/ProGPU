@@ -11,6 +11,7 @@ using DrawingBitmap = System.Drawing.Bitmap;
 using DrawingColor = System.Drawing.Color;
 using DrawingImage = System.Drawing.Image;
 using DrawingImageFormat = System.Drawing.Imaging.ImageFormat;
+using DrawingIcon = System.Drawing.Icon;
 
 namespace ProGPU.Tests;
 
@@ -99,6 +100,64 @@ public sealed class GdiBitmapTests
         Assert.Equal(storedSemiTransparentPixel, decoded.GetPixel(1, 0));
         Assert.Equal(DrawingColor.FromArgb(255, 0, 255, 0), decoded.GetPixel(0, 1));
         Assert.Equal(DrawingColor.FromArgb(255, 0, 0, 255), decoded.GetPixel(1, 1));
+    }
+
+    [Fact]
+    public void IconSaveWritesRoundtrippablePngIconAndLeavesStreamOpen()
+    {
+        using var source = new DrawingBitmap(2, 2);
+        source.SetPixel(0, 0, DrawingColor.FromArgb(255, 255, 0, 0));
+        source.SetPixel(1, 0, DrawingColor.FromArgb(128, 64, 128, 192));
+        source.SetPixel(0, 1, DrawingColor.FromArgb(255, 0, 255, 0));
+        source.SetPixel(1, 1, DrawingColor.FromArgb(0, 0, 0, 0));
+
+        using var icon = DrawingIcon.FromHandle(source.GetHicon());
+        using var stream = new System.IO.MemoryStream();
+        icon.Save(stream);
+
+        Assert.True(stream.CanWrite);
+        byte[] encoded = stream.ToArray();
+        Assert.Equal(0, BitConverter.ToUInt16(encoded, 0));
+        Assert.Equal(1, BitConverter.ToUInt16(encoded, 2));
+        Assert.Equal(1, BitConverter.ToUInt16(encoded, 4));
+        Assert.Equal(2, encoded[6]);
+        Assert.Equal(2, encoded[7]);
+        Assert.Equal(1, BitConverter.ToUInt16(encoded, 10));
+        Assert.Equal(32, BitConverter.ToUInt16(encoded, 12));
+        Assert.Equal(22u, BitConverter.ToUInt32(encoded, 18));
+
+        int imageLength = checked((int)BitConverter.ToUInt32(encoded, 14));
+        Assert.Equal(encoded.Length - 22, imageLength);
+        Assert.Equal(new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G' }, encoded[22..26]);
+
+        using var imageStream = new System.IO.MemoryStream(encoded, 22, imageLength, writable: false);
+        using var decoded = new DrawingBitmap(imageStream);
+        Assert.Equal(source.GetPixel(0, 0), decoded.GetPixel(0, 0));
+        Assert.Equal(source.GetPixel(1, 0), decoded.GetPixel(1, 0));
+        Assert.Equal(source.GetPixel(0, 1), decoded.GetPixel(0, 1));
+        Assert.Equal(source.GetPixel(1, 1), decoded.GetPixel(1, 1));
+
+        stream.Position = 0;
+        using var decodedIcon = new DrawingIcon(stream);
+        using var decodedIconBitmap = decodedIcon.ToBitmap();
+        Assert.Equal(source.GetPixel(0, 0), decodedIconBitmap.GetPixel(0, 0));
+        Assert.Equal(source.GetPixel(1, 0), decodedIconBitmap.GetPixel(1, 0));
+        Assert.Equal(source.GetPixel(0, 1), decodedIconBitmap.GetPixel(0, 1));
+        Assert.Equal(source.GetPixel(1, 1), decodedIconBitmap.GetPixel(1, 1));
+    }
+
+    [Fact]
+    public void IconSaveEncodes256PixelDirectoryDimensionsAsZero()
+    {
+        using var source = new DrawingBitmap(256, 256);
+        using var icon = DrawingIcon.FromHandle(source.GetHicon());
+        using var stream = new System.IO.MemoryStream();
+
+        icon.Save(stream);
+
+        byte[] encoded = stream.ToArray();
+        Assert.Equal(0, encoded[6]);
+        Assert.Equal(0, encoded[7]);
     }
 
     [Fact]

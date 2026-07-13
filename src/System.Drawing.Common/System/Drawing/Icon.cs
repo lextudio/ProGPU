@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Drawing.Imaging;
+using System.Text;
 using System.Threading;
 
 namespace System.Drawing;
@@ -58,6 +60,49 @@ public sealed class Icon : IDisposable
     public Bitmap ToBitmap()
     {
         return _bitmap is null ? new Bitmap(1, 1) : new Bitmap(_bitmap);
+    }
+
+    public void Save(Stream outputStream)
+    {
+        ArgumentNullException.ThrowIfNull(outputStream);
+
+        if (_bitmap is null)
+            throw new InvalidOperationException("The icon does not contain an image.");
+
+        int width = _bitmap.Width;
+        int height = _bitmap.Height;
+        if ((uint)(width - 1) >= 256 || (uint)(height - 1) >= 256)
+        {
+            throw new InvalidOperationException(
+                "ICO images must be between 1 and 256 pixels in each dimension.");
+        }
+
+        using var imageStream = new MemoryStream();
+        _bitmap.Save(imageStream, ImageFormat.Png);
+        if (imageStream.Length > uint.MaxValue)
+            throw new InvalidOperationException("The encoded icon image is too large.");
+
+        const uint imageOffset = 6 + 16;
+        using (var writer = new BinaryWriter(outputStream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write((ushort)0); // Reserved.
+            writer.Write((ushort)1); // Icon image.
+            writer.Write((ushort)1); // One directory entry.
+            writer.Write((byte)(width == 256 ? 0 : width));
+            writer.Write((byte)(height == 256 ? 0 : height));
+            writer.Write((byte)0); // No palette.
+            writer.Write((byte)0); // Reserved.
+            writer.Write((ushort)1); // Color planes.
+            writer.Write((ushort)32); // Bits per pixel.
+            writer.Write((uint)imageStream.Length);
+            writer.Write(imageOffset);
+            writer.Flush();
+        }
+
+        if (!imageStream.TryGetBuffer(out ArraySegment<byte> imageData))
+            throw new InvalidOperationException("Unable to access the encoded icon image.");
+
+        outputStream.Write(imageData.AsSpan(0, checked((int)imageStream.Length)));
     }
 
     public static Icon FromHandle(IntPtr handle)
