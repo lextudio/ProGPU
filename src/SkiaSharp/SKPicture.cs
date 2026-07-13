@@ -4,7 +4,7 @@ using ProGPU.Vector;
 
 namespace SkiaSharp;
 
-public class SKPicture : SKObject
+public partial class SKPicture : SKObject
 {
     private static int s_nextUniqueId;
 
