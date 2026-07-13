@@ -37,6 +37,7 @@ public class SKCanvas : IDisposable
     private readonly Action? _flush;
     private readonly SKBitmap? _bitmap;
     private readonly bool _isPictureRecording;
+    private SKSurface? _surface;
     private SKMatrix _currentMatrix = SKMatrix.Identity;
     private float _currentOpacity = 1f;
     private ClipState _clipState;
@@ -70,6 +71,9 @@ public class SKCanvas : IDisposable
             DrawingContext parentContext,
             DrawingContext layerContext,
             SKPaint? paint,
+            SKImageFilter? backdrop,
+            SKCanvasSaveLayerRecFlags flags,
+            DrawingContext? previousContext,
             int stateDepth,
             SKRect bounds,
             SKMatrix boundsMatrix,
@@ -78,6 +82,9 @@ public class SKCanvas : IDisposable
             ParentContext = parentContext;
             LayerContext = layerContext;
             Paint = paint;
+            Backdrop = backdrop;
+            Flags = flags;
+            PreviousContext = previousContext;
             StateDepth = stateDepth;
             Bounds = bounds;
             BoundsMatrix = boundsMatrix;
@@ -87,6 +94,9 @@ public class SKCanvas : IDisposable
         public DrawingContext ParentContext { get; }
         public DrawingContext LayerContext { get; }
         public SKPaint? Paint { get; }
+        public SKImageFilter? Backdrop { get; }
+        public SKCanvasSaveLayerRecFlags Flags { get; }
+        public DrawingContext? PreviousContext { get; }
         public int StateDepth { get; }
         public SKRect Bounds { get; }
         public SKMatrix BoundsMatrix { get; }
@@ -164,6 +174,35 @@ public class SKCanvas : IDisposable
 
     internal DrawingContext Context => _context;
 
+    internal void AttachSurface(SKSurface surface)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        _surface = surface;
+    }
+
+    internal void DetachSurface(SKSurface surface)
+    {
+        if (ReferenceEquals(_surface, surface))
+        {
+            _surface = null;
+        }
+    }
+
+    internal DrawingContext? CurrentLayerPreviousContext =>
+        _layerStack.TryPeek(out var layer) ? layer.PreviousContext : null;
+
+    internal SKPaint? CurrentLayerPaint =>
+        _layerStack.TryPeek(out var layer) ? layer.Paint : null;
+
+    internal SKImageFilter? CurrentLayerBackdrop =>
+        _layerStack.TryPeek(out var layer) ? layer.Backdrop : null;
+
+    internal SKCanvasSaveLayerRecFlags CurrentLayerFlags =>
+        _layerStack.TryPeek(out var layer) ? layer.Flags : SKCanvasSaveLayerRecFlags.None;
+
+    internal SKRect? CurrentLayerBounds =>
+        _layerStack.TryPeek(out var layer) ? layer.Bounds : null;
+
     public void Clear()
     {
         Clear(SKColors.Empty);
@@ -229,15 +268,49 @@ public class SKCanvas : IDisposable
 
     public int SaveLayer(SKRect bounds, SKPaint? paint)
     {
+        return SaveLayerCore(
+            bounds,
+            paint,
+            backdrop: null,
+            SKCanvasSaveLayerRecFlags.None);
+    }
+
+    public int SaveLayer(in SKCanvasSaveLayerRec rec)
+    {
+        return SaveLayerCore(
+            rec.Bounds ?? new SKRect(0, 0, _width, _height),
+            rec.Paint,
+            rec.Backdrop,
+            rec.Flags);
+    }
+
+    private int SaveLayerCore(
+        SKRect bounds,
+        SKPaint? paint,
+        SKImageFilter? backdrop,
+        SKCanvasSaveLayerRecFlags flags)
+    {
         var restoreCount = SaveCount;
         Save();
 
         var parentContext = _context;
         var layerContext = new DrawingContext();
+        DrawingContext? previousContext = null;
+        if (IsValidLayerBounds(bounds) &&
+            (backdrop != null ||
+             (flags & SKCanvasSaveLayerRecFlags.InitializeWithPrevious) != 0))
+        {
+            previousContext = new DrawingContext();
+            previousContext.Append(parentContext);
+        }
+
         _layerStack.Push(new LayerFrame(
             parentContext,
             layerContext,
             paint?.Clone(),
+            backdrop,
+            flags,
+            previousContext,
             _stateStack.Count,
             bounds,
             _currentMatrix,
@@ -305,13 +378,27 @@ public class SKCanvas : IDisposable
 
     private void RestoreLayer(LayerFrame layerFrame)
     {
+        try
+        {
+            RestoreLayerCore(layerFrame);
+        }
+        finally
+        {
+            layerFrame.LayerContext.Clear();
+            layerFrame.PreviousContext?.Clear();
+            layerFrame.Paint?.Dispose();
+        }
+    }
+
+    private void RestoreLayerCore(LayerFrame layerFrame)
+    {
         _context = layerFrame.ParentContext;
         var hasSourceGeneratingFilter = layerFrame.Paint?.ImageFilter != null ||
-            layerFrame.Paint?.ColorFilter != null;
+            layerFrame.Paint?.ColorFilter != null ||
+            layerFrame.PreviousContext != null;
         if ((!hasSourceGeneratingFilter && layerFrame.LayerContext.Commands.Count == 0) ||
             !IsValidLayerBounds(layerFrame.Bounds))
         {
-            layerFrame.LayerContext.Clear();
             return;
         }
 
@@ -1470,42 +1557,60 @@ public class SKCanvas : IDisposable
             layerFrame.BoundsMatrix.ToMatrix4x4());
         var textureWidth = GetRequiredTextureExtent(_width, transformedBounds.Right);
         var textureHeight = GetRequiredTextureExtent(_height, transformedBounds.Bottom);
+        var textureFormat = GetSaveLayerTextureFormat(layerFrame.Flags);
         var texture = new GpuTexture(
             context,
             textureWidth,
             textureHeight,
-            TextureFormat.Rgba8Unorm,
+            textureFormat,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc | TextureUsage.CopyDst | TextureUsage.TextureBinding,
             "SKCanvas SaveLayer Texture",
             alphaMode: GpuTextureAlphaMode.Premultiplied);
 
         var visual = new DrawingVisual { Size = new Vector2(textureWidth, textureHeight) };
-        ReplayActiveClipPushes(visual.Context, layerFrame.ActiveClipPushes);
-        var pushedLayerBoundsClip = PushLayerBoundsClip(visual.Context, layerFrame);
-        visual.Context.Append(layerFrame.LayerContext);
-        if (pushedLayerBoundsClip)
-        {
-            visual.Context.PopClip();
-        }
-        PopReplayedClipPushes(visual.Context, layerFrame.ActiveClipPushes);
-
+        GpuTexture? initialTexture = null;
         var textureRetained = false;
         try
         {
-            try
+            if (layerFrame.PreviousContext != null)
             {
-                GetCompositorForContext(context).RenderOffscreen(
-                    visual,
+                initialTexture = RenderPreviousLayerToTexture(
+                    layerFrame,
+                    context,
                     textureWidth,
                     textureHeight,
-                    texture,
-                    padding: 0f,
-                    dpiScale: 1f);
+                    textureFormat);
+                if (layerFrame.Backdrop != null)
+                {
+                    initialTexture = RenderImageFilterGraph(
+                        initialTexture,
+                        layerFrame.Backdrop,
+                        layerFrame.BoundsMatrix.ToMatrix4x4());
+                }
             }
-            finally
+
+            ReplayActiveClipPushes(visual.Context, layerFrame.ActiveClipPushes);
+            var pushedLayerBoundsClip = PushLayerBoundsClip(visual.Context, layerFrame);
+            if (initialTexture != null)
             {
-                visual.Context.Clear();
+                visual.Context.DrawTexture(
+                    initialTexture,
+                    new Rect(0f, 0f, initialTexture.Width, initialTexture.Height));
             }
+            visual.Context.Append(layerFrame.LayerContext);
+            if (pushedLayerBoundsClip)
+            {
+                visual.Context.PopClip();
+            }
+            PopReplayedClipPushes(visual.Context, layerFrame.ActiveClipPushes);
+
+            GetCompositorForContext(context, textureFormat).RenderOffscreen(
+                visual,
+                textureWidth,
+                textureHeight,
+                texture,
+                padding: 0f,
+                dpiScale: 1f);
 
             layerFrame.LayerContext.Clear();
             _ownedLayerTextures.Add(texture);
@@ -1514,9 +1619,69 @@ public class SKCanvas : IDisposable
         }
         finally
         {
+            visual.Context.Clear();
+            if (initialTexture != null)
+            {
+                ReleaseOwnedLayerTexture(initialTexture);
+            }
+
             if (!textureRetained)
             {
                 layerFrame.LayerContext.Clear();
+                texture.Dispose();
+            }
+        }
+    }
+
+    private GpuTexture RenderPreviousLayerToTexture(
+        LayerFrame layerFrame,
+        WgpuContext context,
+        uint textureWidth,
+        uint textureHeight,
+        TextureFormat textureFormat)
+    {
+        var texture = new GpuTexture(
+            context,
+            textureWidth,
+            textureHeight,
+            textureFormat,
+            TextureUsage.RenderAttachment |
+            TextureUsage.CopySrc |
+            TextureUsage.CopyDst |
+            TextureUsage.TextureBinding,
+            "SKCanvas SaveLayer Previous Texture",
+            alphaMode: GpuTextureAlphaMode.Premultiplied);
+        var visual = new DrawingVisual { Size = new Vector2(textureWidth, textureHeight) };
+
+        var retained = false;
+        try
+        {
+            if (_surface?.TryGetLayerBackdropTexture(out var backingTexture) == true)
+            {
+                visual.Context.DrawTexture(
+                    backingTexture,
+                    new Rect(0f, 0f, backingTexture.Width, backingTexture.Height));
+            }
+
+            visual.Context.Append(layerFrame.PreviousContext!);
+            GetCompositorForContext(context, textureFormat).RenderOffscreen(
+                visual,
+                textureWidth,
+                textureHeight,
+                texture,
+                padding: 0f,
+                dpiScale: 1f,
+                clearColor: Vector4.Zero);
+
+            _ownedLayerTextures.Add(texture);
+            retained = true;
+            return texture;
+        }
+        finally
+        {
+            visual.Context.Clear();
+            if (!retained)
+            {
                 texture.Dispose();
             }
         }
@@ -1532,6 +1697,11 @@ public class SKCanvas : IDisposable
 
         return (uint)Math.Min(Math.Ceiling(extent), uint.MaxValue);
     }
+
+    internal static TextureFormat GetSaveLayerTextureFormat(SKCanvasSaveLayerRecFlags flags) =>
+        (flags & SKCanvasSaveLayerRecFlags.F16ColorType) != 0
+            ? TextureFormat.Rgba16float
+            : TextureFormat.Rgba8Unorm;
 
     private bool PushLayerBoundsClip(DrawingContext context, LayerFrame layerFrame)
     {
@@ -1812,9 +1982,11 @@ public class SKCanvas : IDisposable
             MathF.Abs(bounds.Height - _height) < 0.0001f;
     }
 
-    private static Compositor GetCompositorForContext(WgpuContext context)
+    private static Compositor GetCompositorForContext(
+        WgpuContext context,
+        TextureFormat renderFormat = TextureFormat.Rgba8Unorm)
     {
-        return SharedCompositorCache.GetOrCreate(context, TextureFormat.Rgba8Unorm, s_compositorCacheScope);
+        return SharedCompositorCache.GetOrCreate(context, renderFormat, s_compositorCacheScope);
     }
 
     private static void RemoveCachedCompositor(WgpuContext context)
@@ -4583,6 +4755,16 @@ public class SKCanvas : IDisposable
         _ownedLayerTextures.Clear();
     }
 
+    private void ReleaseUnrestoredLayers()
+    {
+        while (_layerStack.TryPop(out var layer))
+        {
+            layer.LayerContext.Clear();
+            layer.PreviousContext?.Clear();
+            layer.Paint?.Dispose();
+        }
+    }
+
     public void Dispose()
     {
         try
@@ -4592,7 +4774,9 @@ public class SKCanvas : IDisposable
         finally
         {
             _bitmap?.DetachCanvas(this);
+            ReleaseUnrestoredLayers();
             ReleaseLayerTexturesAfterFlush();
+            _surface = null;
         }
     }
 }

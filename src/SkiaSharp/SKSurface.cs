@@ -56,6 +56,7 @@ public class SKSurface : IDisposable
 
         _drawingContext = new DrawingContext();
         Canvas = new SKCanvas(_drawingContext, width, height, context, Flush);
+        Canvas.AttachSurface(this);
         _hasTextureContents = _gpuTexture != null && !_ownsTexture;
 
         if (_pixels != IntPtr.Zero && _gpuTexture != null)
@@ -313,6 +314,18 @@ public class SKSurface : IDisposable
             _drawingContext.Clear();
             Canvas.ReleaseLayerTexturesAfterFlush();
         }
+    }
+
+    internal bool TryGetLayerBackdropTexture(out GpuTexture texture)
+    {
+        if (_hasTextureContents && _gpuTexture is { IsDisposed: false } backingTexture)
+        {
+            texture = backingTexture;
+            return true;
+        }
+
+        texture = null!;
+        return false;
     }
 
     private unsafe void CopyReadbackToCpu(byte[] readBackBytes, SKRect[]? regions)
@@ -619,6 +632,7 @@ public class SKSurface : IDisposable
         {
             try
             {
+                Canvas.DetachSurface(this);
                 Canvas.Dispose();
             }
             finally
