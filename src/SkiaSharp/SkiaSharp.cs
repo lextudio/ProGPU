@@ -310,7 +310,7 @@ public struct SKPoint : IEquatable<SKPoint>
         _y = y;
     }
 
-    public void Offset(SKPoint point) => Offset(point.X, point.Y);
+    public void Offset(SKPoint p) => Offset(p.X, p.Y);
 
     public void Offset(float dx, float dy)
     {
@@ -342,31 +342,31 @@ public struct SKPoint : IEquatable<SKPoint>
             point.Y - 2f * dot * normal.Y);
     }
 
-    public static SKPoint Add(SKPoint point, SKPoint value) =>
-        new(point.X + value.X, point.Y + value.Y);
+    public static SKPoint Add(SKPoint pt, SKPoint sz) =>
+        new(pt.X + sz.X, pt.Y + sz.Y);
 
-    public static SKPoint Add(SKPoint point, SKPointI value) =>
-        new(point.X + value.X, point.Y + value.Y);
+    public static SKPoint Add(SKPoint pt, SKPointI sz) =>
+        new(pt.X + sz.X, pt.Y + sz.Y);
 
-    public static SKPoint Add(SKPoint point, SKSize value) =>
-        new(point.X + value.Width, point.Y + value.Height);
+    public static SKPoint Add(SKPoint pt, SKSize sz) =>
+        new(pt.X + sz.Width, pt.Y + sz.Height);
 
-    public static SKPoint Add(SKPoint point, SKSizeI value) =>
-        new(point.X + value.Width, point.Y + value.Height);
+    public static SKPoint Add(SKPoint pt, SKSizeI sz) =>
+        new(pt.X + sz.Width, pt.Y + sz.Height);
 
-    public static SKPoint Subtract(SKPoint point, SKPoint value) =>
-        new(point.X - value.X, point.Y - value.Y);
+    public static SKPoint Subtract(SKPoint pt, SKPoint sz) =>
+        new(pt.X - sz.X, pt.Y - sz.Y);
 
-    public static SKPoint Subtract(SKPoint point, SKPointI value) =>
-        new(point.X - value.X, point.Y - value.Y);
+    public static SKPoint Subtract(SKPoint pt, SKPointI sz) =>
+        new(pt.X - sz.X, pt.Y - sz.Y);
 
-    public static SKPoint Subtract(SKPoint point, SKSize value) =>
-        new(point.X - value.Width, point.Y - value.Height);
+    public static SKPoint Subtract(SKPoint pt, SKSize sz) =>
+        new(pt.X - sz.Width, pt.Y - sz.Height);
 
-    public static SKPoint Subtract(SKPoint point, SKSizeI value) =>
-        new(point.X - value.Width, point.Y - value.Height);
+    public static SKPoint Subtract(SKPoint pt, SKSizeI sz) =>
+        new(pt.X - sz.Width, pt.Y - sz.Height);
 
-    public readonly bool Equals(SKPoint other) => _x == other._x && _y == other._y;
+    public readonly bool Equals(SKPoint obj) => _x == obj._x && _y == obj._y;
 
     public override readonly bool Equals(object? obj) => obj is SKPoint other && Equals(other);
 
@@ -374,21 +374,25 @@ public struct SKPoint : IEquatable<SKPoint>
 
     public override readonly string ToString() => $"{{X={_x}, Y={_y}}}";
 
-    public static SKPoint operator +(SKPoint point, SKPoint value) => Add(point, value);
+    public static SKPoint operator +(SKPoint pt, SKPoint sz) => Add(pt, sz);
 
-    public static SKPoint operator +(SKPoint point, SKPointI value) => Add(point, value);
+    public static SKPoint operator +(SKPoint pt, SKPointI sz) => Add(pt, sz);
 
-    public static SKPoint operator +(SKPoint point, SKSize value) => Add(point, value);
+    public static SKPoint operator +(SKPoint pt, SKSize sz) => Add(pt, sz);
 
-    public static SKPoint operator +(SKPoint point, SKSizeI value) => Add(point, value);
+    public static SKPoint operator +(SKPoint pt, SKSizeI sz) => Add(pt, sz);
 
-    public static SKPoint operator -(SKPoint point, SKPoint value) => Subtract(point, value);
+    public static SKPoint operator -(SKPoint pt, SKPoint sz) => Subtract(pt, sz);
 
-    public static SKPoint operator -(SKPoint point, SKPointI value) => Subtract(point, value);
+    public static SKPoint operator -(SKPoint pt, SKPointI sz) => Subtract(pt, sz);
 
-    public static SKPoint operator -(SKPoint point, SKSize value) => Subtract(point, value);
+    public static SKPoint operator -(SKPoint pt, SKSize sz) => Subtract(pt, sz);
 
-    public static SKPoint operator -(SKPoint point, SKSizeI value) => Subtract(point, value);
+    public static SKPoint operator -(SKPoint pt, SKSizeI sz) => Subtract(pt, sz);
+
+    public static implicit operator Vector2(SKPoint point) => new(point.X, point.Y);
+
+    public static implicit operator SKPoint(Vector2 vector) => new(vector.X, vector.Y);
 
     public static bool operator ==(SKPoint left, SKPoint right) => left.Equals(right);
 
@@ -418,10 +422,10 @@ public struct SKPointI : IEquatable<SKPointI>
         set => _y = value;
     }
 
-    public SKPointI(SKSizeI size)
+    public SKPointI(SKSizeI sz)
     {
-        _x = size.Width;
-        _y = size.Height;
+        _x = sz.Width;
+        _y = sz.Height;
     }
 
     public SKPointI(int x, int y)
@@ -430,10 +434,10 @@ public struct SKPointI : IEquatable<SKPointI>
         _y = y;
     }
 
-    public void Offset(SKPointI point)
+    public void Offset(SKPointI p)
     {
-        _x += point.X;
-        _y += point.Y;
+        _x += p.X;
+        _y += p.Y;
     }
 
     public void Offset(int dx, int dy)
@@ -497,28 +501,28 @@ public struct SKPointI : IEquatable<SKPointI>
         }
     }
 
-    public static SKPointI Add(SKPointI point, SKSizeI size) => point + size;
-    public static SKPointI Add(SKPointI point, SKPointI size) => point + size;
-    public static SKPointI Subtract(SKPointI point, SKSizeI size) => point - size;
-    public static SKPointI Subtract(SKPointI point, SKPointI size) => point - size;
+    public static SKPointI Add(SKPointI pt, SKSizeI sz) => pt + sz;
+    public static SKPointI Add(SKPointI pt, SKPointI sz) => pt + sz;
+    public static SKPointI Subtract(SKPointI pt, SKSizeI sz) => pt - sz;
+    public static SKPointI Subtract(SKPointI pt, SKPointI sz) => pt - sz;
 
-    public static SKPointI operator +(SKPointI point, SKSizeI size) =>
-        new(point.X + size.Width, point.Y + size.Height);
+    public static SKPointI operator +(SKPointI pt, SKSizeI sz) =>
+        new(pt.X + sz.Width, pt.Y + sz.Height);
 
-    public static SKPointI operator +(SKPointI point, SKPointI size) =>
-        new(point.X + size.X, point.Y + size.Y);
+    public static SKPointI operator +(SKPointI pt, SKPointI sz) =>
+        new(pt.X + sz.X, pt.Y + sz.Y);
 
-    public static SKPointI operator -(SKPointI point, SKSizeI size) =>
-        new(point.X - size.Width, point.Y - size.Height);
+    public static SKPointI operator -(SKPointI pt, SKSizeI sz) =>
+        new(pt.X - sz.Width, pt.Y - sz.Height);
 
-    public static SKPointI operator -(SKPointI point, SKPointI size) =>
-        new(point.X - size.X, point.Y - size.Y);
+    public static SKPointI operator -(SKPointI pt, SKPointI sz) =>
+        new(pt.X - sz.X, pt.Y - sz.Y);
 
-    public static explicit operator SKSizeI(SKPointI point) => new(point.X, point.Y);
-    public static implicit operator SKPoint(SKPointI point) => new(point.X, point.Y);
+    public static explicit operator SKSizeI(SKPointI p) => new(p.X, p.Y);
+    public static implicit operator SKPoint(SKPointI p) => new(p.X, p.Y);
     public static implicit operator Vector2(SKPointI point) => new(point._x, point._y);
 
-    public readonly bool Equals(SKPointI other) => _x == other._x && _y == other._y;
+    public readonly bool Equals(SKPointI obj) => _x == obj._x && _y == obj._y;
     public override readonly bool Equals(object? obj) => obj is SKPointI other && Equals(other);
     public static bool operator ==(SKPointI left, SKPointI right) => left.Equals(right);
     public static bool operator !=(SKPointI left, SKPointI right) => !left.Equals(right);
@@ -562,19 +566,19 @@ public struct SKPoint3 : IEquatable<SKPoint3>
 
     public override readonly string ToString() => $"{{X={_x}, Y={_y}, Z={_z}}}";
 
-    public static SKPoint3 Add(SKPoint3 point, SKPoint3 size) => point + size;
-    public static SKPoint3 Subtract(SKPoint3 point, SKPoint3 size) => point - size;
+    public static SKPoint3 Add(SKPoint3 pt, SKPoint3 sz) => pt + sz;
+    public static SKPoint3 Subtract(SKPoint3 pt, SKPoint3 sz) => pt - sz;
 
-    public static SKPoint3 operator +(SKPoint3 point, SKPoint3 size) =>
-        new(point.X + size.X, point.Y + size.Y, point.Z + size.Z);
+    public static SKPoint3 operator +(SKPoint3 pt, SKPoint3 sz) =>
+        new(pt.X + sz.X, pt.Y + sz.Y, pt.Z + sz.Z);
 
-    public static SKPoint3 operator -(SKPoint3 point, SKPoint3 size) =>
-        new(point.X - size.X, point.Y - size.Y, point.Z - size.Z);
+    public static SKPoint3 operator -(SKPoint3 pt, SKPoint3 sz) =>
+        new(pt.X - sz.X, pt.Y - sz.Y, pt.Z - sz.Z);
 
     public static implicit operator Vector3(SKPoint3 point) => new(point._x, point._y, point._z);
     public static implicit operator SKPoint3(Vector3 vector) => new(vector.X, vector.Y, vector.Z);
 
-    public readonly bool Equals(SKPoint3 other) => _x == other._x && _y == other._y && _z == other._z;
+    public readonly bool Equals(SKPoint3 obj) => _x == obj._x && _y == obj._y && _z == obj._z;
     public override readonly bool Equals(object? obj) => obj is SKPoint3 other && Equals(other);
     public static bool operator ==(SKPoint3 left, SKPoint3 right) => left.Equals(right);
     public static bool operator !=(SKPoint3 left, SKPoint3 right) => !left.Equals(right);
@@ -608,10 +612,10 @@ public struct SKSize : IEquatable<SKSize>
         _height = height;
     }
 
-    public SKSize(SKPoint point)
+    public SKSize(SKPoint pt)
     {
-        _width = point.X;
-        _height = point.Y;
+        _width = pt.X;
+        _height = pt.Y;
     }
 
     public readonly SKPoint ToPoint() => new(_width, _height);
@@ -624,11 +628,11 @@ public struct SKSize : IEquatable<SKSize>
         }
     }
 
-    public static SKSize Add(SKSize left, SKSize right) => left + right;
+    public static SKSize Add(SKSize sz1, SKSize sz2) => sz1 + sz2;
 
-    public static SKSize Subtract(SKSize left, SKSize right) => left - right;
+    public static SKSize Subtract(SKSize sz1, SKSize sz2) => sz1 - sz2;
 
-    public readonly bool Equals(SKSize other) => _width == other._width && _height == other._height;
+    public readonly bool Equals(SKSize obj) => _width == obj._width && _height == obj._height;
 
     public override readonly bool Equals(object? obj) => obj is SKSize other && Equals(other);
 
@@ -636,11 +640,11 @@ public struct SKSize : IEquatable<SKSize>
 
     public override readonly string ToString() => $"{{Width={_width}, Height={_height}}}";
 
-    public static SKSize operator +(SKSize left, SKSize right) =>
-        new(left.Width + right.Width, left.Height + right.Height);
+    public static SKSize operator +(SKSize sz1, SKSize sz2) =>
+        new(sz1.Width + sz2.Width, sz1.Height + sz2.Height);
 
-    public static SKSize operator -(SKSize left, SKSize right) =>
-        new(left.Width - right.Width, left.Height - right.Height);
+    public static SKSize operator -(SKSize sz1, SKSize sz2) =>
+        new(sz1.Width - sz2.Width, sz1.Height - sz2.Height);
 
     public static bool operator ==(SKSize left, SKSize right) => left.Equals(right);
 
@@ -678,19 +682,19 @@ public struct SKSizeI : IEquatable<SKSizeI>
         _height = height;
     }
 
-    public SKSizeI(SKPointI point)
+    public SKSizeI(SKPointI pt)
     {
-        _width = point.X;
-        _height = point.Y;
+        _width = pt.X;
+        _height = pt.Y;
     }
 
     public readonly SKPointI ToPointI() => new(_width, _height);
 
-    public static SKSizeI Add(SKSizeI left, SKSizeI right) => left + right;
+    public static SKSizeI Add(SKSizeI sz1, SKSizeI sz2) => sz1 + sz2;
 
-    public static SKSizeI Subtract(SKSizeI left, SKSizeI right) => left - right;
+    public static SKSizeI Subtract(SKSizeI sz1, SKSizeI sz2) => sz1 - sz2;
 
-    public readonly bool Equals(SKSizeI other) => _width == other._width && _height == other._height;
+    public readonly bool Equals(SKSizeI obj) => _width == obj._width && _height == obj._height;
 
     public override readonly bool Equals(object? obj) => obj is SKSizeI other && Equals(other);
 
@@ -698,11 +702,11 @@ public struct SKSizeI : IEquatable<SKSizeI>
 
     public override readonly string ToString() => $"{{Width={_width}, Height={_height}}}";
 
-    public static SKSizeI operator +(SKSizeI left, SKSizeI right) =>
-        new(left.Width + right.Width, left.Height + right.Height);
+    public static SKSizeI operator +(SKSizeI sz1, SKSizeI sz2) =>
+        new(sz1.Width + sz2.Width, sz1.Height + sz2.Height);
 
-    public static SKSizeI operator -(SKSizeI left, SKSizeI right) =>
-        new(left.Width - right.Width, left.Height - right.Height);
+    public static SKSizeI operator -(SKSizeI sz1, SKSizeI sz2) =>
+        new(sz1.Width - sz2.Width, sz1.Height - sz2.Height);
 
     public static bool operator ==(SKSizeI left, SKSizeI right) => left.Equals(right);
 
@@ -802,7 +806,7 @@ public struct SKRect : IEquatable<SKRect>
     public static SKRect Create(SKPoint location, SKSize size) =>
         Create(location.X, location.Y, size.Width, size.Height);
 
-    public readonly bool Contains(SKPoint point) => Contains(point.X, point.Y);
+    public readonly bool Contains(SKPoint pt) => Contains(pt.X, pt.Y);
 
     public readonly bool Contains(float x, float y) =>
         _left <= x && x < _right && _top <= y && y < _bottom;
@@ -827,7 +831,7 @@ public struct SKRect : IEquatable<SKRect>
         return rect;
     }
 
-    public void Offset(SKPoint point) => Offset(point.X, point.Y);
+    public void Offset(SKPoint pos) => Offset(pos.X, pos.Y);
 
     public void Offset(float x, float y)
     {
@@ -839,18 +843,18 @@ public struct SKRect : IEquatable<SKRect>
 
     public void Intersect(SKRect rect) => this = Intersect(this, rect);
 
-    public static SKRect Intersect(SKRect left, SKRect right)
+    public static SKRect Intersect(SKRect a, SKRect b)
     {
-        if (!left.IntersectsWithInclusive(right))
+        if (!a.IntersectsWithInclusive(b))
         {
             return Empty;
         }
 
         return new SKRect(
-            MathF.Max(left.Left, right.Left),
-            MathF.Max(left.Top, right.Top),
-            MathF.Min(left.Right, right.Right),
-            MathF.Min(left.Bottom, right.Bottom));
+            MathF.Max(a.Left, b.Left),
+            MathF.Max(a.Top, b.Top),
+            MathF.Min(a.Right, b.Right),
+            MathF.Min(a.Bottom, b.Bottom));
     }
 
     public readonly bool IntersectsWith(SKRect rect) =>
@@ -873,12 +877,12 @@ public struct SKRect : IEquatable<SKRect>
         }
     }
 
-    public static SKRect Union(SKRect left, SKRect right)
+    public static SKRect Union(SKRect a, SKRect b)
         => new(
-            MathF.Min(left.Left, right.Left),
-            MathF.Min(left.Top, right.Top),
-            MathF.Max(left.Right, right.Right),
-            MathF.Max(left.Bottom, right.Bottom));
+            MathF.Min(a.Left, b.Left),
+            MathF.Min(a.Top, b.Top),
+            MathF.Max(a.Right, b.Right),
+            MathF.Max(a.Bottom, b.Bottom));
 
     public readonly SKRect AspectFit(SKSize size) => AspectResize(size, fit: true);
 
@@ -914,9 +918,9 @@ public struct SKRect : IEquatable<SKRect>
             aspectHeight);
     }
 
-    public readonly bool Equals(SKRect other) =>
-        _left == other._left && _top == other._top &&
-        _right == other._right && _bottom == other._bottom;
+    public readonly bool Equals(SKRect obj) =>
+        _left == obj._left && _top == obj._top &&
+        _right == obj._right && _bottom == obj._bottom;
 
     public override readonly bool Equals(object? obj) => obj is SKRect other && Equals(other);
 
@@ -929,8 +933,8 @@ public struct SKRect : IEquatable<SKRect>
 
     public static bool operator !=(SKRect left, SKRect right) => !left.Equals(right);
 
-    public static implicit operator SKRect(SKRectI rect) =>
-        new(rect.Left, rect.Top, rect.Right, rect.Bottom);
+    public static implicit operator SKRect(SKRectI r) =>
+        new(r.Left, r.Top, r.Right, r.Bottom);
 }
 
 public struct SKRectI : IEquatable<SKRectI>
@@ -1072,13 +1076,13 @@ public struct SKRectI : IEquatable<SKRectI>
         _bottom += height;
     }
 
-    public static SKRectI Inflate(SKRectI rect, int width, int height)
+    public static SKRectI Inflate(SKRectI rect, int x, int y)
     {
-        rect.Inflate(width, height);
+        rect.Inflate(x, y);
         return rect;
     }
 
-    public void Offset(SKPointI point) => Offset(point.X, point.Y);
+    public void Offset(SKPointI pos) => Offset(pos.X, pos.Y);
 
     public void Offset(int x, int y)
     {
@@ -1090,18 +1094,18 @@ public struct SKRectI : IEquatable<SKRectI>
 
     public void Intersect(SKRectI rect) => this = Intersect(this, rect);
 
-    public static SKRectI Intersect(SKRectI left, SKRectI right)
+    public static SKRectI Intersect(SKRectI a, SKRectI b)
     {
-        if (!left.IntersectsWithInclusive(right))
+        if (!a.IntersectsWithInclusive(b))
         {
             return Empty;
         }
 
         return new SKRectI(
-            Math.Max(left.Left, right.Left),
-            Math.Max(left.Top, right.Top),
-            Math.Min(left.Right, right.Right),
-            Math.Min(left.Bottom, right.Bottom));
+            Math.Max(a.Left, b.Left),
+            Math.Max(a.Top, b.Top),
+            Math.Min(a.Right, b.Right),
+            Math.Min(a.Bottom, b.Bottom));
     }
 
     public readonly bool IntersectsWith(SKRectI rect) =>
@@ -1114,13 +1118,13 @@ public struct SKRectI : IEquatable<SKRectI>
 
     public void Union(SKRectI rect) => this = Union(this, rect);
 
-    public static SKRectI Union(SKRectI left, SKRectI right) => new(
-        Math.Min(left.Left, right.Left),
-        Math.Min(left.Top, right.Top),
-        Math.Max(left.Right, right.Right),
-        Math.Max(left.Bottom, right.Bottom));
+    public static SKRectI Union(SKRectI a, SKRectI b) => new(
+        Math.Min(a.Left, b.Left),
+        Math.Min(a.Top, b.Top),
+        Math.Max(a.Right, b.Right),
+        Math.Max(a.Bottom, b.Bottom));
 
-    public readonly bool Contains(SKPointI point) => Contains(point.X, point.Y);
+    public readonly bool Contains(SKPointI pt) => Contains(pt.X, pt.Y);
 
     public readonly bool Contains(int x, int y) =>
         _left <= x && x < _right && _top <= y && y < _bottom;
@@ -1139,9 +1143,9 @@ public struct SKRectI : IEquatable<SKRectI>
     public static SKRectI Create(SKPointI location, SKSizeI size) =>
         Create(location.X, location.Y, size.Width, size.Height);
 
-    public readonly bool Equals(SKRectI other) =>
-        _left == other._left && _top == other._top &&
-        _right == other._right && _bottom == other._bottom;
+    public readonly bool Equals(SKRectI obj) =>
+        _left == obj._left && _top == obj._top &&
+        _right == obj._right && _bottom == obj._bottom;
 
     public override readonly bool Equals(object? obj) => obj is SKRectI other && Equals(other);
 
