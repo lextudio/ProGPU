@@ -861,7 +861,17 @@ public struct SKRect : IEquatable<SKRect>
         _left <= rect.Right && rect.Left <= _right &&
         _top <= rect.Bottom && rect.Top <= _bottom;
 
-    public void Union(SKRect rect) => this = Union(this, rect);
+    public void Union(SKRect rect)
+    {
+        if (IsEmpty)
+        {
+            this = rect;
+        }
+        else if (!rect.IsEmpty)
+        {
+            this = Union(this, rect);
+        }
+    }
 
     public static SKRect Union(SKRect left, SKRect right)
         => new(
@@ -1356,7 +1366,7 @@ public static class SKColors
     public static readonly SKColor DeepSkyBlue = new(0, 191, 255, 255);
     public static readonly SKColor DimGray = new(105, 105, 105, 255);
     public static readonly SKColor DodgerBlue = new(30, 144, 255, 255);
-    public static SKColor Empty => SKColor.Empty;
+    public static readonly SKColor Empty = SKColor.Empty;
     public static readonly SKColor Firebrick = new(178, 34, 34, 255);
     public static readonly SKColor FloralWhite = new(255, 250, 240, 255);
     public static readonly SKColor ForestGreen = new(34, 139, 34, 255);
