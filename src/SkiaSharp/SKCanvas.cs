@@ -82,11 +82,7 @@ public class SKCanvas : IDisposable
         public RenderCommand[] ActiveClipPushes { get; }
     }
 
-    public SKMatrix TotalMatrix
-    {
-        get => _currentMatrix;
-        set => SetMatrix(value);
-    }
+    public SKMatrix TotalMatrix => _currentMatrix;
 
     public int SaveCount => _stateStack.Count + 1;
 
@@ -148,22 +144,58 @@ public class SKCanvas : IDisposable
 
     public void Clear()
     {
-        Clear(SKColors.Transparent);
+        Clear(SKColors.Empty);
     }
 
-    public void Clear(SKColor color)
+    public void Clear(SKColor color) =>
+        DrawDeviceColor(new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f), SKBlendMode.Src);
+
+    public void Clear(SKColorF color)
     {
-        var c = new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
-        var brush = new SolidColorBrush(c);
-        _context.PushBlendMode(GpuBlendMode.Src);
-        _context.Commands.Add(new RenderCommand
+        var clamped = color.Clamp();
+        DrawDeviceColor(new Vector4(clamped.Red, clamped.Green, clamped.Blue, clamped.Alpha), SKBlendMode.Src);
+    }
+
+    public void DrawColor(SKColor color, SKBlendMode mode = SKBlendMode.Src) =>
+        DrawDeviceColor(new Vector4(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f), mode);
+
+    public void DrawColor(SKColorF color, SKBlendMode mode = SKBlendMode.Src)
+    {
+        var clamped = color.Clamp();
+        DrawDeviceColor(new Vector4(clamped.Red, clamped.Green, clamped.Blue, clamped.Alpha), mode);
+    }
+
+    private void DrawDeviceColor(Vector4 color, SKBlendMode mode)
+    {
+        var blendMode = MapBlendMode(mode);
+        var pushedBlendMode = blendMode != GpuBlendMode.SrcOver;
+        if (pushedBlendMode)
         {
-            Type = RenderCommandType.DrawRect,
-            Rect = new Rect(0, 0, _width, _height),
-            Brush = brush,
-            Transform = Matrix4x4.Identity // Clear is always in identity screen space
-        });
-        _context.PopBlendMode();
+            _context.PushBlendMode(blendMode);
+        }
+
+        try
+        {
+            _context.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawRect,
+                Rect = new Rect(0f, 0f, _width, _height),
+                Brush = new SolidColorBrush(color),
+                Transform = Matrix4x4.Identity,
+            });
+        }
+        finally
+        {
+            if (pushedBlendMode)
+            {
+                _context.PopBlendMode();
+            }
+        }
+    }
+
+    public void Discard()
+    {
+        // Retained canvases have no immediate attachment contents to invalidate.
     }
 
     public int Save()
@@ -2056,6 +2088,65 @@ public class SKCanvas : IDisposable
 
     public void DrawLine(SKPoint point0, SKPoint point1, SKPaint paint) =>
         DrawLine(point0.X, point0.Y, point1.X, point1.Y, paint);
+
+    public void DrawArc(
+        SKRect oval,
+        float startAngle,
+        float sweepAngle,
+        bool useCenter,
+        SKPaint paint)
+    {
+        ArgumentNullException.ThrowIfNull(paint);
+        if (oval.IsEmpty || sweepAngle == 0f)
+        {
+            return;
+        }
+
+        var radiusX = oval.Width * 0.5f;
+        var radiusY = oval.Height * 0.5f;
+        var center = new SKPoint(oval.MidX, oval.MidY);
+        var startRadians = startAngle * (MathF.PI / 180f);
+        var clampedSweep = Math.Clamp(sweepAngle, -360f, 360f);
+        var start = new SKPoint(
+            center.X + MathF.Cos(startRadians) * radiusX,
+            center.Y + MathF.Sin(startRadians) * radiusY);
+
+        using var path = new SKPath();
+        if (MathF.Abs(clampedSweep) >= 360f)
+        {
+            path.AddOval(
+                oval,
+                clampedSweep >= 0f ? SKPathDirection.Clockwise : SKPathDirection.CounterClockwise);
+        }
+        else
+        {
+            if (useCenter)
+            {
+                path.MoveTo(center);
+                path.LineTo(start);
+            }
+            else
+            {
+                path.MoveTo(start);
+            }
+
+            var endRadians = (startAngle + clampedSweep) * (MathF.PI / 180f);
+            path.ArcTo(
+                radiusX,
+                radiusY,
+                0f,
+                MathF.Abs(clampedSweep) > 180f ? SKPathArcSize.Large : SKPathArcSize.Small,
+                clampedSweep >= 0f ? SKPathDirection.Clockwise : SKPathDirection.CounterClockwise,
+                center.X + MathF.Cos(endRadians) * radiusX,
+                center.Y + MathF.Sin(endRadians) * radiusY);
+            if (useCenter)
+            {
+                path.Close();
+            }
+        }
+
+        DrawPath(path, paint);
+    }
 
     public void DrawPoints(SKPointMode mode, SKPoint[] points, SKPaint paint)
     {

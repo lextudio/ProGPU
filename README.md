@@ -167,6 +167,8 @@ Path-positioned text blobs reproduce SkiaSharp's non-warped text-on-path algorit
 
 Canvas text overloads preserve SkiaSharp's legacy alignment metadata while normalizing point and scalar coordinates into the canonical shaped-text path. Text-on-path selects outline morphing when `warpGlyphs` is true and tangent-positioned rotation-scale blobs otherwise. Wrapper cost is `O(1)`; shaping and path placement remain `O(G + P)` for G glyphs and path-measure setup P, and compositor glyph instances continue to batch without readback or quality reduction.
 
+Core canvas color operations draw a device-space rectangle through the requested blend mode, independent of the current matrix but inside retained clip scopes; float colors are clamped before recording. Arc drawing converts the Skia angle convention into one elliptical path, clamps full turns to one oval, and closes center wedges only when requested. Color/discard/state work is `O(1)`; arc path creation is bounded `O(1)`, emits one retained path command, and performs no readback.
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
