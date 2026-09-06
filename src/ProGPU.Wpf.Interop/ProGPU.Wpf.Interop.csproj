@@ -8,5 +8,14 @@
     <PackageTags>librewpf;progpu;webgpu;silk.net;interop</PackageTags>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>..\..\eng\ProGPU.snk</AssemblyOriginatorKeyFile>
+    <!--
+      Interop contracts only - no architecture-specific IL. Pinned to AnyCPU because this assembly
+      is republished inside the arch-neutral LibreWPF.Transport package (lib/net10.0), where it has
+      no per-RID counterpart to correct it: when a platform-driven build stamped it x64, every arm64
+      consumer failed to load it, and stamping it arm64 broke x64 the same way. The standalone
+      LibreWPF.Interop package was always AnyCPU; this keeps the two copies identical rather than
+      letting the copy inherit whichever -platform the WPF build happened to pass.
+    -->
+    <PlatformTarget>AnyCPU</PlatformTarget>
   </PropertyGroup>
 </Project>
