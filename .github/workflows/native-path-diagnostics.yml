@@ -1,14 +1,10 @@
 name: Native path diagnostics
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/native-path-diagnostics.yml
   workflow_dispatch:
     inputs:
       package_run_id:
         description: Build run containing the package under investigation
-        default: '34763887821'
         required: true
         type: string
 
@@ -30,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
@@ -39,7 +35,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          PACKAGE_RUN_ID: ${{ inputs.package_run_id || '34763887821' }}
+          PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
         run: |
           if ($env:PACKAGE_RUN_ID -notmatch '^[0-9]+$') { throw 'Invalid package run ID.' }
           $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PACKAGE_RUN_ID" | ConvertFrom-Json

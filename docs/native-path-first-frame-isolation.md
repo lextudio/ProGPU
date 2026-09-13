@@ -55,7 +55,11 @@ remains failed.
 
 The independent `Native path diagnostics` workflow reuses a specified completed
 Build's package and logs its run number, original head and package hashes. It is
-not a current-head artifact producer or replacement gate. Its follow-up invokes
+manual-only and requires an explicit run ID: PR pushes must not repeatedly
+evaluate a historical failing package as though it were their current artifact.
+The Build workflow now runs all three independent stages against its own package
+after a Windows consumer failure, preserving that failure and all final gates.
+The manual workflow is not a current-head artifact producer or replacement gate. It invokes
 `--native-path-probe` (cold direct native rectangle) and `--native-cubic-probe`
 (the unchanged original MIL cubic assertion), each in a fresh process. Metal
 passes the direct rectangle with exact white/black RGBA samples. The workflow
