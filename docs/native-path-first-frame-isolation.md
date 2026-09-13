@@ -38,6 +38,17 @@ early-release and raw-coverage probes all pass. Hosted lifetime results remain
 required. This is diagnostic coverage of the common WebGPU ownership contract,
 not a one-sided production rendering change or a demonstrated lifetime defect.
 
+Hosted [run 34775162633](https://github.com/wieslawsoltes/ProGPU/actions/runs/34775162633)
+now passes the retained-reference baseline on both architectures. Releasing the
+command plus all raster references before completion produces an access violation
+on x64; the native x64 fixtures still fail. ARM64 passes that comparison but the
+original cubic remains black. This reproduces a submission-lifetime-sensitive
+failure outside C++, not proof of which reference is causal. The subsequent
+`--path-native-release-buffers-probe` and `--path-native-release-command-probe`
+split those two changes. Both build without warnings/errors and pass on Metal;
+Windows results determine the required retention scope. No production lifetime
+fix has been qualified yet.
+
 `ProGPU.Native.PackageConsumer --path-coverage-probe` executes the packaged
 `ProGPU.Backend.Shaders.PathRasterizerShader`, entry `cs_main_ordinary`, with
 its original five-binding storage ABI, 16x16 workgroup and eight-by-eight sample

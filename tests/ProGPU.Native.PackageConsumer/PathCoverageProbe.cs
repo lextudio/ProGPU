@@ -4,7 +4,7 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
-internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease }
+internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand }
 
 // Failure isolation only: this executes the packaged canonical kernel, not a
 // replacement renderer. A passing probe never qualifies a failed native frame.
@@ -126,7 +126,7 @@ internal static unsafe class PathCoverageProbe
             if (sameSubmission)
             {
                 DrawAtlas(context, atlas, cache, encoder, nativeLayout, apiMode,
-                    apiMode == PathProbeApi.NativeRelease ? () => {
+                    apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers ? () => {
                         context.Api.BindGroupRelease(group); group = null;
                         uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
                         Console.WriteLine("package-consumer: released all five raster buffers and bind group before native completion wait");
@@ -144,7 +144,7 @@ internal static unsafe class PathCoverageProbe
             // not warm up or synchronize the atlas through a CPU read first.
             if (drawAtlas && !sameSubmission) DrawAtlas(context, atlas, cache);
             byte[] pixels = atlas.ReadPixels();
-            if (apiMode == PathProbeApi.NativeRelease)
+            if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers)
             {
                 if (pixels[(atlasY + 8) * 1024 + atlasX + 16] != 255 ||
                     pixels[(atlasY + 2) * 1024 + atlasX + 2] != 0 || pixels[0] != 0)
@@ -321,7 +321,7 @@ internal static unsafe class PathCoverageProbe
             var commandDescriptor = new CommandBufferDescriptor();
             command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
             if (command == null) throw new InvalidOperationException("Canonical vector probe commands rejected.");
-            if (apiMode == PathProbeApi.NativeSubmission || apiMode == PathProbeApi.NativeRelease)
+            if (apiMode >= PathProbeApi.NativeSubmission)
             {
                 // Existing wgpu-native extension ABI used by the C++ engine,
                 // followed by the same exact-token wait as the native probe.
@@ -330,11 +330,12 @@ internal static unsafe class PathCoverageProbe
                 var poll = (delegate* unmanaged[Cdecl]<Device*, uint, void*, uint>)
                     context.Wgpu.Context.GetProcAddress("wgpuDevicePoll");
                 var token = new SubmissionToken { Queue = context.Queue, Index = submit(context.Queue, 1, &command) };
-                if (apiMode == PathProbeApi.NativeRelease)
+                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand)
                 {
                     context.Api.CommandBufferRelease(command); command = null;
-                    releaseRaster!();
+                    Console.WriteLine("package-consumer: released submitted command buffer before completion wait");
                 }
+                releaseRaster?.Invoke();
                 Console.WriteLine($"package-consumer: native submission token={token.Index}; poll={poll(context.Device, 1, &token)}");
             }
             else

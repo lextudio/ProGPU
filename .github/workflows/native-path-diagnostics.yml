@@ -73,7 +73,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $failed = $false
           $probes = if ($env:PROBE_SET -eq 'lifetime') {
-            @('--path-native-submit-probe', '--path-native-release-probe', '--native-path-probe', '--native-cubic-probe')
+            @('--path-native-submit-probe', '--path-native-release-buffers-probe', '--path-native-release-command-probe', '--native-path-probe', '--native-cubic-probe')
           } else {
             @('--path-coverage-probe', '--path-vector-probe', '--path-vector-batched-probe', '--path-native-layout-probe', '--path-native-bindings-probe', '--path-native-submit-probe', '--path-native-release-probe', '--native-path-probe', '--native-cubic-probe')
           }

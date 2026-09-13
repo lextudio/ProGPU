@@ -29,11 +29,17 @@ if (args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-layout-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-bindings-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-submit-probe", StringComparer.Ordinal) ||
-    args.Contains("--path-native-release-probe", StringComparer.Ordinal))
+    args.Contains("--path-native-release-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-release-command-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
-    var apiMode = args.Contains("--path-native-release-probe", StringComparer.Ordinal)
+    var apiMode = args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeReleaseBuffers
+        : args.Contains("--path-native-release-command-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeReleaseCommand
+        : args.Contains("--path-native-release-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeRelease
         : args.Contains("--path-native-submit-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeSubmission
