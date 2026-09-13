@@ -16,6 +16,12 @@ unchanged. First-readback and repeated-wait milestones locate a crash without
 claiming success from submission alone. The ordinary consumer still runs this
 fixture after rendering.
 
+The manual `Native path diagnostics` workflow accepts `probe_set=owner` with a
+completed Build's `package_run_id`. It runs the same independent fixture in
+separate Windows x64 and ARM64 jobs against that recorded package, using the
+runner's ordinary runtime. No development WARP is installed by that workflow.
+It remains diagnostic, never a replacement for final-head package consumers.
+
 Both the Release build (zero warnings/errors) and complete independent fixture
 pass on Apple M3 Pro / Metal. This is not Windows or full application admission.
 
@@ -40,6 +46,13 @@ This is evidence of an invalid generated-code store, consistent with faulty
 stack-spill addressing in WARP; it is not evidence of a managed map callback
 invoking address zero. The earlier terminal unknown-module/zero-offset event
 was insufficient to locate this first-chance failure.
+
+A matched `Consumer.exe --native-owner-query-probe` control also loads the
+system WARP and exits `-1073741819` before first readback, after 28,402.209 ms
+submission. This excludes the apphost-versus-shared-dotnet launch difference as
+the explanation for development WARP's successful point query. System DLL
+SHA256: `750d6535099e15148103fbf75d1925d8ff590ff62124630aa7f687ddaab4b82a`.
+These runs are correctness comparisons, not controlled performance benchmarks.
 
 ## Controlled development-runtime comparison
 
@@ -67,11 +80,11 @@ Keep the source/native assemblies and shader identical, collect stdout/stderr
 and the real child exit code, and retain the original system-WARP failure.
 
 The development-runtime run submits the first point query in 22,532.337 ms,
-completes its readback in 155.797 ms, and passes all 16 repeated waits. The
-first bounds-region pipeline is still running at this checkpoint, before its
-submitted milestone, with CPU time increasing beyond 218 seconds. This exposes
-cold region-query latency separately from the initial point execution crash;
-it is not a completed region query, timeout pass or full-fixture qualification.
+completes its readback in 155.797 ms, and passes all 16 repeated waits. The first
+bounds query subsequently submits in 341,098.475 ms and passes its assertions;
+the ellipse query is now compiling. This exposes unacceptable cold region-query
+latency separately from the initial point execution crash. No timeout is widened
+or promoted to success, and the full fixture is not yet qualified.
 
 Do not fix this crash by replacing the native index with managed/CPU geometry,
 removing shader families, widening deadlines or declaring pipeline submission a
