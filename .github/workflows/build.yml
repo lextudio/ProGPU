@@ -678,7 +678,7 @@ jobs:
         run: |
           version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
           failed=0
-          for probe in --path-coverage-probe --native-path-probe --native-cubic-probe; do
+          for probe in --path-coverage-probe --path-vector-probe --native-path-probe --native-cubic-probe; do
             echo "Independent current-package process: ${probe}"
             dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
               --configuration Release --no-build \

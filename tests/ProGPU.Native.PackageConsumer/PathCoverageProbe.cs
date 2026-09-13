@@ -35,7 +35,7 @@ internal static unsafe class PathCoverageProbe
             throw new InvalidOperationException("Cold direct native path probe failed.");
     }
 
-    internal static void Run(WgpuContext context)
+    internal static void Run(WgpuContext context, bool drawAtlas = false)
     {
         const uint rowBytes = 256, width = 64, height = 16;
         using var cache = new RenderPipelineCache(context);
@@ -114,6 +114,9 @@ internal static unsafe class PathCoverageProbe
             if (command == null) throw new InvalidOperationException("Coverage probe commands rejected.");
             context.Submit(1, &command);
             Console.WriteLine("package-consumer: coverage probe submitted canonical raster and partial atlas copy");
+            // Submit the first draw before either readback. The diagnostic must
+            // not warm up or synchronize the atlas through a CPU read first.
+            if (drawAtlas) DrawAtlas(context, atlas, cache);
             byte[] raw = coverage.ReadBytes();
             byte[] pixels = atlas.ReadPixels();
             byte rawInside = raw[8 * rowBytes + 16], rawOutside = raw[2 * rowBytes + 2];
@@ -132,6 +135,114 @@ internal static unsafe class PathCoverageProbe
             if (group != null) context.Api.BindGroupRelease(group);
             if (pipelineLayout != null) context.Api.PipelineLayoutRelease(pipelineLayout);
             if (layout != null) context.Api.BindGroupLayoutRelease(layout);
+        }
+    }
+
+    private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache)
+    {
+        using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
+        using var uniforms = new GpuBuffer(context, 224, BufferUsage.Uniform | BufferUsage.CopyDst);
+        using var brushes = new GpuBuffer(context, 256, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var stops = new GpuBuffer(context, 32, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var vertices = new GpuBuffer(context, 4 * 56, BufferUsage.Vertex | BufferUsage.CopyDst);
+        using var indices = new GpuBuffer(context, 6 * 4, BufferUsage.Index | BufferUsage.CopyDst);
+        // Existing Vector.wgsl wire layouts, identical to native gpu_uniforms,
+        // vector_vertex and the solid-brush sentinel. No reduced shader entry.
+        float[] frame = new float[56];
+        frame[0] = 2f / 64; frame[5] = -2f / 16; frame[10] = -1;
+        frame[12] = -1; frame[13] = 1; frame[15] = 1;
+        for (int matrix = 1; matrix < 3; matrix++)
+            for (int diagonal = 0; diagonal < 4; diagonal++) frame[matrix * 16 + diagonal * 5] = 1;
+        frame[48] = 64; frame[49] = 16; frame[50] = 1;
+        uniforms.Write<float>(frame);
+        float[] brush = new float[64]; brush[1] = 1;
+        brushes.Write<float>(brush);
+        stops.Write<uint>(new uint[8]);
+        vertices.Write<float>([
+             0,  0, 1,1,1,1, 17,19, 0,64,16,0,0,4,
+            64,  0, 1,1,1,1, 81,19, 0,64,16,0,0,4,
+            64, 16, 1,1,1,1, 81,35, 0,64,16,0,0,4,
+             0, 16, 1,1,1,1, 17,35, 0,64,16,0,0,4]);
+        indices.Write<uint>([0,1,2,0,2,3]);
+        var attributes = stackalloc VertexAttribute[8];
+        VertexFormat[] formats = [VertexFormat.Float32x2, VertexFormat.Float32x4,
+            VertexFormat.Float32x2, VertexFormat.Float32, VertexFormat.Float32x2,
+            VertexFormat.Float32, VertexFormat.Float32, VertexFormat.Float32];
+        ulong[] offsets = [0,8,24,32,36,44,48,52];
+        for (int i = 0; i < 8; i++) attributes[i] = new() {
+            Format = formats[i], Offset = offsets[i], ShaderLocation = (uint)i };
+        VertexBufferLayout[] vertexLayouts = [new() {
+            ArrayStride = 56, StepMode = VertexStepMode.Vertex, AttributeCount = 8, Attributes = attributes }];
+        var shader = cache.GetOrCreateShader("PackageCanonicalVectorProbe", Shaders.VectorShader);
+        var pipeline = cache.GetOrCreateRenderPipeline("PackageCanonicalVectorProbe", shader,
+            fragmentEntry: "fs_main_unmasked", targetFormat: TextureFormat.Rgba8Unorm,
+            vertexBufferLayouts: vertexLayouts);
+        BindGroupLayout* uniformLayout = null; BindGroupLayout* atlasLayout = null;
+        BindGroup* uniformGroup = null; BindGroup* atlasGroup = null;
+        Sampler* sampler = null; CommandEncoder* encoder = null; CommandBuffer* command = null;
+        try
+        {
+            uniformLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 0);
+            atlasLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 1);
+            var uniformEntries = stackalloc BindGroupEntry[3];
+            uniformEntries[0] = new() { Binding = 0, Buffer = uniforms.BufferPtr, Size = 224 };
+            uniformEntries[1] = new() { Binding = 1, Buffer = brushes.BufferPtr, Size = 256 };
+            uniformEntries[2] = new() { Binding = 2, Buffer = stops.BufferPtr, Size = 32 };
+            var uniformDescriptor = new BindGroupDescriptor {
+                Layout = uniformLayout, EntryCount = 3, Entries = uniformEntries };
+            uniformGroup = context.Api.DeviceCreateBindGroup(context.Device, &uniformDescriptor);
+            var samplerDescriptor = new SamplerDescriptor {
+                AddressModeU = AddressMode.ClampToEdge, AddressModeV = AddressMode.ClampToEdge,
+                AddressModeW = AddressMode.ClampToEdge, MinFilter = FilterMode.Linear,
+                MagFilter = FilterMode.Linear, MipmapFilter = MipmapFilterMode.Nearest, MaxAnisotropy = 1 };
+            sampler = context.Api.DeviceCreateSampler(context.Device, &samplerDescriptor);
+            var atlasEntries = stackalloc BindGroupEntry[2];
+            atlasEntries[0] = new() { Binding = 0, Sampler = sampler };
+            atlasEntries[1] = new() { Binding = 1, TextureView = atlas.ViewPtr };
+            var atlasDescriptor = new BindGroupDescriptor { Layout = atlasLayout, EntryCount = 2, Entries = atlasEntries };
+            atlasGroup = context.Api.DeviceCreateBindGroup(context.Device, &atlasDescriptor);
+            if (uniformGroup == null || atlasGroup == null || sampler == null)
+                throw new InvalidOperationException("Canonical vector probe bindings rejected.");
+            var encoderDescriptor = new CommandEncoderDescriptor();
+            encoder = context.Api.DeviceCreateCommandEncoder(context.Device, &encoderDescriptor);
+            var attachment = new RenderPassColorAttachment {
+                View = target.ViewPtr, LoadOp = LoadOp.Clear, StoreOp = StoreOp.Store,
+                ClearValue = new Color(0,0,0,1) };
+            var passDescriptor = new RenderPassDescriptor { ColorAttachmentCount = 1, ColorAttachments = &attachment };
+            var pass = context.Api.CommandEncoderBeginRenderPass(encoder, &passDescriptor);
+            if (pass == null) throw new InvalidOperationException("Canonical vector probe pass rejected.");
+            context.Api.RenderPassEncoderSetPipeline(pass, pipeline);
+            context.Api.RenderPassEncoderSetBindGroup(pass, 0, uniformGroup, 0, null);
+            context.Api.RenderPassEncoderSetBindGroup(pass, 1, atlasGroup, 0, null);
+            context.Api.RenderPassEncoderSetVertexBuffer(pass, 0, vertices.BufferPtr, 0, vertices.Size);
+            context.Api.RenderPassEncoderSetIndexBuffer(pass, indices.BufferPtr, IndexFormat.Uint32, 0, indices.Size);
+            context.Api.RenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
+            context.Api.RenderPassEncoderEnd(pass);
+            context.Api.RenderPassEncoderRelease(pass);
+            var commandDescriptor = new CommandBufferDescriptor();
+            command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
+            if (command == null) throw new InvalidOperationException("Canonical vector probe commands rejected.");
+            context.Submit(1, &command);
+            byte[] pixels = target.ReadPixels();
+            int inside = (8 * 64 + 16) * 4, outside = (2 * 64 + 2) * 4;
+            Console.WriteLine($"package-consumer: canonical vector atlas inside=" +
+                $"({pixels[inside]},{pixels[inside+1]},{pixels[inside+2]},{pixels[inside+3]}), " +
+                $"outside=({pixels[outside]},{pixels[outside+1]},{pixels[outside+2]},{pixels[outside+3]}); " +
+                $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
+            if (pixels[inside] != 255 || pixels[inside+1] != 255 || pixels[inside+2] != 255 || pixels[inside+3] != 255 ||
+                pixels[outside] != 0 || pixels[outside+1] != 0 || pixels[outside+2] != 0 || pixels[outside+3] != 255)
+                throw new InvalidOperationException("Canonical vector atlas draw failed.");
+        }
+        finally
+        {
+            if (command != null) context.Api.CommandBufferRelease(command);
+            if (encoder != null) context.Api.CommandEncoderRelease(encoder);
+            if (atlasGroup != null) context.Api.BindGroupRelease(atlasGroup);
+            if (uniformGroup != null) context.Api.BindGroupRelease(uniformGroup);
+            if (sampler != null) context.Api.SamplerRelease(sampler);
+            if (atlasLayout != null) context.Api.BindGroupLayoutRelease(atlasLayout);
+            if (uniformLayout != null) context.Api.BindGroupLayoutRelease(uniformLayout);
         }
     }
 

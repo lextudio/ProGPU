@@ -77,6 +77,31 @@ an empty driver shader cache.
 
 ## Demand-driven native path pipelines
 
+### Current-package result and vector-stage isolation
+
+Build [34770390199](https://github.com/wieslawsoltes/ProGPU/actions/runs/34770390199),
+head `5a3b6bfd`, package `0.1.0-preview.3005.ci`, finishes with only the two
+Windows package consumers failing. All six native renderer lanes, the browser,
+strict compiler checks and the four non-Windows package consumers pass. Both
+Windows consumers still lose the original first-frame rectangle and cubic ink.
+The independent coverage/copy probe passes on both; the direct native rectangle
+fails on x64 and passes on ARM64, while the independent cubic probe fails on both.
+Demand-driven pipeline creation therefore did not repair the hosted black frame.
+
+`--path-vector-probe` extends the existing diagnostic with a manually populated
+canonical 56-byte vector vertex, 224-byte frame uniform and 256-byte solid brush.
+It uses the unchanged packaged `Vector.wgsl` `vs_main`/`fs_main_unmasked` entries
+to sample the independently rasterized R8 atlas. Both renderers use that shader;
+this tests their shared shader/binding contract independently of native resource
+preparation. The first draw is submitted before raw/atlas readback, without
+warm-up or a CPU synchronization used to make the atlas visible. It checks exact
+white interior and opaque-black exterior, then the original coverage/copy checks.
+This is test-only manually prepared input, not a new renderer or qualification
+substitute. Local Release compilation has zero warnings/errors and the Metal run
+passes all samples. The manual workflow reuses an explicitly selected package;
+Build failure diagnostics use their own package. Original consumer failures,
+query checks, deadlines and final qualification gates are unchanged.
+
 `ProGPU.Wpf.ShowcaseApp` first-path startup currently creates seven coverage
 pipelines, including three signed-winding shader modules, even for an ordinary
 rectangle. Both C++ providers now retain common atlas/layout resources but create
