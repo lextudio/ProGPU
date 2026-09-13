@@ -63,8 +63,17 @@ new renderer/startup architecture or a claim that those unrelated systems improv
   `32744beaa414db7bdeaf9917403d42e13aa1de367f299b30472b4d7c2c8315bc`.
 - MSVC builds both providers. The staged ARM64 DLL has SHA256
   `b027e83ef793b9fd6d337119aadb51f93b62427bed4239aa0c71fbee6e528795`.
-  Its full owner fixture is running with the same isolated development WARP
-  as the unchanged baseline; final status and comparative latency remain open.
+  With the same isolated development WARP, its first point query and all 16 waits
+  pass. Bounds submission takes 245,917.082 ms versus the unchanged fixture's
+  341,098.475 ms; ellipse submission takes 62,207.937 ms versus 69,585.134 ms.
+  All participation cases pass; fresh region-first contexts remain live. These
+  are encouraging diagnostic observations, not controlled benchmark results:
+  the baseline and candidate processes overlapped for part of the run. Both
+  observed cold latencies remain unacceptable for normal application input.
+
+The unchanged development-WARP fixture has now completed successfully in full.
+System WARP still fails its matched apphost control; changing rectangle-edge
+classification does not establish a repair of its separate point-query crash.
 
 Do not promote compilation, first submission or development-WARP success into
 system-runtime or application qualification. Current-head CI, Windows system

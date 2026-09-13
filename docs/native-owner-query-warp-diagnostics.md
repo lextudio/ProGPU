@@ -81,10 +81,12 @@ and the real child exit code, and retain the original system-WARP failure.
 
 The development-runtime run submits the first point query in 22,532.337 ms,
 completes its readback in 155.797 ms, and passes all 16 repeated waits. The first
-bounds query subsequently submits in 341,098.475 ms and passes its assertions;
-the ellipse query is now compiling. This exposes unacceptable cold region-query
-latency separately from the initial point execution crash. No timeout is widened
-or promoted to success, and the full fixture is not yet qualified.
+bounds query subsequently submits in 341,098.475 ms and the first ellipse query
+in 69,585.134 ms. The entire fixture now exits 0, including all participation
+combinations, scene-generation isolation and fresh region-first contexts. Its
+process/session is terminal, not an outstanding wait. This establishes successful
+execution with the development runtime, not system-runtime compatibility or
+acceptable cold latency. No timeout is widened or promoted to success.
 
 Do not fix this crash by replacing the native index with managed/CPU geometry,
 removing shader families, widening deadlines or declaring pipeline submission a
