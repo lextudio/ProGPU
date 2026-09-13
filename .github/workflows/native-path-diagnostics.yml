@@ -1,0 +1,71 @@
+name: Native path diagnostics
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/native-path-diagnostics.yml
+  workflow_dispatch:
+    inputs:
+      package_run_id:
+        description: Build run containing the package under investigation
+        default: '34763887821'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# This deliberately reuses an earlier package. It is diagnostic evidence only,
+# never an artifact-producing Build or replacement current-head consumer gate.
+jobs:
+  windows-path-stage:
+    name: Windows path-stage diagnosis (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Resolve original package provenance
+        id: package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ inputs.package_run_id || '34763887821' }}
+        run: |
+          if ($env:PACKAGE_RUN_ID -notmatch '^[0-9]+$') { throw 'Invalid package run ID.' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PACKAGE_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve package run.' }
+          if ($run.path -ne '.github/workflows/build.yml' -or $run.status -ne 'completed') {
+            throw 'Select a completed Build run; a failed consumer run is allowed for diagnosis.'
+          }
+          $version = "0.1.0-preview.$($run.run_number).ci"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "run_id=$env:PACKAGE_RUN_ID" >> $env:GITHUB_OUTPUT
+          "Package=$version original-head=$($run.head_sha) run=$($run.html_url) conclusion=$($run.conclusion)"
+      - name: Download original native packages
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.package.outputs.run_id }}
+          name: progpu-native-package
+          path: artifacts/path-diagnostic-packages
+      - name: Execute canonical coverage and partial texture copy probe
+        shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE 'artifacts/path-diagnostic-packages'
+          Get-ChildItem -LiteralPath $source -Filter '*.nupkg' | Get-FileHash -Algorithm SHA256 | Format-List
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+            --configuration Release "-p:ProGpuNativePackageSource=$source" `
+            "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION" -- --path-coverage-probe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
