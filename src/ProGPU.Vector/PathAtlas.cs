@@ -412,7 +412,7 @@ public unsafe class PathAtlas : IDisposable
     private readonly WgpuPipelineLayoutLease _computePipelineLayoutLease;
     private readonly BindGroupLayout* _computeBindGroupLayout;
     private readonly PipelineLayout* _computePipelineLayout;
-    private readonly ComputePipeline* _computePipeline;
+    private ComputePipeline* _computePipeline;
     private bool _isDisposed;
 
     public GpuTexture AtlasTexture => _atlasTexture;
@@ -613,6 +613,11 @@ public unsafe class PathAtlas : IDisposable
                 _computeBindGroupLayout);
         _computePipelineLayout =
             _computePipelineLayoutLease.Handle;
+    }
+
+    private void EnsureComputePipeline()
+    {
+        if (_computePipeline != null) return;
         var shaderModule = _pipelineCache.GetOrCreateShader("PathRasterizer", Shaders.PathRasterizerShader, "PathRasterizerShader");
         _computePipeline = _pipelineCache.GetOrCreateComputePipeline(
             "PathRasterizer",
@@ -4076,6 +4081,7 @@ public unsafe class PathAtlas : IDisposable
         LastDirectBooleanRasterizationCount = 0;
         LastBooleanProgramRasterizationCount = 0;
         if (_pendingPaths.Count == 0) return;
+        EnsureComputePipeline();
 
         PendingRasterization[]? rasterizations = null;
         RasterizationDispatch[]? dispatches = null;

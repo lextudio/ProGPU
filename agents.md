@@ -11,6 +11,13 @@ Welcome, agent! This document serves as a specialized developer guide and archit
 
 ## 1. Core Architectural Rules & Conventions
 
+Managed glyph/path atlases retain their binding contracts and captured execution
+policy at construction, but compile raster pipelines only for actual work. Keep
+immediate, batched, oversized and fragment glyph paths covered before pass entry;
+empty path batches and unused native-host managed atlases must not compile them.
+Preserve shared cache keys/disposal and C++ on-demand resource creation. Do not
+count this initialization optimization as Windows query or application qualification.
+
 Bottomless float placement is distinct from fixed horizontal anchors. Use native
 free-interval packing for measured floaters: left/center select the first fit,
 right the last, center within the selected interval. Keep fixed-anchor placement

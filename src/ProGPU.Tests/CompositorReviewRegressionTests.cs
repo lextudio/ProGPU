@@ -3334,6 +3334,57 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(first.TexCoordMax, cached.TexCoordMax);
     }
 
+    [Theory]
+    [InlineData(GpuComputeExecutionPreference.NativeCompute, false)]
+    [InlineData(GpuComputeExecutionPreference.NativeCompute, true)]
+    [InlineData(GpuComputeExecutionPreference.RasterShader, false)]
+    [InlineData(GpuComputeExecutionPreference.RasterShader, true)]
+    public void AtlasPipelinesCompileOnlyForActualRasterRequests(
+        GpuComputeExecutionPreference preference, bool batch)
+    {
+        using var context = new WgpuContext { ComputeExecutionPreference = preference };
+        context.Initialize(null);
+        using var glyphs = new GlyphAtlas(context, atlasSize: 64);
+        using var paths = new PathAtlas(context, atlasSize: 64);
+        // The atlas captures its typed policy at construction, before lazy
+        // compilation; changing the context preference cannot switch its path.
+        context.ComputeExecutionPreference = GpuComputeExecutionPreference.ScalarCpu;
+        paths.RasterizePendingPaths();
+        Assert.Equal(0, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(0, context.CachedDeviceComputePipelineCount);
+        Assert.Equal(0, context.CachedDeviceRenderPipelineCount);
+
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        GlyphInfo glyph;
+        if (batch) glyphs.BeginBatch();
+        try { glyph = glyphs.GetOrCreateGlyph(font, 'A', 8f); }
+        finally { if (batch) glyphs.EndBatch(); }
+        Assert.True(ReadGlyphAtlasCoverage(glyphs.AtlasTexture.ReadPixels(), glyph, 64, 6, 6) > 200);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(preference == GpuComputeExecutionPreference.NativeCompute ? 1 : 0,
+            context.CachedDeviceComputePipelineCount);
+        Assert.Equal(preference == GpuComputeExecutionPreference.RasterShader ? 1 : 0,
+            context.CachedDeviceRenderPipelineCount);
+        GlyphInfo cached = glyphs.GetOrCreateGlyph(font, 'A', 8f);
+        Assert.Equal(glyph.TexCoordMin, cached.TexCoordMin);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+
+        paths.GetOrCreatePath(PrimitivePathGeometry.CreateRectangle(0, 0, 8, 8), 1f);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+        paths.RasterizePendingPaths();
+        Assert.Contains(paths.AtlasTexture.ReadPixels(), value => value > 200);
+        Assert.Equal(2, context.CachedDeviceShaderModuleCount);
+        int pipelines = context.CachedDeviceComputePipelineCount;
+        Assert.Equal(preference == GpuComputeExecutionPreference.NativeCompute ? 2 : 1, pipelines);
+        paths.RasterizePendingPaths();
+        Assert.Equal(pipelines, context.CachedDeviceComputePipelineCount);
+        paths.Dispose();
+        glyphs.Dispose();
+        Assert.Equal(0, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(0, context.CachedDeviceComputePipelineCount);
+        Assert.Equal(0, context.CachedDeviceRenderPipelineCount);
+    }
+
     [Fact]
     public void GlyphAtlasBatchFlushesBeforeUniformRingWraps()
     {
@@ -3661,17 +3712,17 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         {
             Assert.Equal(8, context.CachedDeviceBindGroupLayoutCount);
             Assert.Equal(6, context.CachedDevicePipelineLayoutCount);
-            Assert.Equal(5, context.CachedDeviceShaderModuleCount);
+            Assert.Equal(3, context.CachedDeviceShaderModuleCount);
             Assert.Equal(8, context.CachedDeviceRenderPipelineCount);
-            Assert.Equal(2, context.CachedDeviceComputePipelineCount);
+            Assert.Equal(0, context.CachedDeviceComputePipelineCount);
 
             first.Dispose();
 
             Assert.Equal(8, context.CachedDeviceBindGroupLayoutCount);
             Assert.Equal(6, context.CachedDevicePipelineLayoutCount);
-            Assert.Equal(5, context.CachedDeviceShaderModuleCount);
+            Assert.Equal(3, context.CachedDeviceShaderModuleCount);
             Assert.Equal(8, context.CachedDeviceRenderPipelineCount);
-            Assert.Equal(2, context.CachedDeviceComputePipelineCount);
+            Assert.Equal(0, context.CachedDeviceComputePipelineCount);
 
             second.Dispose();
 

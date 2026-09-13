@@ -123,12 +123,12 @@ public unsafe partial class GlyphAtlas : IDisposable
     private readonly WgpuPipelineLayoutLease? _computePipelineLayoutLease;
     private readonly BindGroupLayout* _computeBindGroupLayout;
     private readonly PipelineLayout* _computePipelineLayout;
-    private readonly ComputePipeline* _computePipeline;
+    private ComputePipeline* _computePipeline;
     private readonly WgpuBindGroupLayoutLease? _rasterBindGroupLayoutLease;
     private readonly WgpuPipelineLayoutLease? _rasterPipelineLayoutLease;
     private readonly BindGroupLayout* _rasterBindGroupLayout;
     private readonly PipelineLayout* _rasterPipelineLayout;
-    private readonly RenderPipeline* _rasterPipeline;
+    private RenderPipeline* _rasterPipeline;
     private readonly GpuComputeExecutionPath _rasterizationPath;
     private BindGroup* _ringBindGroup;
     private BindGroup* _rasterRingBindGroup;
@@ -331,6 +331,7 @@ public unsafe partial class GlyphAtlas : IDisposable
             return _batchComputePass;
         }
 
+        EnsureComputePipeline();
         var descriptor = new ComputePassDescriptor();
         _batchComputePass = _context.Api.CommandEncoderBeginComputePass(
             _batchEncoder,
@@ -351,6 +352,7 @@ public unsafe partial class GlyphAtlas : IDisposable
             return _batchRasterPass;
         }
 
+        EnsureRasterPipeline();
         var colorAttachment = new RenderPassColorAttachment
         {
             View = _atlasTexture.ViewPtr,
@@ -696,8 +698,9 @@ public unsafe partial class GlyphAtlas : IDisposable
         _atlasTexture.ClearRenderTarget();
         _colorAtlasTexture.ClearRenderTarget();
 
-        // Compile only the selected GPU implementation. CPU modes need neither
-        // shader pipeline nor the compute coverage ring.
+        // Prepare only the selected binding contract. Compile its pipeline on
+        // first rasterization; retained native hosts may never use this atlas.
+        // CPU modes need neither shader pipeline nor the compute coverage ring.
         _pipelineCache = new RenderPipelineCache(_context);
         if (_rasterizationPath == GpuComputeExecutionPath.NativeCompute)
         {
@@ -710,15 +713,6 @@ public unsafe partial class GlyphAtlas : IDisposable
                     _computeBindGroupLayout);
             _computePipelineLayout =
                 _computePipelineLayoutLease.Handle;
-            var shaderModule = _pipelineCache.GetOrCreateShader(
-                "GlyphRasterizer",
-                Shaders.GlyphRasterizerShader,
-                "GlyphRasterizerShader");
-            _computePipeline = _pipelineCache.GetOrCreateComputePipeline(
-                "GlyphRasterizer",
-                shaderModule,
-                "cs_main",
-                _computePipelineLayout);
         }
         if (_rasterizationPath == GpuComputeExecutionPath.RasterShader)
         {
@@ -728,20 +722,6 @@ public unsafe partial class GlyphAtlas : IDisposable
             _rasterPipelineLayoutLease =
                 CreateRasterFallbackPipelineLayout(_rasterBindGroupLayout);
             _rasterPipelineLayout = _rasterPipelineLayoutLease.Handle;
-            var shaderModule = _pipelineCache.GetOrCreateShader(
-                "GlyphRasterizer",
-                Shaders.GlyphRasterizerShader,
-                "GlyphRasterizerShader");
-            _rasterPipeline = _pipelineCache.GetOrCreateRenderPipeline(
-                "GlyphRasterizer.RasterFallback.R8",
-                shaderModule,
-                ReadOnlySpan<VertexBufferLayout>.Empty,
-                "vs_raster_fallback",
-                "fs_raster_fallback",
-                TextureFormat.R8Unorm,
-                PrimitiveTopology.TriangleList,
-                enableBlend: false,
-                pipelineLayout: _rasterPipelineLayout);
         }
 
         // Allocate a small bounded uniform ring once at startup to avoid
@@ -765,6 +745,28 @@ public unsafe partial class GlyphAtlas : IDisposable
             _segmentCapacity);
         _ringOffset = 0;
         _coverageRingOffset = 0;
+    }
+
+    private void EnsureComputePipeline()
+    {
+        if (_computePipeline != null) return;
+        var shader = _pipelineCache.GetOrCreateShader(
+            "GlyphRasterizer", Shaders.GlyphRasterizerShader, "GlyphRasterizerShader");
+        _computePipeline = _pipelineCache.GetOrCreateComputePipeline(
+            "GlyphRasterizer", shader, "cs_main", _computePipelineLayout);
+    }
+
+    private void EnsureRasterPipeline()
+    {
+        if (_rasterPipeline != null) return;
+        var shader = _pipelineCache.GetOrCreateShader(
+            "GlyphRasterizer", Shaders.GlyphRasterizerShader, "GlyphRasterizerShader");
+        _rasterPipeline = _pipelineCache.GetOrCreateRenderPipeline(
+            "GlyphRasterizer.RasterFallback.R8", shader,
+            ReadOnlySpan<VertexBufferLayout>.Empty,
+            "vs_raster_fallback", "fs_raster_fallback",
+            TextureFormat.R8Unorm, PrimitiveTopology.TriangleList,
+            enableBlend: false, pipelineLayout: _rasterPipelineLayout);
     }
 
     private WgpuBindGroupLayoutLease CreateRasterizationBindGroupLayout()
@@ -1244,6 +1246,7 @@ public unsafe partial class GlyphAtlas : IDisposable
                                     goto RasterizationComplete;
                                 }
                                 // Immediate path: use a compact GPU coverage buffer, then copy its R8 bytes.
+                                EnsureComputePipeline();
                                 uniforms.OutputOffsetWords = 0;
                                 uniforms.OutputRowWords = coverageBytesPerRow / 4;
                                 var uniformsBuffer = new GpuBuffer(
@@ -1383,6 +1386,7 @@ public unsafe partial class GlyphAtlas : IDisposable
         uint width,
         uint height)
     {
+        EnsureComputePipeline();
         uniforms.OutputOffsetWords = 0;
         uniforms.OutputRowWords = coverageBytesPerRow / 4;
         using var uniformsBuffer = new GpuBuffer(
@@ -1455,6 +1459,7 @@ public unsafe partial class GlyphAtlas : IDisposable
         uint width,
         uint height)
     {
+        EnsureRasterPipeline();
         using var uniformsBuffer = new GpuBuffer(
             _context,
             (uint)Marshal.SizeOf<GlyphUniforms>(),
