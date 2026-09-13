@@ -96,6 +96,24 @@ changes, UTF-8 native output under an OEM console, child exit/error restoration,
 and the checked-in lock digest. The normal Windows native PR lanes now run these
 checks. The first VM attempts rejected missing Git and an OEM-code-page mismatch
 before building; neither modified dependency implementation. Explicit tool discovery
-and UTF-8 capture resolve those setup issues. The isolated ARM64 build has passed
-source/header/feature resolution and is compiling; final DLL publication and runtime
-qualification are not yet claimed.
+and UTF-8 capture resolve those setup issues. The isolated ARM64 build completes
+successfully in 3m35s, including source/header/feature, lock and PE checks. Its DLL
+SHA256 is `a0cdbedccc490377b94c4e7cf8506d65c85bbc0be1c6cf4d70d2a04c791806e3`.
+The pinned upstream source emits eight preexisting Rust warnings; no implementation
+or warning policy was patched to hide them.
+
+The new DLL passes the full independent native owner-query fixture with the same
+explicit-WARP/DXC diagnostic managed assembly and current native query DLL used
+by the preceding investigation. The child exits 0 after point/repeated waits,
+list/participation modes, both region families, region-first contexts and owner/
+generation isolation. Actual loaded native dependency, DXC/DXIL 1.8.2502.11 and
+development WARP 1.0.20 paths were observed in the child. First point, bounds and
+ellipse submissions took 1522.061, 1599.800 and 2030.964 ms respectively; this is
+functional reproduction, not a controlled benchmark. Local evidence is
+`pinned-wgpu-native-build.json` and `pinned-compiler-query.*.log` under the task's
+native-core validation artifacts.
+
+This verifies the committed dependency build tooling, not current managed package,
+system WARP, x64, hardware rendering or Showcase qualification. The system-WARP
+DLL remains exactly the previously failing version/hash. Typed compiler admission,
+normal product packaging and the remaining runtime gates above are still required.
