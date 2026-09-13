@@ -23,6 +23,14 @@ if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--path-coverage-probe", StringComparer.Ordinal))
+{
+    using var probeContext = new WgpuContext();
+    probeContext.Initialize(window: null);
+    PathCoverageProbe.Run(probeContext);
+    return;
+}
+
 Console.WriteLine("package-consumer: native ABI");
 NativeRendererInfo info = NativeCompositor.GetInfo();
 if (info.AbiVersion != 4 ||

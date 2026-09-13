@@ -672,6 +672,16 @@ jobs:
             -p:ProGpuNativePackageVersion="${version}" -- \
             --mil-guideline-only
 
+      - name: Diagnose Windows path coverage after consumer failure
+        if: failure() && runner.os == 'Windows'
+        shell: bash
+        run: |
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-build \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+            -p:ProGpuNativePackageVersion="${version}" -- --path-coverage-probe
+
       - name: Publish and run NativeAOT package consumer
         shell: bash
         run: |
