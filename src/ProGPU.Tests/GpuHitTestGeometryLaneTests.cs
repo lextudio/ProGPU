@@ -7,10 +7,12 @@ using Xunit;
 
 namespace ProGPU.Tests;
 
-public sealed class GpuHitTestSegmentLaneTests
+public sealed class GpuHitTestGeometryLaneTests
 {
-    [Fact]
-    public unsafe void FourSegmentLanesMatchOriginalGpuPredicate()
+    [Theory]
+    [InlineData("compare_segment_lanes")]
+    [InlineData("compare_triangle_lanes")]
+    public unsafe void FourGeometryLanesMatchOriginalGpuPredicates(string entryPoint)
     {
         const int caseCount = 512;
         // 96-byte WGSL record: a/b, four coordinate vectors, then four uint results.
@@ -37,6 +39,17 @@ public sealed class GpuHitTestSegmentLaneTests
                 if (i % 8 == 3) data[i * 6] = Vector4.Zero;
                 if (i % 8 == 7) data[i * 6] = new(1, 0, 0, 0);
             }
+            if (entryPoint == "compare_triangle_lanes" && i % 4 != 0)
+            {
+                // Vertices, hypotenuse boundary, interior/exterior, both windings
+                // and collinear triangles. Other cases retain randomized inputs.
+                data[i * 6] = i % 8 < 4 ? new(0, 0, 2, 0) : new(2, 0, 0, 0);
+                data[i * 6 + 1] = new(0, 1, 2, 2);
+                data[i * 6 + 2] = new(0, 1, 0, 2);
+                data[i * 6 + 3] = Vector4.Zero;
+                data[i * 6 + 4] = new Vector4(i % 4 == 2 ? 0 : 2);
+                if (i % 4 == 3) data[i * 6 + 2] = new(-0.000001f, 0.000001f, 0, 2);
+            }
             data[i * 6 + 5] = new Vector4(-1); // every output lane must be written
         }
 
@@ -47,9 +60,9 @@ public sealed class GpuHitTestSegmentLaneTests
             BufferUsage.Storage | BufferUsage.CopyDst | BufferUsage.CopySrc);
         buffer.Write<Vector4>(data);
         string source = ShaderResource.Load(typeof(GpuHitTestEngine), "GpuHitTesting.wgsl") +
-            "\n" + ShaderResource.Load(typeof(GpuHitTestSegmentLaneTests), "HitSegmentLanes.wgsl");
-        var shader = cache.GetOrCreateShader("HitSegmentLanes", source);
-        var pipeline = cache.GetOrCreateComputePipeline("HitSegmentLanes", shader, "compare_segment_lanes");
+            "\n" + ShaderResource.Load(typeof(GpuHitTestGeometryLaneTests), "HitGeometryLanes.wgsl");
+        var shader = cache.GetOrCreateShader("HitGeometryLanes", source);
+        var pipeline = cache.GetOrCreateComputePipeline("HitGeometryLanes", shader, entryPoint);
         var layout = context.Api.ComputePipelineGetBindGroupLayout(pipeline, 0);
         var entry = new BindGroupEntry { Binding = 6, Buffer = buffer.BufferPtr, Size = buffer.Size };
         var bindDescriptor = new BindGroupDescriptor { Layout = layout, EntryCount = 1, Entries = &entry };
@@ -78,7 +91,7 @@ public sealed class GpuHitTestSegmentLaneTests
                 for (int lane = 0; lane < 4; lane++)
                 {
                     uint comparison = result[i * 24 + 20 + lane];
-                    Assert.True(comparison is 0 or 3, $"Segment case {i}, lane {lane}: {comparison}");
+                    Assert.True(comparison is 0 or 3, $"{entryPoint} case {i}, lane {lane}: {comparison}");
                     if (comparison == 3) hits++; else misses++;
                 }
             Assert.True(hits > 0 && misses > 0);

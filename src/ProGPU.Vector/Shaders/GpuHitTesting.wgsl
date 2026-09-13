@@ -601,13 +601,23 @@ fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 {
     return a.x * b.y - a.y * b.x;
 }
 
+// Four independent points share triangle edges, retaining the scalar sign test
+// (including its boundary and degenerate-triangle behavior) without four copies.
+fn points_in_triangle4(px: vec4<f32>, py: vec4<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> vec4<bool> {
+    let ab = b - a;
+    let bc = c - b;
+    let ca = a - c;
+    let d0 = ab.x * (py - vec4<f32>(a.y)) - ab.y * (px - vec4<f32>(a.x));
+    let d1 = bc.x * (py - vec4<f32>(b.y)) - bc.y * (px - vec4<f32>(b.x));
+    let d2 = ca.x * (py - vec4<f32>(c.y)) - ca.y * (px - vec4<f32>(c.x));
+    let zero = vec4<f32>(0.0);
+    let has_neg = (d0 < zero) | (d1 < zero) | (d2 < zero);
+    let has_pos = (d0 > zero) | (d1 > zero) | (d2 > zero);
+    return !(has_neg & has_pos);
+}
+
 fn point_in_triangle(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> bool {
-    let d0 = cross2(b - a, point - a);
-    let d1 = cross2(c - b, point - b);
-    let d2 = cross2(a - c, point - c);
-    let has_neg = d0 < 0.0 || d1 < 0.0 || d2 < 0.0;
-    let has_pos = d0 > 0.0 || d1 > 0.0 || d2 > 0.0;
-    return !(has_neg && has_pos);
+    return points_in_triangle4(vec4<f32>(point.x), vec4<f32>(point.y), a, b, c).x;
 }
 
 fn contains_triangle_cap(point: vec2<f32>, base_center: vec2<f32>, outward: vec2<f32>, half_stroke: f32) -> bool {
@@ -901,14 +911,9 @@ fn quad_intersects_rect(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>, 
         return true;
     }
 
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    if (point_in_quad(top_left, a, b, c, d) ||
-        point_in_quad(top_right, a, b, c, d) ||
-        point_in_quad(bottom_right, a, b, c, d) ||
-        point_in_quad(bottom_left, a, b, c, d)) {
+    let px = vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x);
+    let py = vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y);
+    if (any(points_in_triangle4(px, py, a, b, c) | points_in_triangle4(px, py, a, c, d))) {
         return true;
     }
 
@@ -954,14 +959,9 @@ fn triangle_cap_intersects_rect(center: vec2<f32>, direction: vec2<f32>, half_st
         return true;
     }
 
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    if (point_in_triangle(top_left, a, b, c) ||
-        point_in_triangle(top_right, a, b, c) ||
-        point_in_triangle(bottom_right, a, b, c) ||
-        point_in_triangle(bottom_left, a, b, c)) {
+    let px = vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x);
+    let py = vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y);
+    if (any(points_in_triangle4(px, py, a, b, c))) {
         return true;
     }
 

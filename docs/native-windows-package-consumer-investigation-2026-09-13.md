@@ -70,6 +70,14 @@ render/compute pipeline creation with 0x80004005 and aborts after invalid pipeli
 use. DXC is therefore not qualified on this Parallels adapter. Neither that DLL
 nor the diagnostic managed compiler selection is shipped or enabled by default.
 
+Later first-query isolation separates runtime correctness from that earlier
+rendering failure. With the repaired native lifetime and current shared shader,
+the exact same optional-feature dependency and SDK DXC pass the full native owner
+fixture on development WARP 1.0.20, with roughly one-second family submissions.
+System WARP still crashes before first point readback despite similarly fast
+submission. See [controlled compiler/runtime comparison](native-hit-query-segment-lanes.md#independent-compilerruntime-comparison).
+This changes the next compiler investigation, not package/default admission.
+
 A separate original-backend x64 run explicitly selects Microsoft Basic Render
 Driver in the VM. It passes the cubic rectangle check, unlike CI run 34758568841,
 where both Windows architectures now fail that same assertion. The VM's newer

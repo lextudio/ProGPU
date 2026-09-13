@@ -895,6 +895,20 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
         indexInfo.NodeCount != 1 || indexInfo.PrimitiveIndexCount != 1 || indexInfo.PathSegmentCount != 0)
         throw new InvalidOperationException("Native metadata did not describe the unuploaded installed index.");
     Console.WriteLine($"package-consumer: native owner-query begin, adapter={context.AdapterName}, backend={context.AdapterBackendType}");
+    if (OperatingSystem.IsWindows())
+    {
+        // Record actual loaded runtime provenance before a native crash can
+        // prevent diagnostics. This fixture-only work is outside query timing.
+        Console.WriteLine($"package-consumer: query runtime os={RuntimeInformation.OSDescription}, arch={RuntimeInformation.ProcessArchitecture}");
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        foreach (System.Diagnostics.ProcessModule module in process.Modules)
+        {
+            if (module.ModuleName.Equals("d3d10warp.dll", StringComparison.OrdinalIgnoreCase) ||
+                module.ModuleName.Equals("d3d12core.dll", StringComparison.OrdinalIgnoreCase) ||
+                module.ModuleName.Equals("d3dcompiler_47.dll", StringComparison.OrdinalIgnoreCase))
+                Console.WriteLine($"package-consumer: query runtime module={module.ModuleName}, version={module.FileVersionInfo.FileVersion}, path={module.FileName}");
+        }
+    }
     var submissionTimer = System.Diagnostics.Stopwatch.StartNew();
     NativeGpuHitTestRequestToken firstToken = before.BeginQuery(query);
     submissionTimer.Stop();
@@ -999,7 +1013,10 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
             var token = selected.BeginQuery(selectedQuery);
             queryTimer.Stop();
             Console.WriteLine($"package-consumer: native participation query submitted in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
+            queryTimer.Restart();
             count = selected.Wait(token, results, out summary);
+            queryTimer.Stop();
+            Console.WriteLine($"package-consumer: native participation query readback completed in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
             // Zero-list queries keep their topmost record in the summary.
             // List queries keep counters there and owners in ordered records.
             NativeGpuHitTestResult hit = selectedQuery.RequestedResultCapacity == 0 ? summary : results[0];
@@ -1022,13 +1039,25 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
         var owners = regionFirst.BindGpuHitTestOwners(
             new NativeGpuHitTestOwnerMap<object>([new(42, firstOwner)]), sceneId, 1);
         Console.WriteLine($"package-consumer: native region-first query begin, flags={firstQuery.Flags:X8}");
+        var queryTimer = System.Diagnostics.Stopwatch.StartNew();
         var token = owners.BeginQuery(firstQuery);
+        queryTimer.Stop();
+        Console.WriteLine($"package-consumer: native region-first query submitted in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
+        queryTimer.Restart();
         count = owners.Wait(token, results, out summary);
+        queryTimer.Stop();
+        Console.WriteLine($"package-consumer: native region-first readback completed in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
         if (count != 1 || summary.Hit != 1 || results[0].Id != 42 ||
             !owners.TryGetOwner(token, results[0], out owner) || !ReferenceEquals(owner, firstOwner))
             throw new InvalidOperationException("A native region-first query lost its original owner.");
+        queryTimer.Restart();
         token = owners.BeginQuery(NativeGpuHitTestQuery.PointQuery(new Vector2(5), 1));
+        queryTimer.Stop();
+        Console.WriteLine($"package-consumer: native region-first point follow-up submitted in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
+        queryTimer.Restart();
         count = owners.Wait(token, results, out summary);
+        queryTimer.Stop();
+        Console.WriteLine($"package-consumer: native region-first point readback completed in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
         if (count != 1 || summary.Hit != 1 || results[0].Id != 42 ||
             !owners.TryGetOwner(token, results[0], out owner) || !ReferenceEquals(owner, firstOwner))
             throw new InvalidOperationException("Switching a region-first native engine to point input changed its owner.");

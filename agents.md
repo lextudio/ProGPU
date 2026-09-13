@@ -16,6 +16,10 @@ masks until the final any reduction. Preserve original inclusive tests and both
 tolerances, and select a safe denominator for parallel lanes. Managed/native
 providers share the canonical shader; keep the GPU scalar-reference differential.
 Compiler call-site reduction is not measured latency or Windows qualification.
+Corner containment likewise shares the original edge-sign predicate across
+independent lanes and the single-point wrapper. Retain boundary/degenerate cases
+and GPU scalar-reference comparisons; do not alter primitive semantics to reduce
+compiler work. Separate shader submission latency from actual map completion.
 
 The pinned wgpu-native blocking device poll can promote its internal timeout to
 completed submissions. Never use that path for retirement, WaitIdle, map waiting
