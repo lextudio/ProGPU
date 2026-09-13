@@ -8,3 +8,6 @@
 # enables core.autocrlf, otherwise git apply sees CRLF patch context.
 eng/avalonia/**/*.patch text eol=lf whitespace=-blank-at-eol
 eng/directx-graphics-samples/*.patch text eol=lf whitespace=-blank-at-eol
+
+# Dependency lock verification hashes the reviewed bytes on Windows as well.
+eng/wgpu-dxc/Cargo.lock text eol=lf

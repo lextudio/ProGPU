@@ -149,6 +149,11 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Verify Windows compiler dependency input handling
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./eng/test-wgpu-native-windows-inputs.ps1
+
       - name: Cache Windows native dependencies
         if: runner.os == 'Windows'
         uses: actions/cache@v5

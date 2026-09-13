@@ -11,6 +11,12 @@ Welcome, agent! This document serves as a specialized developer guide and archit
 
 ## 1. Core Architectural Rules & Conventions
 
+Windows compiler-feature builds must retain the exact Silk native/header ABI,
+reviewed locked dependency graph and verified target PE architecture. Keep the
+DXC metadata overlay confined to an isolated external build; never patch upstream
+renderer code or replace system/NuGet DLLs. Build capability is not actual compiler
+selection or runtime qualification. See docs/native-windows-shader-compiler.md.
+
 Rectangle-edge query batching keeps independent four-lane crossing/collinearity
 masks until the final any reduction. Preserve original inclusive tests and both
 tolerances, and select a safe denominator for parallel lanes. Managed/native
