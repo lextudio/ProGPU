@@ -816,6 +816,10 @@ Keep one traversal, exact primitive/clip policies and owner-generation results.
 Every query family may run first; family transitions must reuse resources without
 changing list or summary contracts. This is not permission to drop region support,
 relax readback deadlines or claim Windows compiler qualification from Metal tests.
+Path region samples share one four-lane fill walker and curve evaluation. Keep
+per-lane boundary/parity/winding state, both fill rules and the exact existing
+sampling thresholds. Single points consume the same algorithm's splatted lane;
+never copy a scalar geometry fork or claim compiler gains without Windows evidence.
 
 Native hit-index diagnostics read the installed scene through its qualified
 owner snapshot and native resource metadata. Report residency only for the
