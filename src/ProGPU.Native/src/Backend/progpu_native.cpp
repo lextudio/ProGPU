@@ -614,6 +614,7 @@ progpu_native_status progpu_native_engine_poll_submission(
     if (completed && submission_index == engine->last_submission_index) {
         engine->submission_retirement.observe_latest_completion(
             engine->submission_count);
+        engine->retained_raster_resources.retire(engine->submission_count);
     }
     engine->last_error.clear();
     return PROGPU_NATIVE_STATUS_SUCCESS;

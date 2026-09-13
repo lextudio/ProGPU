@@ -21,6 +21,7 @@
 #include "progpu_native_semantic_text_style.hpp"
 #include "progpu_native_semantic_validation.hpp"
 #include "progpu_native_webgpu_synchronization.hpp"
+#include "progpu_native_submission_resources.hpp"
 
 #include <array>
 #include <chrono>
@@ -432,6 +433,49 @@ void native_submission_retirement_is_periodic_and_bounded() {
         submission_retirement_action::poll);
     tracker.observe_latest_completion(72U);
     require(tracker.retired_count() == 72U);
+}
+
+void native_temporary_resources_follow_completed_submissions() {
+    struct tracked_resource {
+        std::uint32_t* released = nullptr;
+        ~tracked_resource() { if (released != nullptr) ++*released; }
+    };
+    progpu::native::submission_resource_retention<tracked_resource> queue;
+    std::uint32_t released = 0U;
+    auto& active = queue.begin();
+    active.resources.released = &released;
+    queue.retire(8U);
+    require(released == 0U && queue.size() == 1U);
+    // Borrowed encoders require the following submission, not the previously
+    // completed one. Active split-pass recording must also survive a drain.
+    queue.seal(active, 9U);
+    queue.retire(8U);
+    require(released == 0U);
+    auto& failed = queue.begin();
+    failed.resources.released = &released;
+    queue.cancel(failed);
+    require(released == 1U && queue.size() == 1U);
+    queue.retire(9U);
+    require(released == 2U && queue.size() == 0U);
+
+    auto& later = queue.begin();
+    later.resources.released = &released;
+    queue.seal(later, 11U);
+    auto& earlier = queue.begin();
+    earlier.resources.released = &released;
+    queue.seal(earlier, 10U);
+    queue.retire(10U);
+    require(released == 3U && queue.size() == 1U);
+    queue.retire(11U);
+    require(released == 4U && queue.size() == 0U);
+    for (std::uint64_t index = 1U; index <= 128U; ++index) {
+        auto& batch = queue.begin();
+        batch.resources.released = &released;
+        queue.seal(batch, index);
+        if (index % 8U == 0U) queue.retire(index);
+        require(queue.size() < 8U);
+    }
+    require(released == 132U && queue.size() == 0U);
 }
 
 void native_buffer_growth_respects_the_portable_device_limit() {
@@ -1780,6 +1824,7 @@ int main() {
     reversal_joins_match_wpf_collapsed_contours();
     native_webgpu_scopes_share_one_process_lock();
     native_submission_retirement_is_periodic_and_bounded();
+    native_temporary_resources_follow_completed_submissions();
     native_buffer_growth_respects_the_portable_device_limit();
     semantic_contiguous_draws_merge_without_reordering();
     effect_plan_uses_three_bounded_intermediates();

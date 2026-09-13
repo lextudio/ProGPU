@@ -1342,7 +1342,9 @@ progpu_native_status render_glyphs(
             engine->glyph_gpu_cache_valid = retain_compiled_payload;
         }
     }
-    path_raster_resources temporary;
+    progpu_native_engine::raster_resource_lease temporary_lease(
+        *engine, !compiled_payload_hit && frame->outline_count != 0U);
+    auto& temporary = temporary_lease.get();
     std::vector<std::byte> uniform_bytes;
     std::vector<std::byte> cpu_coverage;
     const bool glyph_raster_shader_fallback =

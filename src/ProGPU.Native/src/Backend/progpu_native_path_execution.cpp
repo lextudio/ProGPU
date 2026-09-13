@@ -711,7 +711,9 @@ progpu_native_status render_paths(
             engine->analytic_material_owner_hash = 0U;
         }
     }
-    path_raster_resources temporary;
+    progpu_native_engine::raster_resource_lease temporary_lease(
+        *engine, !compiled_payload_hit && frame->path_count != 0U);
+    auto& temporary = temporary_lease.get();
     WGPUBuffer& path_uniform_buffer = temporary.uniforms;
     auto& split_leaf_uniform_buffers = temporary.split_leaf_uniforms;
     auto& split_signed_leaf_uniform_buffers =

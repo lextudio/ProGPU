@@ -589,7 +589,8 @@ bool rebuild_vector_clip_chain(
             compose_uniform_bytes.data(),
             compose_bytes);
 
-        path_raster_resources temporary;
+        progpu_native_engine::raster_resource_lease temporary_lease(engine, true);
+        auto& temporary = temporary_lease.get();
         const auto create_buffer = [&engine](
             const char* label,
             std::uint64_t size,

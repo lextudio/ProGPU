@@ -13,6 +13,8 @@
 #include "progpu_native_semantic_text_style.hpp"
 #include "progpu_webgpu_compat.hpp"
 #include "progpu_native_semantic_replay.hpp"
+#include "progpu_native_submission_resources.hpp"
+#include "progpu_native_webgpu_resources.hpp"
 
 #include <algorithm>
 #include <array>
@@ -510,6 +512,49 @@ struct progpu_native_engine {
     std::uint64_t device_loss_generation = 0U;
     bool device_lost = false;
 
+    using raster_retention = progpu::native::submission_resource_retention<
+        progpu::native::path_raster_resources>;
+    raster_retention retained_raster_resources;
+
+    class raster_resource_lease final {
+    public:
+        raster_resource_lease(progpu_native_engine& owner, bool allocate)
+            : owner_(owner), first_submission_(owner.submission_count) {
+#if !defined(PROGPU_NATIVE_BROWSER)
+            if (allocate) batch_ = &owner.retained_raster_resources.begin();
+#else
+            // Browser WebGPU owns encoded references; no synchronous native
+            // completion poll exists on that provider. Keep its existing path.
+            (void)allocate;
+#endif
+        }
+        raster_resource_lease(const raster_resource_lease&) = delete;
+        raster_resource_lease& operator=(const raster_resource_lease&) = delete;
+        ~raster_resource_lease() {
+            if (batch_ == nullptr) return;
+            if (owner_.semantic_encoder == nullptr &&
+                owner_.submission_count == first_submission_) {
+                // No submission consumed this batch and no borrowed encoder
+                // can still submit it: failed setup owns no in-flight use.
+                owner_.retained_raster_resources.cancel(*batch_);
+                return;
+            }
+            const auto required = owner_.submission_count +
+                (owner_.semantic_encoder != nullptr ? 1U : 0U);
+            owner_.retained_raster_resources.seal(*batch_, required);
+            owner_.retained_raster_resources.retire(
+                owner_.submission_retirement.retired_count());
+        }
+        progpu::native::path_raster_resources& get() noexcept {
+            return batch_ == nullptr ? immediate_ : batch_->resources;
+        }
+    private:
+        progpu_native_engine& owner_;
+        std::uint64_t first_submission_;
+        raster_retention::batch* batch_ = nullptr;
+        progpu::native::path_raster_resources immediate_;
+    };
+
     void submit(WGPUCommandBuffer command) noexcept {
         last_submission_index = progpu::native::webgpu::submit(
             queue,
@@ -532,6 +577,7 @@ struct progpu_native_engine {
             if (completed) {
                 submission_retirement.observe_latest_completion(
                     submission_count);
+                retained_raster_resources.retire(submission_count);
             }
         }
 #endif
@@ -1490,6 +1536,13 @@ struct progpu_native_engine {
         if (semantic_encoder != nullptr) {
             wgpuCommandEncoderRelease(semantic_encoder);
             semantic_encoder = nullptr;
+        }
+        if (retained_raster_resources.size() != 0U) {
+            if (!device_lost && last_submission_index != 0U) {
+                (void)progpu::native::webgpu::poll_submission(
+                    instance, device, queue, last_submission_index, true);
+            }
+            retained_raster_resources.clear();
         }
         release_semantic_render_bundle();
         release_semantic_layer_resources();

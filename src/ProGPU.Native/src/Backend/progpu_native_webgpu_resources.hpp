@@ -59,10 +59,9 @@ struct path_raster_resources {
 private:
     static void release_buffer(WGPUBuffer buffer) {
         if (buffer != nullptr) {
-            // Encoders and submitted command buffers retain temporary staging
-            // resources. Dropping caller ownership is safe; explicitly
-            // destroying here would invalidate a shared semantic encoder
-            // before it is finished.
+            // Native engine leases retain these caller references through
+            // submission completion. Never explicitly destroy a buffer still
+            // referenced by another encoded operation or a browser command.
             wgpuBufferRelease(buffer);
         }
     }

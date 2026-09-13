@@ -49,6 +49,44 @@ split those two changes. Both build without warnings/errors and pass on Metal;
 Windows results determine the required retention scope. No production lifetime
 fix has been qualified yet.
 
+### Submission-bound native raster retention
+
+The x64 split comparison in
+[run 34775504926](https://github.com/wieslawsoltes/ProGPU/actions/runs/34775504926)
+passes the retained baseline and command-buffer-only release. Releasing only the
+five raster buffers plus bind group produces an entirely black frame. Original
+native rectangle/cubic probes likewise remain black. This isolates the observed
+failure to early raster-resource release, independently of C++ preparation and
+command-buffer ownership; it does not identify an individual buffer or a driver
+internal defect.
+
+Native path, clip and glyph staging now acquire one recording lease per uncached
+raster batch. Active leases survive intermediate submissions and completion
+polls. Closing a lease assigns the latest consumed submission, or the next one
+for a borrowed semantic encoder. Failed independent setup without a submission
+releases its batch immediately. Existing eight-submission polling and the
+64-submission drain retire completed batches; explicit latest-token waits retire
+them too. Engine disposal drops an unsubmitted encoder and drains submitted work
+before releasing retained batches. There is no per-draw wait, warm-up, extra GPU
+submission, shader change or CPU fallback. Cached path/glyph replay allocates no
+new batch. Publication is amortized O(1); retirement is O(B) over B live batches,
+whose residency follows current unsubmitted scene work and the existing bounded
+submission window.
+
+Both native wgpu-native and Dawn builds use this lease. Browser WebGPU retains
+its existing encoded-reference ownership because it has no synchronous native
+completion polling; it must not acquire an undrainable native retirement queue.
+Managed `GpuBuffer.Dispose` already uses the backend's deferred-release path,
+which is why the diagnostic needs an explicitly owned raw buffer to reproduce
+early release. No corresponding managed rendering algorithm change is required.
+
+Both native providers compile on Metal. All 20 CTest cases pass, including active
+recording, borrowed-future completion, out-of-order publication, cancellation and
+repeated periodic retirement. The full Metal native package consumer passes its
+original frame and native owner/generation/participation/region checks. Windows
+native compilation and original fixtures are running; final-head CI/package and
+application qualification remain mandatory before dependency pins or merges.
+
 `ProGPU.Native.PackageConsumer --path-coverage-probe` executes the packaged
 `ProGPU.Backend.Shaders.PathRasterizerShader`, entry `cs_main_ordinary`, with
 its original five-binding storage ABI, 16x16 workgroup and eight-by-eight sample
