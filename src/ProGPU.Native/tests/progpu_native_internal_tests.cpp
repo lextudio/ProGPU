@@ -407,6 +407,26 @@ void native_webgpu_scopes_share_one_process_lock() {
     second.join();
 }
 
+void native_queue_wait_observes_completion_without_timed_poll() {
+    using progpu::native::webgpu::poll_queue_completion;
+    unsigned polls = 0U;
+    unsigned pauses = 0U;
+    const auto pending = [&]() noexcept { ++polls; return false; };
+    const auto pause = [&]() noexcept { ++pauses; };
+    require(!poll_queue_completion(false, pending, pause));
+    require(polls == 1U && pauses == 0U);
+    polls = 0U;
+    const auto complete_later = [&]() noexcept { return ++polls == 8U; };
+    require(poll_queue_completion(true, complete_later, pause));
+    require(polls == 8U && pauses == 7U);
+    polls = pauses = 0U;
+    const auto complete = [&]() noexcept { ++polls; return true; };
+    require(poll_queue_completion(true, complete, pause));
+    require(polls == 1U && pauses == 0U);
+    require(poll_queue_completion(false, complete, pause));
+    require(polls == 2U && pauses == 0U);
+}
+
 void native_submission_retirement_is_periodic_and_bounded() {
     using progpu::native::webgpu::submission_retirement_action;
     using progpu::native::webgpu::submission_retirement_tracker;
@@ -1823,6 +1843,7 @@ int main() {
     clipped_miter_join_uses_the_wpf_three_triangle_wedge();
     reversal_joins_match_wpf_collapsed_contours();
     native_webgpu_scopes_share_one_process_lock();
+    native_queue_wait_observes_completion_without_timed_poll();
     native_submission_retirement_is_periodic_and_bounded();
     native_temporary_resources_follow_completed_submissions();
     native_buffer_growth_respects_the_portable_device_limit();

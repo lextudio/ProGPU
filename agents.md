@@ -11,6 +11,13 @@ Welcome, agent! This document serves as a specialized developer guide and archit
 
 ## 1. Core Architectural Rules & Conventions
 
+The pinned wgpu-native blocking device poll can promote its internal timeout to
+completed submissions. Never use that path for retirement, WaitIdle, map waiting
+or cancellation cleanup. Drive nonblocking fence progress, sleep while pending
+and preserve actual map callback ownership; elapsed time is not completion.
+Keep managed and C++ drains paired, Dawn future waits/browser admission intact,
+and all existing host/readback deadlines. See docs/native-wgpu-completion.md.
+
 Managed glyph/path atlases retain their binding contracts and captured execution
 policy at construction, but compile raster pipelines only for actual work. Keep
 immediate, batched, oversized and fragment glyph paths covered before pass entry;

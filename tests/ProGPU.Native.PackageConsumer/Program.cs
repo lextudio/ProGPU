@@ -40,11 +40,14 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
     args.Contains("--path-native-release-encoder-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-encoding-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-retire-raster-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-fence-retire-raster-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-command-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
-    var apiMode = args.Contains("--path-native-retire-raster-probe", StringComparer.Ordinal)
+    var apiMode = args.Contains("--path-native-fence-retire-raster-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeFenceRetireRaster
+        : args.Contains("--path-native-retire-raster-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeRetireRaster
         : rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
         : args.Contains("--path-native-release-encoder-probe", StringComparer.Ordinal)

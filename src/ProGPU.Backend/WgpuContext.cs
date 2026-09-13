@@ -2243,10 +2243,7 @@ public unsafe class WgpuContext : IDisposable
                         uint,
                         void*,
                         uint>)_devicePollAddress;
-                _ = poll(
-                    Device,
-                    wait ? 1u : 0u,
-                    null);
+                _ = PollNativeQueueCompletion(Device, poll, wait);
                 if (wait)
                 {
                     MarkSubmittedWorkDrained();
@@ -2269,6 +2266,20 @@ public unsafe class WgpuContext : IDisposable
                 }
             }
         }
+    }
+
+    // The pinned wgpu-native blocking poll can report completion after an
+    // internal timeout without observing the GPU fence. Keep WaitIdle's drain
+    // contract by polling actual progress, never by trusting elapsed time.
+    internal static bool PollNativeQueueCompletion(Device* device,
+        delegate* unmanaged[Cdecl]<Device*, uint, void*, uint> poll, bool wait)
+    {
+        while (poll(device, 0, null) == 0)
+        {
+            if (!wait) return false;
+            Thread.Sleep(1);
+        }
+        return true;
     }
 
     private void MarkSubmittedWorkDrained()

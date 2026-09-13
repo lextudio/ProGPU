@@ -5,6 +5,22 @@
 
 namespace progpu::native::webgpu {
 
+// The pinned wgpu-native blocking poll can retire work after its internal
+// timeout even when the GPU fence has not reached that submission. Only its
+// nonblocking poll reads actual fence progress. Sleep between pending polls;
+// a caller requesting a drain must not publish completion from elapsed time.
+template<typename Poll, typename Pause>
+[[nodiscard]] bool poll_queue_completion(
+    bool wait, Poll&& poll, Pause&& pause) noexcept {
+    while (!poll()) {
+        if (!wait) {
+            return false;
+        }
+        pause();
+    }
+    return true;
+}
+
 enum class submission_retirement_action : std::uint8_t {
     none,
     poll,

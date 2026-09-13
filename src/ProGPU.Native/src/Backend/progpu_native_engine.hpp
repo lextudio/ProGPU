@@ -1047,7 +1047,10 @@ struct progpu_native_engine {
                 progpu::native::webgpu::buffer_map_pending) {
             wgpuBufferUnmap(semantic_hit_test_readback_buffer);
 #if !defined(PROGPU_NATIVE_DAWN_ABI)
-            (void)wgpuDevicePoll(device, true, nullptr);
+            if (!device_lost && last_submission_index != 0U) {
+                (void)progpu::native::webgpu::poll_submission(
+                    instance, device, queue, last_submission_index, true);
+            }
 #endif
         }
         if (semantic_hit_test_readback_buffer != nullptr &&

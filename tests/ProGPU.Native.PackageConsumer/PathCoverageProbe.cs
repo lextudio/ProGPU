@@ -4,7 +4,7 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
-internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand, NativeReleaseEncoder, NativeReleaseEncoding, NativeRetireRaster }
+internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand, NativeReleaseEncoder, NativeReleaseEncoding, NativeRetireRaster, NativeFenceRetireRaster }
 [Flags]
 internal enum PathProbeAtlas { Managed = 0, CopyDestinationOnly = 1, DefaultView = 2 }
 [Flags]
@@ -153,11 +153,11 @@ internal static unsafe class PathCoverageProbe
                         uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
                         Console.WriteLine("package-consumer: released all five raster buffers and bind group before native completion wait");
                     } : null, atlasMode,
-                    apiMode is PathProbeApi.NativeReleaseEncoder or PathProbeApi.NativeReleaseEncoding or PathProbeApi.NativeRetireRaster ? () => {
+                    apiMode is PathProbeApi.NativeReleaseEncoder or PathProbeApi.NativeReleaseEncoding or PathProbeApi.NativeRetireRaster or PathProbeApi.NativeFenceRetireRaster ? () => {
                         context.Api.CommandEncoderRelease(encoder); encoder = null;
                         Console.WriteLine("package-consumer: released finished encoder before native submission");
                     } : null,
-                    apiMode == PathProbeApi.NativeRetireRaster ? () => {
+                    apiMode is PathProbeApi.NativeRetireRaster or PathProbeApi.NativeFenceRetireRaster ? () => {
                         context.Api.BindGroupRelease(group); group = null;
                         uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
                         Console.WriteLine("package-consumer: retired all five raster buffers and bind group after confirmed completion, before target readback");
@@ -186,7 +186,7 @@ internal static unsafe class PathCoverageProbe
                 return;
             }
             byte[] pixels = atlas.ReadPixels();
-            if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers or PathProbeApi.NativeRetireRaster)
+            if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers or PathProbeApi.NativeRetireRaster or PathProbeApi.NativeFenceRetireRaster)
             {
                 if (pixels[(atlasY + 8) * 1024 + atlasX + 16] != 255 ||
                     pixels[(atlasY + 2) * 1024 + atlasX + 2] != 0 || pixels[0] != 0)
@@ -381,13 +381,29 @@ internal static unsafe class PathCoverageProbe
                 var poll = (delegate* unmanaged[Cdecl]<Device*, uint, void*, uint>)
                     context.Wgpu.Context.GetProcAddress("wgpuDevicePoll");
                 var token = new SubmissionToken { Queue = context.Queue, Index = submit(context.Queue, 1, &command) };
-                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand or PathProbeApi.NativeReleaseEncoding or PathProbeApi.NativeRetireRaster)
+                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand or PathProbeApi.NativeReleaseEncoding or PathProbeApi.NativeRetireRaster or PathProbeApi.NativeFenceRetireRaster)
                 {
                     context.Api.CommandBufferRelease(command); command = null;
                     Console.WriteLine("package-consumer: released submitted command buffer before completion wait");
                 }
                 releaseRaster?.Invoke();
-                uint completed = poll(context.Device, 1, &token);
+                uint completed;
+                if (apiMode == PathProbeApi.NativeFenceRetireRaster)
+                {
+                    var timer = System.Diagnostics.Stopwatch.StartNew();
+                    int polls = 0;
+                    do
+                    {
+                        completed = poll(context.Device, 0, &token);
+                        polls++;
+                        if (completed != 0) break;
+                        if (timer.ElapsedMilliseconds >= 30000)
+                            throw new TimeoutException("Diagnostic fence polling exceeded 30 seconds.");
+                        Thread.Sleep(1);
+                    } while (true);
+                    Console.WriteLine($"package-consumer: actual fence polling calls={polls}; elapsedMs={timer.ElapsedMilliseconds}");
+                }
+                else completed = poll(context.Device, 1, &token);
                 Console.WriteLine($"package-consumer: native submission token={token.Index}; poll={completed}");
                 if (completed == 0) throw new InvalidOperationException("Native diagnostic submission did not complete.");
                 retireRaster?.Invoke();

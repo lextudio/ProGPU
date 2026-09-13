@@ -18,6 +18,38 @@ public sealed class WgpuContextLossCollection
 public sealed class WgpuContextTests
 {
     [Theory]
+    [InlineData(false, 7, false, 1)]
+    [InlineData(false, 0, true, 1)]
+    [InlineData(true, 7, true, 8)]
+    [InlineData(true, 0, true, 1)]
+    public unsafe void NativeQueueCompletionNeverUsesTimedBlockingPoll(
+        bool wait, int pendingPolls, bool expected, int expectedCalls)
+    {
+        var state = new QueuePollProbe { PendingPolls = pendingPolls };
+        bool completed = WgpuContext.PollNativeQueueCompletion(
+            (Device*)&state, &PollQueueProbe, wait);
+        Assert.Equal(expected, completed);
+        Assert.Equal(expectedCalls, state.Calls);
+        Assert.Equal(0u, state.WaitFlags);
+    }
+
+    private struct QueuePollProbe
+    {
+        public int PendingPolls;
+        public int Calls;
+        public uint WaitFlags;
+    }
+
+    [System.Runtime.InteropServices.UnmanagedCallersOnly(
+        CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    private static unsafe uint PollQueueProbe(Device* device, uint wait, void* token)
+    {
+        var state = (QueuePollProbe*)device;
+        state->WaitFlags |= wait;
+        return ++state->Calls > state->PendingPolls ? 1u : 0u;
+    }
+
+    [Theory]
     [InlineData(SurfaceGetCurrentTextureStatus.Timeout)]
     [InlineData(SurfaceGetCurrentTextureStatus.Outdated)]
     [InlineData(SurfaceGetCurrentTextureStatus.Lost)]

@@ -1885,6 +1885,23 @@ public class NativeRendererInteropTests
     }
 
     [Fact]
+    public void NativeSubmissionAndMapWaitsAvoidRuntimeTimedBlockingPoll()
+    {
+        string compatibility = File.ReadAllText(FindRepoFile(
+            "src", "ProGPU.Native", "src", "Backend", "progpu_webgpu_compat.hpp"));
+        string engine = File.ReadAllText(FindRepoFile(
+            "src", "ProGPU.Native", "src", "Backend", "progpu_native_engine.hpp"));
+        string queries = File.ReadAllText(FindRepoFile(
+            "src", "ProGPU.Native", "src", "HitTesting", "progpu_native_hit_testing_execution.cpp"));
+        Assert.Contains("wgpuDevicePoll(device, false, &wrapped)", compatibility, StringComparison.Ordinal);
+        Assert.DoesNotContain("wgpuDevicePoll(device, wait", compatibility, StringComparison.Ordinal);
+        Assert.DoesNotContain("wgpuDevicePoll(device, true", engine, StringComparison.Ordinal);
+        Assert.DoesNotContain("wgpuDevicePoll(engine->device, true", queries, StringComparison.Ordinal);
+        Assert.Contains("webgpu::poll_queue_completion(true", queries, StringComparison.Ordinal);
+        Assert.Contains("*engine->semantic_hit_test_map_state) != WGPUBufferMapState_Pending", queries, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NativeRetainedPictureCopiesUseProviderAwareTrackedSubmission()
     {
         string source = File.ReadAllText(FindRepoFile(

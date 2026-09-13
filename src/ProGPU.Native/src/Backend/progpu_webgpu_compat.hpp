@@ -5,10 +5,12 @@
 #include <webgpu.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <new>
+#include <thread>
 
 namespace progpu::native::webgpu {
 
@@ -435,7 +437,14 @@ inline bool poll_submission(
         queue,
         submission_index
     };
-    return wgpuDevicePoll(device, wait, &wrapped) != 0U;
+    // Do not enter the pinned runtime's timed blocking wait: it can mistake
+    // its five-second timeout for fence completion (wgpu issue 4589).
+    // Queue-empty is conservative for the validated token and all prior work.
+    return poll_queue_completion(wait,
+        [&]() noexcept { return wgpuDevicePoll(device, false, &wrapped) != 0U; },
+        []() noexcept {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        });
 }
 
 inline WGPUBufferMapState poll_buffer_map(

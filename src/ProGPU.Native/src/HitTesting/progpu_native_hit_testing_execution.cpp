@@ -889,7 +889,18 @@ progpu_native_status poll_hit_test(
                 "The native GPU hit-test map wait did not complete; the request remains pending.");
         }
 #else
-        (void)wgpuDevicePoll(engine->device, true, nullptr);
+        // The pinned blocking poll can fire map callbacks after a GPU wait
+        // timeout. Drive real fence progress without entering that path, and
+        // observe the map callback, not merely queue or buffer-map state.
+        (void)webgpu::poll_queue_completion(true,
+            [&]() noexcept {
+                return engine->device_lost || webgpu::poll_buffer_map(
+                    engine->device, engine->semantic_hit_test_readback_buffer,
+                    *engine->semantic_hit_test_map_state) != WGPUBufferMapState_Pending;
+            },
+            []() noexcept {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            });
 #endif
     }
     const WGPUBufferMapState state = webgpu::poll_buffer_map(

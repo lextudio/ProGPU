@@ -21,7 +21,10 @@ in the summary; a list query retains total hit count and traversal diagnostics.
 Dawn retains the map operation's future and waits for that future through the
 existing WebGPU `InstanceWaitAny` adapter. Waiting only for queue submission does
 not establish map completion. As with the existing submission wait API, the Dawn
-instance must support timed waits. wgpu-native drives its blocking device poll.
+instance must support timed waits. wgpu-native drives nonblocking fence polls
+with a short native sleep until its map callback publishes completion; its
+pinned blocking poll can mistake an internal timeout for completed GPU work.
+See [queue completion](native-wgpu-completion.md).
 Neither path pumps the application's dispatcher, spins in managed code, adds a
 submission or reruns the hit algorithm. Browser builds reject blocking completion
 without consuming the token: their existing asynchronous polling path remains
