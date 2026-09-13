@@ -26,15 +26,22 @@ if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
 if (args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
-    args.Contains("--path-native-layout-probe", StringComparer.Ordinal))
+    args.Contains("--path-native-layout-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-bindings-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-submit-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
+    var apiMode = args.Contains("--path-native-submit-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeSubmission
+        : args.Contains("--path-native-bindings-probe", StringComparer.Ordinal)
+            ? PathProbeApi.NativeLayout : PathProbeApi.AutomaticLayout;
     PathCoverageProbe.Run(probeContext,
         args.Contains("--path-vector-probe", StringComparer.Ordinal),
         args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
-            args.Contains("--path-native-layout-probe", StringComparer.Ordinal),
-        args.Contains("--path-native-layout-probe", StringComparer.Ordinal));
+            args.Contains("--path-native-layout-probe", StringComparer.Ordinal) || apiMode != PathProbeApi.AutomaticLayout,
+        args.Contains("--path-native-layout-probe", StringComparer.Ordinal) || apiMode != PathProbeApi.AutomaticLayout,
+        apiMode);
     return;
 }
 

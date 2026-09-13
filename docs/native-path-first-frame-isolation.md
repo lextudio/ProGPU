@@ -126,6 +126,25 @@ print preparation metrics before waiting so device loss does not erase that
 evidence. This is diagnostic parity of a fixed payload, not a production CPU
 renderer or evidence of shader/compiler/resource-lifetime equivalence on Windows.
 
+Run [34773803547](https://github.com/wieslawsoltes/ProGPU/actions/runs/34773803547)
+passes that reference native-layout draw on both Windows architectures, with the
+same `37CF2B2338D40B07` payload hash as the native producer. Nevertheless both
+native direct rectangles are black; the original cubic subsequently loses the
+x64 device and exits with an access violation on ARM64. The payload comparison
+rules out different vertex/index/brush preparation for this fixed case, not
+native GPU resource contents or lifetime. Earlier ARM64 diagnostic successes
+are not deterministic current-consumer qualification.
+
+Two additional separate-process stages mirror native GPU setup:
+`--path-native-bindings-probe` uses the exact explicit common vector layouts,
+visibility and minimum sizes, releasing caller pipeline-layout ownership after
+pipeline creation as native code does. `--path-native-submit-probe` additionally
+uses the existing `wgpuQueueSubmitForIndex` and exact-token `wgpuDevicePoll`
+extension ABI before readback. Neither changes production submission, dependency
+selection, shaders, sampling or assertions. Both compile without warnings/errors
+and pass on Metal, with the original payload hash and exact samples; Windows
+results remain required. Diagnostic raw extension calls are not new public APIs.
+
 `ProGPU.Wpf.ShowcaseApp` first-path startup currently creates seven coverage
 pipelines, including three signed-winding shader modules, even for an ordinary
 rectangle. Both C++ providers now retain common atlas/layout resources but create

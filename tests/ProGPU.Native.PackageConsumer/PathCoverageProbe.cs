@@ -4,6 +4,8 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
+internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission }
+
 // Failure isolation only: this executes the packaged canonical kernel, not a
 // replacement renderer. A passing probe never qualifies a failed native frame.
 internal static unsafe class PathCoverageProbe
@@ -40,7 +42,8 @@ internal static unsafe class PathCoverageProbe
     }
 
     internal static void Run(WgpuContext context, bool drawAtlas = false,
-        bool sameSubmission = false, bool nativeLayout = false)
+        bool sameSubmission = false, bool nativeLayout = false,
+        PathProbeApi apiMode = PathProbeApi.AutomaticLayout)
     {
         const uint rowBytes = 256, height = 16;
         uint width = nativeLayout ? 40u : 64u;
@@ -118,7 +121,7 @@ internal static unsafe class PathCoverageProbe
             context.Api.CommandEncoderCopyBufferToTexture(encoder, &source, &destination, &extent);
             if (sameSubmission)
             {
-                DrawAtlas(context, atlas, cache, encoder, nativeLayout);
+                DrawAtlas(context, atlas, cache, encoder, nativeLayout, apiMode);
             }
             else
             {
@@ -153,7 +156,8 @@ internal static unsafe class PathCoverageProbe
     }
 
     private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
-        CommandEncoder* sharedEncoder = null, bool nativeLayout = false)
+        CommandEncoder* sharedEncoder = null, bool nativeLayout = false,
+        PathProbeApi apiMode = PathProbeApi.AutomaticLayout)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
@@ -211,16 +215,55 @@ internal static unsafe class PathCoverageProbe
         VertexBufferLayout[] vertexLayouts = [new() {
             ArrayStride = 56, StepMode = VertexStepMode.Vertex, AttributeCount = 8, Attributes = attributes }];
         var shader = cache.GetOrCreateShader("PackageCanonicalVectorProbe", Shaders.VectorShader);
-        var pipeline = cache.GetOrCreateRenderPipeline("PackageCanonicalVectorProbe", shader,
-            fragmentEntry: "fs_main_unmasked", targetFormat: TextureFormat.Rgba8Unorm,
-            vertexBufferLayouts: vertexLayouts);
         BindGroupLayout* uniformLayout = null; BindGroupLayout* atlasLayout = null;
+        PipelineLayout* pipelineLayout = null;
         BindGroup* uniformGroup = null; BindGroup* atlasGroup = null;
         Sampler* sampler = null; CommandEncoder* encoder = null; CommandBuffer* command = null;
         try
         {
-            uniformLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 0);
-            atlasLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 1);
+            if (apiMode != PathProbeApi.AutomaticLayout)
+            {
+                // Mirror the original native common vector layout, including
+                // visibility/minimum sizes, without changing the shader ABI.
+                var layoutEntries = stackalloc BindGroupLayoutEntry[3];
+                for (int i = 0; i < 3; i++) layoutEntries[i] = new() {
+                    Binding = (uint)i,
+                    Visibility = i == 2 ? ShaderStage.Fragment : ShaderStage.Vertex | ShaderStage.Fragment,
+                    Buffer = new BufferBindingLayout {
+                        Type = i == 0 ? BufferBindingType.Uniform : BufferBindingType.ReadOnlyStorage,
+                        MinBindingSize = i == 0 ? 224u : i == 1 ? 256u : 32u } };
+                var layoutDescriptor = new BindGroupLayoutDescriptor { EntryCount = 3, Entries = layoutEntries };
+                uniformLayout = context.Api.DeviceCreateBindGroupLayout(context.Device, &layoutDescriptor);
+                var textureEntries = stackalloc BindGroupLayoutEntry[2];
+                textureEntries[0] = new() { Binding = 0, Visibility = ShaderStage.Fragment,
+                    Sampler = new SamplerBindingLayout { Type = SamplerBindingType.Filtering } };
+                textureEntries[1] = new() { Binding = 1, Visibility = ShaderStage.Fragment,
+                    Texture = new TextureBindingLayout { SampleType = TextureSampleType.Float,
+                        ViewDimension = TextureViewDimension.Dimension2D } };
+                var textureDescriptor = new BindGroupLayoutDescriptor { EntryCount = 2, Entries = textureEntries };
+                atlasLayout = context.Api.DeviceCreateBindGroupLayout(context.Device, &textureDescriptor);
+                if (uniformLayout == null || atlasLayout == null)
+                    throw new InvalidOperationException("Native-layout probe layouts rejected.");
+                var layouts = stackalloc BindGroupLayout*[2];
+                layouts[0] = uniformLayout; layouts[1] = atlasLayout;
+                var descriptor = new PipelineLayoutDescriptor { BindGroupLayoutCount = 2, BindGroupLayouts = layouts };
+                pipelineLayout = context.Api.DeviceCreatePipelineLayout(context.Device, &descriptor);
+                if (pipelineLayout == null) throw new InvalidOperationException("Native-layout probe pipeline layout rejected.");
+            }
+            var pipeline = cache.GetOrCreateRenderPipeline("PackageCanonicalVectorProbe", shader,
+                fragmentEntry: "fs_main_unmasked", targetFormat: TextureFormat.Rgba8Unorm,
+                vertexBufferLayouts: vertexLayouts, pipelineLayout: pipelineLayout);
+            if (pipelineLayout != null)
+            {
+                // Native pipeline creation drops its caller layout reference here.
+                context.Api.PipelineLayoutRelease(pipelineLayout);
+                pipelineLayout = null;
+            }
+            if (apiMode == PathProbeApi.AutomaticLayout)
+            {
+                uniformLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 0);
+                atlasLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 1);
+            }
             var uniformEntries = stackalloc BindGroupEntry[3];
             uniformEntries[0] = new() { Binding = 0, Buffer = uniforms.BufferPtr, Size = 224 };
             uniformEntries[1] = new() { Binding = 1, Buffer = brushes.BufferPtr, Size = brushes.Size };
@@ -261,13 +304,27 @@ internal static unsafe class PathCoverageProbe
             var commandDescriptor = new CommandBufferDescriptor();
             command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
             if (command == null) throw new InvalidOperationException("Canonical vector probe commands rejected.");
-            context.Submit(1, &command);
+            if (apiMode == PathProbeApi.NativeSubmission)
+            {
+                // Existing wgpu-native extension ABI used by the C++ engine,
+                // followed by the same exact-token wait as the native probe.
+                var submit = (delegate* unmanaged[Cdecl]<Queue*, nuint, CommandBuffer**, ulong>)
+                    context.Wgpu.Context.GetProcAddress("wgpuQueueSubmitForIndex");
+                var poll = (delegate* unmanaged[Cdecl]<Device*, uint, void*, uint>)
+                    context.Wgpu.Context.GetProcAddress("wgpuDevicePoll");
+                var token = new SubmissionToken { Queue = context.Queue, Index = submit(context.Queue, 1, &command) };
+                Console.WriteLine($"package-consumer: native submission token={token.Index}; poll={poll(context.Device, 1, &token)}");
+            }
+            else
+            {
+                context.Submit(1, &command);
+            }
             byte[] pixels = target.ReadPixels();
             int inside = (8 * 64 + 16) * 4, outside = (2 * 64 + 2) * 4;
             Console.WriteLine($"package-consumer: canonical vector atlas inside=" +
                 $"({pixels[inside]},{pixels[inside+1]},{pixels[inside+2]},{pixels[inside+3]}), " +
                 $"outside=({pixels[outside]},{pixels[outside+1]},{pixels[outside+2]},{pixels[outside+3]}); " +
-                $"sameSubmission={sharedEncoder != null}; nativeLayout={nativeLayout}; " +
+                $"sameSubmission={sharedEncoder != null}; nativeLayout={nativeLayout}; api={apiMode}; " +
                 $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
             if (pixels[inside] != 255 || pixels[inside+1] != 255 || pixels[inside+2] != 255 || pixels[inside+3] != 255 ||
                 pixels[outside] != 0 || pixels[outside+1] != 0 || pixels[outside+2] != 0 || pixels[outside+3] != 255)
@@ -280,9 +337,17 @@ internal static unsafe class PathCoverageProbe
             if (atlasGroup != null) context.Api.BindGroupRelease(atlasGroup);
             if (uniformGroup != null) context.Api.BindGroupRelease(uniformGroup);
             if (sampler != null) context.Api.SamplerRelease(sampler);
+            if (pipelineLayout != null) context.Api.PipelineLayoutRelease(pipelineLayout);
             if (atlasLayout != null) context.Api.BindGroupLayoutRelease(atlasLayout);
             if (uniformLayout != null) context.Api.BindGroupLayoutRelease(uniformLayout);
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SubmissionToken
+    {
+        public Queue* Queue;
+        public ulong Index;
     }
 
     private static uint Bits(float value) => BitConverter.SingleToUInt32Bits(value);
