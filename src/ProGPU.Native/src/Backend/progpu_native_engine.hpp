@@ -1068,10 +1068,10 @@ struct progpu_native_engine {
         semantic_hit_test_map_state = nullptr;
         release(semantic_hit_test_result_buffer);
         release(semantic_hit_test_query_buffer);
-        for (auto& pipeline : semantic_hit_test_pipelines) {
-            if (pipeline != nullptr) {
-                wgpuComputePipelineRelease(pipeline);
-                pipeline = nullptr;
+        for (auto& hit_pipeline : semantic_hit_test_pipelines) {
+            if (hit_pipeline != nullptr) {
+                wgpuComputePipelineRelease(hit_pipeline);
+                hit_pipeline = nullptr;
             }
         }
         if (semantic_hit_test_pipeline_layout != nullptr) {

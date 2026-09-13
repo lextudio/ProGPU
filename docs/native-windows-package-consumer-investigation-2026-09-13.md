@@ -115,6 +115,16 @@ The Linux failure is not diagnosed or waived by that local result.
 
 ## Diagnostics added without changing acceptance
 
+The subsequent cbb diagnostic head fails on both Windows CI architectures with
+RGBA `(0,0,0,255)`, `deviceLost=False`, D3D12 and Microsoft Basic Render Driver.
+Failure-only pixel inventory now skips all-black blocks with `Vector<uint>` and
+reports exact nonblack bounds/count together with the existing native draw/upload
+counters. The original white-pixel and cubic-outside assertions are unchanged.
+This distinguishes an empty target from misplaced ink; it is not a raster fix.
+The consumer compiles with zero warnings/errors. The newer query-family work and
+terminal point-only crash evidence are recorded in
+[query pipeline specialization](native-mil-query-pipeline-specialization.md).
+
 The consumer now prints existing typed WebGPU error/device-loss notifications,
 actual RGBA and adapter identity on cubic failure, and cold query submission time
 separately from the existing readback deadline. Timeout details include device

@@ -56,7 +56,23 @@ Both native providers compile. The rebuilt Metal native consumer passes original
 owner/generation/participation checks plus fresh rectangle-first and ellipse-first
 engines followed by point queries. Native generated contracts verify.
 
-Windows execution of this full split, final-head CI and exact package gates remain
-required. Windows CI's independent cubic rectangle-ink failure and Linux's WinUI
-stable-cache assertion also remain open. See
+Windows MSVC built both providers after renaming the pipeline-release loop local
+to avoid shadowing the engine's existing `pipeline` member under `/WX`. The VM's
+full-family consumer passes cubic/retained rendering and submits its first point
+query in 29,963.419 ms; subsequent point/topmost and point/list submissions take
+1.710/0.729 ms. Rectangle pipeline creation is still pending. These are diagnostic
+observations, not controlled benchmarks or a completed Windows gate.
+
+The earlier point-only process ultimately terminated with 0xC0000005 after
+18m42s. Windows Error Reporting names `coreclr.dll` as the fault module; the
+managed stack ends in native `BeginHitTest`. Slow compilation is observed, but
+neither the compiler nor an interop lifetime defect is established as the crash
+cause. Do not describe this as a diagnosed FXC crash.
+
+The full-family head passes Linux build/tests. The earlier WinUI cache failure
+also passes on the subsequent diagnostic head without any weakened assertion;
+its intermittent cause is not established. The browser gate reaches evidence
+readback but times out at `map-requested`, with no reported browser error.
+Final-head CI and exact package gates remain required. Windows CI's independent
+cubic rectangle-ink failure also remains open. See
 [Windows investigation](native-windows-package-consumer-investigation-2026-09-13.md).

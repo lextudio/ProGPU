@@ -1232,7 +1232,7 @@ static void ValidateNativeCubicControlHull(WgpuContext context)
         TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Cubic control hull",
         alphaMode: GpuTextureAlphaMode.Premultiplied);
     renderer.UpdateScene(scene.Stream);
-    renderer.RenderScene(target, 1, 702, 1, new Vector4(0, 0, 0, 1));
+    NativeSceneFrameMetrics frameMetrics = renderer.RenderScene(target, 1, 702, 1, new Vector4(0, 0, 0, 1));
     renderer.WaitForSubmission(renderer.GetLastSubmissionToken());
     byte[] pixels = target.ReadPixels();
     for (int x = 237; x <= 243; ++x)
@@ -1243,11 +1243,42 @@ static void ValidateNativeCubicControlHull(WgpuContext context)
             throw new InvalidOperationException("Native cubic produced coverage outside its control hull.");
     }
     if (pixels[(105 * 300 + 216) * 4] != 255)
+    {
+        // Failure-only image inventory: skip black SIMD blocks, then retain
+        // exact positions/channels for diagnostic pixels without changing the oracle.
+        ReadOnlySpan<uint> words = MemoryMarshal.Cast<byte, uint>(pixels);
+        var rgbMask = new Vector<uint>(0x00FFFFFFU);
+        int colored = 0, minX = 300, minY = 150, maxX = -1, maxY = -1;
+        for (int block = 0; block < words.Length;)
+        {
+            int count = Math.Min(Vector<uint>.Count, words.Length - block);
+            if (count == Vector<uint>.Count &&
+                Vector.EqualsAll(new Vector<uint>(words.Slice(block, count)) & rgbMask, Vector<uint>.Zero))
+            {
+                block += count;
+                continue;
+            }
+            for (int lane = 0; lane < count; lane++)
+            {
+                int pixel = block + lane;
+                if ((words[pixel] & 0x00FFFFFFU) == 0) continue;
+                colored++;
+                int x = pixel % 300, y = pixel / 300;
+                minX = Math.Min(minX, x); minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
+            }
+            block += count;
+        }
         throw new InvalidOperationException(
             $"Native cubic fixture lost its independent rectangle ink: " +
             $"RGBA=({pixels[(105 * 300 + 216) * 4]}, {pixels[(105 * 300 + 216) * 4 + 1]}, " +
             $"{pixels[(105 * 300 + 216) * 4 + 2]}, {pixels[(105 * 300 + 216) * 4 + 3]}); " +
-            $"deviceLost={context.IsDeviceLost}; backend={context.AdapterBackendType}; adapter={context.AdapterName}.");
+            $"deviceLost={context.IsDeviceLost}; backend={context.AdapterBackendType}; adapter={context.AdapterName}; " +
+            $"coloredPixels={colored}; coloredBounds=({minX},{minY})-({maxX},{maxY}); " +
+            $"commands={frameMetrics.CommandCount}; draws={frameMetrics.DrawCallCount}; " +
+            $"coverageBytes={frameMetrics.CoverageStagingBytes}; vertexBytes={frameMetrics.VertexUploadBytes}; " +
+            $"uniformBytes={frameMetrics.UniformUploadBytes}.");
+    }
     Console.WriteLine("package-consumer: native cubic control hull passed");
 }
 
