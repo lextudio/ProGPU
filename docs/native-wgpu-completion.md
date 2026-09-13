@@ -63,3 +63,26 @@ failing package without qualifying it as a new release.
 Windows runtime, final-head package CI and full application qualification remain
 required. Earlier query pipeline crashes and latency are not declared resolved
 solely from this synchronization repair. Broader Direct2D/Win2D remains deferred.
+
+## Hosted fence comparison
+
+Run `34781154788`, x64 job `103788290937`, confirms the isolated repair: the old
+blocking-poll/retire probe exits with access violation `0xC0000005`, while the
+new nonblocking-fence/retire probe passes identical target and atlas checks.
+Actual completion takes 5,977 ms across 536 sleeping polls, exceeding the faulty
+internal five-second wait. The original native baseline remains black and its
+deferred-retirement diagnostic passes. The overall diagnostic job is deliberately
+red because it includes the failing original-package baselines; it is not the
+replacement package gate. Current-head Windows Build remains necessary.
+
+The staged ARM64 VM MSVC build compiles both providers and passes its native
+internal fixture. The resulting native DLL, SHA256
+`902431121dda4d2b189efbf2300950b05486f1751a8eff8bfec42a11d22c6248`,
+passes the direct native path on Microsoft Basic Render Driver without the
+deferred-retirement diagnostic. Further original cubic/full-consumer checks
+remain running at this checkpoint. The staged consumer retains the old
+WARP-selecting managed diagnostic assembly, so this is C++ repair evidence only.
+
+All 122 managed native-interop contract tests also pass. Superseded Builds
+`34779068703` and `34780421690` were cancelled to release CI capacity, not counted
+as successful qualification.
