@@ -542,8 +542,10 @@ struct progpu_native_engine {
             const auto required = owner_.submission_count +
                 (owner_.semantic_encoder != nullptr ? 1U : 0U);
             owner_.retained_raster_resources.seal(*batch_, required);
-            owner_.retained_raster_resources.retire(
-                owner_.submission_retirement.retired_count());
+            const auto completed = owner_.submission_retirement.retired_count();
+            if (required <= completed) {
+                owner_.retained_raster_resources.retire(completed);
+            }
         }
         progpu::native::path_raster_resources& get() noexcept {
             return batch_ == nullptr ? immediate_ : batch_->resources;

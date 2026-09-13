@@ -87,6 +87,16 @@ original frame and native owner/generation/participation/region checks. Windows
 native compilation and original fixtures are running; final-head CI/package and
 application qualification remain mandatory before dependency pins or merges.
 
+MSVC ARM64 now compiles both native providers. The original direct rectangle and
+cubic assertions pass with the normal Parallels Display Adapter. The staged
+wgpu-native DLL SHA256 is
+`079FB052B7CA73F95AAB2BFF1F1F27D9EFA4A464599F512B5C1ACA315059CF1E`.
+The actual LibreWPF source-host/device-recovery run also passes on Metal with
+`f5dcfb15`. These staged builds are not final package qualification. The software
+adapter comparison remains running. A follow-up avoids scanning the retirement
+list at every recording-lease close when that batch's completion has not yet
+been observed; periodic retirement and already-completed lease cleanup are kept.
+
 `ProGPU.Native.PackageConsumer --path-coverage-probe` executes the packaged
 `ProGPU.Backend.Shaders.PathRasterizerShader`, entry `cs_main_ordinary`, with
 its original five-binding storage ABI, 16x16 workgroup and eight-by-eight sample
