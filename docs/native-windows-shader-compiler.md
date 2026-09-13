@@ -10,10 +10,10 @@ fixture with development WARP, with family submissions around one second.
 System WARP still crashes with either compiler. Neither a compiler switch nor
 the testing-only WARP package qualifies the application or permits a merge.
 
-`eng/build-wgpu-native-windows.ps1` now builds that optional dependency from
-pinned inputs. This is build tooling, not automatic backend selection, a new
-renderer, or a replacement runtime in the product package. The stock Silk
-native dependency and all existing application/CI gates remain unchanged.
+`eng/build-wgpu-native-windows.ps1` builds that optional dependency from pinned
+inputs. `WgpuDx12CompilerOptions` now connects explicit selection to the shared
+product device factory. This does not change automatic selection, the stock
+Silk package payload, the renderer, or existing application/CI gates.
 
 ## Reviewed dependency inputs
 
@@ -75,15 +75,12 @@ resource lifetime, DPI or text behavior changes in this build-only batch.
 
 Required follow-up before product adoption:
 
-1. Typed, immutable-before-device compiler configuration and diagnostics that
-   distinguish requested compiler from actual admission. Forced DXC must fail
-   rather than silently falling back when its feature or runtime is missing.
-2. Exact-ABI feature artifact packaging/loader identity, complete dependency
+1. Exact-ABI feature artifact packaging, complete dependency
    license review and permitted DXC/DXIL distribution; no development WARP
    redistribution. Do not accept arbitrary newer native WebGPU binaries.
-3. Current-package x64/ARM64 rendering and all query families on actual loaded
+2. Current-package x64/ARM64 rendering and all query families on actual loaded
    system/hardware runtimes, followed by complete source application gates.
-4. Keep the independent system-WARP crash and hosted x64 wait investigated;
+3. Keep the independent system-WARP crash and hosted x64 wait investigated;
    do not change timeouts, use CPU geometry or advance WPF pins from this build.
 
 The accelerated delivery sequence and ordered merge gates remain unchanged.
@@ -115,5 +112,97 @@ native-core validation artifacts.
 
 This verifies the committed dependency build tooling, not current managed package,
 system WARP, x64, hardware rendering or Showcase qualification. The system-WARP
-DLL remains exactly the previously failing version/hash. Typed compiler admission,
-normal product packaging and the remaining runtime gates above are still required.
+DLL remains exactly the previously failing version/hash. At this build checkpoint,
+typed compiler admission, packaging and the remaining runtime gates were still
+required; the next section records the subsequently implemented selection path.
+
+## Explicit product configuration — 2026-09-14
+
+The next implementation batch connects the existing pinned native instance
+extension through `WgpuContext.Dx12CompilerOptions`. Configuration is immutable
+before instance creation. For example:
+
+```csharp
+using var context = new WgpuContext
+{
+    Dx12CompilerOptions = new(WgpuDx12ShaderCompiler.Dxc, @"C:\app\compiler")
+};
+context.Initialize(window: null);
+```
+
+Equivalent startup settings are `PROGPU_DX12_SHADER_COMPILER=auto|fxc|dxc` and,
+only for explicit DXC, `PROGPU_DX12_COMPILER_DIRECTORY` with an absolute directory.
+Without that directory, DXC/DXIL must be beside the actual loaded `wgpu_native.dll`.
+Default/automatic retains FXC for this pinned Windows backend. No automatic DXC
+or software-adapter promotion is introduced.
+
+Forced DXC identifies the actual process-retained DLL with the Windows module API,
+then checks its adjacent build manifest: schema, native/header/wgpu revisions,
+ABI, feature, lock, RID and library SHA256. Both compiler libraries must exist
+and match the process PE architecture. Missing/incorrect artifacts fail before
+native instance creation; the stock binary cannot silently satisfy forced DXC.
+The manifest is build provenance, not a signature or an untrusted-code sandbox.
+Release provenance and complete dependency licensing still belong to packaging.
+
+Explicit UTF-8 library paths are pinned only for the synchronous instance call.
+The pinned [public native descriptor](https://github.com/gfx-rs/wgpu-native/blob/33133da4ec5a0174cb21539ef2d3346f75200411/ffi/wgpu.h)
+selects the compiler. In the feature-enabled pinned HAL, compiler initialization
+failure rejects the D3D12 backend rather than returning the feature-disabled FXC
+path. The existing D3D12-only backend mask and selected-adapter check therefore
+keep failure closed. No global logging callback, COM compiler mirror, binary
+patch, alternate renderer, or CPU geometry path is added.
+
+`SelectedDx12ShaderCompiler` is published after device creation and the existing
+queue probe; `Dx12CompilerLibraryPath` reports the explicit path. These identify
+selection, not successful compilation of every shader on that adapter. Shared
+surfaces inherit their owner's compiler and cannot replace it or its libraries.
+External Dawn/browser devices reject an explicit compiler request rather than
+pretending to reconfigure a borrowed device. Disposal clears selection metadata.
+The managed renderer and C++ MIL renderer consume the same owned device and
+canonical shaders; the C++ engine does not create another compiler instance.
+
+`ForceFallbackAdapter` is a separate explicit native WebGPU adapter requirement,
+false by default. It preserves surface compatibility and is reported through
+`WgpuAdapterSelectionDiagnostics`; external/shared devices cannot silently change
+adapters. The existing complete native consumer accepts `--software-adapter`,
+eliminating the previous patched managed assembly used to force WARP. This is
+adapter selection for validation, not a new compute fallback or automatic CPU
+execution policy.
+
+Research was rechecked against WebRender, Skia/SkParagraph, Direct2D/DirectWrite,
+Win2D, Vello/Parley and HarfBuzz through the
+[shared retained-input research record](native-mil-hit-test-ownership.md#design-references-and-decisions).
+Adopt only initialization-bound compiler ownership. Preserve lazy workload
+pipelines, retained layout/scenes, culling, font/path/texture keys and eviction,
+demand uploads, worker preparation, GPU batching, DPI/subpixel/hinting, fallback
+and variable-font identity, and device-generation invalidation. No third-party
+implementation is copied. Metadata work is startup-only O(B) file hashing for
+B native-library bytes plus bounded descriptor/path work; .NET's SHA256 uses
+its runtime implementation. No per-frame IO, parsing, hashing, new GPU passes
+or per-primitive crossings are introduced.
+
+### Product-selection validation
+
+The updated backend and consumer build without warnings/errors. All 79 focused
+compiler/context tests pass, including build-pin synchronization, loader metadata,
+both PE architectures, wrong/missing
+features and hashes, explicit paths, and external-provider rejection. The complete
+rebuilt Metal consumer still passes with automatic selection.
+
+The full Windows ARM64 consumer passes with current unpatched product assemblies,
+explicit DXC and development WARP: native ABI/document/inline contracts, cubic
+control hull, retained MIL rendering (38 resources, 11 draws, 174080 coverage),
+and the complete owner/participation/region-first fixture. Product backend hash:
+`1beb68b66c7078f0b9aebaf8277694147f9712152f6e2457735d12ac4bb8b5cf`;
+native DLL remains `e696e6a9...`; dependency DLL remains `a0cdbedc...` above.
+First point/bounds/ellipse submissions take 1318.047/2085.784/1292.745 ms;
+these are functional observations, not controlled benchmark claims.
+
+Real missing-manifest and missing-compiler controls fail before adapter creation.
+The matched current-product system-WARP control passes rendering and still
+terminates after first query submission (1588.796 ms), before readback. The
+Parallels hardware control selects DXC but still fails shader pipeline creation
+with `0x80004005`, followed by the native invalid-pipeline error path. Neither
+failure is hidden by default compiler changes, software selection or relaxed
+assertions. This strengthens compiler integration evidence but does not qualify
+system/hardware execution, x64, final packages or the source Showcase application.

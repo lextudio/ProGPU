@@ -55,6 +55,15 @@ public unsafe class WgpuContext : IDisposable
     public bool SupportsTextureFormatsTier1 { get; private set; }
     public BackendType AdapterBackendType { get; private set; } = BackendType.Undefined;
     public string AdapterName { get; private set; } = string.Empty;
+    /// <summary>Explicitly requires a WebGPU fallback adapter; false preserves high-performance selection.</summary>
+    public bool ForceFallbackAdapter { get; init; }
+    /// <summary>Immutable before native instance creation; automatic retains the backend default.</summary>
+    public WgpuDx12CompilerOptions Dx12CompilerOptions { get; init; } = WgpuDx12CompilerOptions.FromEnvironment();
+    /// <summary>The compiler of the initialized owned D3D12 device; null for uninitialized or external devices.</summary>
+    public WgpuDx12ShaderCompiler? SelectedDx12ShaderCompiler { get; private set; }
+    private WgpuDx12CompilerPaths? _dx12CompilerPaths;
+    /// <summary>The explicit DXC library path, when that compiler was admitted.</summary>
+    public string? Dx12CompilerLibraryPath => _dx12CompilerPaths?.Compiler;
     /// <summary>Configure before device creation; retained vertices keep the resolved path.</summary>
     public GpuImageSamplingPreference ImageSamplingPreference { get; init; } =
         GpuImageSamplingPolicy.ReadEnvironmentPreference();
@@ -896,18 +905,38 @@ public unsafe class WgpuContext : IDisposable
         }
 
         SafeLog($"[WGPUCONTEXT] Initialize started, window exists={window != null}\n");
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.ValidateOwnership(OperatingSystem.IsWindows());
         _window = window;
         Wgpu = CreateNativeWebGpuApi();
         Api = new SilkWebGpuApi(Wgpu, RenderLock);
 
+        WgpuDx12CompilerPaths? compilerPaths = null;
+        if (Dx12CompilerOptions.Preference == WgpuDx12ShaderCompiler.Dxc)
+        {
+            // Resolve the same process-retained library used by all Silk/native commands.
+            // Identify its actual loaded path, not a candidate filename that the OS may redirect.
+            _ = ResolveDesktopWebGpuSymbol("wgpuCreateInstance");
+            compilerPaths = WgpuDx12CompilerArtifact.Validate(
+                WgpuDx12CompilerArtifact.GetLoadedLibraryPath(s_desktopWebGpuLibrary),
+                Dx12CompilerOptions.LibraryDirectory,
+                RuntimeInformation.ProcessArchitecture);
+        }
+        byte[]? compilerPath = compilerPaths?.CompilerUtf8;
+        byte[]? validatorPath = compilerPaths?.ValidatorUtf8;
+
         // 1. Create WebGPU Instance (isolated per context)
         SafeLog("[WGPUCONTEXT] Creating WebGPU Instance\n");
-        var instanceExtras = CreateNativeInstanceExtras();
-        var instanceDesc = new InstanceDescriptor
+        fixed (byte* dxcPath = compilerPath)
+        fixed (byte* dxilPath = validatorPath)
         {
-            NextInChain = instanceExtras.Chain.SType == 0 ? null : &instanceExtras.Chain
-        };
-        Instance = Wgpu.CreateInstance(&instanceDesc);
+            var instanceExtras = CreateNativeInstanceExtras(Dx12CompilerOptions.Preference, dxcPath, dxilPath);
+            var instanceDesc = new InstanceDescriptor
+            {
+                NextInChain = instanceExtras.Chain.SType == 0 ? null : &instanceExtras.Chain
+            };
+            Instance = Wgpu.CreateInstance(&instanceDesc);
+        }
         if (Instance == null)
         {
             throw new InvalidOperationException("Failed to create WebGPU Instance.");
@@ -969,6 +998,7 @@ public unsafe class WgpuContext : IDisposable
         var requestAdapterOptions = new RequestAdapterOptions
         {
             CompatibleSurface = Surface,
+            ForceFallbackAdapter = ForceFallbackAdapter,
             PowerPreference = PowerPreference.HighPerformance
         };
 
@@ -1006,7 +1036,9 @@ public unsafe class WgpuContext : IDisposable
             adapterProperties.VendorID,
             adapterProperties.DeviceID,
             Surface != null,
-            Surface != null
+            ForceFallbackAdapter
+                ? (Surface != null ? WgpuAdapterSelectionReason.RequiredFallbackSurfaceCompatible : WgpuAdapterSelectionReason.RequiredFallback)
+                : Surface != null
                 ? WgpuAdapterSelectionReason.HighPerformanceSurfaceCompatible
                 : WgpuAdapterSelectionReason.HighPerformance));
         string adapterDiagnostic =
@@ -1019,6 +1051,11 @@ public unsafe class WgpuContext : IDisposable
             $"reason={AdapterSelectionDiagnostics.SelectionReason}";
         SafeLog(adapterDiagnostic + "\n");
         ProGpuBackendDiagnostics.WriteLine(adapterDiagnostic);
+        if (Dx12CompilerOptions.Preference != WgpuDx12ShaderCompiler.Automatic && AdapterBackendType != BackendType.D3D12)
+        {
+            ReleaseAdapterInitializationResources();
+            throw new NotSupportedException("The explicitly selected D3D12 compiler did not produce a D3D12 adapter.");
+        }
         if (OperatingSystem.IsAndroid() && AdapterBackendType != BackendType.Vulkan)
         {
             ReleaseAdapterInitializationResources();
@@ -1126,6 +1163,14 @@ public unsafe class WgpuContext : IDisposable
         // only on the first resource write. Catching that state here avoids a
         // minutes-long driver stall followed by a native submit abort.
         ProbeNativeDevice();
+        if (AdapterBackendType == BackendType.D3D12)
+        {
+            SelectedDx12ShaderCompiler = Dx12CompilerOptions.Preference == WgpuDx12ShaderCompiler.Dxc
+                ? WgpuDx12ShaderCompiler.Dxc : WgpuDx12ShaderCompiler.Fxc;
+            _dx12CompilerPaths = compilerPaths;
+            ProGpuBackendDiagnostics.WriteLine(
+                $"[D3D12] Shader compiler={SelectedDx12ShaderCompiler}, requested={Dx12CompilerOptions.Preference}, library='{Dx12CompilerLibraryPath ?? "backend default"}'.");
+        }
 
         // 7. Configure Surface if window exists
         if (Surface != null)
@@ -1286,7 +1331,8 @@ public unsafe class WgpuContext : IDisposable
         _hasSurfaceConfigurationCapabilities = false;
     }
 
-    private static NativeInstanceExtras CreateNativeInstanceExtras()
+    private static NativeInstanceExtras CreateNativeInstanceExtras(
+        WgpuDx12ShaderCompiler compiler, byte* dxcPath, byte* dxilPath)
     {
         uint backends = OperatingSystem.IsWindows()
             ? NativeInstanceExtras.D3D12Backend
@@ -1300,7 +1346,16 @@ public unsafe class WgpuContext : IDisposable
             : new NativeInstanceExtras
             {
                 Chain = new ChainedStruct { SType = (SType)NativeInstanceExtras.STypeValue },
-                Backends = backends
+                Backends = backends,
+                Dx12ShaderCompiler = compiler switch
+                {
+                    WgpuDx12ShaderCompiler.Automatic => 0,
+                    WgpuDx12ShaderCompiler.Fxc => 1,
+                    WgpuDx12ShaderCompiler.Dxc => 2,
+                    _ => throw new ArgumentOutOfRangeException(nameof(compiler))
+                },
+                DxcPath = dxcPath,
+                DxilPath = dxilPath
             };
     }
 
@@ -1568,6 +1623,9 @@ public unsafe class WgpuContext : IDisposable
         ulong maxBufferSize = DefaultMaxBufferSize)
     {
         ArgumentNullException.ThrowIfNull(api);
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.ValidateOwnership(false);
+        if (ForceFallbackAdapter) throw new NotSupportedException("A borrowed device cannot satisfy a new adapter-selection request.");
         if (Api != null || Device != null || _isDisposed)
             throw new InvalidOperationException("The WebGPU context is already initialized or disposed.");
         if (device == null || queue == null || surface == null)
@@ -1639,6 +1697,9 @@ public unsafe class WgpuContext : IDisposable
     {
         ArgumentNullException.ThrowIfNull(api);
         ArgumentNullException.ThrowIfNull(lifetime);
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.ValidateOwnership(false);
+        if (ForceFallbackAdapter) throw new NotSupportedException("A borrowed device cannot satisfy a new adapter-selection request.");
         if (Api != null || Device != null || _isDisposed)
         {
             throw new InvalidOperationException(
@@ -1734,6 +1795,19 @@ public unsafe class WgpuContext : IDisposable
     {
         ArgumentNullException.ThrowIfNull(window);
         ArgumentNullException.ThrowIfNull(deviceOwner);
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.Validate();
+        if (ForceFallbackAdapter && deviceOwner.AdapterSelectionDiagnostics.SelectionReason is not
+            (WgpuAdapterSelectionReason.RequiredFallback or WgpuAdapterSelectionReason.RequiredFallbackSurfaceCompatible))
+            throw new NotSupportedException("A shared surface cannot replace its owner's adapter with a fallback adapter.");
+        if (Dx12CompilerOptions.Preference != WgpuDx12ShaderCompiler.Automatic &&
+            Dx12CompilerOptions.Preference != deviceOwner.SelectedDx12ShaderCompiler)
+            throw new NotSupportedException("A shared surface cannot change its owner's D3D12 compiler.");
+        if (Dx12CompilerOptions.LibraryDirectory != null && !string.Equals(
+            Path.GetFullPath(Dx12CompilerOptions.LibraryDirectory).TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetDirectoryName(deviceOwner.Dx12CompilerLibraryPath)?.TrimEnd(Path.DirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("A shared surface cannot replace its owner's DXC libraries.");
         if (_window != null || Instance != null || Surface != null || Device != null)
         {
             throw new InvalidOperationException("The WebGPU context is already initialized.");
@@ -1764,6 +1838,8 @@ public unsafe class WgpuContext : IDisposable
         _window = window;
         Wgpu = deviceOwner.Wgpu;
         Api = deviceOwner.Api;
+        SelectedDx12ShaderCompiler = deviceOwner.SelectedDx12ShaderCompiler;
+        _dx12CompilerPaths = deviceOwner._dx12CompilerPaths;
         Instance = deviceOwner.Instance;
         Adapter = deviceOwner.Adapter;
         Device = deviceOwner.Device;
@@ -2454,6 +2530,8 @@ public unsafe class WgpuContext : IDisposable
 
     private void ClearSharedDeviceReferences()
     {
+        SelectedDx12ShaderCompiler = null;
+        _dx12CompilerPaths = null;
         Queue = null;
         Device = null;
         Adapter = null;

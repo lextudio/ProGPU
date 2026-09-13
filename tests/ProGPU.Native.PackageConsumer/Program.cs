@@ -16,7 +16,7 @@ if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
         $"package-consumer: WebGPU init " +
         $"arch={RuntimeInformation.ProcessArchitecture}, " +
         $"temp={Path.GetTempPath()}");
-    using var probeContext = new WgpuContext();
+    using var probeContext = new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter", StringComparer.Ordinal) };
     Console.WriteLine("package-consumer: WebGPU context constructed");
     probeContext.Initialize(window: null);
     Console.WriteLine("ProGPU.Backend WebGPU initialization smoke passed.");
@@ -43,7 +43,7 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
     args.Contains("--path-native-fence-retire-raster-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-command-probe", StringComparer.Ordinal))
 {
-    using var probeContext = new WgpuContext();
+    using var probeContext = new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter", StringComparer.Ordinal) };
     probeContext.Initialize(window: null);
     var apiMode = args.Contains("--path-native-fence-retire-raster-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeFenceRetireRaster
@@ -79,7 +79,7 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
 
 if (args.Contains("--native-owner-query-probe", StringComparer.Ordinal))
 {
-    using var probeContext = new WgpuContext();
+    using var probeContext = new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter", StringComparer.Ordinal) };
     probeContext.Initialize(window: null);
     using var probeRenderer = new NativeCompositor(probeContext, TextureFormat.Rgba8Unorm);
     ValidateNativeHitTestOwnerSnapshots(probeContext, probeRenderer);
@@ -91,7 +91,7 @@ if (args.Contains("--native-path-probe", StringComparer.Ordinal) ||
     args.Contains("--native-path-deferred-retirement-probe", StringComparer.Ordinal) ||
     args.Contains("--native-cubic-probe", StringComparer.Ordinal))
 {
-    using var probeContext = new WgpuContext();
+    using var probeContext = new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter", StringComparer.Ordinal) };
     probeContext.Initialize(window: null);
     if (args.Contains("--native-cubic-probe", StringComparer.Ordinal))
         ValidateNativeCubicControlHull(probeContext);
@@ -384,7 +384,7 @@ if (milOnly)
     return;
 }
 
-using var context = new WgpuContext();
+using var context = new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter", StringComparer.Ordinal) };
 context.Initialize(window: null);
 Console.WriteLine("package-consumer: WebGPU context");
 ValidateNativeCubicControlHull(context);

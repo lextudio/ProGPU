@@ -16,6 +16,12 @@ reviewed locked dependency graph and verified target PE architecture. Keep the
 DXC metadata overlay confined to an isolated external build; never patch upstream
 renderer code or replace system/NuGet DLLs. Build capability is not actual compiler
 selection or runtime qualification. See docs/native-windows-shader-compiler.md.
+Explicit DXC selection must verify the actual loaded native artifact and compiler
+architecture before instance creation; feature-disabled stock binaries must fail
+closed. Shared surfaces inherit the owner's compiler, and borrowed Dawn/browser
+devices cannot be reconfigured. Keep automatic compiler/adapter defaults intact
+until platform qualification. A forced software adapter is an explicit validation
+choice, not an automatic renderer or compute fallback.
 
 Rectangle-edge query batching keeps independent four-lane crossing/collinearity
 masks until the final any reduction. Preserve original inclusive tests and both
