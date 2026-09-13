@@ -39,11 +39,14 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
     args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-encoder-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-encoding-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-retire-raster-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-command-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
-    var apiMode = rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
+    var apiMode = args.Contains("--path-native-retire-raster-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeRetireRaster
+        : rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
         : args.Contains("--path-native-release-encoder-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeReleaseEncoder
         : args.Contains("--path-native-release-encoding-probe", StringComparer.Ordinal)
@@ -72,6 +75,7 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
 }
 
 if (args.Contains("--native-path-probe", StringComparer.Ordinal) ||
+    args.Contains("--native-path-deferred-retirement-probe", StringComparer.Ordinal) ||
     args.Contains("--native-cubic-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
@@ -79,7 +83,8 @@ if (args.Contains("--native-path-probe", StringComparer.Ordinal) ||
     if (args.Contains("--native-cubic-probe", StringComparer.Ordinal))
         ValidateNativeCubicControlHull(probeContext);
     else
-        PathCoverageProbe.RunNative(probeContext);
+        PathCoverageProbe.RunNative(probeContext,
+            args.Contains("--native-path-deferred-retirement-probe", StringComparer.Ordinal));
     return;
 }
 

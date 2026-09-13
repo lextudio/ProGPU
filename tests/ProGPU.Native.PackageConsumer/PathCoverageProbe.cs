@@ -4,7 +4,7 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
-internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand, NativeReleaseEncoder, NativeReleaseEncoding }
+internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand, NativeReleaseEncoder, NativeReleaseEncoding, NativeRetireRaster }
 [Flags]
 internal enum PathProbeAtlas { Managed = 0, CopyDestinationOnly = 1, DefaultView = 2 }
 [Flags]
@@ -14,7 +14,7 @@ internal enum PathProbeRaster { Baseline = 0, MinimumRecordBinding = 1, Unwritte
 // replacement renderer. A passing probe never qualifies a failed native frame.
 internal static unsafe class PathCoverageProbe
 {
-    internal static void RunNative(WgpuContext context)
+    internal static void RunNative(WgpuContext context, bool deferRetirement = false)
     {
         using var renderer = new NativeCompositor(context, TextureFormat.Rgba8Unorm);
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
@@ -32,13 +32,25 @@ internal static unsafe class PathCoverageProbe
             $"{metrics.PayloadHash:X16}; vertices={metrics.VertexCount}; indices={metrics.IndexCount}; " +
             $"brushBytes={metrics.BrushUploadBytes}; pathBytes={metrics.PathUploadBytes}; " +
             $"atlas={metrics.AtlasWidth}x{metrics.AtlasHeight}; submissions={metrics.SubmissionCount}");
-        renderer.WaitForSubmission(renderer.GetLastSubmissionToken());
-        byte[] pixels = target.ReadPixels();
+        var token = renderer.GetLastSubmissionToken();
+        if (!deferRetirement) renderer.WaitForSubmission(token);
+        byte[] pixels;
+        try
+        {
+            // ReadPixels submits its own copy and waits for its map. Delaying
+            // only the native timeline poll retains raster references through
+            // that copy without changing the native draw or reading early.
+            pixels = target.ReadPixels();
+        }
+        finally
+        {
+            if (deferRetirement) renderer.WaitForSubmission(token);
+        }
         int inside = (8 * 64 + 16) * 4, outside = (2 * 64 + 2) * 4;
         Console.WriteLine($"package-consumer: cold direct native path inside=" +
             $"({pixels[inside]},{pixels[inside + 1]},{pixels[inside + 2]},{pixels[inside + 3]}), " +
             $"outside=({pixels[outside]},{pixels[outside + 1]},{pixels[outside + 2]},{pixels[outside + 3]}); " +
-            $"draws={metrics.DrawCallCount}; coverageBytes={metrics.CoverageStagingBytes}; " +
+            $"draws={metrics.DrawCallCount}; coverageBytes={metrics.CoverageStagingBytes}; deferRetirement={deferRetirement}; " +
             $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
         if (pixels[inside] != 255 || pixels[inside + 1] != 255 || pixels[inside + 2] != 255 || pixels[inside + 3] != 255 ||
             pixels[outside] != 0 || pixels[outside + 1] != 0 || pixels[outside + 2] != 0 || pixels[outside + 3] != 255)
@@ -141,9 +153,14 @@ internal static unsafe class PathCoverageProbe
                         uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
                         Console.WriteLine("package-consumer: released all five raster buffers and bind group before native completion wait");
                     } : null, atlasMode,
-                    apiMode is PathProbeApi.NativeReleaseEncoder or PathProbeApi.NativeReleaseEncoding ? () => {
+                    apiMode is PathProbeApi.NativeReleaseEncoder or PathProbeApi.NativeReleaseEncoding or PathProbeApi.NativeRetireRaster ? () => {
                         context.Api.CommandEncoderRelease(encoder); encoder = null;
                         Console.WriteLine("package-consumer: released finished encoder before native submission");
+                    } : null,
+                    apiMode == PathProbeApi.NativeRetireRaster ? () => {
+                        context.Api.BindGroupRelease(group); group = null;
+                        uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
+                        Console.WriteLine("package-consumer: retired all five raster buffers and bind group after confirmed completion, before target readback");
                     } : null);
             }
             else
@@ -169,7 +186,7 @@ internal static unsafe class PathCoverageProbe
                 return;
             }
             byte[] pixels = atlas.ReadPixels();
-            if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers)
+            if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers or PathProbeApi.NativeRetireRaster)
             {
                 if (pixels[(atlasY + 8) * 1024 + atlasX + 16] != 255 ||
                     pixels[(atlasY + 2) * 1024 + atlasX + 2] != 0 || pixels[0] != 0)
@@ -200,7 +217,8 @@ internal static unsafe class PathCoverageProbe
     private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
         CommandEncoder* sharedEncoder = null, bool nativeLayout = false,
         PathProbeApi apiMode = PathProbeApi.AutomaticLayout, Action? releaseRaster = null,
-        PathProbeAtlas atlasMode = PathProbeAtlas.Managed, Action? releaseEncoder = null)
+        PathProbeAtlas atlasMode = PathProbeAtlas.Managed, Action? releaseEncoder = null,
+        Action? retireRaster = null)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
@@ -363,13 +381,16 @@ internal static unsafe class PathCoverageProbe
                 var poll = (delegate* unmanaged[Cdecl]<Device*, uint, void*, uint>)
                     context.Wgpu.Context.GetProcAddress("wgpuDevicePoll");
                 var token = new SubmissionToken { Queue = context.Queue, Index = submit(context.Queue, 1, &command) };
-                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand or PathProbeApi.NativeReleaseEncoding)
+                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand or PathProbeApi.NativeReleaseEncoding or PathProbeApi.NativeRetireRaster)
                 {
                     context.Api.CommandBufferRelease(command); command = null;
                     Console.WriteLine("package-consumer: released submitted command buffer before completion wait");
                 }
                 releaseRaster?.Invoke();
-                Console.WriteLine($"package-consumer: native submission token={token.Index}; poll={poll(context.Device, 1, &token)}");
+                uint completed = poll(context.Device, 1, &token);
+                Console.WriteLine($"package-consumer: native submission token={token.Index}; poll={completed}");
+                if (completed == 0) throw new InvalidOperationException("Native diagnostic submission did not complete.");
+                retireRaster?.Invoke();
             }
             else
             {

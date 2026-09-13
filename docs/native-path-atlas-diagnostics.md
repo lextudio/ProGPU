@@ -100,3 +100,37 @@ consumer job `103783563847` is red: the direct native path is black, and the
 original cubic readback reports DeviceLost rather than a valid image. Raw vector
 and indexed-submission comparisons pass. Do not count either failure as a frame
 pass or equate it with the separately unresolved native rectangle-input crash.
+
+Run `34779972312` is now terminal: the baseline and both encoder-release
+variants pass on x64 and ARM64 with complete exact pixel and storage checks.
+Both actual native frame probes fail on both runners. Finished encoder/command
+reference release alone therefore does not reproduce the native failure.
+
+## Completed-submission raster retirement
+
+Acceptance target: the first native frame in `ProGPU.Wpf.ShowcaseApp`. The
+bounded diagnostic isolates native `progpu_native_engine_poll_submission`,
+which retires completed raster leases before the caller reads the target.
+The raw reference previously kept its raster references through target readback.
+No renderer change is justified until that distinction is tested.
+
+`probe_set=retirement` compares independent cold processes:
+
+- The existing finished-encoder/command release baseline.
+- `--path-native-retire-raster-probe`: the same encoding/reference sequence,
+  but releases the five raster buffers and bind group after the exact submission
+  poll confirms completion and before reading the target. Exact target pixels
+  and atlas interior/exterior/untouched checks remain required. Only the now
+  released coverage buffer cannot be read a second time.
+- The unchanged direct native path baseline.
+- `--native-path-deferred-retirement-probe`: renders the identical native path,
+  reads the target through the existing synchronized `ReadPixels`, then polls
+  the native timeline in `finally`. It defers native retirement, not GPU work
+  completion or readback synchronization; it cannot become a product workaround.
+- The original cubic frame probe.
+
+Both new variants pass on Metal with payload `37CF2B2338D40B07` and exact white
+interior/opaque-black exterior after a Release build with zero warnings/errors.
+Windows evidence remains required. This is test-only code over the original
+ProGPU shader/resource contracts; neither managed nor native product lifetime,
+rendering, shader selection, package gates or readback deadlines are modified.
