@@ -11,6 +11,12 @@ Welcome, agent! This document serves as a specialized developer guide and archit
 
 ## 1. Core Architectural Rules & Conventions
 
+Rectangle-edge query batching keeps independent four-lane crossing/collinearity
+masks until the final any reduction. Preserve original inclusive tests and both
+tolerances, and select a safe denominator for parallel lanes. Managed/native
+providers share the canonical shader; keep the GPU scalar-reference differential.
+Compiler call-site reduction is not measured latency or Windows qualification.
+
 The pinned wgpu-native blocking device poll can promote its internal timeout to
 completed submissions. Never use that path for retirement, WaitIdle, map waiting
 or cancellation cleanup. Drive nonblocking fence progress, sleep while pending

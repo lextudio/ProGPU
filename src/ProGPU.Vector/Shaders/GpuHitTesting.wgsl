@@ -1,6 +1,8 @@
 // Algorithm: Traverse the retained BVH, reject bounds, analytically test primitive/path geometry, and keep z-ordered hit records.
 // Time complexity: Average O(log N + K*S), worst-case O(N*S), for N primitives, K candidates, and S path segments.
 // Space complexity: O(H+R) private/output storage for traversal height H (capped at 64) and retained result capacity R.
+// Rectangle edges share four independent vector lanes: constant private state,
+// unchanged inclusive crossings/parallel tolerances, no extra dispatch or storage.
 struct HitTestQuery {
     point: vec2<f32>,
     region_max: vec2<f32>,
@@ -852,26 +854,29 @@ fn distance_squared_to_rect(point: vec2<f32>, rect_min: vec2<f32>, rect_max: vec
     return dot(delta, delta);
 }
 
-fn segments_intersect(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
+// Original segment predicate evaluated for four independent c/d pairs. Keep
+// multiply/subtract order and the two distinct parallel/collinear tolerances.
+fn segments_intersect4(a: vec2<f32>, b: vec2<f32>, cx: vec4<f32>, cy: vec4<f32>, dx: vec4<f32>, dy: vec4<f32>) -> vec4<bool> {
     let ab = b - a;
-    let cd = d - c;
-    let denominator = cross2(ab, cd);
-    let ca = c - a;
-    if (abs(denominator) <= 0.000001) {
-        if (abs(cross2(ca, ab)) > 0.0001) {
-            return false;
-        }
-
-        let ab_min = min(a, b);
-        let ab_max = max(a, b);
-        let cd_min = min(c, d);
-        let cd_max = max(c, d);
-        return intersects_bounds(ab_min, ab_max, cd_min, cd_max);
-    }
-
-    let t = cross2(ca, cd) / denominator;
-    let u = cross2(ca, ab) / denominator;
-    return t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0;
+    let cdx = dx - cx;
+    let cdy = dy - cy;
+    let denominator = ab.x * cdy - ab.y * cdx;
+    let cax = cx - vec4<f32>(a.x);
+    let cay = cy - vec4<f32>(a.y);
+    let ca_cross_ab = cax * ab.y - cay * ab.x;
+    let parallel = abs(denominator) <= vec4<f32>(0.000001);
+    let ab_min = min(a, b);
+    let ab_max = max(a, b);
+    let collinear_hit = !(abs(ca_cross_ab) > vec4<f32>(0.0001)) &
+        (vec4<f32>(ab_max.x) >= min(cx, dx)) & (vec4<f32>(ab_min.x) <= max(cx, dx)) &
+        (vec4<f32>(ab_max.y) >= min(cy, dy)) & (vec4<f32>(ab_min.y) <= max(cy, dy));
+    // WGSL select evaluates both operands; do not divide parallel lanes by zero.
+    let divisor = select(denominator, vec4<f32>(1.0), parallel);
+    let t = (cax * cdy - cay * cdx) / divisor;
+    let u = ca_cross_ab / divisor;
+    let crossing_hit = (t >= vec4<f32>(0.0)) & (t <= vec4<f32>(1.0)) &
+        (u >= vec4<f32>(0.0)) & (u <= vec4<f32>(1.0));
+    return select(crossing_hit, collinear_hit, parallel);
 }
 
 fn segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: vec2<f32>, rect_max: vec2<f32>) -> bool {
@@ -879,14 +884,9 @@ fn segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: vec2<f32>
         return true;
     }
 
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    return segments_intersect(start, end, top_left, top_right) ||
-        segments_intersect(start, end, top_right, bottom_right) ||
-        segments_intersect(start, end, bottom_right, bottom_left) ||
-        segments_intersect(start, end, bottom_left, top_left);
+    let cx = vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x);
+    let cy = vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y);
+    return any(segments_intersect4(start, end, cx, cy, cx.yzwx, cy.yzwx));
 }
 
 fn point_in_quad(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
