@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ProGPU.Backend;
+using ProGPU.Backend.Dawn;
 using ProGPU.Vector;
 using Silk.NET.WebGPU;
 
@@ -22,8 +23,13 @@ internal static unsafe class Program
             throw new ArgumentException("Staged-only execution requires an independent reference file and cannot publish one.");
         byte[]? expectedResults = expectedPath == null ? null : File.ReadAllBytes(expectedPath);
         using var referenceResults = new MemoryStream();
-        using var context = new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter") };
-        context.Initialize(null);
+        bool useDawn = args.Contains("--dawn");
+        if (useDawn && args.Contains("--software-adapter"))
+            throw new ArgumentException("The Dawn Metal device factory does not support forcing a software adapter.");
+        using var dawn = useDawn ? DawnGpuContext.CreateMetalPresentation() : null;
+        using var ownedContext = useDawn ? null : new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter") };
+        var context = dawn?.Context ?? ownedContext!;
+        if (ownedContext != null) context.Initialize(null);
         using var cache = new RenderPipelineCache(context);
         var shader = cache.GetOrCreateShader("HitQueryStages", ShaderResource.Load(typeof(GpuHitTestEngine), "GpuHitTesting.wgsl"));
         var referenceShader = referenceShaderPath == null ? shader :
@@ -205,9 +211,7 @@ internal static unsafe class Program
                 var pass = context.Api.CommandEncoderBeginComputePass(encoder, &passDescriptor);
                 context.Api.ComputePassEncoderSetPipeline(pass, pipeline);
                 context.Api.ComputePassEncoderSetBindGroup(pass, 0, group, 0, null);
-                // Explicit native-only probe; production integration must add the
-                // shared API operation for Dawn/browser instead of bypassing it.
-                if (indirect) context.Wgpu.ComputePassEncoderDispatchWorkgroupsIndirect(pass, dispatchArguments.BufferPtr, 0);
+                if (indirect) context.Api.ComputePassEncoderDispatchWorkgroupsIndirect(pass, dispatchArguments.BufferPtr, 0);
                 else context.Api.ComputePassEncoderDispatchWorkgroups(pass, 1, 1, 1);
                 context.Api.ComputePassEncoderEnd(pass);
                 context.Api.ComputePassEncoderRelease(pass);

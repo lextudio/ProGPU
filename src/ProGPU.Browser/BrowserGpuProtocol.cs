@@ -42,6 +42,7 @@ public enum BrowserGpuOpcode : ushort
     EndComputePass = 51,
     SetComputePipeline = 52,
     DispatchWorkgroups = 53,
+    DispatchWorkgroupsIndirect = 54,
     CopyBufferToBuffer = 60,
     CopyBufferToTexture = 61,
     CopyTextureToBuffer = 62,

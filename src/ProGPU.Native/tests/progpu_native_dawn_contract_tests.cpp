@@ -53,7 +53,10 @@ progpu_native_dawn_engine_options valid_options(
 
 } // namespace
 
+void test_dawn_indirect_dispatch();
+
 int main() {
+    test_dawn_indirect_dispatch();
     progpu_native_hit_test_result hit_summary{};
     std::uint32_t hit_count = 0U;
     require(progpu_native_engine_wait_hit_test(

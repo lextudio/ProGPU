@@ -1110,11 +1110,16 @@ if(NOT EMSCRIPTEN AND PROGPU_NATIVE_DAWN_WEBGPU_INCLUDE_DIR)
 
     if(BUILD_TESTING)
         add_executable(progpu_native_dawn_contract_tests
-            tests/progpu_native_dawn_contract_tests.cpp)
+            tests/progpu_native_dawn_contract_tests.cpp
+            tests/progpu_native_dawn_dispatch_tests.cpp)
         target_compile_features(progpu_native_dawn_contract_tests
             PRIVATE cxx_std_20)
+        target_compile_definitions(progpu_native_dawn_contract_tests PRIVATE
+            PROGPU_NATIVE_DAWN_ABI=1)
         target_include_directories(progpu_native_dawn_contract_tests PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/include")
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Backend"
+            "${PROGPU_NATIVE_DAWN_WEBGPU_INCLUDE_DIR}")
         target_link_libraries(progpu_native_dawn_contract_tests PRIVATE
             progpu_native_dawn)
         progpu_native_enable_warnings(progpu_native_dawn_contract_tests)

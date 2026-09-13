@@ -1097,6 +1097,9 @@ jobs:
           path: artifacts/native-x11-popup
           if-no-files-found: warn
 
+      - name: Verify browser indirect command transport
+        run: node --experimental-vm-modules eng/progpu-test-browser-indirect-dispatch.mjs
+
       - name: Compare ordered GPU query stages with original shader
         if: runner.os != 'Windows'
         shell: bash
@@ -1106,6 +1109,14 @@ jobs:
           dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release -- \
             --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
             --write-reference "$RUNNER_TEMP/progpu-hit-query-reference.bin"
+
+      - name: Compare Dawn ordered GPU queries with the independent reference
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --expected-results "$RUNNER_TEMP/progpu-hit-query-reference.bin"
 
       - name: Upload ordered query reference
         if: runner.os != 'Windows' && always()

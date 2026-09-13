@@ -126,9 +126,9 @@ is not counted as a pass. The independent contract project has no such dependenc
 
 - Extend the passing system ARM64/Metal differential to x64, Linux, multi-level
   BVHs and device limits. Retain original deadlines/fences and exact counters.
-- Pair managed and C++ dispatcher/resource lifetime changes; add the typed shared
-  indirect operation for native, Dawn and browser providers. Do not bypass a
-  borrowed device through the native-only API used by this diagnostic probe.
+- Pair managed and C++ dispatcher/resource lifetime changes. The shared indirect
+  API is now connected (below), but product query dispatch still uses the original
+  single-pass entrypoints; transport support is not product query admission.
 - Size scratch from the validated immutable index generation, reject overflow
   before publishing results, preserve pending-readback/owner-map leases, and
   respect device storage/indirect-workgroup limits with bounded dispatching.
@@ -137,6 +137,57 @@ is not counted as a pass. The independent contract project has no such dependenc
   and residency against the same final legacy/native binaries.
 - Finish compiler-feature packaging and final native package/Showcase input,
   popup/DPI/lifetime gates. No dependency pin or merge advances from this probe.
+
+## Shared indirect dispatch — 2026-09-14
+
+`IWebGpuApi.ComputePassEncoderDispatchWorkgroupsIndirect` now forwards the original
+compute-pass/buffer identity and 64-bit byte offset through Silk and Dawn. The
+browser adds opcode 54 with a 16-byte payload (pass u32, buffer u32, offset u64);
+its producer and actual JavaScript decoder reject offsets beyond JavaScript's
+exact integer range instead of rounding. Existing packet opcodes/layouts and
+version remain unchanged. Buffer bounds, alignment, usages and device ownership
+remain WebGPU validation, not CPU argument readback. The C++ Dawn provider resolves
+the same procedure through its current device dispatch scope; missing procedures
+reject provider initialization. Borrowed devices never enter a native-only API.
+
+The original ProGPU shared API/protocol and procedure-table patterns are the
+implementation provenance; no third-party implementation was imported. The
+[WebGPU indirect-dispatch contract](https://gpuweb.github.io/gpuweb/#dom-gpucomputepassencoder-dispatchworkgroupsindirect)
+defines three u32 arguments in a 12-byte indirect buffer and a four-byte-aligned
+offset. Each forwarded command is constant-time with no argument readback or
+geometry work; browser packet storage is fixed-size and shared packet batching
+is unchanged. GPU buffers/pipelines remain owned by the existing context and
+submission lifetime; this API creates no resource or separate queue submission.
+
+Validation:
+
+- All 120 complete original-shader query buffers match using the shared API on
+  wgpu-native Metal and Dawn Metal (`--dawn`). Both also match the independently
+  recorded pre-refactor reference. The Dawn test borrows `DawnGpuContext.Context`
+  and disposes the owning Dawn context once, after query resources.
+- The Windows ARM64 system-WARP rerun passes the same 120 independent reference
+  comparisons through the shared API (exit 0, DXC). The isolated
+  `C:\ProGPU.OrderedQueryStages-System-Strokes-SharedApi` run observed the actual
+  staged wgpu-native DLL, pinned compiler pair and system `d3d10warp.dll`; no
+  development WARP or system replacement was used. This remains the diagnostic
+  dispatcher, not the native package consumer.
+- Eleven actual `BrowserWebGpuApiTests` pass in a focused linked test project
+  (six new cases). The full repository test project remains dependent on the
+  absent source submodules; this focused run is not a full-suite pass.
+- `node --experimental-vm-modules eng/progpu-test-browser-indirect-dispatch.mjs`
+  executes the actual browser decoder with test resources: four exact offsets,
+  two inexact offsets, two malformed payloads and one stale handle. This is
+  transport testing, not real-browser device qualification.
+- The native provider forwarding fixture compiles with strict C++20/Apple Clang
+  against pinned Dawn headers and passes exact handle/u64 forwarding, missing-
+  procedure rejection and dispatch-scope restoration. It is also called by the
+  full native Dawn contract executable; standalone success is not a full native
+  renderer build.
+- CI includes browser decoder checks and the independent Dawn/Metal differential,
+  in addition to the existing native provider and original-shader query gates.
+
+Typed product execution selection, bounded candidate resources, device limits,
+pending readback/overflow handling and paired product dispatch remain required.
 
 ## Research and design decisions
 

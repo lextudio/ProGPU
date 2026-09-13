@@ -73,6 +73,7 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(CommandEncoderFinish) \
     X(CommandEncoderRelease) \
     X(ComputePassEncoderDispatchWorkgroups) \
+    X(ComputePassEncoderDispatchWorkgroupsIndirect) \
     X(ComputePassEncoderEnd) \
     X(ComputePassEncoderRelease) \
     X(ComputePassEncoderSetBindGroup) \
@@ -523,6 +524,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuCommandEncoderRelease)
 #define wgpuComputePassEncoderDispatchWorkgroups \
     (::progpu::native::webgpu::active_dispatch().wgpuComputePassEncoderDispatchWorkgroups)
+#define wgpuComputePassEncoderDispatchWorkgroupsIndirect \
+    (::progpu::native::webgpu::active_dispatch().wgpuComputePassEncoderDispatchWorkgroupsIndirect)
 #define wgpuComputePassEncoderEnd \
     (::progpu::native::webgpu::active_dispatch().wgpuComputePassEncoderEnd)
 #define wgpuComputePassEncoderRelease \

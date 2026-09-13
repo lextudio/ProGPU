@@ -3846,6 +3846,14 @@ function execute(opcode, view, payload, payloadLength, absoluteBase) {
       if (payloadLength === 12) state.computePass.dispatchWorkgroups(view.getUint32(payload, true), view.getUint32(payload + 4, true), view.getUint32(payload + 8, true));
       else requireResource(view.getUint32(payload, true)).dispatchWorkgroups(view.getUint32(payload + 4, true), view.getUint32(payload + 8, true), view.getUint32(payload + 12, true));
       break;
+    case 54: {
+      if (payloadLength !== 16) throw new Error('Invalid indirect compute dispatch payload.');
+      const offset = view.getBigUint64(payload + 8, true);
+      if (offset > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Indirect compute offset is not exactly representable.');
+      requireResource(view.getUint32(payload, true)).dispatchWorkgroupsIndirect(
+        requireResource(view.getUint32(payload + 4, true)), Number(offset));
+      break;
+    }
     case 60:
       requireResource(view.getUint32(payload, true)).copyBufferToBuffer(
         requireResource(view.getUint32(payload + 4, true)), Number(view.getBigUint64(payload + 8, true)),
