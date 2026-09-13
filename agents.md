@@ -11,6 +11,16 @@ Welcome, agent! This document serves as a specialized developer guide and archit
 
 ## 1. Core Architectural Rules & Conventions
 
+Optional staged GPU hit queries must collect and merge in original BVH order;
+primitive-family grouping may not change equal-depth or duplicate-owner results.
+Keep legacy six-binding entrypoints independent of candidate storage, share the
+actual traversal/predicates and preserve clip metadata after a separate clip pass.
+Stroke sample consolidation retains exact 1/16/24-piece evaluation and cap order.
+The standalone stages are not product admission: retain paired dispatcher,
+overflow/device-limit/owner-lease and final Windows requirements in
+docs/native-ordered-hit-query-stages.md. Never waive counter or unused-slot
+differences merely because the topmost owner agrees.
+
 Windows compiler-feature builds must retain the exact Silk native/header ABI,
 reviewed locked dependency graph and verified target PE architecture. Keep the
 DXC metadata overlay confined to an isolated external build; never patch upstream
