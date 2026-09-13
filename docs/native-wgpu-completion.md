@@ -86,3 +86,15 @@ WARP-selecting managed diagnostic assembly, so this is C++ repair evidence only.
 All 122 managed native-interop contract tests also pass. Superseded Builds
 `34779068703` and `34780421690` were cancelled to release CI capacity, not counted
 as successful qualification.
+
+The ARM64 hosted job `103788291061` also passes the new fence-retirement probe
+(4,836 ms, 306 polls), while its actual old-package native baseline is black and
+the deferred-retirement case passes. Both jobs are terminal; the historical
+package diagnostics remain red by including those original failures.
+
+The staged VM run is now terminal. Its direct native path, original cubic and
+retained MIL rendering pass, but the full consumer exits with `0xC0000005` after
+native owner-query submission (19,811.814 ms to submit; 89.515 seconds for the
+full process). The outer Parallels command exits 255. Do not restart that handle
+or call it a successful full consumer. The completion repair has rendering
+evidence; Windows query execution remains independently unresolved.
