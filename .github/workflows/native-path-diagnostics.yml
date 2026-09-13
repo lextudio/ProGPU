@@ -58,14 +58,24 @@ jobs:
           run-id: ${{ steps.package.outputs.run_id }}
           name: progpu-native-package
           path: artifacts/path-diagnostic-packages
-      - name: Execute canonical coverage and partial texture copy probe
+      - name: Execute independent cold path-stage probes
         shell: pwsh
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: |
           $source = Join-Path $env:GITHUB_WORKSPACE 'artifacts/path-diagnostic-packages'
           Get-ChildItem -LiteralPath $source -Filter '*.nupkg' | Get-FileHash -Algorithm SHA256 | Format-List
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+          dotnet build tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
             --configuration Release "-p:ProGpuNativePackageSource=$source" `
-            "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION" -- --path-coverage-probe
+            "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $failed = $false
+          foreach ($probe in '--path-coverage-probe', '--native-path-probe', '--native-cubic-probe') {
+            Write-Output "Independent process: $probe"
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+              --configuration Release --no-build "-p:ProGpuNativePackageSource=$source" `
+              "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION" -- $probe
+            Write-Output "Probe $probe exit=$LASTEXITCODE"
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { exit 1 }

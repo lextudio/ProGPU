@@ -31,6 +31,18 @@ if (args.Contains("--path-coverage-probe", StringComparer.Ordinal))
     return;
 }
 
+if (args.Contains("--native-path-probe", StringComparer.Ordinal) ||
+    args.Contains("--native-cubic-probe", StringComparer.Ordinal))
+{
+    using var probeContext = new WgpuContext();
+    probeContext.Initialize(window: null);
+    if (args.Contains("--native-cubic-probe", StringComparer.Ordinal))
+        ValidateNativeCubicControlHull(probeContext);
+    else
+        PathCoverageProbe.RunNative(probeContext);
+    return;
+}
+
 Console.WriteLine("package-consumer: native ABI");
 NativeRendererInfo info = NativeCompositor.GetInfo();
 if (info.AbiVersion != 4 ||

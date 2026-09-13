@@ -1,12 +1,40 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ProGPU.Backend;
+using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
 // Failure isolation only: this executes the packaged canonical kernel, not a
 // replacement renderer. A passing probe never qualifies a failed native frame.
 internal static unsafe class PathCoverageProbe
 {
+    internal static void RunNative(WgpuContext context)
+    {
+        using var renderer = new NativeCompositor(context, TextureFormat.Rgba8Unorm);
+        using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Cold native path diagnostic");
+        NativePathSegment[] segments = [
+            new(NativePathSegmentKind.Line, new(8, 4), new(40, 4)),
+            new(NativePathSegmentKind.Line, new(40, 4), new(40, 12)),
+            new(NativePathSegmentKind.Line, new(40, 12), new(8, 12)),
+            new(NativePathSegmentKind.Line, new(8, 12), new(8, 4))];
+        var metrics = renderer.RenderPaths(target, 1,
+            [new NativePathFill(0, 4, new(8, 4), new(40, 12), Vector4.One,
+                Matrix3x2.Identity, NativeFillRule.NonZero, 8)],
+            segments, new Vector4(0, 0, 0, 1));
+        renderer.WaitForSubmission(renderer.GetLastSubmissionToken());
+        byte[] pixels = target.ReadPixels();
+        int inside = (8 * 64 + 16) * 4, outside = (2 * 64 + 2) * 4;
+        Console.WriteLine($"package-consumer: cold direct native path inside=" +
+            $"({pixels[inside]},{pixels[inside + 1]},{pixels[inside + 2]},{pixels[inside + 3]}), " +
+            $"outside=({pixels[outside]},{pixels[outside + 1]},{pixels[outside + 2]},{pixels[outside + 3]}); " +
+            $"draws={metrics.DrawCallCount}; coverageBytes={metrics.CoverageStagingBytes}; " +
+            $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
+        if (pixels[inside] != 255 || pixels[inside + 1] != 255 || pixels[inside + 2] != 255 || pixels[inside + 3] != 255 ||
+            pixels[outside] != 0 || pixels[outside + 1] != 0 || pixels[outside + 2] != 0 || pixels[outside + 3] != 255)
+            throw new InvalidOperationException("Cold direct native path probe failed.");
+    }
+
     internal static void Run(WgpuContext context)
     {
         const uint rowBytes = 256, width = 64, height = 16;

@@ -46,8 +46,21 @@ extra submission or readback was introduced.
 Logs remain in `artifacts/path-coverage-probe-{build,metal}.log` in the ProGPU
 worktree and the parent workspace's
 `artifacts/native-windows-consumer.akdIwM/path-coverage-{normal,warp}.log`.
-Hosted CI evidence is still required; the VM has a different Windows graphics
-stack. Do not claim that the partial transfer hypothesis is resolved on CI.
+Hosted [diagnostic run 34768876404](https://github.com/wieslawsoltes/ProGPU/actions/runs/34768876404)
+now passes on both Windows x64 and ARM64 using the original failing package
+3000, with exact expected raw/atlas/untouched samples on Microsoft Basic Render
+Driver. This narrows the basic raster/partial-copy path, not cubic geometry,
+native binding preparation or fragment sampling. The original package gate
+remains failed.
+
+The independent `Native path diagnostics` workflow reuses a specified completed
+Build's package and logs its run number, original head and package hashes. It is
+not a current-head artifact producer or replacement gate. Its follow-up invokes
+`--native-path-probe` (cold direct native rectangle) and `--native-cubic-probe`
+(the unchanged original MIL cubic assertion), each in a fresh process. Metal
+passes the direct rectangle with exact white/black RGBA samples. The workflow
+collects all stage exits and still fails if any probe fails; no first-frame retry
+or hidden warm-up is involved.
 
 ## Research boundary
 
