@@ -22,6 +22,11 @@ closed. Shared surfaces inherit the owner's compiler, and borrowed Dawn/browser
 devices cannot be reconfigured. Keep automatic compiler/adapter defaults intact
 until platform qualification. A forced software adapter is an explicit validation
 choice, not an automatic renderer or compute fallback.
+Compiler redistributables must come from the checked-in package/hash/author pin,
+retain their original notices and pass actual PE architecture checks before
+publication. Never infer architecture from an archive folder, relax pure-ARM64
+admission for a hybrid payload, overwrite existing artifacts, or include testing-
+only WARP in compiler packages. Artifact provenance is not runtime qualification.
 
 Rectangle-edge query batching keeps independent four-lane crossing/collinearity
 masks until the final any reduction. Preserve original inclusive tests and both

@@ -206,3 +206,73 @@ with `0x80004005`, followed by the native invalid-pipeline error path. Neither
 failure is hidden by default compiler changes, software selection or relaxed
 assertions. This strengthens compiler integration evidence but does not qualify
 system/hardware execution, x64, final packages or the source Showcase application.
+
+## Pinned redistributable compiler staging — 2026-09-14
+
+For the same ShowcaseApp startup path, `eng/stage-dxc-compiler.ps1` replaces
+manual Windows SDK DLL discovery with a reproducible compiler artifact. Its
+reviewed inputs are in `eng/wgpu-dxc/compiler-package.json`. Microsoft identifies
+[Microsoft.Direct3D.DXC](https://www.nuget.org/packages/Microsoft.Direct3D.DXC/1.8.2502.8)
+as a redistributable package and assigns `LICENSE-LLVM.txt` to the compiler files.
+The package's actual license documents and nuspec were inspected; staging retains
+all three top-level notices and the original nuspec unchanged. This does not
+approve unrelated dependencies, modify licensing or permit WARP distribution.
+
+The selected package is 1.8.2502.8, with separate pure x64 and ARM64 binaries.
+The newer 1.9.2607.13 package was also downloaded and signature-verified, but its
+ARM64-directory compiler and validator carry PE machine `0x8664`, rather than
+the current pure-ARM64 admission's `0xAA64`. The staging guard correctly rejected
+that payload. Directory names alone do not prove binary architecture. Do not
+relax the product guard or silently introduce hybrid-ABI support to adopt a newer
+compiler. The selected package matches the already tested compiler release family;
+it is not described as the latest DXC release or as an SDK-identical binary.
+
+```powershell
+# Download the exact URL in compiler-package.json to a caller-owned archive.
+./eng/stage-dxc-compiler.ps1 -Rid win-arm64 `
+  -PackagePath C:\downloads\Microsoft.Direct3D.DXC.1.8.2502.8.nupkg `
+  -OutputDirectory C:\app-artifacts\compiler-arm64
+# Also supports win-x64; staging itself can run on Windows, macOS or Linux.
+```
+
+The tool has no implicit download. It verifies the pinned whole-package SHA256,
+NuGet author/repository signatures and the pinned Microsoft author certificate,
+then copies only the two compiler libraries and notices into a private temporary
+directory. Each DLL is hash-checked and PE-checked before same-volume atomic
+publication into a **new** output directory. Missing/duplicate/empty entries,
+truncated headers, hash drift and existing output fail; trust verification is
+never disabled. Only the invocation's unique staging directory is cleaned up on
+failure. Extraction uses bounded stream copying, not a whole-archive expansion.
+Time is O(A+B), for archive bytes A and selected bytes B, plus signature trust
+verification; auxiliary copy memory is bounded, disk output is O(B). There is no
+runtime/frame work, new shader, CPU fallback or geometry change.
+
+The output includes `dxc-compiler-package.json` provenance and licenses. Select
+its directory through the existing explicit `LibraryDirectory` option or
+`PROGPU_DX12_COMPILER_DIRECTORY`. The actual loaded WebGPU dependency still needs
+its separate exact-ABI feature manifest. Compiler staging does not substitute
+for that dependency or rewrite its stock NuGet assets. Windows native CI stages
+and uploads both compiler architectures separately from product runtime packages.
+
+Seventeen offline input checks cover both PE machines, mismatches, truncation,
+hash rejection, exact entry identity, duplicate/missing/empty entries, destination
+preservation and rejecting a wrong package before creating output. They pass on
+macOS and Windows. Real signature-verified staging passes for both RIDs on macOS and ARM64
+on Windows. The workflow passes actionlint.
+
+The full current-product Windows consumer runs with the staged ARM64 DLLs,
+each version 1.8.2502.8, in a separate compiler directory. Module inspection
+confirms both libraries and the intended WARP path. The production native library
+remains `e696e6a9...` from above, not the rejected workgroup-stack experiment.
+Development WARP passes the entire rendering/owner/participation/region-first
+fixture and exits 0. System WARP passes rendering, submits its first query in
+2454.048 ms, then exits `-1073741819` before readback. Both processes are terminal.
+This confirms the redistributable compiler input path, not a repair of system
+WARP or a controlled performance improvement.
+
+Remaining release work: package the exact feature-enabled WebGPU runtime with
+its complete dependency notices, connect and test final package asset selection,
+qualify Windows x64/ARM64 system/hardware execution, and run source application
+gates. Product defaults, WPF dependency pins and ordered merge admission are
+unchanged. No testing-only WARP DLL is staged by the compiler tool or uploaded
+by its CI step.

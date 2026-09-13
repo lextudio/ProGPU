@@ -152,7 +152,27 @@ jobs:
       - name: Verify Windows compiler dependency input handling
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./eng/test-wgpu-native-windows-inputs.ps1
+        run: |
+          ./eng/test-wgpu-native-windows-inputs.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native compiler build input checks failed.' }
+          ./eng/test-dxc-compiler-inputs.ps1
+
+      - name: Stage pinned redistributable Windows shader compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pin = Get-Content -Raw eng/wgpu-dxc/compiler-package.json | ConvertFrom-Json
+          $archive = Join-Path $env:RUNNER_TEMP "Microsoft.Direct3D.DXC.$($pin.version).nupkg"
+          Invoke-WebRequest -Uri $pin.url -OutFile $archive
+          ./eng/stage-dxc-compiler.ps1 -Rid '${{ matrix.rid }}' -PackagePath $archive -OutputDirectory 'artifacts/dxc-compiler/${{ matrix.rid }}'
+
+      - name: Upload verified Windows compiler artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-dxc-compiler-${{ matrix.rid }}
+          path: artifacts/dxc-compiler/${{ matrix.rid }}
+          if-no-files-found: error
 
       - name: Cache Windows native dependencies
         if: runner.os == 'Windows'
