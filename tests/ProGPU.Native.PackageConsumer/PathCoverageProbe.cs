@@ -4,7 +4,7 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
-internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission }
+internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease }
 
 // Failure isolation only: this executes the packaged canonical kernel, not a
 // replacement renderer. A passing probe never qualifies a failed native frame.
@@ -49,11 +49,11 @@ internal static unsafe class PathCoverageProbe
         uint width = nativeLayout ? 40u : 64u;
         uint atlasX = nativeLayout ? 2u : 17u, atlasY = nativeLayout ? 2u : 19u;
         using var cache = new RenderPipelineCache(context);
-        using var uniforms = new GpuBuffer(context, 48, BufferUsage.Storage | BufferUsage.CopyDst);
-        using var records = new GpuBuffer(context, 32, BufferUsage.Storage | BufferUsage.CopyDst);
-        using var segments = new GpuBuffer(context, 4 * 48, BufferUsage.Storage | BufferUsage.CopyDst);
-        using var coverage = new GpuBuffer(context, rowBytes * height, BufferUsage.Storage | BufferUsage.CopySrc);
-        using var combine = new GpuBuffer(context, 40, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var uniforms = new ProbeBuffer(context, 48, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var records = new ProbeBuffer(context, 32, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var segments = new ProbeBuffer(context, 4 * 48, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var coverage = new ProbeBuffer(context, rowBytes * height, BufferUsage.Storage | BufferUsage.CopySrc);
+        using var combine = new ProbeBuffer(context, 40, BufferUsage.Storage | BufferUsage.CopyDst);
         using var atlas = new GpuTexture(context, 1024, 1024, TextureFormat.R8Unorm,
             TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
             "Cold partial path atlas diagnostic");
@@ -65,7 +65,11 @@ internal static unsafe class PathCoverageProbe
             new(new(8, 4), new(40, 4)), new(new(40, 4), new(40, 12)),
             new(new(40, 12), new(8, 12)), new(new(8, 12), new(8, 4))]);
         combine.Write<uint>(new uint[10]);
-        GpuBuffer[] buffers = [uniforms, records, segments, coverage, combine];
+        uint[] bufferSizes = [uniforms.Size, records.Size, segments.Size, coverage.Size, combine.Size];
+        var bufferPointers = stackalloc Silk.NET.WebGPU.Buffer*[5];
+        bufferPointers[0] = uniforms.BufferPtr; bufferPointers[1] = records.BufferPtr;
+        bufferPointers[2] = segments.BufferPtr; bufferPointers[3] = coverage.BufferPtr;
+        bufferPointers[4] = combine.BufferPtr;
         BindGroupLayout* layout = null;
         PipelineLayout* pipelineLayout = null;
         BindGroup* group = null;
@@ -81,11 +85,11 @@ internal static unsafe class PathCoverageProbe
                     Binding = (uint)i, Visibility = ShaderStage.Compute,
                     Buffer = new BufferBindingLayout {
                         Type = i == 3 ? BufferBindingType.Storage : BufferBindingType.ReadOnlyStorage,
-                        MinBindingSize = i == 3 ? 4u : buffers[i].Size
+                        MinBindingSize = i == 3 ? 4u : bufferSizes[i]
                     }
                 };
                 entries[i] = new BindGroupEntry {
-                    Binding = (uint)i, Buffer = buffers[i].BufferPtr, Size = buffers[i].Size
+                    Binding = (uint)i, Buffer = bufferPointers[i], Size = bufferSizes[i]
                 };
             }
             var layoutDescriptor = new BindGroupLayoutDescriptor { EntryCount = 5, Entries = layoutEntries };
@@ -121,7 +125,12 @@ internal static unsafe class PathCoverageProbe
             context.Api.CommandEncoderCopyBufferToTexture(encoder, &source, &destination, &extent);
             if (sameSubmission)
             {
-                DrawAtlas(context, atlas, cache, encoder, nativeLayout, apiMode);
+                DrawAtlas(context, atlas, cache, encoder, nativeLayout, apiMode,
+                    apiMode == PathProbeApi.NativeRelease ? () => {
+                        context.Api.BindGroupRelease(group); group = null;
+                        uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
+                        Console.WriteLine("package-consumer: released all five raster buffers and bind group before native completion wait");
+                    } : null);
             }
             else
             {
@@ -134,8 +143,16 @@ internal static unsafe class PathCoverageProbe
             // Submit the first draw before either readback. The diagnostic must
             // not warm up or synchronize the atlas through a CPU read first.
             if (drawAtlas && !sameSubmission) DrawAtlas(context, atlas, cache);
-            byte[] raw = coverage.ReadBytes();
             byte[] pixels = atlas.ReadPixels();
+            if (apiMode == PathProbeApi.NativeRelease)
+            {
+                if (pixels[(atlasY + 8) * 1024 + atlasX + 16] != 255 ||
+                    pixels[(atlasY + 2) * 1024 + atlasX + 2] != 0 || pixels[0] != 0)
+                    throw new InvalidOperationException("Released raster resource atlas probe failed.");
+                Console.WriteLine("package-consumer: released raster atlas interior/exterior/untouched samples passed");
+                return;
+            }
+            byte[] raw = coverage.ReadBytes();
             byte rawInside = raw[8 * rowBytes + 16], rawOutside = raw[2 * rowBytes + 2];
             byte atlasInside = pixels[(atlasY + 8) * 1024 + atlasX + 16];
             byte atlasOutside = pixels[(atlasY + 2) * 1024 + atlasX + 2];
@@ -157,7 +174,7 @@ internal static unsafe class PathCoverageProbe
 
     private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
         CommandEncoder* sharedEncoder = null, bool nativeLayout = false,
-        PathProbeApi apiMode = PathProbeApi.AutomaticLayout)
+        PathProbeApi apiMode = PathProbeApi.AutomaticLayout, Action? releaseRaster = null)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
@@ -304,7 +321,7 @@ internal static unsafe class PathCoverageProbe
             var commandDescriptor = new CommandBufferDescriptor();
             command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
             if (command == null) throw new InvalidOperationException("Canonical vector probe commands rejected.");
-            if (apiMode == PathProbeApi.NativeSubmission)
+            if (apiMode == PathProbeApi.NativeSubmission || apiMode == PathProbeApi.NativeRelease)
             {
                 // Existing wgpu-native extension ABI used by the C++ engine,
                 // followed by the same exact-token wait as the native probe.
@@ -313,6 +330,11 @@ internal static unsafe class PathCoverageProbe
                 var poll = (delegate* unmanaged[Cdecl]<Device*, uint, void*, uint>)
                     context.Wgpu.Context.GetProcAddress("wgpuDevicePoll");
                 var token = new SubmissionToken { Queue = context.Queue, Index = submit(context.Queue, 1, &command) };
+                if (apiMode == PathProbeApi.NativeRelease)
+                {
+                    context.Api.CommandBufferRelease(command); command = null;
+                    releaseRaster!();
+                }
                 Console.WriteLine($"package-consumer: native submission token={token.Index}; poll={poll(context.Device, 1, &token)}");
             }
             else
@@ -348,6 +370,64 @@ internal static unsafe class PathCoverageProbe
     {
         public Queue* Queue;
         public ulong Index;
+    }
+
+    // Own exactly one raw caller reference, like path_raster_resources in C++.
+    // GpuBuffer.Dispose defers release and therefore cannot test this boundary.
+    private sealed class ProbeBuffer : IDisposable
+    {
+        private readonly WgpuContext _context;
+        public Silk.NET.WebGPU.Buffer* BufferPtr { get; private set; }
+        public uint Size { get; }
+
+        public ProbeBuffer(WgpuContext context, uint size, BufferUsage usage)
+        {
+            _context = context; Size = size;
+            var descriptor = new BufferDescriptor { Size = size, Usage = usage };
+            BufferPtr = context.Api.DeviceCreateBuffer(context.Device, &descriptor);
+            if (BufferPtr == null) throw new InvalidOperationException("Probe buffer allocation failed.");
+        }
+
+        public void Write<T>(ReadOnlySpan<T> values) where T : unmanaged
+        {
+            ObjectDisposedException.ThrowIf(BufferPtr == null, this);
+            var bytes = MemoryMarshal.AsBytes(values);
+            if ((uint)bytes.Length > Size || (bytes.Length & 3) != 0)
+                throw new ArgumentException("Probe write must fit its aligned buffer.", nameof(values));
+            fixed (byte* data = bytes)
+                _context.Api.QueueWriteBuffer(_context.Queue, BufferPtr, 0, data, (nuint)bytes.Length);
+        }
+
+        public void Dispose()
+        {
+            if (BufferPtr == null) return;
+            _context.Api.BufferRelease(BufferPtr);
+            BufferPtr = null;
+        }
+
+        public byte[] ReadBytes()
+        {
+            ObjectDisposedException.ThrowIf(BufferPtr == null, this);
+            using var copy = new GpuBuffer(_context, Size, BufferUsage.CopyDst | BufferUsage.CopySrc);
+            var descriptor = new CommandEncoderDescriptor();
+            var encoder = _context.Api.DeviceCreateCommandEncoder(_context.Device, &descriptor);
+            if (encoder == null) throw new InvalidOperationException("Probe readback encoder rejected.");
+            CommandBuffer* command = null;
+            try
+            {
+                _context.Api.CommandEncoderCopyBufferToBuffer(encoder, BufferPtr, 0, copy.BufferPtr, 0, Size);
+                var commands = new CommandBufferDescriptor();
+                command = _context.Api.CommandEncoderFinish(encoder, &commands);
+                if (command == null) throw new InvalidOperationException("Probe readback commands rejected.");
+                _context.Submit(1, &command);
+                return copy.ReadBytes();
+            }
+            finally
+            {
+                if (command != null) _context.Api.CommandBufferRelease(command);
+                _context.Api.CommandEncoderRelease(encoder);
+            }
+        }
     }
 
     private static uint Bits(float value) => BitConverter.SingleToUInt32Bits(value);

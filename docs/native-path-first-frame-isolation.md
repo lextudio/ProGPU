@@ -12,6 +12,32 @@ as a successful substitute.
 
 ## Bounded diagnostic
 
+### Native resource-reference comparison, 2026-09-13
+
+Run [34774316909](https://github.com/wieslawsoltes/ProGPU/actions/runs/34774316909)
+passes explicit native-equivalent pipeline/bind-group layouts and the exact
+`wgpuQueueSubmitForIndex` / `wgpuDevicePoll` completion-token sequence on both
+Windows architectures against package 3005. Native drawing still fails on x64
+(direct-path device loss and an entirely black original cubic fixture); ARM64
+passes in this run but failed the preceding identical-package comparison.
+This does not qualify either current-head package or reproducible cold startup.
+
+`--path-native-release-probe` adds one controlled ownership difference to the
+passing exact-submission probe: release the caller command-buffer reference and
+all five temporary raster buffer references plus their bind group immediately
+after submission, before waiting. The tiny diagnostic owns raw WebGPU references
+and releases them exactly once, without `BufferDestroy` or managed deferred
+disposal. Only the retained atlas and final frame are read in this case; released
+buffers are never accessed. Ordinary probes still verify raw coverage separately.
+No renderer, shader, dependency, deadline, fallback or acceptance assertion changes.
+The manual workflow's `lifetime` selection runs that comparison and both original
+native probes in independent processes, keeping the ten-minute bound.
+
+Release compilation reports zero warnings/errors. Metal exact-submission,
+early-release and raw-coverage probes all pass. Hosted lifetime results remain
+required. This is diagnostic coverage of the common WebGPU ownership contract,
+not a one-sided production rendering change or a demonstrated lifetime defect.
+
 `ProGPU.Native.PackageConsumer --path-coverage-probe` executes the packaged
 `ProGPU.Backend.Shaders.PathRasterizerShader`, entry `cs_main_ordinary`, with
 its original five-binding storage ABI, 16x16 workgroup and eight-by-eight sample

@@ -7,6 +7,11 @@ on:
         description: Build run containing the package under investigation
         required: true
         type: string
+      probe_set:
+        description: Bounded resource-lifetime comparison or full stage diagnosis
+        type: choice
+        default: all
+        options: [all, lifetime]
 
 permissions:
   contents: read
@@ -58,6 +63,7 @@ jobs:
         shell: pwsh
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          PROBE_SET: ${{ inputs.probe_set }}
         run: |
           $source = Join-Path $env:GITHUB_WORKSPACE 'artifacts/path-diagnostic-packages'
           Get-ChildItem -LiteralPath $source -Filter '*.nupkg' | Get-FileHash -Algorithm SHA256 | Format-List
@@ -66,7 +72,12 @@ jobs:
             "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $failed = $false
-          foreach ($probe in '--path-coverage-probe', '--path-vector-probe', '--path-vector-batched-probe', '--path-native-layout-probe', '--path-native-bindings-probe', '--path-native-submit-probe', '--native-path-probe', '--native-cubic-probe') {
+          $probes = if ($env:PROBE_SET -eq 'lifetime') {
+            @('--path-native-submit-probe', '--path-native-release-probe', '--native-path-probe', '--native-cubic-probe')
+          } else {
+            @('--path-coverage-probe', '--path-vector-probe', '--path-vector-batched-probe', '--path-native-layout-probe', '--path-native-bindings-probe', '--path-native-submit-probe', '--path-native-release-probe', '--native-path-probe', '--native-cubic-probe')
+          }
+          foreach ($probe in $probes) {
             Write-Output "Independent process: $probe"
             dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
               --configuration Release --no-build "-p:ProGpuNativePackageSource=$source" `
