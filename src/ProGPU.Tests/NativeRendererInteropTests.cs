@@ -6286,8 +6286,11 @@ public class NativeRendererInteropTests
         {
             success &= Build(destination, pixels, in image, in effect);
         }
+        // Measure only the builder loop, never the test framework's assertion
+        // dispatch. Keep the exact zero-byte requirement for all 10,000 builds.
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.True(success);
-        Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+        Assert.Equal(0L, allocated);
 
         var blurred = new NativeSceneImageEffect(
             default,

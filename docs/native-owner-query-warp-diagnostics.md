@@ -92,3 +92,37 @@ Do not fix this crash by replacing the native index with managed/CPU geometry,
 removing shader families, widening deadlines or declaring pipeline submission a
 successful query. Final system-runtime compatibility, exact current-package CI,
 source-host input and full application/platform qualification remain required.
+
+## Rejected workgroup-stack experiment (2026-09-14)
+
+The same ShowcaseApp first-input blocker was tested with one bounded storage
+change on top of `45147156`: move the canonical shader's 64-entry traversal
+array from function-private to workgroup memory. Keep its single invocation,
+single workgroup, LIFO order, capacity, exact geometry, bindings and readback
+contract unchanged. The hypothesis was reduced private spill pressure, not a
+proven diagnosis of that array. The original ProGPU shader is the implementation
+source; no third-party code was used. The existing
+[cross-engine decisions](native-mil-hit-test-ownership.md#design-references-and-decisions)
+remain unchanged. [WGSL address spaces](https://www.w3.org/TR/WGSL/#address-spaces)
+permit workgroup-local storage; no inter-invocation synchronization was needed.
+
+Both C++ providers built on macOS and Windows ARM64. All 174 selected hit-query
+and shader-resource tests, all 20 native CTests, and the independent full Metal
+owner-query fixture passed. Experimental native SHA256 values:
+
+- macOS: `99e5d652c8762a253d9f23ea02ff64ba46d11f5bff0bc5fffcda6dcc4c1cb222`.
+- Windows: `6f5517c838c2cc87486929163cd3c4d96dfa3e9b73b2ef4e4aa4818ef9935430`.
+
+The Windows controls used the real product compiler configuration at `45147156`,
+its verified DXC-enabled dependency, explicit DXC and a forced software adapter.
+Loaded module inspection verified the system/development WARP paths. System WARP
+`10.0.26100.9278` submitted the first point query in 2,698.965 ms, then exited
+`-1073741819` (`0xC0000005`) before readback. Development WARP 1.0.20 passed the
+entire fixture, including repeated waits and fresh region-first contexts. Both
+children are terminal. This is not a controlled performance benchmark.
+
+**The experiment was reverted before commit.** Moving the traversal array alone
+does not repair the system-runtime failure, and there is no established benefit
+to justify changing production storage or adding a workgroup-memory dependency.
+Experimental staged binaries must not be confused with current production
+artifacts. The runtime and final package/application gates remain open.
