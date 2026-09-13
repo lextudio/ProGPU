@@ -99,7 +99,9 @@ Windows native DLL SHA256:
 The system-WARP control still fails with `0xC0000005`, after 25,457.121 ms point
 submission and before first readback. Development WARP passes point/repeated
 waits and all participation checks; observed bounds submission is 216,465.624 ms
-and ellipse submission 78,582.698 ms. Fresh region-first contexts remain live.
+and ellipse submission 78,582.698 ms. The complete development fixture now passes,
+including fresh region-first contexts. The paired script exits 1 solely because
+it retains the failed system-runtime control; both processes are terminal.
 The mixed timings are not a controlled or all-family performance improvement;
 system-runtime compatibility and cold latency remain unqualified.
 
