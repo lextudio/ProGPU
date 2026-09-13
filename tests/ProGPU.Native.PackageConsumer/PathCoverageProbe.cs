@@ -35,7 +35,7 @@ internal static unsafe class PathCoverageProbe
             throw new InvalidOperationException("Cold direct native path probe failed.");
     }
 
-    internal static void Run(WgpuContext context, bool drawAtlas = false)
+    internal static void Run(WgpuContext context, bool drawAtlas = false, bool sameSubmission = false)
     {
         const uint rowBytes = 256, width = 64, height = 16;
         using var cache = new RenderPipelineCache(context);
@@ -109,14 +109,21 @@ internal static unsafe class PathCoverageProbe
             };
             var extent = new Extent3D(width, height, 1);
             context.Api.CommandEncoderCopyBufferToTexture(encoder, &source, &destination, &extent);
-            var commandDescriptor = new CommandBufferDescriptor();
-            command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
-            if (command == null) throw new InvalidOperationException("Coverage probe commands rejected.");
-            context.Submit(1, &command);
+            if (sameSubmission)
+            {
+                DrawAtlas(context, atlas, cache, encoder);
+            }
+            else
+            {
+                var commandDescriptor = new CommandBufferDescriptor();
+                command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
+                if (command == null) throw new InvalidOperationException("Coverage probe commands rejected.");
+                context.Submit(1, &command);
+            }
             Console.WriteLine("package-consumer: coverage probe submitted canonical raster and partial atlas copy");
             // Submit the first draw before either readback. The diagnostic must
             // not warm up or synchronize the atlas through a CPU read first.
-            if (drawAtlas) DrawAtlas(context, atlas, cache);
+            if (drawAtlas && !sameSubmission) DrawAtlas(context, atlas, cache);
             byte[] raw = coverage.ReadBytes();
             byte[] pixels = atlas.ReadPixels();
             byte rawInside = raw[8 * rowBytes + 16], rawOutside = raw[2 * rowBytes + 2];
@@ -138,7 +145,8 @@ internal static unsafe class PathCoverageProbe
         }
     }
 
-    private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache)
+    private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
+        CommandEncoder* sharedEncoder = null)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
@@ -205,7 +213,9 @@ internal static unsafe class PathCoverageProbe
             if (uniformGroup == null || atlasGroup == null || sampler == null)
                 throw new InvalidOperationException("Canonical vector probe bindings rejected.");
             var encoderDescriptor = new CommandEncoderDescriptor();
-            encoder = context.Api.DeviceCreateCommandEncoder(context.Device, &encoderDescriptor);
+            encoder = sharedEncoder == null
+                ? context.Api.DeviceCreateCommandEncoder(context.Device, &encoderDescriptor)
+                : sharedEncoder;
             var attachment = new RenderPassColorAttachment {
                 View = target.ViewPtr, LoadOp = LoadOp.Clear, StoreOp = StoreOp.Store,
                 ClearValue = new Color(0,0,0,1) };
@@ -229,6 +239,7 @@ internal static unsafe class PathCoverageProbe
             Console.WriteLine($"package-consumer: canonical vector atlas inside=" +
                 $"({pixels[inside]},{pixels[inside+1]},{pixels[inside+2]},{pixels[inside+3]}), " +
                 $"outside=({pixels[outside]},{pixels[outside+1]},{pixels[outside+2]},{pixels[outside+3]}); " +
+                $"sameSubmission={sharedEncoder != null}; " +
                 $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
             if (pixels[inside] != 255 || pixels[inside+1] != 255 || pixels[inside+2] != 255 || pixels[inside+3] != 255 ||
                 pixels[outside] != 0 || pixels[outside+1] != 0 || pixels[outside+2] != 0 || pixels[outside+3] != 255)
@@ -237,7 +248,7 @@ internal static unsafe class PathCoverageProbe
         finally
         {
             if (command != null) context.Api.CommandBufferRelease(command);
-            if (encoder != null) context.Api.CommandEncoderRelease(encoder);
+            if (encoder != null && sharedEncoder == null) context.Api.CommandEncoderRelease(encoder);
             if (atlasGroup != null) context.Api.BindGroupRelease(atlasGroup);
             if (uniformGroup != null) context.Api.BindGroupRelease(uniformGroup);
             if (sampler != null) context.Api.SamplerRelease(sampler);

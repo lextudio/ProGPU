@@ -102,6 +102,21 @@ passes all samples. The manual workflow reuses an explicitly selected package;
 Build failure diagnostics use their own package. Original consumer failures,
 query checks, deadlines and final qualification gates are unchanged.
 
+The completed [vector-stage run 34773037544](https://github.com/wieslawsoltes/ProGPU/actions/runs/34773037544)
+passes canonical coverage, partial copy and vector shading on both Windows
+architectures using package 3005. The x64 native rectangle loses its device at
+readback and the cubic remains black; ARM64's native rectangle and cubic pass
+in this diagnostic run, unlike its original consumer. These separate processes
+do not isolate driver/disk cache history or establish deterministic cold behavior.
+The normal first-frame gate remains failed. An independent VM software-adapter
+run also passes canonical vector shading with the original package 3000 runtime.
+
+`--path-vector-batched-probe` performs the same exact coverage/copy/vector work
+in one encoder and one queue submission, matching the direct native batch shape.
+The separate-submission probe remains available to distinguish the two contracts.
+Neither variant reads the atlas before drawing, changes shaders or retries a
+failed frame. Metal passes the single-submission variant with exact samples.
+
 `ProGPU.Wpf.ShowcaseApp` first-path startup currently creates seven coverage
 pipelines, including three signed-winding shader modules, even for an ordinary
 rectangle. Both C++ providers now retain common atlas/layout resources but create

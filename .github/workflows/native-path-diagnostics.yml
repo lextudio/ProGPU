@@ -66,7 +66,7 @@ jobs:
             "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $failed = $false
-          foreach ($probe in '--path-coverage-probe', '--path-vector-probe', '--native-path-probe', '--native-cubic-probe') {
+          foreach ($probe in '--path-coverage-probe', '--path-vector-probe', '--path-vector-batched-probe', '--native-path-probe', '--native-cubic-probe') {
             Write-Output "Independent process: $probe"
             dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
               --configuration Release --no-build "-p:ProGpuNativePackageSource=$source" `
