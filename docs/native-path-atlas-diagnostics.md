@@ -50,3 +50,27 @@ Separately, the staged Windows LibreWPF host with lazy managed atlases presents
 and recovers within its unchanged deadlines, but its complete run terminates
 with `0xC0000005` in `BeginHitTest` from `TryQueryHitTestBoundsOwners`. Startup
 progress is not full source-host or application qualification.
+
+## Hosted result and compute-buffer follow-up
+
+Run `34778761952`, x64 job `103781776094`, completes with all three atlas
+variants and the baseline passing. The original direct native path and cubic
+frame still fail with black interiors. These isolated texture-usage/view changes
+therefore do not reproduce the native failure on that runner; changing product
+atlas descriptors is not justified by this evidence. The ARM64 job remains live
+at this checkpoint.
+
+Two further differences in the same original ProGPU sources are now independently
+selectable with `probe_set=raster`:
+
+- `--path-native-raster-binding-probe` declares one 48-byte segment record as
+  the minimum layout binding size, as native does, while still binding all four
+  records. The baseline declares the full 192 bytes as its minimum.
+- `--path-native-raster-zero-probe` leaves the unused combine buffer unwritten,
+  matching native ordinary-path creation. WebGPU zero initialization remains
+  required; this is not admission of uninitialized shader values.
+- `--path-native-raster-probe` combines those differences.
+
+All three preserve complete raw-coverage, atlas-storage and target-pixel checks,
+and pass on Metal after a zero-warning/error Release build. No product renderer
+or shader is changed. Windows evidence remains required before choosing a repair.

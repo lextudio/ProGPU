@@ -8,10 +8,10 @@ on:
         required: true
         type: string
       probe_set:
-        description: Bounded resource-lifetime/atlas comparison or full stage diagnosis
+        description: Bounded resource-lifetime/atlas/raster comparison or full stage diagnosis
         type: choice
         default: all
-        options: [all, lifetime, atlas]
+        options: [all, lifetime, atlas, raster]
 
 permissions:
   contents: read
@@ -72,7 +72,9 @@ jobs:
             "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $failed = $false
-          $probes = if ($env:PROBE_SET -eq 'atlas') {
+          $probes = if ($env:PROBE_SET -eq 'raster') {
+            @('--path-native-submit-probe', '--path-native-raster-binding-probe', '--path-native-raster-zero-probe', '--path-native-raster-probe', '--native-path-probe', '--native-cubic-probe')
+          } elseif ($env:PROBE_SET -eq 'atlas') {
             @('--path-native-submit-probe', '--path-native-atlas-usage-probe', '--path-native-atlas-view-probe', '--path-native-atlas-probe', '--native-path-probe', '--native-cubic-probe')
           } elseif ($env:PROBE_SET -eq 'lifetime') {
             @('--path-native-submit-probe', '--path-native-release-buffers-probe', '--path-native-release-command-probe', '--native-path-probe', '--native-cubic-probe')

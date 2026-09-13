@@ -7,6 +7,8 @@ using Silk.NET.WebGPU;
 internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand }
 [Flags]
 internal enum PathProbeAtlas { Managed = 0, CopyDestinationOnly = 1, DefaultView = 2 }
+[Flags]
+internal enum PathProbeRaster { Baseline = 0, MinimumRecordBinding = 1, UnwrittenCombine = 2 }
 
 // Failure isolation only: this executes the packaged canonical kernel, not a
 // replacement renderer. A passing probe never qualifies a failed native frame.
@@ -46,7 +48,8 @@ internal static unsafe class PathCoverageProbe
     internal static void Run(WgpuContext context, bool drawAtlas = false,
         bool sameSubmission = false, bool nativeLayout = false,
         PathProbeApi apiMode = PathProbeApi.AutomaticLayout,
-        PathProbeAtlas atlasMode = PathProbeAtlas.Managed)
+        PathProbeAtlas atlasMode = PathProbeAtlas.Managed,
+        PathProbeRaster rasterMode = PathProbeRaster.Baseline)
     {
         const uint rowBytes = 256, height = 16;
         uint width = nativeLayout ? 40u : 64u;
@@ -62,6 +65,7 @@ internal static unsafe class PathCoverageProbe
                 (atlasMode.HasFlag(PathProbeAtlas.CopyDestinationOnly) ? TextureUsage.None : TextureUsage.CopySrc),
             "Cold partial path atlas diagnostic");
         Console.WriteLine($"package-consumer: atlas configuration={atlasMode}; usage={atlas.Usage}");
+        Console.WriteLine($"package-consumer: raster configuration={rasterMode}");
         // Exact PathRasterizerCommon.wgsl wire records. The rectangle interior
         // must be 255, its exterior 0 at the unchanged eight-by-eight sample grid.
         uniforms.Write<uint>([Bits(nativeLayout ? 4 : 0), 0, Bits(1), Bits(1), 0, 0, rowBytes / 4, width, height, 8, 0, 0]);
@@ -69,7 +73,7 @@ internal static unsafe class PathCoverageProbe
         segments.Write<Segment>([
             new(new(8, 4), new(40, 4)), new(new(40, 4), new(40, 12)),
             new(new(40, 12), new(8, 12)), new(new(8, 12), new(8, 4))]);
-        combine.Write<uint>(new uint[10]);
+        if (!rasterMode.HasFlag(PathProbeRaster.UnwrittenCombine)) combine.Write<uint>(new uint[10]);
         uint[] bufferSizes = [uniforms.Size, records.Size, segments.Size, coverage.Size, combine.Size];
         var bufferPointers = stackalloc Silk.NET.WebGPU.Buffer*[5];
         bufferPointers[0] = uniforms.BufferPtr; bufferPointers[1] = records.BufferPtr;
@@ -90,7 +94,8 @@ internal static unsafe class PathCoverageProbe
                     Binding = (uint)i, Visibility = ShaderStage.Compute,
                     Buffer = new BufferBindingLayout {
                         Type = i == 3 ? BufferBindingType.Storage : BufferBindingType.ReadOnlyStorage,
-                        MinBindingSize = i == 3 ? 4u : bufferSizes[i]
+                        MinBindingSize = i == 3 ? 4u :
+                            i == 2 && rasterMode.HasFlag(PathProbeRaster.MinimumRecordBinding) ? 48u : bufferSizes[i]
                     }
                 };
                 entries[i] = new BindGroupEntry {

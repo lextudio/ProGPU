@@ -26,7 +26,10 @@ if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
 var atlasProbe = args.Contains("--path-native-atlas-probe", StringComparer.Ordinal);
 var atlasUsageProbe = atlasProbe || args.Contains("--path-native-atlas-usage-probe", StringComparer.Ordinal);
 var atlasViewProbe = atlasProbe || args.Contains("--path-native-atlas-view-probe", StringComparer.Ordinal);
-if (atlasUsageProbe || atlasViewProbe || args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
+var rasterProbe = args.Contains("--path-native-raster-probe", StringComparer.Ordinal);
+var rasterBindingProbe = rasterProbe || args.Contains("--path-native-raster-binding-probe", StringComparer.Ordinal);
+var rasterZeroProbe = rasterProbe || args.Contains("--path-native-raster-zero-probe", StringComparer.Ordinal);
+if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe || args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-layout-probe", StringComparer.Ordinal) ||
@@ -38,7 +41,7 @@ if (atlasUsageProbe || atlasViewProbe || args.Contains("--path-coverage-probe", 
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
-    var apiMode = atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
+    var apiMode = rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
         : args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeReleaseBuffers
         : args.Contains("--path-native-release-command-probe", StringComparer.Ordinal)
@@ -56,7 +59,9 @@ if (atlasUsageProbe || atlasViewProbe || args.Contains("--path-coverage-probe", 
         args.Contains("--path-native-layout-probe", StringComparer.Ordinal) || apiMode != PathProbeApi.AutomaticLayout,
         apiMode,
         (atlasUsageProbe ? PathProbeAtlas.CopyDestinationOnly : PathProbeAtlas.Managed) |
-        (atlasViewProbe ? PathProbeAtlas.DefaultView : PathProbeAtlas.Managed));
+        (atlasViewProbe ? PathProbeAtlas.DefaultView : PathProbeAtlas.Managed),
+        (rasterBindingProbe ? PathProbeRaster.MinimumRecordBinding : PathProbeRaster.Baseline) |
+        (rasterZeroProbe ? PathProbeRaster.UnwrittenCombine : PathProbeRaster.Baseline));
     return;
 }
 
