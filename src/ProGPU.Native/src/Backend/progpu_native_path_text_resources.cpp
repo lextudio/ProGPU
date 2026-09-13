@@ -99,16 +99,9 @@ WGPUBindGroup create_text_atlas_bind_group(
 } // namespace
 
 bool create_path_resources(progpu_native_engine& engine) {
-    if (engine.path_raster_pipeline != nullptr &&
-        engine.path_raster_ordinary_pipeline != nullptr &&
-        engine.path_split_leaf_pipeline != nullptr &&
-        engine.path_split_signed_leaf_pipeline != nullptr &&
-        engine.path_split_signed_rows_pipeline != nullptr &&
-        engine.path_split_signed_coverage_pipeline != nullptr &&
-        engine.path_split_boolean_combine_pipeline != nullptr &&
-        engine.path_signed_winding_leaf_shader != nullptr &&
-        engine.path_signed_winding_evaluate_shader != nullptr &&
-        engine.path_signed_winding_coverage_shader != nullptr &&
+    if (engine.path_raster_shader != nullptr &&
+        engine.path_raster_layout != nullptr &&
+        engine.path_raster_pipeline_layout != nullptr &&
         engine.path_atlas_bind_group != nullptr) {
         return true;
     }
@@ -146,50 +139,6 @@ bool create_path_resources(progpu_native_engine& engine) {
         engine.device,
         &shader_descriptor);
     if (engine.path_raster_shader == nullptr) {
-        return false;
-    }
-    progpu::native::webgpu::wgsl_source signed_leaf_wgsl(
-        progpu::native::generated::path_signed_winding_leaf_wgsl,
-        progpu::native::generated::path_signed_winding_leaf_wgsl_size);
-    WGPUShaderModuleDescriptor signed_leaf_shader_descriptor{};
-    signed_leaf_shader_descriptor.nextInChain = signed_leaf_wgsl.chain();
-    signed_leaf_shader_descriptor.label =
-        progpu::native::webgpu::string_view(
-            "ProGPU signed-winding leaf shader");
-    engine.path_signed_winding_leaf_shader = wgpuDeviceCreateShaderModule(
-        engine.device,
-        &signed_leaf_shader_descriptor);
-    if (engine.path_signed_winding_leaf_shader == nullptr) {
-        return false;
-    }
-    progpu::native::webgpu::wgsl_source signed_evaluate_wgsl(
-        progpu::native::generated::path_signed_winding_evaluate_wgsl,
-        progpu::native::generated::path_signed_winding_evaluate_wgsl_size);
-    WGPUShaderModuleDescriptor signed_evaluate_shader_descriptor{};
-    signed_evaluate_shader_descriptor.nextInChain =
-        signed_evaluate_wgsl.chain();
-    signed_evaluate_shader_descriptor.label =
-        progpu::native::webgpu::string_view(
-            "ProGPU signed-winding evaluate shader");
-    engine.path_signed_winding_evaluate_shader = wgpuDeviceCreateShaderModule(
-        engine.device,
-        &signed_evaluate_shader_descriptor);
-    if (engine.path_signed_winding_evaluate_shader == nullptr) {
-        return false;
-    }
-    progpu::native::webgpu::wgsl_source signed_coverage_wgsl(
-        progpu::native::generated::path_signed_winding_coverage_wgsl,
-        progpu::native::generated::path_signed_winding_coverage_wgsl_size);
-    WGPUShaderModuleDescriptor signed_coverage_shader_descriptor{};
-    signed_coverage_shader_descriptor.nextInChain =
-        signed_coverage_wgsl.chain();
-    signed_coverage_shader_descriptor.label =
-        progpu::native::webgpu::string_view(
-            "ProGPU signed-winding coverage shader");
-    engine.path_signed_winding_coverage_shader = wgpuDeviceCreateShaderModule(
-        engine.device,
-        &signed_coverage_shader_descriptor);
-    if (engine.path_signed_winding_coverage_shader == nullptr) {
         return false;
     }
 
@@ -230,90 +179,6 @@ bool create_path_resources(progpu_native_engine& engine) {
         return false;
     }
 
-    WGPUComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = progpu::native::webgpu::string_view("ProGPU native path raster pipeline");
-    pipeline_descriptor.layout = engine.path_raster_pipeline_layout;
-    pipeline_descriptor.compute.module = engine.path_raster_shader;
-    pipeline_descriptor.compute.entryPoint = progpu::native::webgpu::string_view("cs_main");
-    engine.path_raster_pipeline = wgpuDeviceCreateComputePipeline(
-        engine.device,
-        &pipeline_descriptor);
-    if (engine.path_raster_pipeline == nullptr) {
-        return false;
-    }
-    pipeline_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native ordinary path raster pipeline");
-    pipeline_descriptor.compute.entryPoint =
-        progpu::native::webgpu::string_view("cs_main_ordinary");
-    engine.path_raster_ordinary_pipeline =
-        wgpuDeviceCreateComputePipeline(
-            engine.device,
-            &pipeline_descriptor);
-    if (engine.path_raster_ordinary_pipeline == nullptr) {
-        return false;
-    }
-    pipeline_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native path split leaf pipeline");
-    pipeline_descriptor.compute.entryPoint =
-        progpu::native::webgpu::string_view("cs_split_leaf");
-    engine.path_split_leaf_pipeline =
-        wgpuDeviceCreateComputePipeline(
-            engine.device,
-            &pipeline_descriptor);
-    if (engine.path_split_leaf_pipeline == nullptr) {
-        return false;
-    }
-    pipeline_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native path split signed-winding leaf pipeline");
-    pipeline_descriptor.compute.module =
-        engine.path_signed_winding_leaf_shader;
-    pipeline_descriptor.compute.entryPoint =
-        progpu::native::webgpu::string_view("cs_main");
-    engine.path_split_signed_leaf_pipeline =
-        wgpuDeviceCreateComputePipeline(
-            engine.device,
-            &pipeline_descriptor);
-    if (engine.path_split_signed_leaf_pipeline == nullptr) {
-        return false;
-    }
-    pipeline_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native path split signed-winding sample pipeline");
-    pipeline_descriptor.compute.module =
-        engine.path_signed_winding_evaluate_shader;
-    pipeline_descriptor.compute.entryPoint =
-        progpu::native::webgpu::string_view("cs_main");
-    engine.path_split_signed_rows_pipeline =
-        wgpuDeviceCreateComputePipeline(
-            engine.device,
-            &pipeline_descriptor);
-    if (engine.path_split_signed_rows_pipeline == nullptr) {
-        return false;
-    }
-    pipeline_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native path split signed-winding coverage pipeline");
-    pipeline_descriptor.compute.module =
-        engine.path_signed_winding_coverage_shader;
-    pipeline_descriptor.compute.entryPoint =
-        progpu::native::webgpu::string_view("cs_main");
-    engine.path_split_signed_coverage_pipeline =
-        wgpuDeviceCreateComputePipeline(
-            engine.device,
-            &pipeline_descriptor);
-    if (engine.path_split_signed_coverage_pipeline == nullptr) {
-        return false;
-    }
-    pipeline_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native path split boolean combine pipeline");
-    pipeline_descriptor.compute.module = engine.path_raster_shader;
-    pipeline_descriptor.compute.entryPoint =
-        progpu::native::webgpu::string_view("cs_split_boolean_combine");
-    engine.path_split_boolean_combine_pipeline =
-        wgpuDeviceCreateComputePipeline(
-            engine.device,
-            &pipeline_descriptor);
-    if (engine.path_split_boolean_combine_pipeline == nullptr) {
-        return false;
-    }
 
     WGPUTextureDescriptor texture_descriptor{};
     texture_descriptor.label = progpu::native::webgpu::string_view("ProGPU native retained path atlas");
@@ -376,6 +241,78 @@ bool create_path_resources(progpu_native_engine& engine) {
     }
     ++engine.path_atlas_generation;
     return true;
+}
+
+bool ensure_path_raster_pipelines(
+    progpu_native_engine& engine,
+    const path_raster_pipeline_requirements& required) {
+    if (!create_path_resources(engine)) {
+        return false;
+    }
+    // Each requested pipeline retains its canonical module and shared layout.
+    // Unused signed programs do not participate in ordinary-path cold startup.
+    const auto ensure = [&](
+        WGPUComputePipeline& selected_pipeline,
+        WGPUShaderModule& selected_shader,
+        const unsigned char* source,
+        std::size_t source_size,
+        const char* entry_point,
+        const char* label) {
+        if (selected_pipeline != nullptr) {
+            return true;
+        }
+        if (selected_shader == nullptr) {
+            progpu::native::webgpu::wgsl_source wgsl(source, source_size);
+            WGPUShaderModuleDescriptor shader_descriptor{};
+            shader_descriptor.nextInChain = wgsl.chain();
+            shader_descriptor.label = progpu::native::webgpu::string_view(label);
+            selected_shader = wgpuDeviceCreateShaderModule(
+                engine.device, &shader_descriptor);
+            if (selected_shader == nullptr) {
+                return false;
+            }
+        }
+        WGPUComputePipelineDescriptor descriptor{};
+        descriptor.label = progpu::native::webgpu::string_view(label);
+        descriptor.layout = engine.path_raster_pipeline_layout;
+        descriptor.compute.module = selected_shader;
+        descriptor.compute.entryPoint =
+            progpu::native::webgpu::string_view(entry_point);
+        selected_pipeline = wgpuDeviceCreateComputePipeline(
+            engine.device, &descriptor);
+        return selected_pipeline != nullptr;
+    };
+    using namespace progpu::native::generated;
+    return
+        (!required.ordinary || ensure(
+            engine.path_raster_ordinary_pipeline, engine.path_raster_shader,
+            path_rasterizer_wgsl, path_rasterizer_wgsl_size,
+            "cs_main_ordinary", "ProGPU native ordinary path raster pipeline")) &&
+        (!required.inline_signed || ensure(
+            engine.path_raster_pipeline, engine.path_raster_shader,
+            path_rasterizer_wgsl, path_rasterizer_wgsl_size,
+            "cs_main", "ProGPU native signed path raster pipeline")) &&
+        (!required.split_leaf || ensure(
+            engine.path_split_leaf_pipeline, engine.path_raster_shader,
+            path_rasterizer_wgsl, path_rasterizer_wgsl_size,
+            "cs_split_leaf", "ProGPU native path split leaf pipeline")) &&
+        (!required.split_boolean || ensure(
+            engine.path_split_boolean_combine_pipeline, engine.path_raster_shader,
+            path_rasterizer_wgsl, path_rasterizer_wgsl_size,
+            "cs_split_boolean_combine", "ProGPU native path split boolean combine pipeline")) &&
+        (!required.split_signed || (
+            ensure(engine.path_split_signed_leaf_pipeline,
+                engine.path_signed_winding_leaf_shader,
+                path_signed_winding_leaf_wgsl, path_signed_winding_leaf_wgsl_size,
+                "cs_main", "ProGPU native path signed-winding leaf pipeline") &&
+            ensure(engine.path_split_signed_rows_pipeline,
+                engine.path_signed_winding_evaluate_shader,
+                path_signed_winding_evaluate_wgsl, path_signed_winding_evaluate_wgsl_size,
+                "cs_main", "ProGPU native path signed-winding sample pipeline") &&
+            ensure(engine.path_split_signed_coverage_pipeline,
+                engine.path_signed_winding_coverage_shader,
+                path_signed_winding_coverage_wgsl, path_signed_winding_coverage_wgsl_size,
+                "cs_main", "ProGPU native path signed-winding pack pipeline")));
 }
 
 bool create_glyph_resources(progpu_native_engine& engine) {

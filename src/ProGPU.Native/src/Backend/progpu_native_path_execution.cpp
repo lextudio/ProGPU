@@ -1001,6 +1001,26 @@ progpu_native_status render_paths(
         }
     }
 
+    if (raster_bind_group != nullptr) {
+        const auto has_work = [](const auto& phases) {
+            return std::any_of(phases.begin(), phases.end(),
+                [](const auto& phase) { return !phase.empty(); });
+        };
+        const path_raster_pipeline_requirements required{
+            .ordinary = !path_uniforms.empty() && !has_inline_signed_winding,
+            .inline_signed = !path_uniforms.empty() && has_inline_signed_winding,
+            .split_leaf = has_work(split_leaf_uniforms),
+            .split_boolean = !coverage_combine_uniforms.empty(),
+            .split_signed = has_work(split_signed_leaf_uniforms) ||
+                !signed_coverage_combine_uniforms.empty()
+        };
+        if (!ensure_path_raster_pipelines(*engine, required)) {
+            return engine->fail(
+                PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+                "The requested native path raster pipelines could not be created.");
+        }
+    }
+
     const bool split_raster_submissions =
         !coverage_combine_uniforms.empty() ||
         !signed_coverage_combine_uniforms.empty();

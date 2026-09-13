@@ -56,6 +56,16 @@ WGPUBindGroup create_semantic_mask_chain_bind_group(
     WGPUBuffer primary_uniform_buffer,
     WGPUBuffer chain_uniform_buffer);
 bool create_path_resources(progpu_native_engine& engine);
+struct path_raster_pipeline_requirements {
+    bool ordinary = false;
+    bool inline_signed = false;
+    bool split_leaf = false;
+    bool split_boolean = false;
+    bool split_signed = false;
+};
+bool ensure_path_raster_pipelines(
+    progpu_native_engine& engine,
+    const path_raster_pipeline_requirements& required);
 bool create_glyph_resources(progpu_native_engine& engine);
 bool ensure_text_style_buffer(
     progpu_native_engine& engine,

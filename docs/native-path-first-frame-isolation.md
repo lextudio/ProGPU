@@ -62,6 +62,61 @@ passes the direct rectangle with exact white/black RGBA samples. The workflow
 collects all stage exits and still fails if any probe fails; no first-frame retry
 or hidden warm-up is involved.
 
+The completed [three-stage run 34769078839](https://github.com/wieslawsoltes/ProGPU/actions/runs/34769078839)
+passes all stages on hosted ARM64. On hosted x64, coverage/copy passes but the
+cold direct native rectangle and the original MIL cubic frame are both black.
+The x64 failure therefore does not require MIL lowering or cubic geometry. The
+same package's x64 binaries pass both native probes under x64 .NET in Parallels
+with its normal display adapter. This is not a controlled driver/cache comparison
+or qualification of the full x64 package consumer. Fresh processes do not imply
+an empty driver shader cache.
+
+## Demand-driven native path pipelines
+
+`ProGPU.Wpf.ShowcaseApp` first-path startup currently creates seven coverage
+pipelines, including three signed-winding shader modules, even for an ordinary
+rectangle. Both C++ providers now retain common atlas/layout resources but create
+only pipeline families requested by actual nonempty raster batches. Ordinary,
+inline signed, split leaf, Boolean combine and staged signed work retain their
+original entry points, bindings and execution order. Staged signed work creates
+its existing leaf/evaluate/pack trio together. Paths and clip paths share this
+engine-owned cache; later requests can add missing families. Pipeline failure
+returns before a caller-owned encoder is consumed, with no renderer fallback.
+
+This removes six unused pipeline creations and three unused modules from an
+ordinary-path-only engine. It does not change raster math, sampling, draw bounds,
+submission count, atlas allocation/eviction, owner input, worker scheduling or
+the existing engine/device lifetime. It is not a claim that compilation cost
+caused either the hosted black frame or browser readback timeout, and no measured
+latency improvement is claimed yet.
+
+Local validation uses rebuilt libraries: both native providers compile, all 20
+C++ tests pass, and fresh Metal direct-path/cubic probes pass without warm-up.
+Existing managed/native comparison runs pass ordinary paths, forced inline and
+staged signed paths, and vector clip chains. Those comparison runs retain their
+existing warm-up and pixel tolerances, so only the separate cold probes provide
+first-frame evidence. Final-head Windows/browser/package gates remain required.
+
+### Cross-engine design review
+
+The review uses public contracts, not foreign implementation code. The existing
+[query pipeline review](native-mil-query-pipeline-specialization.md) remains the
+shared engine-owned resource precedent. The following references bound this
+change; they do not establish equivalent driver behavior or benchmark results.
+
+| Family | Public contract and decision |
+| --- | --- |
+| Skia / SkParagraph | [SkPath](https://api.skia.org/classSkPath.html) and [Paragraph](https://github.com/google/skia/blob/main/modules/skparagraph/include/Paragraph.h): retain ProGPU geometry and text ownership; no scene, layout or font cache rewrite. |
+| Direct2D / DirectWrite / Win2D | [ID2D1Geometry](https://learn.microsoft.com/en-us/windows/win32/api/d2d1/nn-d2d1-id2d1geometry), [HitTestPoint](https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwritetextlayout-hittestpoint), [CanvasGeometry](https://microsoft.github.io/Win2D/WinUI3/html/T_Microsoft_Graphics_Canvas_Geometry_CanvasGeometry.htm): preserve geometry/input semantics independently of deferred GPU resource construction. |
+| WebRender | [Rendering overview](https://firefox-source-docs.mozilla.org/gfx/RenderingOverview.html): keep retained scene/input and GPU execution responsibilities separate; no new scene flattening or invalidation policy. |
+| Vello / Parley | [Scene](https://docs.rs/vello/latest/vello/struct.Scene.html) and [Layout](https://docs.rs/parley/latest/parley/struct.Layout.html): preserve existing ProGPU scene/layout boundaries, not a new composer. |
+| HarfBuzz | [Shape plans](https://harfbuzz.github.io/harfbuzz-hb-shape-plan.html): no shaping-plan, glyph, fallback-font or text cache changes. |
+
+The adopted technique is demand-driven creation in ProGPU's existing engine,
+bounded by actual batch requirements. DPI/transform keys, culling, allocation
+limits, eviction, precision and SIMD policies remain unchanged. No dependency
+or foreign source was added.
+
 ## Research boundary
 
 The upstream [wgpu driver issue inventory](https://github.com/gfx-rs/wgpu/wiki/Known-Driver-Issues)
