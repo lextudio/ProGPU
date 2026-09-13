@@ -6,6 +6,56 @@ namespace ProGPU.Tests;
 public sealed class CocoaPopupConfigurationTests
 {
     [Fact]
+    public void PreparationStaysHiddenAndShowAttachesBeforeHostCallbackIncludingReopen()
+    {
+        var api = new Operations { ShowOnAdd = true };
+        Assert.True(CocoaPopupConfiguration.Prepare(1, 2, ref api));
+        Assert.Empty(api.Writes);
+        Assert.False(api.Visible);
+        int shows = 0;
+        Action show = () => { Assert.Equal((nint)1, api.Parent); Assert.True(api.Visible); ++shows; };
+        Assert.True(CocoaPopupConfiguration.Show(1, 2, ref api, show));
+        Assert.True(CocoaPopupConfiguration.Show(1, 2, ref api, show));
+        api.Hide(2);
+        Assert.True(CocoaPopupConfiguration.Show(1, 2, ref api, show));
+        Assert.Equal(3, shows);
+        Assert.Equal(2, api.Writes.Count(value => value == "add:1"));
+    }
+
+    [Fact]
+    public void ThrowingShowHidesAndDetachesBeforePropagating()
+    {
+        var api = new Operations { ShowOnAdd = true };
+        Assert.Throws<InvalidOperationException>(() => CocoaPopupConfiguration.Show(1, 2, ref api,
+            () => throw new InvalidOperationException("host show")));
+        Assert.False(api.Visible);
+        Assert.Equal((nint)0, api.Parent);
+        Assert.True(api.Hides);
+    }
+
+    [Fact]
+    public void RejectedAttachmentNeverInvokesShowOrOverwritesThirdPartyParent()
+    {
+        var api = new Operations { ShowOnAdd = true };
+        api.AfterAdd = () => api.Parent = 4;
+        Assert.False(CocoaPopupConfiguration.Show(1, 2, ref api, () => Assert.Fail("unowned show")));
+        Assert.Equal((nint)4, api.Parent);
+        Assert.DoesNotContain("hide", api.Writes);
+    }
+
+    [Fact]
+    public void FailedPreparationDoesNotMutateVisibleOrForeignOwnedPopup()
+    {
+        var api = new Operations { Parent = 4 };
+        Assert.False(CocoaPopupConfiguration.Prepare(1, 2, ref api));
+        api.Parent = 0;
+        api.Visible = true;
+        Assert.False(CocoaPopupConfiguration.Prepare(1, 2, ref api));
+        Assert.False(CocoaPopupConfiguration.Show(1, 2, ref api, () => Assert.Fail("unowned show")));
+        Assert.Empty(api.Writes);
+    }
+
+    [Fact]
     public void HiddenPopupGetsActualParentAndPreservesUnrelatedState()
     {
         var api = new Operations { Parent = 3 };
@@ -80,7 +130,7 @@ public sealed class CocoaPopupConfigurationTests
     private sealed class Operations : ICocoaPopupOperations
     {
         internal nint Parent;
-        internal bool Visible, Cycle, RejectAdd, RejectFlag;
+        internal bool Visible, Cycle, RejectAdd, RejectFlag, ShowOnAdd;
         internal bool Identity = true, Hides = true;
         internal Action? AfterAdd;
         internal List<string> Writes { get; } = new();
@@ -94,10 +144,12 @@ public sealed class CocoaPopupConfigurationTests
             if (!RejectFlag) Hides = value;
         }
         public void RemoveChild(nint owner, nint child) { Writes.Add($"remove:{owner}"); Parent = 0; }
+        public void Hide(nint window) { Writes.Add("hide"); Visible = false; Parent = 0; }
         public void AddChild(nint owner, nint child)
         {
             Writes.Add($"add:{owner}");
             if (!RejectAdd || owner != 1) Parent = owner;
+            if (ShowOnAdd && Parent == owner) Visible = true;
             AfterAdd?.Invoke();
         }
     }

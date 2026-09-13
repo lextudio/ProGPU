@@ -510,9 +510,13 @@ clear/refill, keep zero-sized rectangles distinct, and never perform image mappi
 with empty bounds. Both renderer consumers must preserve this contract.
 
 Native Cocoa popup parent setup uses `NativePopupWindow` checked main-thread
-identity and hidden-state admission, retains host objects across callbacks and
-verifies the resulting parent/flag state. Failed setup requires disposal, not
-Show or a different popup surface. Do not overwrite reentrant host ownership.
+prepare/show contract. Preparation validates a hidden host without attaching it;
+AppKit attachment orders the child in and therefore belongs to native Show after
+input admission. Retain host objects across callbacks and verify actual parent,
+visibility and flags. Hide detaches; reopen must reattach. Reject direct
+parentWindow assignment and attach-then-hide setup. Failed setup/show requires
+disposal, not an unowned Show or a different popup surface. Do not overwrite
+reentrant host ownership.
 This does not admit GLFW NSWindows to AppKit modal sessions or replace them with
 NSPanels. See docs/native-mil-cocoa-popup-ownership.md; final native gates remain.
 

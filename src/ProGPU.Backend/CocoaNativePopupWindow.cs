@@ -7,7 +7,7 @@ internal static unsafe partial class CocoaNativePopupWindow
 {
     private const string ObjC = "/usr/lib/libobjc.A.dylib";
 
-    internal static bool TryConfigureOwner(nint owner, nint popup)
+    internal static bool TryConfigureOwner(nint owner, nint popup, bool prepareOnly = false, Action? show = null)
     {
         if (pthread_main_np() == 0 ||
             RuntimeInformation.ProcessArchitecture is not (Architecture.Arm64 or Architecture.X64)) return false;
@@ -29,6 +29,8 @@ internal static unsafe partial class CocoaNativePopupWindow
         try
         {
             var operations = new Operations(owner, popup, ownerView, popupView, ownerDelegate, popupDelegate);
+            if (prepareOnly) return CocoaPopupConfiguration.Prepare(owner, popup, ref operations);
+            if (show != null) return CocoaPopupConfiguration.Show(owner, popup, ref operations, show);
             return CocoaPopupConfiguration.Apply(owner, popup, ref operations);
         }
         finally
@@ -53,6 +55,7 @@ internal static unsafe partial class CocoaNativePopupWindow
             MessageVoidArgument(parent, Selector("removeChildWindow:\0"u8), child);
         public void AddChild(nint parent, nint child) =>
             MessageVoidArgumentInteger(parent, Selector("addChildWindow:ordered:\0"u8), child, 1);
+        public void Hide(nint window) => MessageVoidArgument(window, Selector("orderOut:\0"u8), 0);
     }
 
     private readonly ref struct Pool

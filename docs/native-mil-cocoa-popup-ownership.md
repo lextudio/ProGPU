@@ -1,5 +1,44 @@
 # Checked Cocoa popup ownership
 
+## Prepare/show correction — 2026-09-13
+
+The previous hidden-attachment design below was contradicted by a direct AppKit
+probe and the native external LibreWPF application: adding a hidden child above a
+visible owner immediately makes it visible. `orderOut:` detaches it; assigning
+`parentWindow` directly is not a supported alternative. The user resumed the
+requested core fixes after this prepare/show change was proposed.
+
+`TryPrepareOwner` now checks the actual main-thread hidden host, parent and
+ancestry without attaching it. `TryShowOwned` repeats admission against current
+native objects, disables hiding solely on deactivation, and attaches the actual
+child at the native Show boundary. WPF publishes its native input admission
+before that operation and supplies its normal nonactivating Show callback to
+update Silk visibility. Actual parent, host identity, visibility and flags must
+still hold after the callback. A visible unowned popup is rejected. Hide detaches
+on AppKit, so every subsequent Show checks and reattaches, rather than relying
+on a cached initialization result.
+
+Failure/exception orders out and restores the captured flag only when identity
+and ownership still permit it; the source host always disposes rejected popups.
+Reentrant third-party parents are not overwritten. Native objects are retained
+only across the synchronous operation. The legacy hidden `TryConfigureOwner`
+returns false on Cocoa without attaching or showing anything. Win32/X11 retain
+hidden owner setup. No owner-surface substitution or AppKit modal-session
+admission is introduced.
+
+The focused Cocoa policy suite passes 14 tests, including actual AppKit-style
+visible-on-add behavior, repeat Show, Hide/reopen, rejection and throwing callback
+cleanup. WPF host compilation passes with one existing unused-event warning.
+The native-selected external SDK diagnostic app now exits 0 with
+`External SDK Application.Run validation succeeded.`, passing the prior menu
+popup failure. This uses staged diagnostic assemblies, not exact final packages;
+the separate native live-input diagnostic also exits 0 with its required marker
+for mouse input, TextBox committed text and Ctrl+E at 320x200 logical / 640x400
+framebuffer pixels. Final packages, Windows/Linux and final-head CI remain required.
+
+The older sections below record the original design and are superseded where
+they require hidden state after native child attachment.
+
 ## Core acceptance dependency
 
 The LibreWPF Showcase's main menu and ComboBoxes use separately surfaced native Cocoa
