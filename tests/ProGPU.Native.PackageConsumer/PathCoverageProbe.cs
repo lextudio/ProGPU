@@ -21,7 +21,11 @@ internal static unsafe class PathCoverageProbe
         var metrics = renderer.RenderPaths(target, 1,
             [new NativePathFill(0, 4, new(8, 4), new(40, 12), Vector4.One,
                 Matrix3x2.Identity, NativeFillRule.NonZero, 8)],
-            segments, new Vector4(0, 0, 0, 1));
+            segments, new Vector4(0, 0, 0, 1), capturePayloadHash: true);
+        Console.WriteLine($"package-consumer: native path prepared payload=" +
+            $"{metrics.PayloadHash:X16}; vertices={metrics.VertexCount}; indices={metrics.IndexCount}; " +
+            $"brushBytes={metrics.BrushUploadBytes}; pathBytes={metrics.PathUploadBytes}; " +
+            $"atlas={metrics.AtlasWidth}x{metrics.AtlasHeight}; submissions={metrics.SubmissionCount}");
         renderer.WaitForSubmission(renderer.GetLastSubmissionToken());
         byte[] pixels = target.ReadPixels();
         int inside = (8 * 64 + 16) * 4, outside = (2 * 64 + 2) * 4;
@@ -35,9 +39,12 @@ internal static unsafe class PathCoverageProbe
             throw new InvalidOperationException("Cold direct native path probe failed.");
     }
 
-    internal static void Run(WgpuContext context, bool drawAtlas = false, bool sameSubmission = false)
+    internal static void Run(WgpuContext context, bool drawAtlas = false,
+        bool sameSubmission = false, bool nativeLayout = false)
     {
-        const uint rowBytes = 256, width = 64, height = 16;
+        const uint rowBytes = 256, height = 16;
+        uint width = nativeLayout ? 40u : 64u;
+        uint atlasX = nativeLayout ? 2u : 17u, atlasY = nativeLayout ? 2u : 19u;
         using var cache = new RenderPipelineCache(context);
         using var uniforms = new GpuBuffer(context, 48, BufferUsage.Storage | BufferUsage.CopyDst);
         using var records = new GpuBuffer(context, 32, BufferUsage.Storage | BufferUsage.CopyDst);
@@ -49,7 +56,7 @@ internal static unsafe class PathCoverageProbe
             "Cold partial path atlas diagnostic");
         // Exact PathRasterizerCommon.wgsl wire records. The rectangle interior
         // must be 255, its exterior 0 at the unchanged eight-by-eight sample grid.
-        uniforms.Write<uint>([0, 0, Bits(1), Bits(1), 0, 0, rowBytes / 4, width, height, 8, 0, 0]);
+        uniforms.Write<uint>([Bits(nativeLayout ? 4 : 0), 0, Bits(1), Bits(1), 0, 0, rowBytes / 4, width, height, 8, 0, 0]);
         records.Write<uint>([0, 4, Bits(8), Bits(4), Bits(40), Bits(12), 1, 0]);
         segments.Write<Segment>([
             new(new(8, 4), new(40, 4)), new(new(40, 4), new(40, 12)),
@@ -105,13 +112,13 @@ internal static unsafe class PathCoverageProbe
                 Layout = new TextureDataLayout { BytesPerRow = rowBytes, RowsPerImage = height }
             };
             var destination = new ImageCopyTexture {
-                Texture = atlas.TexturePtr, Origin = new Origin3D(17, 19, 0), Aspect = TextureAspect.All
+                Texture = atlas.TexturePtr, Origin = new Origin3D(atlasX, atlasY, 0), Aspect = TextureAspect.All
             };
             var extent = new Extent3D(width, height, 1);
             context.Api.CommandEncoderCopyBufferToTexture(encoder, &source, &destination, &extent);
             if (sameSubmission)
             {
-                DrawAtlas(context, atlas, cache, encoder);
+                DrawAtlas(context, atlas, cache, encoder, nativeLayout);
             }
             else
             {
@@ -127,8 +134,8 @@ internal static unsafe class PathCoverageProbe
             byte[] raw = coverage.ReadBytes();
             byte[] pixels = atlas.ReadPixels();
             byte rawInside = raw[8 * rowBytes + 16], rawOutside = raw[2 * rowBytes + 2];
-            byte atlasInside = pixels[(19 + 8) * 1024 + 17 + 16];
-            byte atlasOutside = pixels[(19 + 2) * 1024 + 17 + 2];
+            byte atlasInside = pixels[(atlasY + 8) * 1024 + atlasX + 16];
+            byte atlasOutside = pixels[(atlasY + 2) * 1024 + atlasX + 2];
             Console.WriteLine($"package-consumer: coverage probe raw=({rawInside},{rawOutside}), " +
                 $"atlas=({atlasInside},{atlasOutside}), untouched={pixels[0]}; " +
                 $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
@@ -146,15 +153,15 @@ internal static unsafe class PathCoverageProbe
     }
 
     private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
-        CommandEncoder* sharedEncoder = null)
+        CommandEncoder* sharedEncoder = null, bool nativeLayout = false)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
         using var uniforms = new GpuBuffer(context, 224, BufferUsage.Uniform | BufferUsage.CopyDst);
-        using var brushes = new GpuBuffer(context, 256, BufferUsage.Storage | BufferUsage.CopyDst);
+        using var brushes = new GpuBuffer(context, nativeLayout ? 65536u : 256u, BufferUsage.Storage | BufferUsage.CopyDst);
         using var stops = new GpuBuffer(context, 32, BufferUsage.Storage | BufferUsage.CopyDst);
-        using var vertices = new GpuBuffer(context, 4 * 56, BufferUsage.Vertex | BufferUsage.CopyDst);
-        using var indices = new GpuBuffer(context, 6 * 4, BufferUsage.Index | BufferUsage.CopyDst);
+        using var vertices = new GpuBuffer(context, nativeLayout ? 65536u : 4 * 56u, BufferUsage.Vertex | BufferUsage.CopyDst);
+        using var indices = new GpuBuffer(context, nativeLayout ? 65536u : 6 * 4u, BufferUsage.Index | BufferUsage.CopyDst);
         // Existing Vector.wgsl wire layouts, identical to native gpu_uniforms,
         // vector_vertex and the solid-brush sentinel. No reduced shader entry.
         float[] frame = new float[56];
@@ -164,15 +171,36 @@ internal static unsafe class PathCoverageProbe
             for (int diagonal = 0; diagonal < 4; diagonal++) frame[matrix * 16 + diagonal * 5] = 1;
         frame[48] = 64; frame[49] = 16; frame[50] = 1;
         uniforms.Write<float>(frame);
-        float[] brush = new float[64]; brush[1] = 1;
+        float[] brush = new float[nativeLayout ? 128 : 64]; brush[1] = 1;
+        if (nativeLayout)
+        {
+            brush[65] = 1;
+            brush[80] = brush[81] = brush[82] = brush[83] = 1;
+        }
         brushes.Write<float>(brush);
         stops.Write<uint>(new uint[8]);
-        vertices.Write<float>([
+        float[] vertexData = nativeLayout ? [
+             4,  0, 1,1,1,1,  2, 2, 1, 4, 0,1,0,4,
+            44,  0, 1,1,1,1, 42, 2, 1,44, 0,1,0,4,
+            44, 16, 1,1,1,1, 42,18, 1,44,16,1,0,4,
+             4, 16, 1,1,1,1,  2,18, 1, 4,16,1,0,4] : [
              0,  0, 1,1,1,1, 17,19, 0,64,16,0,0,4,
             64,  0, 1,1,1,1, 81,19, 0,64,16,0,0,4,
             64, 16, 1,1,1,1, 81,35, 0,64,16,0,0,4,
-             0, 16, 1,1,1,1, 17,35, 0,64,16,0,0,4]);
-        indices.Write<uint>([0,1,2,0,2,3]);
+             0, 16, 1,1,1,1, 17,35, 0,64,16,0,0,4];
+        vertices.Write<float>(vertexData);
+        uint[] indexData = [0,1,2,0,2,3];
+        indices.Write<uint>(indexData);
+        if (nativeLayout)
+        {
+            // Explicit scalar diagnostic oracle for the tiny immutable payload,
+            // using the native metrics' FNV-1a byte order, not a renderer path.
+            ulong hash = 14695981039346656037UL;
+            foreach (byte value in MemoryMarshal.AsBytes(vertexData.AsSpan())) hash = unchecked((hash ^ value) * 1099511628211UL);
+            foreach (byte value in MemoryMarshal.AsBytes(indexData.AsSpan())) hash = unchecked((hash ^ value) * 1099511628211UL);
+            foreach (byte value in MemoryMarshal.AsBytes(brush.AsSpan())) hash = unchecked((hash ^ value) * 1099511628211UL);
+            Console.WriteLine($"package-consumer: reference native-layout payload={hash:X16}");
+        }
         var attributes = stackalloc VertexAttribute[8];
         VertexFormat[] formats = [VertexFormat.Float32x2, VertexFormat.Float32x4,
             VertexFormat.Float32x2, VertexFormat.Float32, VertexFormat.Float32x2,
@@ -195,7 +223,7 @@ internal static unsafe class PathCoverageProbe
             atlasLayout = context.Api.RenderPipelineGetBindGroupLayout(pipeline, 1);
             var uniformEntries = stackalloc BindGroupEntry[3];
             uniformEntries[0] = new() { Binding = 0, Buffer = uniforms.BufferPtr, Size = 224 };
-            uniformEntries[1] = new() { Binding = 1, Buffer = brushes.BufferPtr, Size = 256 };
+            uniformEntries[1] = new() { Binding = 1, Buffer = brushes.BufferPtr, Size = brushes.Size };
             uniformEntries[2] = new() { Binding = 2, Buffer = stops.BufferPtr, Size = 32 };
             var uniformDescriptor = new BindGroupDescriptor {
                 Layout = uniformLayout, EntryCount = 3, Entries = uniformEntries };
@@ -225,8 +253,8 @@ internal static unsafe class PathCoverageProbe
             context.Api.RenderPassEncoderSetPipeline(pass, pipeline);
             context.Api.RenderPassEncoderSetBindGroup(pass, 0, uniformGroup, 0, null);
             context.Api.RenderPassEncoderSetBindGroup(pass, 1, atlasGroup, 0, null);
-            context.Api.RenderPassEncoderSetVertexBuffer(pass, 0, vertices.BufferPtr, 0, vertices.Size);
-            context.Api.RenderPassEncoderSetIndexBuffer(pass, indices.BufferPtr, IndexFormat.Uint32, 0, indices.Size);
+            context.Api.RenderPassEncoderSetVertexBuffer(pass, 0, vertices.BufferPtr, 0, 4 * 56);
+            context.Api.RenderPassEncoderSetIndexBuffer(pass, indices.BufferPtr, IndexFormat.Uint32, 0, 6 * 4);
             context.Api.RenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
             context.Api.RenderPassEncoderEnd(pass);
             context.Api.RenderPassEncoderRelease(pass);
@@ -239,7 +267,7 @@ internal static unsafe class PathCoverageProbe
             Console.WriteLine($"package-consumer: canonical vector atlas inside=" +
                 $"({pixels[inside]},{pixels[inside+1]},{pixels[inside+2]},{pixels[inside+3]}), " +
                 $"outside=({pixels[outside]},{pixels[outside+1]},{pixels[outside+2]},{pixels[outside+3]}); " +
-                $"sameSubmission={sharedEncoder != null}; " +
+                $"sameSubmission={sharedEncoder != null}; nativeLayout={nativeLayout}; " +
                 $"backend={context.AdapterBackendType}; adapter={context.AdapterName}");
             if (pixels[inside] != 255 || pixels[inside+1] != 255 || pixels[inside+2] != 255 || pixels[inside+3] != 255 ||
                 pixels[outside] != 0 || pixels[outside+1] != 0 || pixels[outside+2] != 0 || pixels[outside+3] != 255)

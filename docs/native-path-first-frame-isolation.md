@@ -117,6 +117,15 @@ The separate-submission probe remains available to distinguish the two contracts
 Neither variant reads the atlas before drawing, changes shaders or retries a
 failed frame. Metal passes the single-submission variant with exact samples.
 
+The next diagnostic uses `--path-native-layout-probe`: the actual native direct
+rectangle's 40x16 padded tile, `(2,2)` atlas origin, nonzero solid-brush index,
+64-KiB retained buffers and its complete vertex/index/brush payload. The explicit
+scalar diagnostic byte hash and native `CapturePayloadHash` both report
+`37CF2B2338D40B07` on Metal; both render exact white/black samples. Native probes
+print preparation metrics before waiting so device loss does not erase that
+evidence. This is diagnostic parity of a fixed payload, not a production CPU
+renderer or evidence of shader/compiler/resource-lifetime equivalence on Windows.
+
 `ProGPU.Wpf.ShowcaseApp` first-path startup currently creates seven coverage
 pipelines, including three signed-winding shader modules, even for an ordinary
 rectangle. Both C++ providers now retain common atlas/layout resources but create

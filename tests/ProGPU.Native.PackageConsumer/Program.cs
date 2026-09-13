@@ -25,13 +25,16 @@ if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
 
 if (args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-probe", StringComparer.Ordinal) ||
-    args.Contains("--path-vector-batched-probe", StringComparer.Ordinal))
+    args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-layout-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
     PathCoverageProbe.Run(probeContext,
         args.Contains("--path-vector-probe", StringComparer.Ordinal),
-        args.Contains("--path-vector-batched-probe", StringComparer.Ordinal));
+        args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
+            args.Contains("--path-native-layout-probe", StringComparer.Ordinal),
+        args.Contains("--path-native-layout-probe", StringComparer.Ordinal));
     return;
 }
 
