@@ -98,3 +98,9 @@ native owner-query submission (19,811.814 ms to submit; 89.515 seconds for the
 full process). The outer Parallels command exits 255. Do not restart that handle
 or call it a successful full consumer. The completion repair has rendering
 evidence; Windows query execution remains independently unresolved.
+
+The fresh-context owner fixture now independently reproduces the system-WARP
+first-query crash, before any completed map or repeated wait. First-chance
+generated-code evidence and an isolated development-WARP differential are in
+[native owner-query WARP isolation](native-owner-query-warp-diagnostics.md).
+This avoids attributing the query failure to raster retirement without evidence.

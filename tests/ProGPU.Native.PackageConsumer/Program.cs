@@ -77,6 +77,16 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
     return;
 }
 
+if (args.Contains("--native-owner-query-probe", StringComparer.Ordinal))
+{
+    using var probeContext = new WgpuContext();
+    probeContext.Initialize(window: null);
+    using var probeRenderer = new NativeCompositor(probeContext, TextureFormat.Rgba8Unorm);
+    ValidateNativeHitTestOwnerSnapshots(probeContext, probeRenderer);
+    Console.WriteLine("package-consumer: independent native owner-query probe passed");
+    return;
+}
+
 if (args.Contains("--native-path-probe", StringComparer.Ordinal) ||
     args.Contains("--native-path-deferred-retirement-probe", StringComparer.Ordinal) ||
     args.Contains("--native-cubic-probe", StringComparer.Ordinal))
@@ -903,6 +913,7 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
         Thread.Yield();
     }
     NativeGpuHitTestResult firstResult = results[0];
+    Console.WriteLine($"package-consumer: native owner-query first readback completed in {deadline.Elapsed.TotalMilliseconds:F3} ms; count={count}; hit={summary.Hit}");
     if (!before.GetIndexInfo().IsUploaded)
         throw new InvalidOperationException("Native metadata did not report the queried index's GPU residency.");
     if (count != 1 || summary.Hit != 1 || firstToken.SceneId != sceneId ||
@@ -915,8 +926,11 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
     NativeGpuHitTestResult firstSummary = summary;
     for (int repetition = 0; repetition < 16; repetition++)
     {
+        Console.WriteLine($"package-consumer: native owner-query repeated wait {repetition} begin");
         var waitToken = before.BeginQuery(query);
+        Console.WriteLine($"package-consumer: native owner-query repeated wait {repetition} submitted");
         count = before.Wait(waitToken, results, out summary);
+        Console.WriteLine($"package-consumer: native owner-query repeated wait {repetition} completed");
         if (count != 1 || !summary.Equals(firstSummary) || !results[0].Equals(firstResult) ||
             !before.TryGetOwner(waitToken, results[0], out owner) || !ReferenceEquals(owner, firstOwner))
             throw new InvalidOperationException("Waiting changed native query order, diagnostics or source ownership.");
