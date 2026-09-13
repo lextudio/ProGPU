@@ -5,6 +5,11 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
+WgpuContext.OnWebGpuError += (type, message) =>
+    Console.Error.WriteLine($"package-consumer: WebGPU error {type}: {message}");
+WgpuContext.OnWebGpuDeviceLost += (reason, message) =>
+    Console.Error.WriteLine($"package-consumer: WebGPU device lost {reason}: {message}");
+
 if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
 {
     Console.WriteLine(
@@ -811,7 +816,11 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
     if (!indexInfo.HasIndex || indexInfo.IsUploaded || indexInfo.PrimitiveCount != 1 ||
         indexInfo.NodeCount != 1 || indexInfo.PrimitiveIndexCount != 1 || indexInfo.PathSegmentCount != 0)
         throw new InvalidOperationException("Native metadata did not describe the unuploaded installed index.");
+    Console.WriteLine($"package-consumer: native owner-query begin, adapter={context.AdapterName}, backend={context.AdapterBackendType}");
+    var submissionTimer = System.Diagnostics.Stopwatch.StartNew();
     NativeGpuHitTestRequestToken firstToken = before.BeginQuery(query);
+    submissionTimer.Stop();
+    Console.WriteLine($"package-consumer: native owner-query submitted in {submissionTimer.Elapsed.TotalMilliseconds:F3} ms");
     Span<NativeGpuHitTestResult> results = stackalloc NativeGpuHitTestResult[1];
     var deadline = System.Diagnostics.Stopwatch.StartNew();
     int count;
@@ -819,7 +828,10 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
     while (!before.TryPoll(firstToken, results, out count, out summary))
     {
         if (deadline.Elapsed > TimeSpan.FromSeconds(10))
-            throw new TimeoutException("Native owner-query GPU readback did not complete.");
+            throw new TimeoutException(
+                $"Native owner-query GPU readback did not complete. DeviceLost={context.IsDeviceLost}; " +
+                $"submitMs={submissionTimer.Elapsed.TotalMilliseconds:F3}; " +
+                $"readbackMs={deadline.Elapsed.TotalMilliseconds:F3}; backend={context.AdapterBackendType}; adapter={context.AdapterName}.");
         Thread.Yield();
     }
     NativeGpuHitTestResult firstResult = results[0];
@@ -1207,7 +1219,11 @@ static void ValidateNativeCubicControlHull(WgpuContext context)
             throw new InvalidOperationException("Native cubic produced coverage outside its control hull.");
     }
     if (pixels[(105 * 300 + 216) * 4] != 255)
-        throw new InvalidOperationException("Native cubic fixture lost its independent rectangle ink.");
+        throw new InvalidOperationException(
+            $"Native cubic fixture lost its independent rectangle ink: " +
+            $"RGBA=({pixels[(105 * 300 + 216) * 4]}, {pixels[(105 * 300 + 216) * 4 + 1]}, " +
+            $"{pixels[(105 * 300 + 216) * 4 + 2]}, {pixels[(105 * 300 + 216) * 4 + 3]}); " +
+            $"deviceLost={context.IsDeviceLost}; backend={context.AdapterBackendType}; adapter={context.AdapterName}.");
     Console.WriteLine("package-consumer: native cubic control hull passed");
 }
 
