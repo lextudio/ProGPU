@@ -76,3 +76,56 @@ readback but times out at `map-requested`, with no reported browser error.
 Final-head CI and exact package gates remain required. Windows CI's independent
 cubic rectangle-ink failure also remains open. See
 [Windows investigation](native-windows-package-consumer-investigation-2026-09-13.md).
+
+## Shared four-sample path classification
+
+The family-only Windows comparison subsequently terminated with 0xC0000005 after
+7m34s while creating the first rectangle pipeline. Separating families is not a
+complete repair. Inspection of the existing ProGPU shader found four separate
+calls to the complete sampled-path walker for rectangle corners, plus four
+cardinal calls for ellipse regions; each walker evaluates the same curves.
+
+The canonical walker now carries four independent boundary/parity/winding lanes
+and evaluates each segment/curve sample once. Rectangle corners occupy those
+lanes; ellipse cardinal samples use the same batch after the existing boundary
+and center checks. Single points splat one coordinate and consume lane x. There
+is no second scalar algorithm, new geometry approximation, HLSL fork, changed
+fill rule, tolerance, curve-step count, source clip or index lifetime.
+Boundary hits remain sticky independently per lane. Horizontal edges never
+divide by zero. The shader adds constant four-lane private state, not buffers,
+dispatches, retained allocations or CPU readback. Asymptotic O(S) path work is
+unchanged; rectangle sample evaluation is one curve traversal rather than four.
+Actual compiler optimization and point-query cost remain platform measurements.
+
+Validation: all 156 focused hit/shader tests pass, including eight new cases for
+both fill rules, every reflected corner order, reversed winding, mixed boundary
+and interior samples, and exact point-versus-region results. Both native providers
+compile on macOS and Windows. The rebuilt Metal native consumer exits 0. The
+Windows comparison passes rendering and submits the first point query in
+19,818.134 ms; rectangle completion is still required. No final Windows performance
+or crash-resolution claim follows from the earlier point submission.
+
+The preceding committed head be199695 passes the browser gate; the earlier
+readback timeout remains an undiagnosed intermittent failure, not a changed
+deadline. Its System.Drawing lane separately reports 7,296 warmed enumeration
+allocation bytes against the unchanged 4,096-byte limit. Three superseded Build
+runs (34762600632, 34761948474, 34761357934) were cancelled to release runners;
+cancelled runs are not passing qualification.
+
+### Design references and provenance
+
+This is an original refactoring of ProGPU's existing edge predicates and fixed
+curve evaluator. [WGSL vector semantics](https://www.w3.org/TR/WGSL/#vector-types)
+permit independent sample lanes; [HLSL loop documentation](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-for)
+explains that loop rolling/unrolling is a compiler decision, not a portable WGSL
+promise. No compiler behavior is assumed as proven by source size alone.
+
+The [input ownership research](native-mil-hit-test-ownership.md#design-references-and-decisions)
+was revisited against public WebRender, Skia/SkParagraph, Direct2D/DirectWrite,
+Win2D, Vello/Parley and HarfBuzz documentation. Retain independent spatial/query
+metadata and reusable shaping/layout/scene state. Reject raster alpha or source
+bounds as replacement geometry. Lazy family pipelines, source culling, path/
+glyph/texture cache keys, eviction, demand-driven upload, worker preparation,
+DPI/subpixel/hinting, fallback/variable fonts and device-loss generation ownership
+remain unchanged. Only independent samples within one existing GPU query are
+batched; no external implementation source is copied.

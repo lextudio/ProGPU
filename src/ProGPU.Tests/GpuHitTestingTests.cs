@@ -3369,6 +3369,58 @@ public sealed class GpuHitTestingTests
         Assert.Equal(1u, summary.PreciseTests);
     }
 
+    [Theory]
+    [InlineData(false, false, FillRule.Nonzero)]
+    [InlineData(true, false, FillRule.Nonzero)]
+    [InlineData(false, true, FillRule.Nonzero)]
+    [InlineData(true, true, FillRule.Nonzero)]
+    [InlineData(false, false, FillRule.EvenOdd)]
+    [InlineData(true, false, FillRule.EvenOdd)]
+    [InlineData(false, true, FillRule.EvenOdd)]
+    [InlineData(true, true, FillRule.EvenOdd)]
+    public void PathRegionSampleLanesPreserveFillAndBoundaryAcrossReflections(
+        bool reflectX, bool reflectY, FillRule fillRule)
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+        var path = CreateTrianglePath();
+        path.FillRule = fillRule;
+        Matrix4x4 transform = Matrix4x4.CreateScale(reflectX ? -1 : 1, reflectY ? -1 : 1, 1);
+        using var builder = new GpuRenderCommandHitTestCacheBuilder();
+        builder.AddCommand(new RenderCommand
+        {
+            Type = RenderCommandType.DrawPath, Path = path,
+            Brush = new SolidColorBrush(Vector4.One)
+        }, transform, id: 73);
+        var index = builder.BuildIndex();
+        var results = new GpuHitTestResult[1];
+        // Reflections permute every corner lane and reverse winding. The last
+        // case mixes a boundary lane with interior lanes; boundary state is sticky.
+        foreach (var (min, max, detail) in new[]
+        {
+            (new Vector2(1), new Vector2(2), GpuHitTestIntersectionDetail.FullyContains),
+            (new Vector2(8), new Vector2(9), GpuHitTestIntersectionDetail.Empty),
+            (new Vector2(4), new Vector2(6), GpuHitTestIntersectionDetail.Intersects),
+            (Vector2.Zero, new Vector2(2), GpuHitTestIntersectionDetail.Intersects)
+        })
+        {
+            var a = Vector2.Transform(min, transform);
+            var b = Vector2.Transform(max, transform);
+            bool hit = GpuHitTestEngine.TryQueryBoundsAll(context, index,
+                Vector2.Min(a, b), Vector2.Max(a, b), results, out int count, out _);
+            Assert.Equal(detail != GpuHitTestIntersectionDetail.Empty, hit);
+            Assert.Equal(hit ? 1 : 0, count);
+            if (hit)
+            {
+                Assert.Equal(73, results[0].Id);
+                Assert.Equal((uint)detail, results[0].IntersectionDetail);
+            }
+            foreach (var corner in new[] { min, new Vector2(max.X, min.Y), max, new Vector2(min.X, max.Y) })
+                Assert.Equal(corner.X + corner.Y <= 10,
+                    GpuHitTestEngine.TryHitTestPoint(context, index, Vector2.Transform(corner, transform), out _));
+        }
+    }
+
     [Fact]
     public void TryQueryBoundsAllRejectsPathStrokeBoundsFalsePositiveOnGpu()
     {

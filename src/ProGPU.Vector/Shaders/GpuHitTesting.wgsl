@@ -1107,76 +1107,65 @@ fn evaluate_arc(segment: PathSegment, t: f32) -> vec2<f32> {
         (local.x * s) + (local.y * c));
 }
 
-struct PathEdgeResult {
-    boundary: bool,
-    crosses: bool,
-    winding_delta: i32,
-};
-
-fn test_path_fill_edge(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>, tolerance: f32) -> PathEdgeResult {
-    var edge: PathEdgeResult;
-    edge.boundary = false;
-    edge.crosses = false;
-    edge.winding_delta = 0;
-
-    if (distance_squared_to_segment(point, start, end) <= tolerance * tolerance) {
-        edge.boundary = true;
-        return edge;
-    }
-
-    let crosses_y = (start.y > point.y) != (end.y > point.y);
-    if (crosses_y) {
-        let intersection_x = ((end.x - start.x) * (point.y - start.y) / (end.y - start.y)) + start.x;
-        edge.crosses = point.x < intersection_x;
-
-        let cross = cross2(end - start, point - start);
-        if (start.y <= point.y) {
-            if (end.y > point.y && cross > 0.0) {
-                edge.winding_delta = 1;
-            }
-        } else if (end.y <= point.y && cross < 0.0) {
-            edge.winding_delta = -1;
-        }
-    }
-
-    return edge;
-}
-
 struct PathFillState {
-    boundary: bool,
-    even_odd: bool,
-    winding: i32,
+    boundary: vec4<bool>,
+    even_odd: vec4<bool>,
+    winding: vec4<i32>,
 };
 
-fn accumulate_path_fill_edge(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>, tolerance: f32, fill_rule: u32, state: PathFillState) -> PathFillState {
+// Four independent query samples share one segment load and curve evaluation.
+// This keeps rectangle corners out of four separately inlined path walkers.
+// Point queries splat one sample and consume lane x; all thresholds, 16/24-step
+// curve sampling, half-open crossing tests and fill rules are unchanged.
+fn accumulate_path_fill_edge(point_x: vec4<f32>, point_y: vec4<f32>, start: vec2<f32>, end: vec2<f32>, tolerance: f32, fill_rule: u32, state: PathFillState) -> PathFillState {
     var next = state;
-    let edge = test_path_fill_edge(point, start, end, tolerance);
-    if (edge.boundary) {
-        next.boundary = true;
-        return next;
+    let segment = end - start;
+    let length_squared = dot(segment, segment);
+    let start_dx = point_x - start.x;
+    let start_dy = point_y - start.y;
+    var distance_squared = start_dx * start_dx + start_dy * start_dy;
+    if (length_squared > 0.00000001) {
+        let t = clamp((start_dx * segment.x + start_dy * segment.y) / length_squared,
+            vec4<f32>(0.0), vec4<f32>(1.0));
+        let dx = point_x - (start.x + segment.x * t);
+        let dy = point_y - (start.y + segment.y * t);
+        distance_squared = dx * dx + dy * dy;
     }
+    let boundary = distance_squared <= vec4<f32>(tolerance * tolerance);
+    next.boundary = next.boundary | boundary;
 
-    if (fill_rule == FILL_RULE_EVEN_ODD) {
-        if (edge.crosses) {
-            next.even_odd = !next.even_odd;
+    // A horizontal edge cannot cross the ray. Avoid division by zero even in
+    // inactive lanes; a boundary lane remains a hit regardless of later edges.
+    if (segment.y != 0.0) {
+        let crosses_y = (vec4<f32>(start.y) > point_y) != (vec4<f32>(end.y) > point_y);
+        let crossing_lanes = crosses_y & !boundary;
+        if (fill_rule == FILL_RULE_EVEN_ODD) {
+            let intersection_x = (segment.x * start_dy / segment.y) + start.x;
+            next.even_odd = next.even_odd != (crossing_lanes & (point_x < intersection_x));
+        } else {
+            let cross = segment.x * start_dy - segment.y * start_dx;
+            let upward = (vec4<f32>(start.y) <= point_y) &
+                (vec4<f32>(end.y) > point_y) & (cross > vec4<f32>(0.0));
+            let downward = (vec4<f32>(start.y) > point_y) &
+                (vec4<f32>(end.y) <= point_y) & (cross < vec4<f32>(0.0));
+            next.winding = next.winding + select(vec4<i32>(0), vec4<i32>(1), crossing_lanes & upward)
+                - select(vec4<i32>(0), vec4<i32>(1), crossing_lanes & downward);
         }
-    } else {
-        next.winding = next.winding + edge.winding_delta;
     }
 
     return next;
 }
 
-fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> bool {
+fn contains_path_fill_samples(point_x: vec4<f32>, point_y: vec4<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> vec4<bool> {
     if (segment_count == 0u || start_segment >= query.path_segment_count) {
-        return false;
+        return vec4<bool>(false);
     }
 
     let end_segment = min(start_segment + segment_count, query.path_segment_count);
     var state: PathFillState;
-    state.boundary = false;
-    state.even_odd = false;
-    state.winding = 0;
+    state.boundary = vec4<bool>(false);
+    state.even_odd = vec4<bool>(false);
+    state.winding = vec4<i32>(0);
 
     var segment_index = start_segment;
     loop {
@@ -1186,7 +1175,7 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
 
         let segment = path_segments[segment_index];
         if (segment.segment_type == SEGMENT_LINE) {
-            state = accumulate_path_fill_edge(point, segment.p0, segment.p1, 0.0001, fill_rule, state);
+            state = accumulate_path_fill_edge(point_x, point_y, segment.p0, segment.p1, 0.0001, fill_rule, state);
         } else if (segment.segment_type == SEGMENT_QUADRATIC ||
             segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) {
             var previous = segment.p0;
@@ -1197,7 +1186,7 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
                 }
 
                 let next_point = evaluate_quadratic_segment(segment, f32(step) / f32(PATH_QUADRATIC_STEPS));
-                state = accumulate_path_fill_edge(point, previous, next_point, 0.0001, fill_rule, state);
+                state = accumulate_path_fill_edge(point_x, point_y, previous, next_point, 0.0001, fill_rule, state);
                 previous = next_point;
                 step = step + 1u;
             }
@@ -1211,7 +1200,7 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
                 }
 
                 let next_point = evaluate_cubic_segment(segment, f32(step) / f32(PATH_CUBIC_STEPS));
-                state = accumulate_path_fill_edge(point, previous, next_point, 0.0001, fill_rule, state);
+                state = accumulate_path_fill_edge(point_x, point_y, previous, next_point, 0.0001, fill_rule, state);
                 previous = next_point;
                 step = step + 1u;
             }
@@ -1224,24 +1213,29 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
                 }
 
                 let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
-                state = accumulate_path_fill_edge(point, previous, next_point, 0.0001, fill_rule, state);
+                state = accumulate_path_fill_edge(point_x, point_y, previous, next_point, 0.0001, fill_rule, state);
                 previous = next_point;
                 step = step + 1u;
             }
         }
 
-        if (state.boundary) {
-            return true;
+        if (all(state.boundary)) {
+            return state.boundary;
         }
 
         segment_index = segment_index + 1u;
     }
 
     if (fill_rule == FILL_RULE_EVEN_ODD) {
-        return state.even_odd;
+        return state.boundary | state.even_odd;
     }
 
-    return state.winding != 0;
+    return state.boundary | (state.winding != vec4<i32>(0));
+}
+
+fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> bool {
+    return contains_path_fill_samples(vec4<f32>(point.x), vec4<f32>(point.y),
+        start_segment, segment_count, fill_rule).x;
 }
 
 fn contains_path_fill(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
@@ -1414,16 +1408,12 @@ fn path_fill_segments_intersect_ellipse_region(query_center: vec2<f32>, query_in
 }
 
 fn classify_path_fill_rect_intersection_detail_range(rect_min: vec2<f32>, rect_max: vec2<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> u32 {
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    let top_left_inside = contains_path_fill_segments(top_left, start_segment, segment_count, fill_rule);
-    let top_right_inside = contains_path_fill_segments(top_right, start_segment, segment_count, fill_rule);
-    let bottom_right_inside = contains_path_fill_segments(bottom_right, start_segment, segment_count, fill_rule);
-    let bottom_left_inside = contains_path_fill_segments(bottom_left, start_segment, segment_count, fill_rule);
+    let corners_inside = contains_path_fill_samples(
+        vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x),
+        vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y),
+        start_segment, segment_count, fill_rule);
     let path_boundary_intersects_region = path_fill_segments_intersect_rect_range(rect_min, rect_max, start_segment, segment_count);
-    if (top_left_inside && top_right_inside && bottom_right_inside && bottom_left_inside) {
+    if (all(corners_inside)) {
         if (!path_boundary_intersects_region) {
             return INTERSECTION_DETAIL_FULLY_CONTAINS;
         }
@@ -1431,8 +1421,7 @@ fn classify_path_fill_rect_intersection_detail_range(rect_min: vec2<f32>, rect_m
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
-    if (top_left_inside || top_right_inside || bottom_right_inside || bottom_left_inside ||
-        path_boundary_intersects_region) {
+    if (any(corners_inside) || path_boundary_intersects_region) {
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
@@ -1454,11 +1443,14 @@ fn classify_path_fill_ellipse_region_intersection_detail_range(query_center: vec
 
     let boundary_intersects_region = path_fill_segments_intersect_ellipse_region_range(query_center, query_inverse_radii, start_segment, segment_count);
     if (boundary_intersects_region ||
-        contains_path_fill_segments(query_center, start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center + vec2<f32>(radii.x, 0.0), start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center - vec2<f32>(radii.x, 0.0), start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center + vec2<f32>(0.0, radii.y), start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center - vec2<f32>(0.0, radii.y), start_segment, segment_count, fill_rule)) {
+        contains_path_fill_segments(query_center, start_segment, segment_count, fill_rule)) {
+        return INTERSECTION_DETAIL_INTERSECTS;
+    }
+    let cardinal_inside = contains_path_fill_samples(
+        vec4<f32>(query_center.x + radii.x, query_center.x - radii.x, query_center.x, query_center.x),
+        vec4<f32>(query_center.y, query_center.y, query_center.y + radii.y, query_center.y - radii.y),
+        start_segment, segment_count, fill_rule);
+    if (any(cardinal_inside)) {
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
