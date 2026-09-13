@@ -1509,9 +1509,11 @@ public static unsafe class GpuHitTestEngine
 
             var shader = cache.GetOrCreateShader("GpuHitTesting.Query", ShaderSource, "GpuHitTesting.Query");
             bool regionQuery = (query.Flags & QueryModeBoundsFlag) != 0;
+            bool ellipseQuery = (query.Flags & QueryModeEllipseRegionFlag) != 0;
             var pipeline = cache.GetOrCreateComputePipeline(
-                regionQuery ? "GpuHitTesting.Query" : "GpuHitTesting.PointQuery",
-                shader, regionQuery ? "cs_main" : "cs_point");
+                !regionQuery ? "GpuHitTesting.PointQuery" :
+                    ellipseQuery ? "GpuHitTesting.EllipseQuery" : "GpuHitTesting.BoundsQuery",
+                shader, !regionQuery ? "cs_point" : ellipseQuery ? "cs_ellipse" : "cs_bounds");
             BindGroupLayout* bindGroupLayout = null;
             BindGroup* bindGroup = null;
             CommandEncoder* encoder = null;

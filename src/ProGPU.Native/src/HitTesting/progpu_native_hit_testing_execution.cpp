@@ -231,8 +231,9 @@ bool ensure_browser_hit_test_readback(
 }
 #endif
 
-bool ensure_hit_test_pipeline(progpu_native_engine& engine) noexcept {
-    bool ready = engine.semantic_hit_test_pipeline != nullptr &&
+bool ensure_hit_test_resources(progpu_native_engine& engine) noexcept {
+    bool ready = engine.semantic_hit_test_shader != nullptr &&
+        engine.semantic_hit_test_pipeline_layout != nullptr &&
         engine.semantic_hit_test_layout != nullptr &&
         engine.semantic_hit_test_query_buffer != nullptr &&
         engine.semantic_hit_test_result_buffer != nullptr &&
@@ -248,7 +249,6 @@ bool ensure_hit_test_pipeline(progpu_native_engine& engine) noexcept {
         return true;
     }
     if (engine.semantic_hit_test_shader != nullptr ||
-        engine.semantic_hit_test_pipeline != nullptr ||
         engine.semantic_hit_test_layout != nullptr ||
         engine.semantic_hit_test_pipeline_layout != nullptr ||
         engine.semantic_hit_test_query_buffer != nullptr ||
@@ -331,20 +331,6 @@ bool ensure_hit_test_pipeline(progpu_native_engine& engine) noexcept {
         return false;
     }
 
-    WGPUComputePipelineDescriptor pipeline_descriptor{};
-    pipeline_descriptor.label = webgpu::string_view(
-        "ProGPU retained GPU hit-test pipeline");
-    pipeline_descriptor.layout = engine.semantic_hit_test_pipeline_layout;
-    pipeline_descriptor.compute.module = engine.semantic_hit_test_shader;
-    pipeline_descriptor.compute.entryPoint = webgpu::string_view("cs_point");
-    engine.semantic_hit_test_pipeline = wgpuDeviceCreateComputePipeline(
-        engine.device,
-        &pipeline_descriptor);
-    if (engine.semantic_hit_test_pipeline == nullptr) {
-        engine.release_semantic_hit_test_resources();
-        return false;
-    }
-
     WGPUBufferDescriptor descriptor{};
     descriptor.label = webgpu::string_view(
         "ProGPU retained GPU hit-test query");
@@ -417,7 +403,7 @@ bool find_hit_test_resource(
 }
 
 bool ensure_hit_test_index(progpu_native_engine& engine) noexcept {
-    if (!ensure_hit_test_pipeline(engine)) {
+    if (!ensure_hit_test_resources(engine)) {
         return false;
     }
     if (engine.semantic_hit_test_bind_group != nullptr &&
@@ -611,23 +597,24 @@ progpu_native_status begin_hit_test(
             "The retained GPU hit-test root node is out of range.");
     }
 
-    WGPUComputePipeline query_pipeline = engine->semantic_hit_test_pipeline;
-    if ((query->flags & PROGPU_NATIVE_HIT_TEST_BOUNDS_REGION) != 0U) {
-        if (engine->semantic_hit_test_region_pipeline == nullptr) {
-            WGPUComputePipelineDescriptor descriptor{};
-            descriptor.label = webgpu::string_view(
-                "ProGPU retained GPU region hit-test pipeline");
-            descriptor.layout = engine->semantic_hit_test_pipeline_layout;
-            descriptor.compute.module = engine->semantic_hit_test_shader;
-            descriptor.compute.entryPoint = webgpu::string_view("cs_main");
-            engine->semantic_hit_test_region_pipeline =
-                wgpuDeviceCreateComputePipeline(engine->device, &descriptor);
-            if (engine->semantic_hit_test_region_pipeline == nullptr) {
-                return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
-                    "The retained GPU region hit-test pipeline could not be created.");
-            }
+    const std::size_t query_kind =
+        (query->flags & PROGPU_NATIVE_HIT_TEST_BOUNDS_REGION) == 0U ? 0U :
+        (query->flags & PROGPU_NATIVE_HIT_TEST_ELLIPSE_REGION) == 0U ? 1U : 2U;
+    auto& query_pipeline = engine->semantic_hit_test_pipelines[query_kind];
+    if (query_pipeline == nullptr) {
+        constexpr std::array<const char*, 3U> entry_points{{
+            "cs_point", "cs_bounds", "cs_ellipse"}};
+        WGPUComputePipelineDescriptor descriptor{};
+        descriptor.label = webgpu::string_view(
+            "ProGPU retained specialized GPU hit-test pipeline");
+        descriptor.layout = engine->semantic_hit_test_pipeline_layout;
+        descriptor.compute.module = engine->semantic_hit_test_shader;
+        descriptor.compute.entryPoint = webgpu::string_view(entry_points[query_kind]);
+        query_pipeline = wgpuDeviceCreateComputePipeline(engine->device, &descriptor);
+        if (query_pipeline == nullptr) {
+            return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+                "The retained GPU hit-test pipeline could not be created.");
         }
-        query_pipeline = engine->semantic_hit_test_region_pipeline;
     }
 
     progpu_native_hit_test_query native_query = *query;

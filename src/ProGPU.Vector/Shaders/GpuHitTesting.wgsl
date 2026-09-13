@@ -2244,10 +2244,6 @@ fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u
 }
 
 fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
-    if (query_uses_ellipse_region()) {
-        return classify_ellipse_region_intersection_detail(primitive);
-    }
-
     let region_min = query_region_min();
     let region_max = query_region_max();
     if (!intersects_bounds(region_min, region_max, primitive.bounds_min, primitive.bounds_max)) {
@@ -2474,7 +2470,7 @@ fn record_hit(primitive_index: u32, primitive: HitTestPrimitive, intersection_de
     write_hit_result(slot, primitive_index, primitive, intersection_detail);
 }
 
-fn query_scene(global_id: vec3<u32>, region_query: bool) {
+fn query_scene(global_id: vec3<u32>, region_query: bool, ellipse_region: bool) {
     if (global_id.x != 0u || query.node_count == 0u || query.primitive_count == 0u || !finite2(query.point) || !finite2(query.region_max)) {
         return;
     }
@@ -2518,7 +2514,12 @@ fn query_scene(global_id: vec3<u32>, region_query: bool) {
                                 results[0].precise_tests = results[0].precise_tests + 1u;
                             }
 
-                            let intersection_detail = classify_bounds_intersection_detail(primitive);
+                            var intersection_detail = INTERSECTION_DETAIL_EMPTY;
+                            if (ellipse_region) {
+                                intersection_detail = classify_ellipse_region_intersection_detail(primitive);
+                            } else {
+                                intersection_detail = classify_bounds_intersection_detail(primitive);
+                            }
                             if (intersection_detail != INTERSECTION_DETAIL_EMPTY) {
                                 record_hit(primitive_index, primitive, intersection_detail);
                             }
@@ -2553,17 +2554,33 @@ fn query_scene(global_id: vec3<u32>, region_query: bool) {
 }
 
 // Keep one traversal and exact primitive policy. A constant point specialization
-// lets native shader compilers eliminate region classification before compiling
-// the ordinary pointer-input pipeline; regions retain the general entry point.
+// lets native shader compilers eliminate other query families before compiling
+// the requested pipeline. Each family preserves the same primitive algorithms.
 @compute @workgroup_size(1)
 fn cs_point(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (query_uses_bounds() || query_uses_ellipse_region()) {
         return;
     }
-    query_scene(global_id, false);
+    query_scene(global_id, false, false);
+}
+
+@compute @workgroup_size(1)
+fn cs_bounds(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (!query_uses_bounds() || query_uses_ellipse_region()) {
+        return;
+    }
+    query_scene(global_id, true, false);
+}
+
+@compute @workgroup_size(1)
+fn cs_ellipse(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (!query_uses_bounds() || !query_uses_ellipse_region()) {
+        return;
+    }
+    query_scene(global_id, true, true);
 }
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    query_scene(global_id, query_uses_bounds());
+    query_scene(global_id, query_uses_bounds(), query_uses_ellipse_region());
 }

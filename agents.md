@@ -810,11 +810,11 @@ ownership until completion or compositor disposal; never hide it as a miss,
 spin in managed code or consult the managed index. Host admission remains separate
 from this shared completion primitive; see docs/native-mil-hit-test-completion.md.
 
-Point hit queries select the shared cs_point specialization in both renderers;
-region queries lazily retain their general pipeline over the same index/layout.
+Hit queries select the shared cs_point/cs_bounds/cs_ellipse specializations in
+both renderers, lazily retaining only requested pipelines over the same index/layout.
 Keep one traversal, exact primitive/clip policies and owner-generation results.
-Point-to-region-to-point transitions must reuse resources without changing list
-or summary contracts. This separation is not permission to drop region support,
+Every query family may run first; family transitions must reuse resources without
+changing list or summary contracts. This is not permission to drop region support,
 relax readback deadlines or claim Windows compiler qualification from Metal tests.
 
 Native hit-index diagnostics read the installed scene through its qualified

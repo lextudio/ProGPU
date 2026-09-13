@@ -912,7 +912,11 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
             bool region = (selectedQuery.Flags & (uint)NativeGpuHitTestQueryFlags.BoundsRegion) != 0;
             bool expected = region ? participation != NativeGpuHitTestPrimitiveFlags.PointOnly
                 : participation != NativeGpuHitTestPrimitiveFlags.RegionOnly;
+            Console.WriteLine($"package-consumer: native participation query begin, participation={participation}, flags={selectedQuery.Flags:X8}");
+            var queryTimer = System.Diagnostics.Stopwatch.StartNew();
             var token = selected.BeginQuery(selectedQuery);
+            queryTimer.Stop();
+            Console.WriteLine($"package-consumer: native participation query submitted in {queryTimer.Elapsed.TotalMilliseconds:F3} ms");
             count = selected.Wait(token, results, out summary);
             // Zero-list queries keep their topmost record in the summary.
             // List queries keep counters there and owners in ordered records.
@@ -926,6 +930,26 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
                     $"expected hit {expected}, got summary hits {summary.Hit}, count {count}, " +
                     $"owner {hit.Id}, primitive {hit.PrimitiveIndex}.");
         }
+    }
+    foreach (var firstQuery in new[] {
+        NativeGpuHitTestQuery.BoundsQuery(new Vector2(4), new Vector2(6), 1),
+        NativeGpuHitTestQuery.EllipseQuery(new Vector2(4), new Vector2(6), 1) })
+    {
+        using var regionFirst = new NativeCompositor(context, TextureFormat.Rgba8Unorm);
+        InstallIndex(regionFirst, sceneId, 1);
+        var owners = regionFirst.BindGpuHitTestOwners(
+            new NativeGpuHitTestOwnerMap<object>([new(42, firstOwner)]), sceneId, 1);
+        Console.WriteLine($"package-consumer: native region-first query begin, flags={firstQuery.Flags:X8}");
+        var token = owners.BeginQuery(firstQuery);
+        count = owners.Wait(token, results, out summary);
+        if (count != 1 || summary.Hit != 1 || results[0].Id != 42 ||
+            !owners.TryGetOwner(token, results[0], out owner) || !ReferenceEquals(owner, firstOwner))
+            throw new InvalidOperationException("A native region-first query lost its original owner.");
+        token = owners.BeginQuery(NativeGpuHitTestQuery.PointQuery(new Vector2(5), 1));
+        count = owners.Wait(token, results, out summary);
+        if (count != 1 || summary.Hit != 1 || results[0].Id != 42 ||
+            !owners.TryGetOwner(token, results[0], out owner) || !ReferenceEquals(owner, firstOwner))
+            throw new InvalidOperationException("Switching a region-first native engine to point input changed its owner.");
     }
     Console.WriteLine("package-consumer: native GPU owner snapshot/generation isolation");
 

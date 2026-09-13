@@ -427,8 +427,7 @@ struct progpu_native_engine {
     WGPUTexture semantic_3d_sentinel_texture = nullptr;
     WGPUTextureView semantic_3d_sentinel_view = nullptr;
     WGPUShaderModule semantic_hit_test_shader = nullptr;
-    WGPUComputePipeline semantic_hit_test_pipeline = nullptr;
-    WGPUComputePipeline semantic_hit_test_region_pipeline = nullptr;
+    std::array<WGPUComputePipeline, 3U> semantic_hit_test_pipelines{};
     WGPUBindGroupLayout semantic_hit_test_layout = nullptr;
     WGPUPipelineLayout semantic_hit_test_pipeline_layout = nullptr;
     WGPUBindGroup semantic_hit_test_bind_group = nullptr;
@@ -1069,13 +1068,11 @@ struct progpu_native_engine {
         semantic_hit_test_map_state = nullptr;
         release(semantic_hit_test_result_buffer);
         release(semantic_hit_test_query_buffer);
-        if (semantic_hit_test_pipeline != nullptr) {
-            wgpuComputePipelineRelease(semantic_hit_test_pipeline);
-            semantic_hit_test_pipeline = nullptr;
-        }
-        if (semantic_hit_test_region_pipeline != nullptr) {
-            wgpuComputePipelineRelease(semantic_hit_test_region_pipeline);
-            semantic_hit_test_region_pipeline = nullptr;
+        for (auto& pipeline : semantic_hit_test_pipelines) {
+            if (pipeline != nullptr) {
+                wgpuComputePipelineRelease(pipeline);
+                pipeline = nullptr;
+            }
         }
         if (semantic_hit_test_pipeline_layout != nullptr) {
             wgpuPipelineLayoutRelease(semantic_hit_test_pipeline_layout);
