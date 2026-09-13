@@ -49,9 +49,50 @@ The exact ABI pin remains wgpu-native 33133da4ec5a0174cb21539ef2d3346f75200411,
 with wgpu revision 87576b72b37c6b78b41104eb25fc31893af94092. Its dependency
 manifest exposes the optional `dxc_shader_compiler` feature. A DXC comparison
 requires an ABI-identical native build with that feature enabled; blindly using
-a newer incompatible wgpu DLL is not admissible. The VM currently has no Rust
+a newer incompatible wgpu DLL is not admissible. At this checkpoint the VM had no Rust
 toolchain. This discovery explains compiler selection, not yet the pixel failure,
 access violation or readback timeout.
+
+## Feature-enabled comparison and point-query separation
+
+An isolated ARM64 Rust toolchain was subsequently installed under
+`C:\ProGPU.WgpuToolchain-akdIwM`, without persistent PATH or global tool changes.
+The exact pinned wgpu-native/wgpu/header sources were built with their optional
+DXC dependency feature, using the existing Visual Studio environment and an
+isolated build-time libclang. No foreign implementation source was modified.
+The generated optional-dependency lock file was preserved and the resumed build
+used `--locked`. Its DLL SHA256 is
+`52b3eea2261daabc3980e9690cc66b1bcce5eada451808882504e300f12db84d`.
+
+The independent probe now reports `Using DXC for shader compilation` and loads
+the explicit SDK ARM64 compiler. The unchanged native consumer then fails in
+render/compute pipeline creation with 0x80004005 and aborts after invalid pipeline
+use. DXC is therefore not qualified on this Parallels adapter. Neither that DLL
+nor the diagnostic managed compiler selection is shipped or enabled by default.
+
+A separate original-backend x64 run explicitly selects Microsoft Basic Render
+Driver in the VM. It passes the cubic rectangle check, unlike CI run 34758568841,
+where both Windows architectures now fail that same assertion. The VM's newer
+Windows/software driver is not an exact runner match. Its owner-query creation
+and the ordinary ARM64 adapter's query creation both remain slow before submission;
+overlapping diagnostic processes are not controlled performance measurements.
+
+The bounded product change separates point queries from region classification:
+`cs_point` calls one shared traversal with constant point mode, while `cs_main`
+retains region selection. Managed point/list queries share their cached point
+pipeline. Both native providers keep the point pipeline and lazily create the
+general region pipeline with the existing layout/index; disposal releases both.
+No geometry approximation, CPU query fallback, compiler default or deadline change
+is introduced. Traversal complexity and stable query buffers are unchanged; at
+most two query pipelines are retained per native engine instead of one.
+
+Validation: managed Vector and source-reference consumer builds have zero
+warnings/errors; both native provider libraries compile. All 122 managed GPU
+hit-test tests pass, including a new point/list/region/point pipeline-reuse test.
+The rebuilt native Metal consumer exits 0 through the cubic fixture, retained
+rendering and original owner/generation/participation query checks. These staged
+results do not qualify Windows or exact final packages. Windows CI and the
+independent missing-rectangle failure remain required before merge.
 
 ## Diagnostics added without changing acceptance
 

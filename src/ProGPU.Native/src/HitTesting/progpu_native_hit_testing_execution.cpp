@@ -336,7 +336,7 @@ bool ensure_hit_test_pipeline(progpu_native_engine& engine) noexcept {
         "ProGPU retained GPU hit-test pipeline");
     pipeline_descriptor.layout = engine.semantic_hit_test_pipeline_layout;
     pipeline_descriptor.compute.module = engine.semantic_hit_test_shader;
-    pipeline_descriptor.compute.entryPoint = webgpu::string_view("cs_main");
+    pipeline_descriptor.compute.entryPoint = webgpu::string_view("cs_point");
     engine.semantic_hit_test_pipeline = wgpuDeviceCreateComputePipeline(
         engine.device,
         &pipeline_descriptor);
@@ -611,6 +611,25 @@ progpu_native_status begin_hit_test(
             "The retained GPU hit-test root node is out of range.");
     }
 
+    WGPUComputePipeline query_pipeline = engine->semantic_hit_test_pipeline;
+    if ((query->flags & PROGPU_NATIVE_HIT_TEST_BOUNDS_REGION) != 0U) {
+        if (engine->semantic_hit_test_region_pipeline == nullptr) {
+            WGPUComputePipelineDescriptor descriptor{};
+            descriptor.label = webgpu::string_view(
+                "ProGPU retained GPU region hit-test pipeline");
+            descriptor.layout = engine->semantic_hit_test_pipeline_layout;
+            descriptor.compute.module = engine->semantic_hit_test_shader;
+            descriptor.compute.entryPoint = webgpu::string_view("cs_main");
+            engine->semantic_hit_test_region_pipeline =
+                wgpuDeviceCreateComputePipeline(engine->device, &descriptor);
+            if (engine->semantic_hit_test_region_pipeline == nullptr) {
+                return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+                    "The retained GPU region hit-test pipeline could not be created.");
+            }
+        }
+        query_pipeline = engine->semantic_hit_test_region_pipeline;
+    }
+
     progpu_native_hit_test_query native_query = *query;
     native_query.primitive_count = engine->semantic_hit_test_primitive_count;
     native_query.node_count = engine->semantic_hit_test_node_count;
@@ -672,7 +691,7 @@ progpu_native_status begin_hit_test(
     }
     wgpuComputePassEncoderSetPipeline(
         pass,
-        engine->semantic_hit_test_pipeline);
+        query_pipeline);
     wgpuComputePassEncoderSetBindGroup(
         pass,
         0U,

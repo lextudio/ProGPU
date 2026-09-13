@@ -2155,6 +2155,40 @@ public sealed class GpuHitTestingTests
     }
 
     [Fact]
+    public void PointQueriesCompileIndependentlyAndReuseAfterRegionQuery()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+        using var cache = new RenderPipelineCache(context);
+        var primitive = GpuHitTestPrimitive.RectangleFill(
+            42, Vector2.Zero, new Vector2(20), Vector2.Zero);
+        using var index = new GpuHitTestDeviceIndex(context, GpuHitTestIndex.Build([primitive]));
+        int initialPipelines = context.CachedDeviceComputePipelineCount;
+        var results = new GpuHitTestResult[1];
+
+        Assert.True(GpuHitTestEngine.TryHitTestPoint(context, cache, index,
+            new Vector2(5), out var point));
+        Assert.Equal(42, point.Id);
+        Assert.Equal(initialPipelines + 1, context.CachedDeviceComputePipelineCount);
+        Assert.True(GpuHitTestEngine.TryHitTestPointAll(context, cache, index,
+            new Vector2(5), results, out int count, out _));
+        Assert.Equal(1, count);
+        Assert.Equal(42, results[0].Id);
+        Assert.Equal(initialPipelines + 1, context.CachedDeviceComputePipelineCount);
+
+        Assert.True(GpuHitTestEngine.TryQueryBoundsAll(context, cache, index,
+            new Vector2(4), new Vector2(6), results, out count, out _));
+        Assert.Equal(1, count);
+        Assert.Equal(42, results[0].Id);
+        Assert.Equal((uint)GpuHitTestIntersectionDetail.FullyContains, results[0].IntersectionDetail);
+        Assert.Equal(initialPipelines + 2, context.CachedDeviceComputePipelineCount);
+        Assert.True(GpuHitTestEngine.TryHitTestPoint(context, cache, index,
+            new Vector2(5), out point));
+        Assert.Equal(42, point.Id);
+        Assert.Equal(initialPipelines + 2, context.CachedDeviceComputePipelineCount);
+    }
+
+    [Fact]
     public void TryHitTestPointReusesUploadedDeviceIndex()
     {
         using var context = new WgpuContext();

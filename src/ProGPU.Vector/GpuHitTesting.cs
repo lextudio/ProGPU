@@ -1197,7 +1197,7 @@ public static unsafe class GpuHitTestEngine
             deviceIndex.ResultBuffer.WriteSingle(initialResult);
 
             var shader = cache.GetOrCreateShader("GpuHitTesting.Query", ShaderSource, "GpuHitTesting.Query");
-            var pipeline = cache.GetOrCreateComputePipeline("GpuHitTesting.Query", shader, "cs_main");
+            var pipeline = cache.GetOrCreateComputePipeline("GpuHitTesting.PointQuery", shader, "cs_point");
             BindGroupLayout* bindGroupLayout = null;
             BindGroup* bindGroup = null;
             CommandEncoder* encoder = null;
@@ -1508,7 +1508,10 @@ public static unsafe class GpuHitTestEngine
             deviceIndex.ResultListBuffer.Write(initialResults);
 
             var shader = cache.GetOrCreateShader("GpuHitTesting.Query", ShaderSource, "GpuHitTesting.Query");
-            var pipeline = cache.GetOrCreateComputePipeline("GpuHitTesting.Query", shader, "cs_main");
+            bool regionQuery = (query.Flags & QueryModeBoundsFlag) != 0;
+            var pipeline = cache.GetOrCreateComputePipeline(
+                regionQuery ? "GpuHitTesting.Query" : "GpuHitTesting.PointQuery",
+                shader, regionQuery ? "cs_main" : "cs_point");
             BindGroupLayout* bindGroupLayout = null;
             BindGroup* bindGroup = null;
             CommandEncoder* encoder = null;

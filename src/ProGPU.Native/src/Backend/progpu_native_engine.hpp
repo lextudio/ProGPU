@@ -428,6 +428,7 @@ struct progpu_native_engine {
     WGPUTextureView semantic_3d_sentinel_view = nullptr;
     WGPUShaderModule semantic_hit_test_shader = nullptr;
     WGPUComputePipeline semantic_hit_test_pipeline = nullptr;
+    WGPUComputePipeline semantic_hit_test_region_pipeline = nullptr;
     WGPUBindGroupLayout semantic_hit_test_layout = nullptr;
     WGPUPipelineLayout semantic_hit_test_pipeline_layout = nullptr;
     WGPUBindGroup semantic_hit_test_bind_group = nullptr;
@@ -1071,6 +1072,10 @@ struct progpu_native_engine {
         if (semantic_hit_test_pipeline != nullptr) {
             wgpuComputePipelineRelease(semantic_hit_test_pipeline);
             semantic_hit_test_pipeline = nullptr;
+        }
+        if (semantic_hit_test_region_pipeline != nullptr) {
+            wgpuComputePipelineRelease(semantic_hit_test_region_pipeline);
+            semantic_hit_test_region_pipeline = nullptr;
         }
         if (semantic_hit_test_pipeline_layout != nullptr) {
             wgpuPipelineLayoutRelease(semantic_hit_test_pipeline_layout);

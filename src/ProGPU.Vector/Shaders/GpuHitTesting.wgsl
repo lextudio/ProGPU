@@ -2474,8 +2474,7 @@ fn record_hit(primitive_index: u32, primitive: HitTestPrimitive, intersection_de
     write_hit_result(slot, primitive_index, primitive, intersection_detail);
 }
 
-@compute @workgroup_size(1)
-fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn query_scene(global_id: vec3<u32>, region_query: bool) {
     if (global_id.x != 0u || query.node_count == 0u || query.primitive_count == 0u || !finite2(query.point) || !finite2(query.region_max)) {
         return;
     }
@@ -2512,7 +2511,7 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let primitive_index = primitive_indices[primitive_lookup];
                 if (primitive_index < query.primitive_count) {
                     let primitive = primitives[primitive_index];
-                    if (query_uses_bounds()) {
+                    if (region_query) {
                         if (primitive_is_hit_test_visible(primitive) && query_intersects_bounds(primitive.bounds_min, primitive.bounds_max)) {
                             results[0].candidate_count = results[0].candidate_count + 1u;
                             if (primitive_uses_precise_bounds_region_test(primitive)) {
@@ -2551,4 +2550,20 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             child = child + 1u;
         }
     }
+}
+
+// Keep one traversal and exact primitive policy. A constant point specialization
+// lets native shader compilers eliminate region classification before compiling
+// the ordinary pointer-input pipeline; regions retain the general entry point.
+@compute @workgroup_size(1)
+fn cs_point(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (query_uses_bounds() || query_uses_ellipse_region()) {
+        return;
+    }
+    query_scene(global_id, false);
+}
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    query_scene(global_id, query_uses_bounds());
 }
