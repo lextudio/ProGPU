@@ -5,6 +5,8 @@ using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
 internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand }
+[Flags]
+internal enum PathProbeAtlas { Managed = 0, CopyDestinationOnly = 1, DefaultView = 2 }
 
 // Failure isolation only: this executes the packaged canonical kernel, not a
 // replacement renderer. A passing probe never qualifies a failed native frame.
@@ -43,7 +45,8 @@ internal static unsafe class PathCoverageProbe
 
     internal static void Run(WgpuContext context, bool drawAtlas = false,
         bool sameSubmission = false, bool nativeLayout = false,
-        PathProbeApi apiMode = PathProbeApi.AutomaticLayout)
+        PathProbeApi apiMode = PathProbeApi.AutomaticLayout,
+        PathProbeAtlas atlasMode = PathProbeAtlas.Managed)
     {
         const uint rowBytes = 256, height = 16;
         uint width = nativeLayout ? 40u : 64u;
@@ -55,8 +58,10 @@ internal static unsafe class PathCoverageProbe
         using var coverage = new ProbeBuffer(context, rowBytes * height, BufferUsage.Storage | BufferUsage.CopySrc);
         using var combine = new ProbeBuffer(context, 40, BufferUsage.Storage | BufferUsage.CopyDst);
         using var atlas = new GpuTexture(context, 1024, 1024, TextureFormat.R8Unorm,
-            TextureUsage.TextureBinding | TextureUsage.CopyDst | TextureUsage.CopySrc,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst |
+                (atlasMode.HasFlag(PathProbeAtlas.CopyDestinationOnly) ? TextureUsage.None : TextureUsage.CopySrc),
             "Cold partial path atlas diagnostic");
+        Console.WriteLine($"package-consumer: atlas configuration={atlasMode}; usage={atlas.Usage}");
         // Exact PathRasterizerCommon.wgsl wire records. The rectangle interior
         // must be 255, its exterior 0 at the unchanged eight-by-eight sample grid.
         uniforms.Write<uint>([Bits(nativeLayout ? 4 : 0), 0, Bits(1), Bits(1), 0, 0, rowBytes / 4, width, height, 8, 0, 0]);
@@ -130,7 +135,7 @@ internal static unsafe class PathCoverageProbe
                         context.Api.BindGroupRelease(group); group = null;
                         uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
                         Console.WriteLine("package-consumer: released all five raster buffers and bind group before native completion wait");
-                    } : null);
+                    } : null, atlasMode);
             }
             else
             {
@@ -142,7 +147,18 @@ internal static unsafe class PathCoverageProbe
             Console.WriteLine("package-consumer: coverage probe submitted canonical raster and partial atlas copy");
             // Submit the first draw before either readback. The diagnostic must
             // not warm up or synchronize the atlas through a CPU read first.
-            if (drawAtlas && !sameSubmission) DrawAtlas(context, atlas, cache);
+            if (drawAtlas && !sameSubmission) DrawAtlas(context, atlas, cache, atlasMode: atlasMode);
+            if (atlasMode.HasFlag(PathProbeAtlas.CopyDestinationOnly))
+            {
+                // This texture deliberately has the native usage, so reading it
+                // back would be invalid. DrawAtlas has already asserted the same
+                // exact final target pixels before this independent buffer read.
+                byte[] nativeUsageRaw = coverage.ReadBytes();
+                if (nativeUsageRaw[8 * rowBytes + 16] != 255 || nativeUsageRaw[2 * rowBytes + 2] != 0)
+                    throw new InvalidOperationException("Native-usage canonical coverage probe failed.");
+                Console.WriteLine("package-consumer: native-usage raw coverage passed; atlas readback unavailable by design");
+                return;
+            }
             byte[] pixels = atlas.ReadPixels();
             if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseBuffers)
             {
@@ -174,7 +190,8 @@ internal static unsafe class PathCoverageProbe
 
     private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
         CommandEncoder* sharedEncoder = null, bool nativeLayout = false,
-        PathProbeApi apiMode = PathProbeApi.AutomaticLayout, Action? releaseRaster = null)
+        PathProbeApi apiMode = PathProbeApi.AutomaticLayout, Action? releaseRaster = null,
+        PathProbeAtlas atlasMode = PathProbeAtlas.Managed)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
@@ -236,6 +253,7 @@ internal static unsafe class PathCoverageProbe
         PipelineLayout* pipelineLayout = null;
         BindGroup* uniformGroup = null; BindGroup* atlasGroup = null;
         Sampler* sampler = null; CommandEncoder* encoder = null; CommandBuffer* command = null;
+        TextureView* defaultAtlasView = null;
         try
         {
             if (apiMode != PathProbeApi.AutomaticLayout)
@@ -293,9 +311,14 @@ internal static unsafe class PathCoverageProbe
                 AddressModeW = AddressMode.ClampToEdge, MinFilter = FilterMode.Linear,
                 MagFilter = FilterMode.Linear, MipmapFilter = MipmapFilterMode.Nearest, MaxAnisotropy = 1 };
             sampler = context.Api.DeviceCreateSampler(context.Device, &samplerDescriptor);
+            if (atlasMode.HasFlag(PathProbeAtlas.DefaultView))
+            {
+                defaultAtlasView = context.Api.TextureCreateView(atlas.TexturePtr, null);
+                if (defaultAtlasView == null) throw new InvalidOperationException("Native-default atlas view rejected.");
+            }
             var atlasEntries = stackalloc BindGroupEntry[2];
             atlasEntries[0] = new() { Binding = 0, Sampler = sampler };
-            atlasEntries[1] = new() { Binding = 1, TextureView = atlas.ViewPtr };
+            atlasEntries[1] = new() { Binding = 1, TextureView = defaultAtlasView != null ? defaultAtlasView : atlas.ViewPtr };
             var atlasDescriptor = new BindGroupDescriptor { Layout = atlasLayout, EntryCount = 2, Entries = atlasEntries };
             atlasGroup = context.Api.DeviceCreateBindGroup(context.Device, &atlasDescriptor);
             if (uniformGroup == null || atlasGroup == null || sampler == null)
@@ -358,6 +381,7 @@ internal static unsafe class PathCoverageProbe
             if (command != null) context.Api.CommandBufferRelease(command);
             if (encoder != null && sharedEncoder == null) context.Api.CommandEncoderRelease(encoder);
             if (atlasGroup != null) context.Api.BindGroupRelease(atlasGroup);
+            if (defaultAtlasView != null) context.Api.TextureViewRelease(defaultAtlasView);
             if (uniformGroup != null) context.Api.BindGroupRelease(uniformGroup);
             if (sampler != null) context.Api.SamplerRelease(sampler);
             if (pipelineLayout != null) context.Api.PipelineLayoutRelease(pipelineLayout);

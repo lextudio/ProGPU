@@ -23,7 +23,10 @@ if (args.Contains("--webgpu-init-only", StringComparer.Ordinal))
     return;
 }
 
-if (args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
+var atlasProbe = args.Contains("--path-native-atlas-probe", StringComparer.Ordinal);
+var atlasUsageProbe = atlasProbe || args.Contains("--path-native-atlas-usage-probe", StringComparer.Ordinal);
+var atlasViewProbe = atlasProbe || args.Contains("--path-native-atlas-view-probe", StringComparer.Ordinal);
+if (atlasUsageProbe || atlasViewProbe || args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-probe", StringComparer.Ordinal) ||
     args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-layout-probe", StringComparer.Ordinal) ||
@@ -35,7 +38,8 @@ if (args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
-    var apiMode = args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal)
+    var apiMode = atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
+        : args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeReleaseBuffers
         : args.Contains("--path-native-release-command-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeReleaseCommand
@@ -50,7 +54,9 @@ if (args.Contains("--path-coverage-probe", StringComparer.Ordinal) ||
         args.Contains("--path-vector-batched-probe", StringComparer.Ordinal) ||
             args.Contains("--path-native-layout-probe", StringComparer.Ordinal) || apiMode != PathProbeApi.AutomaticLayout,
         args.Contains("--path-native-layout-probe", StringComparer.Ordinal) || apiMode != PathProbeApi.AutomaticLayout,
-        apiMode);
+        apiMode,
+        (atlasUsageProbe ? PathProbeAtlas.CopyDestinationOnly : PathProbeAtlas.Managed) |
+        (atlasViewProbe ? PathProbeAtlas.DefaultView : PathProbeAtlas.Managed));
     return;
 }
 
