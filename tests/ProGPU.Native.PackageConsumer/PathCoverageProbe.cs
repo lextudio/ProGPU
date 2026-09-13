@@ -4,7 +4,7 @@ using ProGPU.Backend;
 using ProGPU.Backend.Native;
 using Silk.NET.WebGPU;
 
-internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand }
+internal enum PathProbeApi { AutomaticLayout, NativeLayout, NativeSubmission, NativeRelease, NativeReleaseBuffers, NativeReleaseCommand, NativeReleaseEncoder, NativeReleaseEncoding }
 [Flags]
 internal enum PathProbeAtlas { Managed = 0, CopyDestinationOnly = 1, DefaultView = 2 }
 [Flags]
@@ -140,7 +140,11 @@ internal static unsafe class PathCoverageProbe
                         context.Api.BindGroupRelease(group); group = null;
                         uniforms.Dispose(); records.Dispose(); segments.Dispose(); coverage.Dispose(); combine.Dispose();
                         Console.WriteLine("package-consumer: released all five raster buffers and bind group before native completion wait");
-                    } : null, atlasMode);
+                    } : null, atlasMode,
+                    apiMode is PathProbeApi.NativeReleaseEncoder or PathProbeApi.NativeReleaseEncoding ? () => {
+                        context.Api.CommandEncoderRelease(encoder); encoder = null;
+                        Console.WriteLine("package-consumer: released finished encoder before native submission");
+                    } : null);
             }
             else
             {
@@ -196,7 +200,7 @@ internal static unsafe class PathCoverageProbe
     private static void DrawAtlas(WgpuContext context, GpuTexture atlas, RenderPipelineCache cache,
         CommandEncoder* sharedEncoder = null, bool nativeLayout = false,
         PathProbeApi apiMode = PathProbeApi.AutomaticLayout, Action? releaseRaster = null,
-        PathProbeAtlas atlasMode = PathProbeAtlas.Managed)
+        PathProbeAtlas atlasMode = PathProbeAtlas.Managed, Action? releaseEncoder = null)
     {
         using var target = new GpuTexture(context, 64, 16, TextureFormat.Rgba8Unorm,
             TextureUsage.RenderAttachment | TextureUsage.CopySrc, "Canonical vector atlas diagnostic");
@@ -349,6 +353,7 @@ internal static unsafe class PathCoverageProbe
             var commandDescriptor = new CommandBufferDescriptor();
             command = context.Api.CommandEncoderFinish(encoder, &commandDescriptor);
             if (command == null) throw new InvalidOperationException("Canonical vector probe commands rejected.");
+            releaseEncoder?.Invoke();
             if (apiMode >= PathProbeApi.NativeSubmission)
             {
                 // Existing wgpu-native extension ABI used by the C++ engine,
@@ -358,7 +363,7 @@ internal static unsafe class PathCoverageProbe
                 var poll = (delegate* unmanaged[Cdecl]<Device*, uint, void*, uint>)
                     context.Wgpu.Context.GetProcAddress("wgpuDevicePoll");
                 var token = new SubmissionToken { Queue = context.Queue, Index = submit(context.Queue, 1, &command) };
-                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand)
+                if (apiMode is PathProbeApi.NativeRelease or PathProbeApi.NativeReleaseCommand or PathProbeApi.NativeReleaseEncoding)
                 {
                     context.Api.CommandBufferRelease(command); command = null;
                     Console.WriteLine("package-consumer: released submitted command buffer before completion wait");

@@ -37,11 +37,17 @@ if (rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe |
     args.Contains("--path-native-submit-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-release-encoder-probe", StringComparer.Ordinal) ||
+    args.Contains("--path-native-release-encoding-probe", StringComparer.Ordinal) ||
     args.Contains("--path-native-release-command-probe", StringComparer.Ordinal))
 {
     using var probeContext = new WgpuContext();
     probeContext.Initialize(window: null);
     var apiMode = rasterBindingProbe || rasterZeroProbe || atlasUsageProbe || atlasViewProbe ? PathProbeApi.NativeSubmission
+        : args.Contains("--path-native-release-encoder-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeReleaseEncoder
+        : args.Contains("--path-native-release-encoding-probe", StringComparer.Ordinal)
+        ? PathProbeApi.NativeReleaseEncoding
         : args.Contains("--path-native-release-buffers-probe", StringComparer.Ordinal)
         ? PathProbeApi.NativeReleaseBuffers
         : args.Contains("--path-native-release-command-probe", StringComparer.Ordinal)

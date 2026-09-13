@@ -74,3 +74,29 @@ selectable with `probe_set=raster`:
 All three preserve complete raw-coverage, atlas-storage and target-pixel checks,
 and pass on Metal after a zero-warning/error Release build. No product renderer
 or shader is changed. Windows evidence remains required before choosing a repair.
+
+The completed raster run `34779073956` passes all raw variants on both Windows
+architectures. ARM64 also passes its two actual native frames in this run; x64
+still fails both. Atlas run `34778761952` previously failed ARM64 direct native
+path while its independent cubic passed, so native success is not yet reliable.
+The smaller layout minimum and unwritten combine buffer do not reproduce the
+x64 failure and are not demonstrated product fixes.
+
+## Finished-encoder lifetime comparison
+
+The native path finishes a command buffer, releases its encoder, submits, then
+releases the command buffer. Earlier raw probes retained the encoder even when
+testing command-buffer release. `probe_set=encoder` now compares the retained
+baseline with `--path-native-release-encoder-probe` (release only the finished
+encoder before submit) and `--path-native-release-encoding-probe` (also release
+the command buffer after submit). Both retain the complete raster resource set
+through completion and preserve all original exact coverage/atlas/target checks.
+The caller clears its encoder pointer to prevent duplicate release; no encoding
+occurs after finish. Product lifetime and submission code are unchanged.
+
+Both new Release probes pass on Metal; compilation has zero warnings/errors.
+Windows results remain required. Meanwhile renderer Build `34777843000` x64
+consumer job `103783563847` is red: the direct native path is black, and the
+original cubic readback reports DeviceLost rather than a valid image. Raw vector
+and indexed-submission comparisons pass. Do not count either failure as a frame
+pass or equate it with the separately unresolved native rectangle-input crash.
