@@ -94,6 +94,25 @@ rendering and original owner/generation/participation query checks. These staged
 results do not qualify Windows or exact final packages. Windows CI and the
 independent missing-rectangle failure remain required before merge.
 
+The committed point-query change was then rebuilt with Windows ARM64 MSVC in
+`C:\ProGPU.PointQuery-532a95ea`, including both provider DLLs. The first configure
+omitted the optional Dawn header input; the existing build was reconfigured with
+the exact pinned header and both targets completed. The comparison retains the
+original packaged wgpu-native DLL. It passes cubic/retained rendering and submits
+the first point query after 44,723.421 ms. Completion of all owner/region checks
+is still pending; this is not an acceptable cold-start performance claim.
+The superseded original ARM64/software-x64 diagnostics were explicitly stopped
+after verifying their exact managed module paths, with logs preserved. They had
+not submitted the first query after 14m32s/12m36s total elapsed time and are not
+passes or controlled benchmarks.
+
+CI run 34761357934 at 532a95ea additionally reports one Linux test failure:
+`WinUiCompositionTests.LinearAndRadialGradientsRenderThroughRetainedWebGpuScene`
+passes its pixel assertions but fails the final stable scene-cache-hit assertion.
+The assertion now includes the existing cache-miss reason without changing its
+requirement or adding a retry. All 39 WinUI composition tests pass locally.
+The Linux failure is not diagnosed or waived by that local result.
+
 ## Diagnostics added without changing acceptance
 
 The consumer now prints existing typed WebGPU error/device-loss notifications,
