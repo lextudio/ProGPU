@@ -1,5 +1,11 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native dashed source input reuses the renderer's phase/run walker and cap/join
+geometry, preserving gaps, closed seams, endpoint caps, source clips and frames.
+Keep typed aligned batch scratch and actual point/double offsets; never index a
+solid outline or AA fringe. Native round-cap tessellation is not an ideal-circle
+parity claim. Separate host/device-index application gates remain authoritative.
+
 Native MIL combined geometry resolves both operands before simplifying exact
 empty-set identities. Retain surviving segments, subtree offsets, fill rule and
 composed transforms; a missing/failed operand is not empty. One surviving clip

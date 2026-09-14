@@ -3,6 +3,7 @@
 #include "progpu_native_geometry_base.hpp"
 #include "progpu_native_geometry_stroke.hpp"
 #include "progpu_native_semantic_image.hpp"
+#include "progpu_native_semantic_stroke.hpp"
 
 #include <algorithm>
 #include <array>
@@ -221,6 +222,10 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
     try {
         std::vector<progpu_native_hit_test_primitive> primitives;
         std::vector<progpu_native_path_segment> segments;
+        // Typed scratch is allocated only for dashed source strokes and reused
+        // across the complete capture; byte-owned resources stay alignment-safe.
+        std::vector<progpu_native_point> dash_points;
+        std::vector<double> dash_intervals;
         std::array<std::uint32_t, PROGPU_NATIVE_SCENE_MAX_STACK_DEPTH> stack{};
         std::array<bool, PROGPU_NATIVE_SCENE_MAX_STACK_DEPTH> layer_stack{};
         std::array<std::uint32_t, PROGPU_NATIVE_SCENE_MAX_STACK_DEPTH> clip_scope_stack{};
@@ -740,7 +745,7 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
                     constexpr std::uint32_t allowed = PROGPU_NATIVE_POLYLINE_FLAG_EDGE_ALIASED |
                         PROGPU_NATIVE_POLYLINE_FLAG_CLOSED | PROGPU_NATIVE_POLYLINE_FLAG_WPF_JOIN_SEMANTICS;
                     const bool closed = (source.flags & PROGPU_NATIVE_POLYLINE_FLAG_CLOSED) != 0U;
-                    if (source.kind != PROGPU_NATIVE_SCENE_STROKE_POLYLINE || source.dash_interval_count != 0U ||
+                    if (source.kind != PROGPU_NATIVE_SCENE_STROKE_POLYLINE ||
                         (source.flags & ~allowed) != 0U || source.point_count < (closed ? 3U : 2U) ||
                         source.stroke_thickness <= 0.0001F) return unsupported();
                     const auto transform = compose_affine(source.transform, state.transform);
@@ -752,6 +757,56 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
                         return read_record<progpu_native_point>(resource.auxiliary, source.point_offset + index);
                     };
                     const bool wpf_joins = (source.flags & PROGPU_NATIVE_POLYLINE_FLAG_WPF_JOIN_SEMANTICS) != 0U;
+                    const auto append_stroke_join = [&](progpu_native_point corner,
+                        progpu_native_point incoming, progpu_native_point outgoing) {
+                        std::array<stroke_triangle, 8U> joins{};
+                        const auto count = create_join_triangles(joins, source.line_join,
+                            affine_outline ? source.stroke_thickness : source.stroke_thickness * maximum_scale,
+                            source.miter_limit, affine_outline ? corner : transformed_point(transform, corner),
+                            affine_outline ? incoming : transformed_direction(transform, incoming),
+                            affine_outline ? outgoing : transformed_direction(transform, outgoing), wpf_joins);
+                        for (std::size_t k = 0U; k < count; ++k)
+                            if (!append_join_triangle(joins[k], join_transform, state, state_index)) return false;
+                        return true;
+                    };
+                    if (source.dash_interval_count != 0U) {
+                        // Reuse the renderer's exact phase/odd-pattern/closed-seam
+                        // traversal. Do not approximate gaps with a solid stroke.
+                        const auto last_source = read_record<progpu_native_scene_stroke>(resource.payload,
+                            resource.payload.size() / sizeof(progpu_native_scene_stroke) - 1U);
+                        const auto double_base = (last_source.point_offset + last_source.point_count) * sizeof(progpu_native_point);
+                        dash_points.resize(source.point_count);
+                        dash_intervals.resize(source.dash_interval_count);
+                        std::memcpy(dash_points.data(), resource.auxiliary.data() + source.point_offset * sizeof(progpu_native_point),
+                            dash_points.size() * sizeof(progpu_native_point));
+                        std::memcpy(dash_intervals.data(), resource.auxiliary.data() + double_base + source.dash_interval_offset * sizeof(double),
+                            dash_intervals.size() * sizeof(double));
+                        auto polyline = make_semantic_polyline(source);
+                        polyline.transform = transform;
+                        auto style = make_semantic_dash_style(source);
+                        style.interval_offset = 0U;
+                        dash_pattern_state pattern{};
+                        if (!try_create_dash_pattern(polyline, &style, 1U, dash_intervals.data(), dash_intervals.size(), pattern))
+                            return unsupported();
+                        const auto body = [&](progpu_native_point first, progpu_native_point last) {
+                            return append_line(first, last, source.stroke_thickness,
+                                PROGPU_NATIVE_STROKE_CAP_FLAT, PROGPU_NATIVE_STROKE_CAP_FLAT, transform, state, state_index);
+                        };
+                        const auto cap = [&](std::uint32_t kind, progpu_native_point center,
+                            progpu_native_point direction, bool is_start) {
+                            std::array<stroke_triangle, 8U> triangles{};
+                            const auto count = create_cap_triangles(triangles, kind,
+                                affine_outline ? source.stroke_thickness : source.stroke_thickness * maximum_scale,
+                                affine_outline ? center : transformed_point(transform, center),
+                                affine_outline ? direction : transformed_direction(transform, direction), is_start);
+                            for (std::size_t k = 0U; k < count; ++k)
+                                if (!append_join_triangle(triangles[k], join_transform, state, state_index)) return false;
+                            return true;
+                        };
+                        if (!walk_dashed_polyline(polyline, dash_points.data(), pattern, body, cap, append_stroke_join))
+                            return unsupported();
+                        continue;
+                    }
                     // Same traversal and join construction as append_polyline.
                     // Line bodies with endpoint caps plus real join triangles form a union under
                     // one owner; canonical query output deduplicates that owner.
@@ -766,18 +821,11 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
                             end_cap, transform, state, state_index)) return unsupported();
                         if (!closed && edge + 1U == edge_count) continue;
                         const auto last = point((edge + 2U) % source.point_count);
-                        std::array<stroke_triangle, 8U> joins{};
                         const progpu_native_point incoming{corner.x - first.x, corner.y - first.y};
                         const progpu_native_point outgoing{last.x - corner.x, last.y - corner.y};
                         // Match append_polyline's local-affine versus world-conformal
                         // join domain, including its scale-sensitive miter threshold.
-                        const auto count = create_join_triangles(joins, source.line_join,
-                            affine_outline ? source.stroke_thickness : source.stroke_thickness * maximum_scale,
-                            source.miter_limit, affine_outline ? corner : transformed_point(transform, corner),
-                            affine_outline ? incoming : transformed_direction(transform, incoming),
-                            affine_outline ? outgoing : transformed_direction(transform, outgoing), wpf_joins);
-                        for (std::size_t k = 0U; k < count; ++k)
-                            if (!append_join_triangle(joins[k], join_transform, state, state_index)) return unsupported();
+                        if (!append_stroke_join(corner, incoming, outgoing)) return unsupported();
                     }
                 }
                 continue;

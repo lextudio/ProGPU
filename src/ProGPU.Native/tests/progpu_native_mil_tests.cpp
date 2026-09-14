@@ -23137,6 +23137,107 @@ int main() {
         PROGPU_REQUIRE(found);
     }
     {
+        // Dashed input uses source run bodies and cap/join coverage, not the
+        // solid outline or raster AA fringe. Paired flat runs: DashedSourceInputTests.
+        for (const bool closed : {false, true})
+        for (std::uint32_t cap = 0U; cap < 4U; ++cap)
+        for (const bool affine : {false, true}) {
+            progpu::native::semantic_scene_builder builder(9850U, 1U);
+            auto state = builder.identity_state();
+            state.flags = PROGPU_NATIVE_SCENE_STATE_CLIP_RECT;
+            state.clip_rect = {-100, -100, 400, 400};
+            if (affine) state.transform = {2, 0, 0.5F, 3, 5, 7};
+            std::uint32_t state_index{};
+            PROGPU_REQUIRE(builder.add_state(state, state_index));
+            PROGPU_REQUIRE(builder.set_hit_test_owner(91));
+            PROGPU_REQUIRE(builder.save(state_index));
+            const std::array points{progpu_native_point{0, 0}, progpu_native_point{20, 0},
+                progpu_native_point{20, 20}, progpu_native_point{0, 20}};
+            const std::array intervals{2.0, 1.0};
+            progpu_native_scene_stroke stroke{};
+            stroke.struct_size = sizeof(stroke);
+            stroke.kind = PROGPU_NATIVE_SCENE_STROKE_POLYLINE;
+            stroke.flags = PROGPU_NATIVE_POLYLINE_FLAG_WPF_JOIN_SEMANTICS |
+                (closed ? static_cast<std::uint32_t>(PROGPU_NATIVE_POLYLINE_FLAG_CLOSED) : 0U);
+            stroke.point_count = closed ? 4U : 2U;
+            stroke.stroke_thickness = 2; stroke.miter_limit = 10;
+            stroke.start_cap = stroke.end_cap = stroke.dash_cap = cap;
+            stroke.dash_interval_count = intervals.size();
+            stroke.transform = builder.identity_transform();
+            PROGPU_REQUIRE(builder.draw_strokes(std::span(&stroke, 1U),
+                std::span(points).first(stroke.point_count), intervals, {}, {-2, -2, 24, 24}));
+            PROGPU_REQUIRE(builder.restore());
+            PROGPU_REQUIRE(builder.set_hit_test_owner(92));
+            progpu_native_analytic_primitive sibling{};
+            sibling.kind = PROGPU_NATIVE_PRIMITIVE_RECTANGLE;
+            sibling.x = sibling.y = 150; sibling.width = sibling.height = 10;
+            sibling.transform = builder.identity_transform();
+            PROGPU_REQUIRE(builder.draw_analytic(std::span(&sibling, 1U), {}, {150, 150, 10, 10}));
+            const auto hits = capture_hits(builder, progpu::native::scene_hit_test_opacity_mode::source_geometry);
+            PROGPU_REQUIRE(hits.back().id == 92 && hits.back().clip_segment_count == 0U);
+            std::size_t bodies = 0U, triangles = 0U;
+            for (std::size_t i = 0U; i + 1U < hits.size(); ++i) {
+                const auto& hit = hits[i];
+                PROGPU_REQUIRE(hit.id == 91 && hit.clip_segment_count == 4U);
+                if (hit.kind == PROGPU_NATIVE_HIT_TEST_LINE_STROKE) {
+                    if (!closed) {
+                        PROGPU_REQUIRE(hit.data0.x == 6.0F * bodies && hit.data0.y == 0);
+                        PROGPU_REQUIRE(hit.data0.z == std::min(20.0F, 6.0F * bodies + 4.0F) && hit.data0.w == 0);
+                    }
+                    PROGPU_REQUIRE(hit.data1.x == 2 && hit.data1.z == 0 && hit.data1.w == 0);
+                    PROGPU_REQUIRE(hit.inverse_transform0.x == (affine ? 0.5F : 1.0F));
+                    ++bodies;
+                } else {
+                    PROGPU_REQUIRE(hit.kind == PROGPU_NATIVE_HIT_TEST_PATH_FILL && hit.data1.y == 3);
+                    ++triangles;
+                }
+            }
+            const std::size_t cap_triangles = cap == PROGPU_NATIVE_STROKE_CAP_FLAT ? 0U :
+                cap == PROGPU_NATIVE_STROKE_CAP_SQUARE ? 2U : cap == PROGPU_NATIVE_STROKE_CAP_ROUND ? 8U : 1U;
+            PROGPU_REQUIRE(bodies == (closed ? 15U : 4U));
+            PROGPU_REQUIRE(triangles == (closed ? 4U + 26U * cap_triangles : 8U * cap_triangles));
+        }
+    }
+    {
+        // Independent distance tables for fractional/negative phase and odd
+        // pattern doubling. Two descriptors share one payload: neither point
+        // nor double offsets may be interpreted as relative to the first draw.
+        const std::array<std::array<float, 8U>, 3U> expected{{
+            {0, 3.5F, 5.5F, 9.5F, 11.5F, 15.5F, 17.5F, 20},
+            {0, 2, 4, 6, 10, 12, 14, 18},
+            {2, 6, 8, 10, 14, 16, 18, 20}}};
+        for (std::size_t variant = 0U; variant < expected.size(); ++variant) {
+            progpu::native::semantic_scene_builder builder(9851U, variant + 1U);
+            PROGPU_REQUIRE(builder.set_hit_test_owner(93));
+            const std::array points{progpu_native_point{0, 0}, progpu_native_point{20, 0},
+                progpu_native_point{0, 10}, progpu_native_point{20, 10}};
+            const std::vector<double> intervals = variant == 0U ? std::vector<double>{2, 1, 2, 1} :
+                std::vector<double>{2, 1, 1, 2, 1, 1};
+            std::array<progpu_native_scene_stroke, 2U> strokes{};
+            for (std::size_t i = 0U; i < strokes.size(); ++i) {
+                auto& stroke = strokes[i];
+                stroke.struct_size = sizeof(stroke);
+                stroke.kind = PROGPU_NATIVE_SCENE_STROKE_POLYLINE;
+                stroke.point_offset = 2U * i; stroke.point_count = 2U;
+                stroke.stroke_thickness = 2; stroke.miter_limit = 10;
+                stroke.dash_interval_count = variant == 0U ? 2U : 3U;
+                stroke.dash_interval_offset = i * stroke.dash_interval_count;
+                stroke.dash_offset = variant == 0U ? 0.25 : variant == 1U ? 1.0 : -1.0;
+                stroke.transform = builder.identity_transform();
+            }
+            PROGPU_REQUIRE(builder.draw_strokes(strokes, points, intervals, {}, {-1, -1, 22, 12}));
+            const auto hits = capture_hits(builder, progpu::native::scene_hit_test_opacity_mode::source_geometry);
+            PROGPU_REQUIRE(hits.size() == 8U);
+            for (std::size_t i = 0U; i < hits.size(); ++i) {
+                const auto& hit = hits[i];
+                PROGPU_REQUIRE(hit.id == 93 && hit.kind == PROGPU_NATIVE_HIT_TEST_LINE_STROKE);
+                PROGPU_REQUIRE(hit.data0.x == expected[variant][2U * (i % 4U)]);
+                PROGPU_REQUIRE(hit.data0.z == expected[variant][2U * (i % 4U) + 1U]);
+                PROGPU_REQUIRE(hit.data0.y == (i < 4U ? 0 : 10) && hit.data0.w == hit.data0.y);
+            }
+        }
+    }
+    {
         // Paired with NativeClosedStrokeCaptureUsesSharedShowcaseJoins. Three
         // connected edges, including the closing seam; endpoint caps do not apply.
         const std::array points{progpu_native_point{0.0F, 40.0F},
