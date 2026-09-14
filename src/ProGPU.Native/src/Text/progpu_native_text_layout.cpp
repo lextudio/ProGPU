@@ -213,8 +213,14 @@ bool can_break_after(
     std::span<const shaping_glyph> glyphs,
     std::span<const text_line_break_kind> breaks_after,
     std::size_t index) noexcept {
-    return breaks_after[index] != text_line_break_kind::prohibited &&
-        is_safe_break_before(glyphs, index + 1U);
+    if (breaks_after[index] == text_line_break_kind::prohibited) return false;
+    if (is_safe_break_before(glyphs, index + 1U)) return true;
+    // A whitespace opportunity is a real line boundary even when a contextual
+    // positioning lookup marks the following glyph unsafe against arbitrary
+    // cluster splits. Never admit a boundary inside the same shaped cluster.
+    return trailing_space(glyphs[index].code_point) &&
+        (index + 1U >= glyphs.size() ||
+            glyphs[index].cluster != glyphs[index + 1U].cluster);
 }
 
 struct line_scan final {

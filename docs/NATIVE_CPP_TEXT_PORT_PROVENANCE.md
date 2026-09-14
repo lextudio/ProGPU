@@ -1195,9 +1195,15 @@ output.
 
 Cluster-safe wrapping now also directly ports ProGPU-owned
 `TextLayout.IsSafeBreakBefore` and `FindNextSafeBreak` from checkpoint
-`1c16061f`. A shaped `unsafe_to_break` flag suppresses the boundary before its
-glyph even when adjacent cluster ids differ; a forced width overflow walks
-forward through the full dependency chain to the next safe boundary. The scan
+`1c16061f`. A shaped `unsafe_to_break` flag suppresses a non-whitespace
+boundary before its glyph even when adjacent cluster ids differ; a forced
+width overflow walks forward through the full dependency chain to the next
+safe boundary. A later Showcase text regression established that this flag
+must not erase a legal Unicode break after a distinct whitespace cluster:
+doing so stranded a short word and split `TemplateBinding` mid-word at a
+211.333-DIP line width in both portable renderers. That exception retains
+same-cluster and unsafe non-space protection, and also feeds intrinsic widths.
+The scan
 remains one-pass `O(G)` with `O(1)` state and no allocation. Tests cover a
 multi-cluster unsafe chain whose first line intentionally exceeds the requested
 width rather than corrupting the shaped sequence.

@@ -692,8 +692,10 @@ caller-supplied break decisions, preserving the managed ProGPU separation
 between reusable shaping, Unicode paragraph analysis, and viewport-dependent
 wrapping. It performs one bounded requirements pass and one write pass over
 caller-owned glyph and line spans. Breaks inside an equal-cluster sequence are
-ignored, and shaped `unsafe_to_break` dependencies suppress boundaries even
-across distinct clusters. When a hard wrap has no preceding safe boundary, the
+ignored. Shaped `unsafe_to_break` dependencies suppress non-whitespace
+boundaries even across distinct clusters; a legal Unicode break after a
+whitespace cluster remains available despite a contextual flag on the next
+glyph. When a hard wrap has no preceding safe boundary, the
 line advances through the dependency chain to the next safe boundary instead
 of splitting complex-script output. Mandatory and hard-wrap boundaries are
 explicit, and maximum-line clipping is reported rather than silently
@@ -962,6 +964,12 @@ and Dawn revisions recorded in `eng/progpu-native-dawn.version.json`:
 ```sh
 ./eng/progpu-verify-native-webscene-provider.sh
 ```
+
+The gate prestages Dawn's revision-pinned Jinja and MarkupSafe generator
+packages with checked Git fetches and validates that Python imports those
+checkouts. This prevents Dawn's dependency helper from hiding a failed clone
+behind a misleading Jinja API error; changes to the Dawn pin must keep these
+generator dependency pins in sync with Dawn's `DEPS` file.
 
 The gate builds WebScene's provider through its own published build entry
 point, creates one Metal provider/device/canvas resource domain, renders the

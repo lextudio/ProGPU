@@ -5,6 +5,10 @@
   "providerAbi": 2,
   "dawnRepository": "https://dawn.googlesource.com/dawn",
   "dawnRevision": "710c33013c53ab2700d332c25ff51430251a8cc4",
+  "jinjaRepository": "https://chromium.googlesource.com/chromium/src/third_party/jinja2",
+  "jinjaRevision": "c3027d884967773057bf74b957e3fea87e5df4d7",
+  "markupSafeRepository": "https://chromium.googlesource.com/chromium/src/third_party/markupsafe",
+  "markupSafeRevision": "4256084ae14175d38a3ff7d739dca83ae49ccec6",
   "webGpuHeadersRepository": "https://github.com/webgpu-native/webgpu-headers.git",
   "webGpuHeadersRevision": "01addc4ba8a2915a061b7095a6768b512071ab96",
   "status": "provider-hardware-integration"

@@ -32,6 +32,9 @@ FormattedText wrapping policy.
 clusters, Unicode break opportunities, scales and tab grid used for positioning:
 
 - Minimum width is the largest unbreakable fragment at legal, shaping-safe breaks.
+- A legal Unicode whitespace break remains available when the following glyph
+  carries a contextual `unsafe_to_break` flag; equal-cluster and unsafe
+  non-whitespace boundaries remain excluded. This is shared with line wrapping.
 - Maximum width is the largest mandatory-break-delimited unwrapped extent.
 - Trailing Unicode whitespace and zero-width break controls do not extend either
   width; internal whitespace still contributes advance. Classification examines

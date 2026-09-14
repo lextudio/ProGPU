@@ -17,9 +17,17 @@ fi
 provider_repository="$(awk -F'"' '/"providerRepository"/ { print $4; exit }' "${version_manifest}")"
 provider_revision="$(awk -F'"' '/"providerRevision"/ { print $4; exit }' "${version_manifest}")"
 dawn_revision="$(awk -F'"' '/"dawnRevision"/ { print $4; exit }' "${version_manifest}")"
+jinja_repository="$(awk -F'"' '/"jinjaRepository"/ { print $4; exit }' "${version_manifest}")"
+jinja_revision="$(awk -F'"' '/"jinjaRevision"/ { print $4; exit }' "${version_manifest}")"
+markup_safe_repository="$(awk -F'"' '/"markupSafeRepository"/ { print $4; exit }' "${version_manifest}")"
+markup_safe_revision="$(awk -F'"' '/"markupSafeRevision"/ { print $4; exit }' "${version_manifest}")"
 if [[ -z "${provider_repository}" ||
       ! "${provider_revision}" =~ ^[0-9a-f]{40}$ ||
-      ! "${dawn_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+      ! "${dawn_revision}" =~ ^[0-9a-f]{40}$ ||
+      -z "${jinja_repository}" ||
+      ! "${jinja_revision}" =~ ^[0-9a-f]{40}$ ||
+      -z "${markup_safe_repository}" ||
+      ! "${markup_safe_revision}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "Invalid WebScene provider version manifest: ${version_manifest}" >&2
   exit 1
 fi
@@ -53,6 +61,64 @@ if [[ "$(git -C "${provider_source}" rev-parse HEAD)" != "${provider_revision}" 
   echo "WebScene provider checkout did not resolve to the pinned revision." >&2
   exit 1
 fi
+
+# Dawn's dependency helper captures Git output without checking exit codes.
+# Prestage its two Python code-generator packages with checked fetches so a
+# transient clone failure cannot masquerade as a Jinja API incompatibility.
+prefetch_dawn_python_dependency() {
+  local name="$1" repository="$2" revision="$3"
+  local checkout="${dawn_workspace}/src/third_party/${name}"
+  if [[ -e "${checkout}" && ! -d "${checkout}/.git" ]]; then
+    echo "Dawn ${name} path is not a Git checkout: ${checkout}" >&2
+    return 1
+  fi
+  if [[ ! -d "${checkout}/.git" ]]; then
+    mkdir -p "${checkout}"
+    git -C "${checkout}" init
+    git -C "${checkout}" remote add origin "${repository}"
+  fi
+  if [[ "$(git -C "${checkout}" remote get-url origin)" != "${repository}" ||
+        -n "$(git -C "${checkout}" status --porcelain --untracked-files=no)" ]]; then
+    echo "Dawn ${name} checkout has an unexpected origin or local changes." >&2
+    return 1
+  fi
+  if ! git -C "${checkout}" cat-file -e "${revision}^{commit}" 2>/dev/null; then
+    local attempt
+    for attempt in 1 2 3; do
+      if git -C "${checkout}" fetch --depth 1 origin "${revision}"; then
+        break
+      fi
+      if [[ "${attempt}" == 3 ]]; then
+        echo "Unable to fetch pinned Dawn ${name} after three attempts." >&2
+        return 1
+      fi
+      sleep "${attempt}"
+    done
+  fi
+  git -C "${checkout}" checkout --detach --force "${revision}"
+  if [[ "$(git -C "${checkout}" rev-parse HEAD)" != "${revision}" ||
+        ! -f "${checkout}/__init__.py" ]]; then
+    echo "Dawn ${name} did not resolve to its pinned Python package." >&2
+    return 1
+  fi
+}
+
+prefetch_dawn_python_dependency jinja2 "${jinja_repository}" "${jinja_revision}"
+prefetch_dawn_python_dependency markupsafe "${markup_safe_repository}" "${markup_safe_revision}"
+PYTHONDONTWRITEBYTECODE=1 python3 - "${dawn_workspace}/src/third_party" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(1, str(root))
+import jinja2
+import markupsafe
+
+if (pathlib.Path(jinja2.__file__).resolve().parent != root / "jinja2"
+        or pathlib.Path(markupsafe.__file__).resolve().parent != root / "markupsafe"
+        or not hasattr(jinja2, "BaseLoader")):
+    raise SystemExit("Pinned Dawn Jinja/MarkupSafe import validation failed.")
+PY
 
 "${provider_source}/scripts/build-native-gpu-runtime.sh" \
   --rid osx-arm64 \
