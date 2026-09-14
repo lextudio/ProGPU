@@ -106,3 +106,40 @@ libclang. This tool is build-only and never included in the DX12 runtime package
 The existing six input tests and both workflow lint checks pass. Full local docs
 verification still requires the absent ACadSharp submodule; the new hosted run
 must prove complete docs, package graph and ARM64 build/runtime qualification.
+
+## Complete renderer package graph and NativeAOT follow-up
+
+Build `34793857889` at `4b6d9cbe` passes both hosted compiler-runtime production
+jobs: x64 `103823063140` and ARM64 `103823063181`. The pinned generator repair
+is therefore compiled on the actual ARM64 runner. Documentation CI `34793857865`
+and the full local documentation/package-table verifier also pass. The Windows
+source-test lane caught an obsolete exact release dependency assertion; it now
+requires the added `native-dx12-package-consumer` alongside every prior gate.
+All 53 original `DiagnosticsLoggingSourceTests` pass in an isolated local test
+project. The full local test project remains unavailable without the separate
+Microsoft UI XAML source checkout; no test or product dependency is removed.
+
+The complete managed/native renderer packages from Build `34792388706`
+(`089e9120`, version `0.1.0-preview.3034.ci`, artifact `10329321304`) now pass the
+full Windows ARM64 consumer in both JIT and NativeAOT. The optional DX12 package
+is locally packed from the already verified two-RID payloads at the same version;
+it is not claimed to be the new hosted compiler artifact. Every renderer asset
+comes from NuGet, with no project references or post-publication DLL overlays.
+Both runs explicitly select DXC/ordered stages and system WARP; no external
+compiler directory or redistributed WARP is used.
+
+Both retain 38 MIL resources, 11 draws and coverage 174080, pass original owner/
+generation isolation, all 16 repeated waits, participation and region-first
+queries. The JIT run checks five actual renderer/compiler/system module paths.
+Its stdout SHA-256 is
+`3accf5b12b53ca805195e688f4ed998df971eb60f19611e0c96fbdcfac260e5e`;
+the CI-built ARM64 renderer DLL is
+`ebe2a4a9499504bfc53caff591f16916bbd61167167df1448a4564b7f51e9a77`.
+Artifacts are in `artifacts/native-package-3034*`; fresh VM stages are
+`C:\ProGPU.PackageConsumer-3034-arm64` and
+`C:\ProGPU.PackageConsumer-3034-aot-arm64`.
+
+This closes the earlier local project-reference-only qualification gap, not final-
+head CI, x64 runtime, hardware/default selection or actual Showcase application
+qualification. Stock-FXC X3511 remains explicit. No dependency pins/defaults or
+PR merge admission change from these checks.
