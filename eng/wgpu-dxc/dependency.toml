@@ -1,0 +1,7 @@
+
+# Enable the optional compiler on the same pinned dependency; no renderer changes.
+[target.'cfg(windows)'.dependencies.progpu_dxc_hal]
+package = "wgpu-hal"
+git = "https://github.com/gfx-rs/wgpu"
+rev = "87576b72b37c6b78b41104eb25fc31893af94092"
+features = ["dxc_shader_compiler"]

@@ -58,6 +58,74 @@ class QuadraticBezierSegment : PathSegment
     }
 }
 
+/// <summary>
+/// A canonical positive-weight rational quadratic Bezier with unit endpoint
+/// weights. The retained GPU path contract supports this segment for fills and
+/// clips; stroke and geometric path-boolean reconstruction are not yet supported.
+/// </summary>
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class RationalQuadraticBezierSegment : PathSegment
+{
+    public Vector2 ControlPoint { get; set; }
+    public Vector2 Point { get; set; }
+    public float Weight { get; set; }
+
+    public RationalQuadraticBezierSegment(
+        Vector2 controlPoint,
+        Vector2 point,
+        float weight,
+        bool isSmoothJoin = false,
+        bool isStroked = false)
+    {
+        ControlPoint = controlPoint;
+        Point = point;
+        Weight = weight;
+        IsSmoothJoin = isSmoothJoin;
+        IsStroked = isStroked;
+    }
+}
+
+/// <summary>
+/// A canonical positive-weight rational cubic Bezier with unit endpoint
+/// weights. The retained GPU path contract supports this segment for fills and
+/// clips; stroke and geometric path-boolean reconstruction are not yet supported.
+/// </summary>
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+class RationalCubicBezierSegment : PathSegment
+{
+    public Vector2 ControlPoint1 { get; set; }
+    public Vector2 ControlPoint2 { get; set; }
+    public Vector2 Point { get; set; }
+    public float Weight1 { get; set; }
+    public float Weight2 { get; set; }
+
+    public RationalCubicBezierSegment(
+        Vector2 controlPoint1,
+        Vector2 controlPoint2,
+        Vector2 point,
+        float weight1,
+        float weight2,
+        bool isSmoothJoin = false,
+        bool isStroked = false)
+    {
+        ControlPoint1 = controlPoint1;
+        ControlPoint2 = controlPoint2;
+        Point = point;
+        Weight1 = weight1;
+        Weight2 = weight2;
+        IsSmoothJoin = isSmoothJoin;
+        IsStroked = isStroked;
+    }
+}
+
 #if PROGPU_VECTOR_INTERNAL
 internal
 #else
@@ -99,6 +167,23 @@ enum FillRule
 {
     EvenOdd = 0,
     Nonzero = 1
+}
+
+/// <summary>
+/// Defines a retained boolean operation between two filled path geometries.
+/// </summary>
+#if PROGPU_VECTOR_INTERNAL
+internal
+#else
+public
+#endif
+enum PathBooleanOperation
+{
+    Difference = 0,
+    Intersect = 1,
+    Union = 2,
+    ExclusiveOr = 3,
+    ReverseDifference = 4,
 }
 
 internal enum CombinedPathQueryKind : byte
@@ -265,6 +350,17 @@ class PathGeometry
     public PathGeometry? PathB { get; set; }
     public int Op { get; set; }
 
+#if !PROGPU_VECTOR_INTERNAL
+    /// <summary>
+    /// Creates an immutable retained boolean expression without materializing it on the CPU or GPU.
+    /// </summary>
+    public static PathGeometry CombineDeferred(
+        PathGeometry pathA,
+        PathGeometry pathB,
+        PathBooleanOperation operation) =>
+        PathOpGeometrySolver.CreateDeferred(pathA, pathB, operation);
+#endif
+
     internal bool IsSharedSnapshot => (_combinedState & SharedSnapshotBit) != 0;
     internal CombinedPathQueryKind CombinedQueryKind =>
         (CombinedPathQueryKind)(_combinedState >> QueryKindShift);
@@ -372,6 +468,28 @@ class PathGeometry
                         sourceCurrentPoint = quadratic.Point;
                         break;
 
+                    case RationalQuadraticBezierSegment rationalQuadratic:
+                        transformedFigure.Segments.Add(new RationalQuadraticBezierSegment(
+                            Vector2.Transform(rationalQuadratic.ControlPoint, transform),
+                            Vector2.Transform(rationalQuadratic.Point, transform),
+                            rationalQuadratic.Weight,
+                            rationalQuadratic.IsSmoothJoin,
+                            rationalQuadratic.IsStroked));
+                        sourceCurrentPoint = rationalQuadratic.Point;
+                        break;
+
+                    case RationalCubicBezierSegment rationalCubic:
+                        transformedFigure.Segments.Add(new RationalCubicBezierSegment(
+                            Vector2.Transform(rationalCubic.ControlPoint1, transform),
+                            Vector2.Transform(rationalCubic.ControlPoint2, transform),
+                            Vector2.Transform(rationalCubic.Point, transform),
+                            rationalCubic.Weight1,
+                            rationalCubic.Weight2,
+                            rationalCubic.IsSmoothJoin,
+                            rationalCubic.IsStroked));
+                        sourceCurrentPoint = rationalCubic.Point;
+                        break;
+
                     case CubicBezierSegment cubic:
                         transformedFigure.Segments.Add(new CubicBezierSegment(
                             Vector2.Transform(cubic.ControlPoint1, transform),
@@ -418,6 +536,34 @@ class PathGeometry
             return TryGetCombinedBounds(out min, out max);
         }
 
+        var figures = Figures;
+        var minValue = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+        var maxValue = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+        var hasBounds = false;
+        for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
+        {
+            if (TryGetBounds(figures[figureIndex], out var figureMin, out var figureMax))
+            {
+                minValue = Vector2.Min(minValue, figureMin);
+                maxValue = Vector2.Max(maxValue, figureMax);
+                hasBounds = true;
+            }
+        }
+
+        if (!hasBounds)
+        {
+            min = default;
+            max = default;
+            return false;
+        }
+
+        min = minValue;
+        max = maxValue;
+        return true;
+    }
+
+    internal static bool TryGetBounds(PathFigure figure, out Vector2 min, out Vector2 max)
+    {
         var minValue = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
         var maxValue = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
         var hasBounds = false;
@@ -434,69 +580,63 @@ class PathGeometry
             hasBounds = true;
         }
 
-        var figures = Figures;
-        for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
+        var currentPoint = figure.StartPoint;
+        Update(currentPoint);
+        var segments = figure.Segments;
+        for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
         {
-            var figure = figures[figureIndex];
-            var currentPoint = figure.StartPoint;
-            Update(currentPoint);
-
-            var figureSegments = figure.Segments;
-            for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
+            switch (segments[segmentIndex])
             {
-                var segment = figureSegments[segmentIndex];
-                switch (segment)
-                {
-                    case LineSegment line:
-                        Update(line.Point);
-                        currentPoint = line.Point;
-                        break;
+                case LineSegment line:
+                    Update(line.Point);
+                    currentPoint = line.Point;
+                    break;
+                case QuadraticBezierSegment quadratic:
+                    Update(quadratic.ControlPoint);
+                    Update(quadratic.Point);
+                    currentPoint = quadratic.Point;
+                    break;
+                case RationalQuadraticBezierSegment rationalQuadratic:
+                    Update(rationalQuadratic.ControlPoint);
+                    Update(rationalQuadratic.Point);
+                    currentPoint = rationalQuadratic.Point;
+                    break;
+                case RationalCubicBezierSegment rationalCubic:
+                    Update(rationalCubic.ControlPoint1);
+                    Update(rationalCubic.ControlPoint2);
+                    Update(rationalCubic.Point);
+                    currentPoint = rationalCubic.Point;
+                    break;
+                case CubicBezierSegment cubic:
+                    Update(cubic.ControlPoint1);
+                    Update(cubic.ControlPoint2);
+                    Update(cubic.Point);
+                    currentPoint = cubic.Point;
+                    break;
+                case ArcSegment arc:
+                    if (ArcSegmentGeometry.TryGetArcBounds(currentPoint, arc, out var arcMin, out var arcMax))
+                    {
+                        Update(arcMin);
+                        Update(arcMax);
+                    }
+                    else
+                    {
+                        Update(arc.Point);
+                    }
 
-                    case QuadraticBezierSegment quadratic:
-                        Update(quadratic.ControlPoint);
-                        Update(quadratic.Point);
-                        currentPoint = quadratic.Point;
-                        break;
-
-                    case CubicBezierSegment cubic:
-                        Update(cubic.ControlPoint1);
-                        Update(cubic.ControlPoint2);
-                        Update(cubic.Point);
-                        currentPoint = cubic.Point;
-                        break;
-
-                    case ArcSegment arc:
-                        if (ArcSegmentGeometry.TryGetArcBounds(currentPoint, arc, out var arcMin, out var arcMax))
-                        {
-                            Update(arcMin);
-                            Update(arcMax);
-                        }
-                        else
-                        {
-                            Update(arc.Point);
-                        }
-
-                        currentPoint = arc.Point;
-                        break;
-                }
-            }
-
-            if (figure.IsClosed)
-            {
-                Update(figure.StartPoint);
+                    currentPoint = arc.Point;
+                    break;
             }
         }
 
-        if (!hasBounds)
+        if (figure.IsClosed)
         {
-            min = default;
-            max = default;
-            return false;
+            Update(figure.StartPoint);
         }
 
-        min = minValue;
-        max = maxValue;
-        return true;
+        min = hasBounds ? minValue : default;
+        max = hasBounds ? maxValue : default;
+        return hasBounds;
     }
 
     private bool TryGetCombinedBounds(out Vector2 min, out Vector2 max)

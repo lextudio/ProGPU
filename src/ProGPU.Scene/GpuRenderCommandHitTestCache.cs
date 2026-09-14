@@ -9,7 +9,7 @@ using ProGPU.Vector;
 
 namespace ProGPU.Scene;
 
-public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
+public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
 {
     private const int MaxLineSeriesSegmentsPerPathPrimitive = 128;
     private const int MinimumDeviceStrokeArcSubdivisions = 32;
@@ -31,6 +31,13 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
     private SmallValueStack<float> _opacityStack;
     private float _activeOpacity = 1f;
     private int _nextId;
+    private Vector2 _boundsMin;
+    private Vector2 _boundsMax;
+    private bool _hasBounds;
+    private int _imageHitClipDepth;
+    private bool _sourceCaptureFailed;
+    private SmallValueStack<GpuHitTestPrimitiveFlags> _pointRegionStack;
+    private GpuHitTestPrimitiveFlags _queryParticipation;
 
     public GpuRenderCommandHitTestCacheBuilder()
     {
@@ -43,6 +50,20 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
 
     public int PrimitiveCount => _primitives.Count;
 
+    /// <summary>
+    /// Returns the union of the clipped world-space bounds accumulated for
+    /// the commands added since construction or the last <see cref="Clear"/>.
+    /// This reuses the same typed primitive, stroke, path, text, and clip
+    /// lowering as GPU hit testing instead of maintaining a second bounds
+    /// approximation pipeline.
+    /// </summary>
+    public bool TryGetBounds(out Vector2 minimum, out Vector2 maximum)
+    {
+        minimum = _boundsMin;
+        maximum = _boundsMax;
+        return _hasBounds;
+    }
+
     public void Clear()
     {
         _primitives.Clear();
@@ -51,12 +72,20 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         _opacityStack.Clear();
         _activeOpacity = 1f;
         _nextId = 0;
+        _boundsMin = default;
+        _boundsMax = default;
+        _hasBounds = false;
+        _imageHitClipDepth = 0;
+        _sourceCaptureFailed = false;
+        _pointRegionStack.Clear();
+        _queryParticipation = GpuHitTestPrimitiveFlags.None;
     }
 
     public void Dispose()
     {
         _clipStack.Dispose();
         _opacityStack.Dispose();
+        _pointRegionStack.Dispose();
     }
 
     public void AddCommand(in RenderCommand command, Matrix4x4 activeTransform, int? id = null)
@@ -72,6 +101,84 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
     {
         activeTransform = NormalizeTransform(activeTransform);
 
+        if (command.SourceHitGeometry.Kind is SourceHitTestGeometryKind.PointRectangleBegin or SourceHitTestGeometryKind.PointEmptyBegin or SourceHitTestGeometryKind.PointRectangleEnd)
+        {
+            try
+            {
+                bool begin = command.SourceHitGeometry.Kind != SourceHitTestGeometryKind.PointRectangleEnd;
+                bool empty = command.SourceHitGeometry.Kind == SourceHitTestGeometryKind.PointEmptyBegin;
+                if (command.Type != (begin ? RenderCommandType.PushOpacity : RenderCommandType.PopOpacity) ||
+                    (begin && command.FontSize != 1f))
+                    throw new NotSupportedException("Source point regions require identity render scopes.");
+                // DrawingImage owns both query kinds for all of its inner commands.
+                if (_imageHitClipDepth != 0) return;
+                if (begin)
+                {
+                    var c = command.SourceHitGeometry.Coordinates;
+                    if ((empty && c != Vector4.Zero) || !float.IsFinite(c.X) || !float.IsFinite(c.Y) || !float.IsFinite(c.Z) || !float.IsFinite(c.W) ||
+                        !float.IsFinite(c.X + c.Z) || !float.IsFinite(c.Y + c.W) || c.Z < 0 || c.W < 0)
+                        throw new NotSupportedException("Source point regions require finite nonnegative extents.");
+                    _pointRegionStack.Push(_queryParticipation);
+                    if (!empty && _queryParticipation != GpuHitTestPrimitiveFlags.RegionOnly && IsFiniteInvertibleAffine2D(activeTransform))
+                    {
+                        _queryParticipation = GpuHitTestPrimitiveFlags.PointOnly;
+                        AddPrimitive(GpuHitTestPrimitive.RectangleFill(ResolvePrimitiveId(id, command.HitTestId),
+                            new Vector2(c.X, c.Y), new Vector2(c.X + c.Z, c.Y + c.W), Vector2.Zero,
+                            activeTransform, _primitives.Count));
+                    }
+                    _queryParticipation = GpuHitTestPrimitiveFlags.RegionOnly;
+                }
+                else
+                {
+                    if (_pointRegionStack.Count == 0)
+                        throw new InvalidOperationException("Unbalanced source point region.");
+                    _queryParticipation = _pointRegionStack.Pop();
+                }
+            }
+            catch { _sourceCaptureFailed = true; throw; }
+            return;
+        }
+
+        if (command.SourceHitGeometry.Kind != SourceHitTestGeometryKind.None)
+        {
+            try
+            {
+                // Validate before any scope handling: metadata may never hide a push/pop.
+                var source = command.SourceHitGeometry.Apply(command);
+                if (command.SourceHitGeometry.Kind != SourceHitTestGeometryKind.Excluded)
+                    AddCommand(source, activeTransform, provider, id);
+            }
+            catch
+            {
+                _sourceCaptureFailed = true;
+                throw;
+            }
+            return;
+        }
+
+        if (_imageHitClipDepth != 0)
+        {
+            // Source image scope is balanced independently of its contents.
+            // Internal clips/opacity/geometry cannot redefine its input area.
+            if (command.Type is RenderCommandType.PushClip or RenderCommandType.PushGeometryClip)
+                _imageHitClipDepth = checked(_imageHitClipDepth + 1);
+            else if (command.Type is RenderCommandType.PopClip or RenderCommandType.PopGeometryClip)
+                _imageHitClipDepth--;
+            return;
+        }
+
+        if (command.Type == RenderCommandType.PushClip && command.IsImageHitTestScope)
+        {
+            if (_activeOpacity > OpacityEpsilon && !command.UseGpuTransforms &&
+                IsFiniteInvertibleAffine2D(activeTransform))
+            {
+                AddRectangleCoverage(command.Rect, activeTransform,
+                    ResolvePrimitiveId(id, command.HitTestId), _primitives.Count);
+            }
+            _imageHitClipDepth = 1;
+            return;
+        }
+
         switch (command.Type)
         {
             case RenderCommandType.PopClip:
@@ -81,7 +188,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                 PopClip();
                 return;
             case RenderCommandType.PushOpacity:
-                PushOpacity(command.FontSize);
+                PushOpacity(command.IsSourceOpacityScope ? 1f : command.FontSize);
                 return;
             case RenderCommandType.PopOpacity:
                 PopOpacity();
@@ -137,6 +244,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                 AddEllipse(command, activeTransform, primitiveId, zIndex);
                 break;
             case RenderCommandType.DrawDotGrid:
+            case RenderCommandType.DrawDeviceDotGrid:
                 AddBounds(command.Rect, activeTransform, primitiveId, zIndex);
                 break;
             case RenderCommandType.DrawCircle:
@@ -155,7 +263,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                 AddPath(command, activeTransform, primitiveId, zIndex);
                 break;
             case RenderCommandType.DrawTexture:
-                AddBounds(command.Rect, activeTransform, primitiveId, zIndex);
+                AddImageCoverage(command, activeTransform, primitiveId, zIndex);
                 break;
             case RenderCommandType.DrawText:
                 AddTextBounds(command, activeTransform, primitiveId, zIndex);
@@ -178,7 +286,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                 AddVertexMesh(command, activeTransform, primitiveId, zIndex);
                 break;
             case RenderCommandType.DrawPointBatch:
-                AddPointBatch(command, activeTransform, primitiveId, zIndex);
+                AddPointBatch(command, activeTransform, primitiveId, zIndex, provider);
                 break;
             case RenderCommandType.FillQuad:
                 AddQuadFill(command, activeTransform, primitiveId, zIndex);
@@ -225,6 +333,12 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
 
     public GpuHitTestIndex BuildIndex(int maxDepth = 8, int maxPrimitivesPerNode = 32)
     {
+        if (_sourceCaptureFailed)
+            throw new InvalidOperationException("Clear the hit-test builder after a failed source capture before publishing an index.");
+        if (_imageHitClipDepth != 0)
+            throw new InvalidOperationException("An image hit-test scope must be closed before publishing its index.");
+        if (_pointRegionStack.Count != 0)
+            throw new InvalidOperationException("A source point region must be closed before publishing its index.");
         return GpuHitTestIndex.Build(
             CollectionsMarshal.AsSpan(_primitives),
             CollectionsMarshal.AsSpan(_pathSegments),
@@ -372,8 +486,9 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         var sourcePath = command.GeometryCache?.StrokePath ??
             RenderCommandGeometryCache.CreatePrimitiveStrokePath(command);
         var pen = command.Pen!;
-        if (sourcePath == null ||
-            !TryGetDashedStrokePath(
+        if (sourcePath == null) return;
+        if (TryAddLinearDashCoverage(command.GeometryCache, sourcePath, pen, localThickness, transform, id, zIndex)) return;
+        if (!TryGetDashedStrokePath(
                 command,
                 sourcePath,
                 pen,
@@ -428,6 +543,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             var linePath = command.GeometryCache?.StrokePath ??
                 RenderCommandGeometryCache.CreateLinePath(command.Position, command.Position2);
 
+            if (TryAddLinearDashCoverage(command.GeometryCache, linePath, pen, localThickness, transform, id, zIndex)) return;
             if (TryGetDashedStrokePath(command, linePath, pen, localThickness, out var strokePath, out var strokePen))
             {
                 if (UsesDeviceStrokeWidth(pen))
@@ -520,6 +636,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
     {
         if (pen.HasDashPattern)
         {
+            if (TryAddLinearDashCoverage(geometryCache, path, pen, localThickness, transform, id, zIndex)) return;
             if (TryGetDashedStrokePath(geometryCache, path, pen, localThickness, out var strokePath, out var strokePen))
             {
                 if (UsesDeviceStrokeWidth(pen))
@@ -617,6 +734,8 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             zIndex += 0.25f;
         }
 
+        if (hasLocalStroke && TryAddLinearDashCoverage(command.GeometryCache, commandPath, pen,
+                localThickness, transform, id, zIndex)) return;
         if (!hasLocalStroke ||
             !TryGetDashedStrokePath(command, commandPath, pen, localThickness, out var strokePath, out var strokePen))
         {
@@ -631,6 +750,21 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         {
             TryAddPathStrokePrimitive(strokePath, transform, id, zIndex, strokePen, localThickness);
         }
+    }
+
+    private bool TryAddLinearDashCoverage(RenderCommandGeometryCache? geometryCache, PathGeometry source,
+        Pen pen, float localThickness, Matrix4x4 transform, int id, float zIndex)
+    {
+        if (!RenderCommandGeometryCache.IsLinearDashCandidate(pen)) return false;
+        var cache = geometryCache != null && ReferenceEquals(geometryCache.StrokePath, source)
+            ? geometryCache : RenderCommandGeometryCache.ForStrokePath(source);
+        if (!cache.SupportsLinearDashCoverage(pen)) return false;
+        if (!cache.TryGetLinearDashCoverage(pen, localThickness, out var coverage)) return true;
+        if (coverage.Pen != null)
+            TryAddPathStrokePrimitive(coverage.Path, transform, id, zIndex, coverage.Pen, localThickness);
+        else if (TryCompileHitTestPath(coverage.Path, out var fill))
+            AddPathFillPrimitive(fill, transform, id, zIndex);
+        return true;
     }
 
     private static bool TryGetDashedStrokePath(
@@ -735,7 +869,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             max,
             startSegment,
             segmentCount,
-            (FillRule)records[0].FillRule);
+            GpuPathFillRuleEncoding.Decode(records[0].FillRule));
         return true;
     }
 
@@ -962,6 +1096,14 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                     count++;
                     currentPoint = quadratic.Point;
                     break;
+                case RationalQuadraticBezierSegment rationalQuadratic:
+                    count++;
+                    currentPoint = rationalQuadratic.Point;
+                    break;
+                case RationalCubicBezierSegment rationalCubic:
+                    count++;
+                    currentPoint = rationalCubic.Point;
+                    break;
                 case CubicBezierSegment cubic:
                     count++;
                     currentPoint = cubic.Point;
@@ -1033,6 +1175,17 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
                     Update(quadratic.ControlPoint);
                     Update(quadratic.Point);
                     currentPoint = quadratic.Point;
+                    break;
+                case RationalQuadraticBezierSegment rationalQuadratic:
+                    Update(rationalQuadratic.ControlPoint);
+                    Update(rationalQuadratic.Point);
+                    currentPoint = rationalQuadratic.Point;
+                    break;
+                case RationalCubicBezierSegment rationalCubic:
+                    Update(rationalCubic.ControlPoint1);
+                    Update(rationalCubic.ControlPoint2);
+                    Update(rationalCubic.Point);
+                    currentPoint = rationalCubic.Point;
                     break;
                 case CubicBezierSegment cubic:
                     Update(cubic.ControlPoint1);
@@ -1419,6 +1572,31 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         AddPrimitive(GpuHitTestPrimitive.Bounds(id, min, max, transform, zIndex));
     }
 
+    private void AddRectangleCoverage(Rect rect, Matrix4x4 transform, int id, float zIndex)
+    {
+        if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0) return;
+        var (min, max) = ToMinMax(rect);
+        AddPrimitive(GpuHitTestPrimitive.RectangleFill(id, min, max, Vector2.Zero, transform, zIndex));
+    }
+
+    private void AddImageCoverage(in RenderCommand command, Matrix4x4 transform, int id, float zIndex)
+    {
+        if (command.TexturePatches is not { } patches)
+        {
+            AddRectangleCoverage(command.Rect, transform, id, zIndex);
+            return;
+        }
+        // The retained image batch owns real destination quads. Its envelope
+        // must not make gaps between patches into hittable image content.
+        for (int i = 0; i < patches.Length; i++)
+        {
+            ref readonly TexturePatch patch = ref patches[i];
+            Matrix4x4 placement = patch.HasDestinationTransform
+                ? new Matrix4x4(patch.DestinationTransform) * transform : transform;
+            AddRectangleCoverage(patch.Destination, placement, id, zIndex);
+        }
+    }
+
     private void AddTextBounds(RenderCommand command, Matrix4x4 transform, int id, float zIndex)
     {
         if (string.IsNullOrEmpty(command.Text) || command.FontSize <= 0f)
@@ -1440,7 +1618,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
     {
         if (!command.Rect.IsEmpty)
         {
-            AddBounds(command.Rect, transform, id, zIndex);
+            AddRectangleCoverage(command.Rect, transform, id, zIndex);
             return;
         }
 
@@ -1556,9 +1734,15 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         }
     }
 
-    private void AddPointBatch(RenderCommand command, Matrix4x4 transform, int id, float zIndex)
+    private void AddPointBatch(
+        RenderCommand command,
+        Matrix4x4 transform,
+        int id,
+        float zIndex,
+        IRenderDataProvider? provider)
     {
-        if (command.Brush is null || command.PolylinePoints is not { Length: > 0 } points)
+        ReadOnlySpan<Vector2> points = GetPointBuffer(command, provider);
+        if (command.Brush is null || points.IsEmpty)
         {
             return;
         }
@@ -1616,10 +1800,11 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             return;
         }
 
-        var path = command.GeometryCache?.StrokePath ??
+        var path = command.GeometryCache?.GetOrCreatePolylineStrokePath(points, command.IsClosed) ??
             RenderCommandGeometryCache.CreatePolylinePath(points, command.IsClosed);
         if (pen.HasDashPattern)
         {
+            if (TryAddLinearDashCoverage(command.GeometryCache, path, pen, localThickness, transform, id, zIndex)) return;
             if (TryGetDashedStrokePath(command, path, pen, localThickness, out var strokePath, out var strokePen))
             {
                 if (UsesDeviceStrokeWidth(pen))
@@ -1707,6 +1892,7 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
 
         if (pen.HasDashPattern)
         {
+            if (TryAddLinearDashCoverage(command.GeometryCache, path, pen, localThickness, transform, id, zIndex)) return;
             if (TryGetDashedStrokePath(command, path, pen, localThickness, out var strokePath, out var strokePen))
             {
                 if (UsesDeviceStrokeWidth(pen))
@@ -1961,6 +2147,8 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
 
     private void AddPrimitive(GpuHitTestPrimitive primitive)
     {
+        if (_queryParticipation != GpuHitTestPrimitiveFlags.None)
+            primitive = primitive.WithFlags(primitive.Flags | _queryParticipation);
         if (!TryApplyActiveClip(ref primitive))
         {
             return;
@@ -1974,10 +2162,26 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         }
 
         _primitives.Add(primitive);
+        if (_hasBounds)
+        {
+            _boundsMin = Vector2.Min(_boundsMin, primitive.BoundsMin);
+            _boundsMax = Vector2.Max(_boundsMax, primitive.BoundsMax);
+        }
+        else
+        {
+            _boundsMin = primitive.BoundsMin;
+            _boundsMax = primitive.BoundsMax;
+            _hasBounds = true;
+        }
     }
 
     public void PushClip(Rect rect, Matrix4x4 transform)
     {
+        if (_imageHitClipDepth != 0)
+        {
+            _imageHitClipDepth = checked(_imageHitClipDepth + 1);
+            return;
+        }
         var (min, max) = ToMinMax(rect);
         TransformBounds(min, max, transform, out Vector2 clipMin, out Vector2 clipMax);
         if (_clipStack.TryPeek(out ClipState active))
@@ -1991,10 +2195,12 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
         _clipStack.Push(new ClipState(clipMin, clipMax));
     }
 
-    private void PushGeometryClip(RenderCommand command, Matrix4x4 activeTransform)
+    private void PushGeometryClip(RenderCommand command, Matrix4x4 activeTransform, bool requireExact = false)
     {
         if (command.Path == null || !command.Path.TryGetBounds(out Vector2 min, out Vector2 max))
         {
+            if (requireExact)
+                throw new NotSupportedException("Source geometry clipping requires available path bounds and coverage.");
             _clipStack.Push(_clipStack.TryPeek(out ClipState active) ? active : ClipState.Unbounded);
             return;
         }
@@ -2034,6 +2240,8 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
             return;
         }
 
+        if (requireExact)
+            throw new NotSupportedException("Source geometry clip encoding cannot fall back to its bounds.");
         _clipStack.Push(
             _clipStack.TryPeek(out ClipState inherited)
                 ? inherited.WithBounds(clipMin, clipMax)
@@ -2042,6 +2250,11 @@ public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable
 
     public void PopClip()
     {
+        if (_imageHitClipDepth != 0)
+        {
+            _imageHitClipDepth--;
+            return;
+        }
         if (_clipStack.Count > 0)
         {
             _clipStack.Pop();

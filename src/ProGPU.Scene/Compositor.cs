@@ -19,7 +19,7 @@ namespace ProGPU.Scene;
 [StructLayout(LayoutKind.Explicit, Size = 256)]
 public struct GpuBrush
 {
-    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial, 5 = Two-point conical, 6 = Sweep, 7 = Perlin noise
+    [FieldOffset(0)] public uint Type;             // 0 = Solid, 1 = Linear, 2 = Radial, 5 = Two-point conical, 6 = Sweep, 7 = Perlin noise, 8 = 8x8 tile, 9 = Path gradient
     [FieldOffset(4)] public float Opacity;
     [FieldOffset(8)] public Vector2 StartPoint;
     [FieldOffset(16)] public Vector2 EndPoint;
@@ -105,12 +105,22 @@ internal struct MaskSamplingUniforms : IEquatable<MaskSamplingUniforms>
             Options);
 }
 
-[StructLayout(LayoutKind.Explicit, Size = 32)]
+[StructLayout(LayoutKind.Explicit, Size = 96)]
 internal struct AdvancedBlendSamplingUniforms
 {
     [FieldOffset(0)] public Vector2 SourceOrigin;
     [FieldOffset(8)] public Vector2 SourceExtent;
     [FieldOffset(16)] public uint BlendMode;
+    [FieldOffset(20)] public uint OperationKind;
+    [FieldOffset(24)] public uint RasterOperationCode;
+    [FieldOffset(28)] public uint PatternKind;
+    [FieldOffset(32)] public Vector4 PatternColor;
+    [FieldOffset(48)] public Vector4 PatternBackgroundColor;
+    [FieldOffset(64)] public Vector2 PatternOrigin;
+    [FieldOffset(72)] public uint PatternMaskLow;
+    [FieldOffset(76)] public uint PatternMaskHigh;
+    [FieldOffset(80)] public uint PatternFlags;
+    [FieldOffset(88)] public Vector2 PatternTextureExtent;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -300,6 +310,7 @@ public struct CompositorMetrics
     public ulong AdvancedBlendScratchTextureBytes;
     public ulong AdvancedBlendSourceTextureBytes;
     public ulong AdvancedBlendTextureBytes;
+    public ulong RasterPresentationTextureBytes;
     public ulong WavefrontTextureBytes;
     public ulong MsaaTextureBytes;
     public ulong TrackedIntermediateTextureBytes;
@@ -414,6 +425,16 @@ public unsafe partial class Compositor : IDisposable
         }
     }
 
+    private sealed class RasterOperationPresentationFallbackException : InvalidOperationException
+    {
+        public static RasterOperationPresentationFallbackException Instance { get; } = new();
+
+        private RasterOperationPresentationFallbackException()
+            : base("Ternary raster operations require bindable presentation composition.")
+        {
+        }
+    }
+
     private static InvalidOperationException CreatePathAtlasTerminalException(
         PathAtlas atlas) =>
         new(
@@ -446,6 +467,7 @@ public unsafe partial class Compositor : IDisposable
     private const float SquarePointHairlineShapeType = 19f;
     private const float RoundPointHairlineShapeType = 20f;
     private const float DotGridShapeType = 21f;
+    private const float DeviceDotGridShapeType = 25f;
     private const float HairlineCapShapeType = 22f;
     private const float HairlineJoinShapeType = 23f;
     private const float AffineRoundCapShapeType = 24f;
@@ -1047,6 +1069,7 @@ public unsafe partial class Compositor : IDisposable
     internal unsafe BindGroupLayout* MaskBindGroupLayoutOffscreen => _maskBindGroupLayoutOffscreen;
 
     private readonly WgpuContext _context;
+    private readonly GpuImageSamplingPath _imageSamplingPath;
     private readonly RenderPipelineCache _pipelineCache;
     private readonly GlyphAtlas _atlas;
     private readonly PathAtlas _pathAtlas;
@@ -1076,6 +1099,7 @@ public unsafe partial class Compositor : IDisposable
     private uint _msaaHeight;
     private GpuTexture? _advancedBlendScratchTexture;
     private GpuTexture? _advancedBlendSourceTexture;
+    private GpuTexture? _rasterPresentationTexture;
     private BindGroupLayout* _advancedBlendBindGroupLayout;
     private PipelineLayout* _advancedBlendPipelineLayout;
     private RenderPipeline* _advancedBlendPipeline;
@@ -1083,6 +1107,7 @@ public unsafe partial class Compositor : IDisposable
     private int _advancedBlendPassResourceCount;
     private uint _advancedBlendSourceUnderutilizedFrames;
     private ulong _advancedBlendLastUsedFrame;
+    private ulong _rasterPresentationLastUsedFrame;
     private const uint AdvancedBlendShrinkDelayFrames = 240;
 
     // Uniform buffer (Projection Matrix)
@@ -1116,6 +1141,8 @@ public unsafe partial class Compositor : IDisposable
     private readonly Dictionary<byte, nint> _anisotropicTextureSamplers = new();
     private readonly Dictionary<TextureSamplingMode, nint>
         _filteredTextureSamplers = new();
+    private readonly Dictionary<TextureSamplerKey, nint>
+        _addressedTextureSamplers = new();
     private BindGroup* _atlasBindGroup;
     private BindGroupLayout* _atlasBindGroupLayout;
     private BindGroup* _atlasBindGroupOffscreen;
@@ -1301,7 +1328,10 @@ public unsafe partial class Compositor : IDisposable
         public GpuBlendMode BlendMode;
         public TextureSamplingMode TextureSamplingMode;
         public byte TextureMaxAnisotropy;
+        public TextureAddressMode TextureAddressModeU;
+        public TextureAddressMode TextureAddressModeV;
         public GpuTextureAlphaMode TextureAlphaMode;
+        public GpuRasterOperation RasterOperation;
         public bool HasImageEffect;
         public ImageEffectCommandData ImageEffect;
 
@@ -1336,13 +1366,17 @@ public unsafe partial class Compositor : IDisposable
         public readonly bool IsOffscreen;
         public readonly TextureSamplingMode SamplingMode;
         public readonly byte MaxAnisotropy;
+        public readonly TextureAddressMode AddressModeU;
+        public readonly TextureAddressMode AddressModeV;
 
         public TextureCacheKey(
             ulong textureId,
             uint generation,
             bool isOffscreen,
             TextureSamplingMode samplingMode,
-            byte maxAnisotropy)
+            byte maxAnisotropy,
+            TextureAddressMode addressModeU = TextureAddressMode.Clamp,
+            TextureAddressMode addressModeV = TextureAddressMode.Clamp)
         {
             TextureId = textureId;
             Generation = generation;
@@ -1351,6 +1385,8 @@ public unsafe partial class Compositor : IDisposable
             MaxAnisotropy = samplingMode == TextureSamplingMode.LinearMipmap && maxAnisotropy > 1
                 ? (byte)Math.Clamp((int)maxAnisotropy, 2, 16)
                 : (byte)1;
+            AddressModeU = addressModeU;
+            AddressModeV = addressModeV;
         }
 
         public bool Equals(TextureCacheKey other) =>
@@ -1358,9 +1394,18 @@ public unsafe partial class Compositor : IDisposable
             Generation == other.Generation &&
             IsOffscreen == other.IsOffscreen &&
             SamplingMode == other.SamplingMode &&
-            MaxAnisotropy == other.MaxAnisotropy;
+            MaxAnisotropy == other.MaxAnisotropy &&
+            AddressModeU == other.AddressModeU &&
+            AddressModeV == other.AddressModeV;
         public override bool Equals(object? obj) => obj is TextureCacheKey other && Equals(other);
-        public override int GetHashCode() => HashCode.Combine(TextureId, Generation, IsOffscreen, SamplingMode, MaxAnisotropy);
+        public override int GetHashCode() => HashCode.Combine(
+            TextureId,
+            Generation,
+            IsOffscreen,
+            SamplingMode,
+            MaxAnisotropy,
+            AddressModeU,
+            AddressModeV);
     }
 
     public class CachedBindGroup
@@ -1379,6 +1424,7 @@ public unsafe partial class Compositor : IDisposable
     {
         public required GpuBuffer UniformBuffer { get; init; }
         public nint TextureUniformBindGroupPtr { get; init; }
+        public GpuTexture? RasterPatternTexture { get; set; }
     }
 
     private readonly List<CompositorDrawCall> _drawCalls = new();
@@ -1421,6 +1467,7 @@ public unsafe partial class Compositor : IDisposable
     private bool _compiledSceneContainsDrawingVisual;
     private readonly List<CompiledVisualVersion> _compiledEmbeddedVisuals = new();
     private readonly List<CompiledVisualVersion> _embeddedVisualsInFrame = new();
+    private readonly Action<Visual> _sourceHitTestEmbeddedVisualObserver;
     private readonly HashSet<Visual> _embeddedVisualsBeingCompiled = new();
     private readonly object _offscreenRenderLock = new();
     private int _offscreenRenderDepth;
@@ -1503,6 +1550,8 @@ public unsafe partial class Compositor : IDisposable
         }
 
         public GpuTexture Source { get; }
+
+        public bool? SuppressesClearType { get; set; }
 
         public GpuTexture? Temporary { get; private set; }
 
@@ -1618,6 +1667,14 @@ public unsafe partial class Compositor : IDisposable
     public static float DefaultTextGamma = 1.43f;
     public static float DefaultTextContrast = 1.15f;
     public static bool IsCacheAsLayerEnabled { get; set; } = true;
+
+    private static bool UsesLayerCache(Visual visual) =>
+        visual.CacheAsLayer && (IsCacheAsLayerEnabled || visual.RequiresLayerCache);
+
+    private bool _suppressCachedClearType;
+
+    internal static TextRenderingMode ResolveCachedTextRenderingMode(TextRenderingMode mode, bool suppressClearType) =>
+        suppressClearType && mode == TextRenderingMode.ClearType ? TextRenderingMode.Grayscale : mode;
 
     public int VectorVertexCount => _vectorVerticesList.Count;
     public List<VectorVertex> VectorVertices => _vectorVerticesList;
@@ -1801,7 +1858,9 @@ public unsafe partial class Compositor : IDisposable
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
 
+        _sourceHitTestEmbeddedVisualObserver = TrackEmbeddedVisual;
         _context = context;
+        _imageSamplingPath = context.ImageSamplingPath;
         Options = options;
         RenderFormat = renderFormat ?? _context.SwapChainFormat;
         _pipelineCache = new RenderPipelineCache(_context);
@@ -1903,6 +1962,31 @@ public unsafe partial class Compositor : IDisposable
         GpuTexture destination,
         float sigma) =>
         ApplyGaussianBlur(source, temporary, destination, sigma, sigma);
+
+    public void ApplyBoxBlur(
+        GpuTexture source,
+        GpuTexture temporary,
+        GpuTexture destination,
+        float radiusX,
+        float radiusY)
+    {
+        lock (_context.RenderLock)
+        {
+            _compute.ApplyBoxBlur(
+                source,
+                temporary,
+                destination,
+                radiusX,
+                radiusY);
+        }
+    }
+
+    public void ApplyBoxBlur(
+        GpuTexture source,
+        GpuTexture temporary,
+        GpuTexture destination,
+        float radius) =>
+        ApplyBoxBlur(source, temporary, destination, radius, radius);
 
     public void ApplyDropShadow(
         GpuTexture source,
@@ -2846,6 +2930,15 @@ public unsafe partial class Compositor : IDisposable
                 ProGpuSceneDiagnostics.WriteLine(
                     "[Compositor] Retrying the experimental Wavefront frame with the ordered Atlas renderer because the scene uses unsupported or mixed content.");
             }
+            catch (RasterOperationPresentationFallbackException)
+            {
+                RenderRasterOperationPresentation(
+                    root,
+                    width,
+                    height,
+                    targetView);
+                return;
+            }
             catch (PathAtlasCapacityExceededException)
             {
                 if (retriedAfterPathAtlasReset)
@@ -2879,6 +2972,82 @@ public unsafe partial class Compositor : IDisposable
         _frameRetainedResources.Clear();
     }
 
+    private void RenderRasterOperationPresentation(
+        Visual root,
+        uint logicalWidth,
+        uint logicalHeight,
+        TextureView* targetView)
+    {
+        uint targetWidth = _explicitRenderTargetWidth ?? Math.Max(1u, logicalWidth);
+        uint targetHeight = _explicitRenderTargetHeight ?? Math.Max(1u, logicalHeight);
+        RenderTargetViewport viewport = NormalizeRenderTargetViewport(
+            _explicitRenderTargetViewport ?? RenderTargetViewport.Full(targetWidth, targetHeight),
+            targetWidth,
+            targetHeight);
+        uint presentationWidth = Math.Max(1u, RoundNonNegativeToUInt(viewport.Width));
+        uint presentationHeight = Math.Max(1u, RoundNonNegativeToUInt(viewport.Height));
+        if (_rasterPresentationTexture is null ||
+            _rasterPresentationTexture.Width != presentationWidth ||
+            _rasterPresentationTexture.Height != presentationHeight ||
+            _rasterPresentationTexture.Format != RenderFormat)
+        {
+            _rasterPresentationTexture?.Dispose();
+            _rasterPresentationTexture = new GpuTexture(
+                _context,
+                presentationWidth,
+                presentationHeight,
+                RenderFormat,
+                TextureUsage.RenderAttachment | TextureUsage.TextureBinding,
+                "Raster-operation presentation",
+                alphaMode: GpuTextureAlphaMode.Premultiplied);
+        }
+        _rasterPresentationLastUsedFrame = _frameNumber;
+
+        float dpiScale = _explicitDpiScale ?? _currentDpiScale;
+        RenderOffscreen(
+            root,
+            logicalWidth,
+            logicalHeight,
+            _rasterPresentationTexture,
+            padding: 0f,
+            dpiScale: dpiScale,
+            clearColor: ClearColor,
+            loadExistingContents: false,
+            includeRootTransform: true,
+            includeRootVisualState: true);
+
+        Vector4 clear = ClearColor;
+        GpuTextureBlitter.Blit(
+            _rasterPresentationTexture,
+            targetView,
+            RenderFormat,
+            new GpuTextureBlitViewport(
+                viewport.X,
+                viewport.Y,
+                viewport.Width,
+                viewport.Height),
+            new Color
+            {
+                R = clear.X,
+                G = clear.Y,
+                B = clear.Z,
+                A = clear.W
+            });
+    }
+
+    private void ReleaseIdleRasterPresentationTexture()
+    {
+        if (_rasterPresentationTexture is null ||
+            _frameNumber - _rasterPresentationLastUsedFrame <
+                AdvancedBlendShrinkDelayFrames)
+        {
+            return;
+        }
+
+        _rasterPresentationTexture.Dispose();
+        _rasterPresentationTexture = null;
+    }
+
     private void RenderSceneCore(Visual root, uint width, uint height, TextureView* targetView)
     {
         if (_isDisposed) return;
@@ -2905,8 +3074,9 @@ public unsafe partial class Compositor : IDisposable
             _currentDpiScale = (float)DisplayScaleResolver.ResolveWindowDisplayScale(_context.Window);
         }
 
-        var totalSw = System.Diagnostics.Stopwatch.StartNew();
-        var compileSw = System.Diagnostics.Stopwatch.StartNew();
+        long totalStarted =
+            System.Diagnostics.Stopwatch.GetTimestamp();
+        long compileStarted = totalStarted;
         _pathAtlas.CleanupFrame(
             _explicitRenderTargetWidth ?? width,
             _explicitRenderTargetHeight ?? height);
@@ -2998,8 +3168,10 @@ public unsafe partial class Compositor : IDisposable
         CommandEncoder* encoder = null;
         int preparedExtensionDrawCallRestoreStart = -1;
         bool renderBundleRecorded = false;
-        System.Diagnostics.Stopwatch uploadSw = null!;
-        System.Diagnostics.Stopwatch passSw = null!;
+        double compileTimeMs;
+        double uploadTimeMs;
+        long uploadStarted;
+        long passStarted;
         try
         {
 
@@ -3177,6 +3349,9 @@ public unsafe partial class Compositor : IDisposable
                         case RenderCommandType.DrawDotGrid:
                             CompileDotGridCommand(cmd, activeTransform);
                             break;
+                        case RenderCommandType.DrawDeviceDotGrid:
+                            CompileDeviceDotGridCommand(cmd, activeTransform);
+                            break;
                         case RenderCommandType.DrawCircle:
                             CompileCircleCommand(cmd, activeTransform);
                             break;
@@ -3202,7 +3377,7 @@ public unsafe partial class Compositor : IDisposable
                             CompileVertexMeshCommand(cmd, activeTransform);
                             break;
                         case RenderCommandType.DrawPointBatch:
-                            CompilePointBatchCommand(cmd, activeTransform);
+                            CompilePointBatchCommand(diagContext, cmd, activeTransform);
                             break;
                         case RenderCommandType.FillQuad:
                             CompileFillQuadCommand(cmd, activeTransform);
@@ -3269,6 +3444,11 @@ SceneCompilationComplete:
             throw WavefrontFrameFallbackException.Instance;
         }
 
+        if (HasRasterOperationDrawCall())
+        {
+            throw RasterOperationPresentationFallbackException.Instance;
+        }
+
         if (_pathAtlas.CapacityExceeded ||
             _pathAtlas.Generation != pathAtlasGenerationAtCompilationStart)
         {
@@ -3291,8 +3471,12 @@ SceneCompilationComplete:
             PrepareWavefrontComposite(width, height, renderWidth, renderHeight);
         }
 
-        compileSw.Stop();
-        uploadSw = System.Diagnostics.Stopwatch.StartNew();
+        long compileStopped =
+            System.Diagnostics.Stopwatch.GetTimestamp();
+        compileTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(
+            compileStarted,
+            compileStopped).TotalMilliseconds;
+        uploadStarted = compileStopped;
 
         // Dynamic buffer writing will happen after uploads to keep logic clear
 
@@ -3425,6 +3609,7 @@ DynamicBufferUploadComplete:
         }
 
 SceneStateUploadComplete:
+        ReleaseIdleRasterPresentationTexture();
         RefreshAtlasBindGroupsIfNeeded();
         if (_compiledRenderBundle == null &&
             _compiledSceneReusable &&
@@ -3437,8 +3622,12 @@ SceneStateUploadComplete:
             _compiledRenderBundleDrawCallCount = _drawCalls.Count;
             renderBundleRecorded = true;
         }
-        uploadSw.Stop();
-        passSw = System.Diagnostics.Stopwatch.StartNew();
+        long uploadStopped =
+            System.Diagnostics.Stopwatch.GetTimestamp();
+        uploadTimeMs = System.Diagnostics.Stopwatch.GetElapsedTime(
+            uploadStarted,
+            uploadStopped).TotalMilliseconds;
+        passStarted = uploadStopped;
 
         // Recreate MSAA resources if needed (handles initialization and window resizing).
         // Single-sample compositors render directly into the acquired target and retain no
@@ -3643,6 +3832,8 @@ SceneStateUploadComplete:
                     isOffscreen: false,
                     dc.TextureSamplingMode,
                     dc.TextureMaxAnisotropy,
+                    dc.TextureAddressModeU,
+                    dc.TextureAddressModeV,
                     _textureBindGroupLayout);
 
                 var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;
@@ -3826,15 +4017,23 @@ SceneStateUploadComplete:
         SweepUnusedLayerTextures(root, externalLayers, activeToolTip);
         _activeLayerTextureOwners.Clear();
 
-        passSw.Stop();
-        totalSw.Stop();
+        long passStopped =
+            System.Diagnostics.Stopwatch.GetTimestamp();
+        double passTimeMs =
+            System.Diagnostics.Stopwatch.GetElapsedTime(
+                passStarted,
+                passStopped).TotalMilliseconds;
+        double totalTimeMs =
+            System.Diagnostics.Stopwatch.GetElapsedTime(
+                totalStarted,
+                passStopped).TotalMilliseconds;
 
         Metrics = new CompositorMetrics
         {
-            FrameTimeMs = totalSw.Elapsed.TotalMilliseconds,
-            VisualTreeCompileTimeMs = compileSw.Elapsed.TotalMilliseconds,
-            GpuUploadTimeMs = uploadSw.Elapsed.TotalMilliseconds,
-            RenderPassTimeMs = passSw.Elapsed.TotalMilliseconds,
+            FrameTimeMs = totalTimeMs,
+            VisualTreeCompileTimeMs = compileTimeMs,
+            GpuUploadTimeMs = uploadTimeMs,
+            RenderPassTimeMs = passTimeMs,
             RenderTargetWidth = _explicitRenderTargetWidth ?? width,
             RenderTargetHeight = _explicitRenderTargetHeight ?? height,
             DpiScale = _currentDpiScale,
@@ -3933,6 +4132,7 @@ SceneStateUploadComplete:
             AdvancedBlendScratchTextureBytes = GetTextureBytes(_advancedBlendScratchTexture),
             AdvancedBlendSourceTextureBytes = GetTextureBytes(_advancedBlendSourceTexture),
             AdvancedBlendTextureBytes = GetAdvancedBlendTextureBytes(),
+            RasterPresentationTextureBytes = GetTextureBytes(_rasterPresentationTexture),
             WavefrontTextureBytes = GetTextureBytes(_wavefrontColorTexture),
             MsaaTextureBytes = GetMsaaTextureBytes(),
             TrackedIntermediateTextureBytes = GetTrackedIntermediateTextureBytes(),
@@ -4234,6 +4434,8 @@ SceneStateUploadComplete:
         bool isOffscreen,
         TextureSamplingMode samplingMode,
         byte maxAnisotropy,
+        TextureAddressMode addressModeU,
+        TextureAddressMode addressModeV,
         BindGroupLayout* layout)
     {
         var cacheKey = new TextureCacheKey(
@@ -4241,7 +4443,9 @@ SceneStateUploadComplete:
             texture.ViewGeneration,
             isOffscreen,
             samplingMode,
-            maxAnisotropy);
+            maxAnisotropy,
+            addressModeU,
+            addressModeV);
         lock (_persistentTextureBindGroups)
         {
             if (_persistentTextureBindGroups.TryGetValue(
@@ -4257,7 +4461,11 @@ SceneStateUploadComplete:
         entries[0] = new BindGroupEntry
         {
             Binding = 0,
-            Sampler = GetTextureSampler(samplingMode, maxAnisotropy)
+            Sampler = GetTextureSampler(
+                samplingMode,
+                maxAnisotropy,
+                addressModeU,
+                addressModeV)
         };
         entries[1] = new BindGroupEntry
         {
@@ -4470,6 +4678,7 @@ SceneStateUploadComplete:
             GetEffectTextureBytes() +
             GetLayerTextureBytes() +
             GetAdvancedBlendTextureBytes() +
+            GetTextureBytes(_rasterPresentationTexture) +
             GetTextureBytes(_wavefrontColorTexture) +
             GetMsaaTextureBytes();
     }
@@ -4657,8 +4866,7 @@ SceneStateUploadComplete:
                     || !ReferenceEquals(owner.LayerTexture, texture)
                     || !_activeLayerTextureOwners.Contains(owner)
                     || !owner.IsVisible
-                    || !owner.CacheAsLayer
-                    || !IsCacheAsLayerEnabled
+                    || !UsesLayerCache(owner)
                     || !IsAttachedToAnyActiveRoot(owner, mainRoot, externalLayers, activeToolTip))
                 {
                     AddRemovalItem(ref stale, ref staleCount, _allocatedLayerTextures.Count, owner);
@@ -5208,6 +5416,7 @@ SceneStateUploadComplete:
                 RenderCommandType.DrawLine or
                 RenderCommandType.DrawEllipse or
                 RenderCommandType.DrawDotGrid or
+                RenderCommandType.DrawDeviceDotGrid or
                 RenderCommandType.DrawCircle or
                 RenderCommandType.DrawRoundedRect or
                 RenderCommandType.DrawBezier or
@@ -5286,10 +5495,20 @@ SceneStateUploadComplete:
             _compiledSceneContainsDrawingVisual = true;
         }
 
-        if (!node.IsVisible
-            || (includeLocalVisualState && node.Opacity <= 0.0001f)
+        if (!node.IsVisible)
+        {
+            node.IsDirty = false;
+            return;
+        }
+
+        if ((includeLocalVisualState && node.Opacity <= 0.0001f)
             || _activeOpacity <= 0.0001f)
         {
+            if (Options.EnableGpuHitTesting && !_suspendHitTestCacheWrites &&
+                node is ISourceGeometryHitTestCommands)
+                _hitTestCacheBuilder.AddSourceVisual(node, parentTransform,
+                    offsetOverride, includeLocalTransform, includeLocalVisualState,
+                    _sourceHitTestEmbeddedVisualObserver);
             node.IsDirty = false;
             return;
         }
@@ -5300,7 +5519,7 @@ SceneStateUploadComplete:
             return;
         }
 
-        if (node.CacheAsLayer && IsCacheAsLayerEnabled && !_elementsRenderingLayers.Contains(node))
+        if (UsesLayerCache(node) && !_elementsRenderingLayers.Contains(node))
         {
             ApplyAndDrawLayer(node, parentTransform);
             return;
@@ -5357,10 +5576,30 @@ SceneStateUploadComplete:
                 retainedCommands.TargetWidth == _currentWidth &&
                 retainedCommands.TargetHeight == _currentHeight &&
                 retainedCommands.DpiScale == _currentDpiScale;
-            bool usesPooledContext = !hasRetainedCommands && !ownsRenderCommandCache;
+            // The base DrawingVisual renderer only appends its retained Context.
+            // Replay that storage directly so picture/resource leases are not
+            // AddRef'd into a pooled context on every frame. Preserve virtual
+            // OnRender dispatch for derived drawing-visual implementations.
+            DrawingContext? drawingVisualContext =
+                node.GetType() == typeof(DrawingVisual) &&
+                node is DrawingVisual directDrawingVisual
+                    ? directDrawingVisual.Context
+                    : null;
+            bool usesDrawingVisualContext =
+                !hasRetainedCommands &&
+                !ownsRenderCommandCache &&
+                drawingVisualContext is not null;
+            bool usesPooledContext =
+                !hasRetainedCommands &&
+                !ownsRenderCommandCache &&
+                !usesDrawingVisualContext;
             bool keepRetainedCommands = reuseRetainedCommands;
             var ctx = ownedRenderCommandCache?.GetOrUpdateRenderCommandCache() ??
-                (hasRetainedCommands ? retainedCommands!.Context : GetDrawingContext());
+                (hasRetainedCommands
+                    ? retainedCommands!.Context
+                    : usesDrawingVisualContext
+                        ? drawingVisualContext!
+                        : GetDrawingContext());
             try
             {
                 if (!reuseRetainedCommands)
@@ -5370,7 +5609,7 @@ SceneStateUploadComplete:
                         ctx.Clear();
                     }
 
-                    if (!ownsRenderCommandCache)
+                    if (!ownsRenderCommandCache && !usesDrawingVisualContext)
                     {
                         node.OnRender(ctx);
                     }
@@ -5447,7 +5686,7 @@ SceneStateUploadComplete:
                     // the next compilation after its first successful frame.
                     _retainedVisualCommands.Remove(node);
                 }
-                else if (!keepRetainedCommands)
+                else if (!usesDrawingVisualContext && !keepRetainedCommands)
                 {
                     _retainedVisualCommands.Remove(node);
                     ctx.Clear();
@@ -5480,6 +5719,8 @@ SceneStateUploadComplete:
         RenderCommand command,
         Matrix4x4 globalTransform)
     {
+        if (command.HitTestId == 0 && node is ISourceGeometryHitTestCommands)
+            command.HitTestId = node.HitTestId;
         int vectorStart = _vectorVerticesList.Count;
         int textStart = _textVerticesList.Count;
         Matrix4x4 activeTransform = command.UseGpuTransforms
@@ -5557,7 +5798,8 @@ SceneStateUploadComplete:
                             activeTransform,
                             command.IsPenThicknessLocal,
                             command.Transform,
-                            command.GeometryCache);
+                            command.GeometryCache,
+                            command.IsEdgeAliased);
                     }
                     else if (command.Brush != null)
                     {
@@ -5605,6 +5847,9 @@ SceneStateUploadComplete:
                 case RenderCommandType.DrawDotGrid:
                     CompileDotGridCommand(command, activeTransform);
                     break;
+                case RenderCommandType.DrawDeviceDotGrid:
+                    CompileDeviceDotGridCommand(command, activeTransform);
+                    break;
                 case RenderCommandType.DrawCircle:
                     CompileCircleCommand(command, activeTransform);
                     break;
@@ -5630,12 +5875,14 @@ SceneStateUploadComplete:
                     CompileVertexMeshCommand(command, activeTransform);
                     break;
                 case RenderCommandType.DrawPointBatch:
-                    CompilePointBatchCommand(command, activeTransform);
+                    CompilePointBatchCommand(context, command, activeTransform);
                     break;
                 case RenderCommandType.FillQuad:
                     CompileFillQuadCommand(command, activeTransform);
                     break;
                 case RenderCommandType.DrawStaticDxf:
+                    if (_suppressCachedClearType)
+                        throw new NotSupportedException("A precompiled DXF buffer cannot override its baked text raster policy during cache capture.");
                     CommitPendingDrawCalls();
                     _drawCalls.Add(new CompositorDrawCall
                     {
@@ -5886,6 +6133,7 @@ SceneStateUploadComplete:
     {
         if (!Options.EnableGpuHitTesting ||
             _suspendHitTestCacheWrites ||
+            node is ISourceGeometryHitTestCommands ||
             node.HitTestId == 0 ||
             node.Size.X <= 0f ||
             node.Size.Y <= 0f)
@@ -6012,7 +6260,8 @@ SceneStateUploadComplete:
                             activeTransform,
                             cmd.IsPenThicknessLocal,
                             cmd.Transform,
-                            cmd.GeometryCache);
+                            cmd.GeometryCache,
+                            cmd.IsEdgeAliased);
                     else if (cmd.Brush != null)
                         PushOpacityMaskValue(cmd.Brush, cmd.Rect, activeTransform);
                     break;
@@ -6053,6 +6302,9 @@ SceneStateUploadComplete:
                 case RenderCommandType.DrawDotGrid:
                     CompileDotGridCommand(cmd, activeTransform);
                     break;
+                case RenderCommandType.DrawDeviceDotGrid:
+                    CompileDeviceDotGridCommand(cmd, activeTransform);
+                    break;
                 case RenderCommandType.DrawCircle:
                     CompileCircleCommand(cmd, activeTransform);
                     break;
@@ -6078,7 +6330,7 @@ SceneStateUploadComplete:
                     CompileVertexMeshCommand(cmd, activeTransform);
                     break;
                 case RenderCommandType.DrawPointBatch:
-                    CompilePointBatchCommand(cmd, activeTransform);
+                    CompilePointBatchCommand(picture, cmd, activeTransform);
                     break;
                 case RenderCommandType.FillQuad:
                     CompileFillQuadCommand(cmd, activeTransform);
@@ -6204,8 +6456,7 @@ SceneStateUploadComplete:
                 continue;
             }
 
-            if (visual.CacheAsLayer &&
-                IsCacheAsLayerEnabled &&
+            if (UsesLayerCache(visual) &&
                 !_elementsRenderingLayers.Contains(visual))
             {
                 EnsureLayerTexture(visual);
@@ -6228,21 +6479,11 @@ SceneStateUploadComplete:
 
         try
         {
-            bool alreadyTracked = false;
-            for (int i = 0; i < _embeddedVisualsInFrame.Count; i++)
-            {
-                if (ReferenceEquals(_embeddedVisualsInFrame[i].Visual, visual))
-                {
-                    alreadyTracked = true;
-                    break;
-                }
-            }
-
-            if (!alreadyTracked)
-            {
-                _embeddedVisualsInFrame.Add(
-                    new CompiledVisualVersion(visual, visual.ChangeVersion));
-            }
+            // Live cached sources can replace their recording here. Track the
+            // resulting version, not the pre-capture version, so the next stable
+            // frame does not incur a synthetic embedded-visual cache miss.
+            visual.PrepareLayerCache();
+            TrackEmbeddedVisual(visual);
 
             CompileVisualTree(visual, parentTransform);
         }
@@ -6250,6 +6491,14 @@ SceneStateUploadComplete:
         {
             _embeddedVisualsBeingCompiled.Remove(visual);
         }
+    }
+
+    private void TrackEmbeddedVisual(Visual visual)
+    {
+        for (int i = 0; i < _embeddedVisualsInFrame.Count; i++)
+            if (ReferenceEquals(_embeddedVisualsInFrame[i].Visual, visual))
+                return;
+        _embeddedVisualsInFrame.Add(new CompiledVisualVersion(visual, visual.ChangeVersion));
     }
 
     private static void TransformCommandBrushes(
@@ -6290,6 +6539,7 @@ SceneStateUploadComplete:
             RenderCommandType.DrawRect or
             RenderCommandType.DrawEllipse or
             RenderCommandType.DrawDotGrid or
+            RenderCommandType.DrawDeviceDotGrid or
             RenderCommandType.DrawCircle or
             RenderCommandType.DrawRoundedRect or
             RenderCommandType.DrawPath or
@@ -6354,6 +6604,9 @@ SceneStateUploadComplete:
                 ColorInterpolationMode = radial.ColorInterpolationMode,
                 CoordinateTransform = inverseCommandTransform * radial.CoordinateTransform
             },
+            PathGradientBrush pathGradient => ClonePathGradientBrush(
+                pathGradient,
+                inverseCommandTransform * pathGradient.CoordinateTransform),
             TwoPointConicalGradientBrush conical => new TwoPointConicalGradientBrush(
                 conical.StartCenter,
                 conical.StartRadius,
@@ -6384,6 +6637,33 @@ SceneStateUploadComplete:
             {
                 Opacity = perlin.Opacity,
                 CoordinateTransform = inverseCommandTransform * perlin.CoordinateTransform
+            },
+            HatchPatternBrush hatch => new HatchPatternBrush(
+                hatch.Angle,
+                hatch.Spacing,
+                hatch.Thickness,
+                hatch.Color)
+            {
+                Opacity = hatch.Opacity,
+                CoordinateTransform = inverseCommandTransform * hatch.CoordinateTransform
+            },
+            CrossHatchBrush crossHatch => new CrossHatchBrush(
+                crossHatch.Angle,
+                crossHatch.Spacing,
+                crossHatch.Thickness,
+                crossHatch.Color)
+            {
+                Opacity = crossHatch.Opacity,
+                CoordinateTransform = inverseCommandTransform * crossHatch.CoordinateTransform
+            },
+            HatchPatternSetBrush hatchSet => new HatchPatternSetBrush(
+                hatchSet.Families.Span,
+                hatchSet.Dashes.Span,
+                hatchSet.Thickness,
+                hatchSet.Color)
+            {
+                Opacity = hatchSet.Opacity,
+                CoordinateTransform = inverseCommandTransform * hatchSet.CoordinateTransform
             },
             _ => brush
         };
@@ -6523,24 +6803,26 @@ SceneStateUploadComplete:
         Rect clipBounds,
         Matrix4x4 transform)
     {
-        GpuTexture? texture = brush.Texture;
-        if (texture is null || texture.IsDisposed)
+        if (!brush.TryCreateTextureCommand(
+                clipBounds,
+                out RenderCommand textureCommand))
+        {
+            throw new NotSupportedException(
+                "The retained texture brush requires a live texture, finite positive extents, and a positive axis-preserving transform.");
+        }
+
+        if (brush.ExtendToFillBounds)
+        {
+            CompileTextureCommand(textureCommand, transform);
             return;
+        }
 
         PushClipRect(clipBounds, transform);
         try
         {
             CompileTextureCommand(
-                new RenderCommand
-                {
-                    Type = RenderCommandType.DrawTexture,
-                    Texture = texture,
-                    Rect = brush.DestinationRect,
-                    SrcRect = brush.SourceRect,
-                    TextureSamplingMode = brush.SamplingMode,
-                    SnapTextureToPixels = brush.SnapToPixels
-                },
-                brush.Transform * transform);
+                textureCommand,
+                textureCommand.Transform * transform);
         }
         finally
         {
@@ -7421,6 +7703,100 @@ SceneStateUploadComplete:
         contour.CornerRadii.Z > 0f ||
         contour.CornerRadii.W > 0f;
 
+    private PathGeometry? CullPathFiguresOutsideRasterViewport(
+        PathGeometry path,
+        Matrix4x4 transform)
+    {
+        if (path.IsCombined ||
+            path.Figures.Count <= 1 ||
+            ActiveCompilationContext != null ||
+            _useGpuTransformsActive)
+        {
+            return path;
+        }
+
+        Rect viewport = _activeClipRect ?? new Rect(0f, 0f, _currentWidth, _currentHeight);
+        float left = viewport.X - 1f;
+        float top = viewport.Y - 1f;
+        float right = viewport.X + viewport.Width + 1f;
+        float bottom = viewport.Y + viewport.Height + 1f;
+        if (right <= left || bottom <= top)
+        {
+            return null;
+        }
+
+        List<PathFigure>? visibleFigures = null;
+        var figures = path.Figures;
+        for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
+        {
+            PathFigure figure = figures[figureIndex];
+            bool isVisible = !PathGeometry.TryGetBounds(figure, out Vector2 localMin, out Vector2 localMax) ||
+                TransformedBoundsIntersectViewport(
+                    localMin,
+                    localMax,
+                    transform,
+                    left,
+                    top,
+                    right,
+                    bottom);
+            if (isVisible)
+            {
+                visibleFigures?.Add(figure);
+                continue;
+            }
+
+            if (visibleFigures == null)
+            {
+                visibleFigures = new List<PathFigure>(figures.Count);
+                for (int visibleIndex = 0; visibleIndex < figureIndex; visibleIndex++)
+                {
+                    visibleFigures.Add(figures[visibleIndex]);
+                }
+            }
+        }
+
+        if (visibleFigures == null)
+        {
+            return path;
+        }
+
+        if (visibleFigures.Count == 0)
+        {
+            return null;
+        }
+
+        var visiblePath = new PathGeometry
+        {
+            FillRule = path.FillRule
+        };
+        visiblePath.Figures.AddRange(visibleFigures);
+        return visiblePath;
+    }
+
+    private static bool TransformedBoundsIntersectViewport(
+        Vector2 localMin,
+        Vector2 localMax,
+        Matrix4x4 transform,
+        float left,
+        float top,
+        float right,
+        float bottom)
+    {
+        Vector2 p0 = Vector2.Transform(localMin, transform);
+        Vector2 p1 = Vector2.Transform(new Vector2(localMax.X, localMin.Y), transform);
+        Vector2 p2 = Vector2.Transform(localMax, transform);
+        Vector2 p3 = Vector2.Transform(new Vector2(localMin.X, localMax.Y), transform);
+        float minX = MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p2.X, p3.X));
+        float minY = MathF.Min(MathF.Min(p0.Y, p1.Y), MathF.Min(p2.Y, p3.Y));
+        float maxX = MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p2.X, p3.X));
+        float maxY = MathF.Max(MathF.Max(p0.Y, p1.Y), MathF.Max(p2.Y, p3.Y));
+        return !float.IsFinite(minX) ||
+            !float.IsFinite(minY) ||
+            !float.IsFinite(maxX) ||
+            !float.IsFinite(maxY) ||
+            (maxX >= left && minX <= right && maxY >= top && minY <= bottom);
+    }
+
     private void CompilePathCommand(
         RenderCommand cmd,
         Matrix4x4 transform,
@@ -7474,7 +7850,7 @@ SceneStateUploadComplete:
                 : 0f;
             pathCoverageGamma = MathF.Abs(fontSkewX) > 0.0001f || fontScaleX < 0f
                 ? TransformedTextPathCoverageGamma
-                : GetTextPathCoverageGamma(
+                : GetActiveTextPathCoverageGamma(
                     cmd.FontSize,
                     transform,
                     TransformMetrics.GetStrokeScale(transform),
@@ -7489,16 +7865,26 @@ SceneStateUploadComplete:
             TryCompileDirectRoundedRectanglePathFill(cmd, transform);
         if (cmd.Brush != null && !compiledDirectRoundedFill)
         {
+            PathGeometry? rasterPath = CullPathFiguresOutsideRasterViewport(cmd.Path, transform);
+            if (rasterPath == null)
+            {
+                goto CompilePathStroke;
+            }
+
             float bIdx = RegisterBrush(cmd.Brush);
             var brush = cmd.Brush as SolidColorBrush;
             var color = brush?.Color ?? new Vector4(1f, 1f, 1f, 1f);
 
-            // Extract scale factor from transform
-            var scaleX = new Vector2(transform.M11, transform.M12).Length();
-            var scaleY = new Vector2(transform.M21, transform.M22).Length();
+            // Coverage is rasterized at the final camera scale while the quad
+            // remains in local coordinates for late GPU placement.
+            var coverageTransform = _useGpuTransformsActive
+                ? transform * _cameraViewMatrix
+                : transform;
+            var scaleX = new Vector2(coverageTransform.M11, coverageTransform.M12).Length();
+            var scaleY = new Vector2(coverageTransform.M21, coverageTransform.M22).Length();
             if (scaleX < 0.0001f) scaleX = 1f;
             if (scaleY < 0.0001f) scaleY = 1f;
-            if (!IsAxisAlignedClipTransform(transform))
+            if (!IsAxisAlignedClipTransform(coverageTransform))
             {
                 scaleX = scaleY = Math.Max(scaleX, scaleY);
             }
@@ -7510,11 +7896,11 @@ SceneStateUploadComplete:
             scaleY *= rasterScale;
 
             var info = _pathAtlas.GetOrCreatePath(
-                cmd.Path,
+                rasterPath,
                 scaleX,
                 scaleY,
-                GetSubpixelPhase(transform.M41 * rasterScale),
-                GetSubpixelPhase(transform.M42 * rasterScale),
+                GetSubpixelPhase(coverageTransform.M41 * rasterScale),
+                GetSubpixelPhase(coverageTransform.M42 * rasterScale),
                 cmd.PathSampleGrid,
                 subpixelPhaseGrid,
                 quantizeScale);
@@ -7583,6 +7969,8 @@ SceneStateUploadComplete:
             }
         }
 
+CompilePathStroke:
+
         if (IsRenderableStroke(cmd.Pen))
         {
             // A canonical sharp-rectangle fill may have been emitted through
@@ -7602,6 +7990,21 @@ SceneStateUploadComplete:
 
             if (cmd.Pen!.HasDashPattern)
             {
+                if (TryPrepareLinearDashCommand(cmd, cmd.Path, stroke.LocalThickness, out var preparedCommand))
+                {
+                    if (_activeClipRect.HasValue)
+                    {
+                        var vertices = CollectionsMarshal.AsSpan(_vectorVerticesList);
+                        for (int i = startIndex; i < vertices.Length; i++)
+                        {
+                            var vertex = vertices[i];
+                            vertex.Position = ClampToClip(vertex.Position);
+                            vertices[i] = vertex;
+                        }
+                    }
+                    CompilePathCommand(preparedCommand, transform, subpixelPhaseGrid, quantizeScale, rasterScale);
+                    return;
+                }
                 PathGeometry dashedPath;
                 Pen undashedPen;
                 if (cmd.GeometryCache?.TryGetDashedStrokePath(
@@ -7684,6 +8087,13 @@ SceneStateUploadComplete:
                         }
 
                         continue;
+                    }
+
+                    if (segment is RationalQuadraticBezierSegment or
+                        RationalCubicBezierSegment)
+                    {
+                        throw new NotSupportedException(
+                            "Rational path segments currently support fill and clip rendering only.");
                     }
 
                     if (segment is LineSegment)
@@ -8390,8 +8800,23 @@ SceneStateUploadComplete:
         PathGeometry source,
         Pen pen,
         float localThickness,
-        out PathGeometry dashedPath)
+        out PathGeometry dashedPath,
+        bool rejectUnrepresentedTerminalCaps = false)
     {
+        bool result = TryCreateDashedStrokePath(source, pen, localThickness, out dashedPath,
+            out var terminalCaps, captureTerminalCaps: rejectUnrepresentedTerminalCaps);
+        return result && terminalCaps == null;
+    }
+
+    internal static bool TryCreateDashedStrokePath(
+        PathGeometry source,
+        Pen pen,
+        float localThickness,
+        out PathGeometry dashedPath,
+        out List<DirectedStrokeCaps>? terminalCaps,
+        bool captureTerminalCaps)
+    {
+        terminalCaps = null;
         dashedPath = new PathGeometry
         {
             FillRule = source.FillRule
@@ -8402,7 +8827,7 @@ SceneStateUploadComplete:
             return false;
         }
 
-        var dashArray = pen.DashArray;
+        var dashArray = pen.DashArrayStorage;
         var dashThickness = pen.IsHairline ? 1f : localThickness;
         if (dashArray is not { Length: > 0 } ||
             !DashPattern.TryCreate(dashArray, pen.DashOffset, dashThickness, out var pattern))
@@ -8414,9 +8839,13 @@ SceneStateUploadComplete:
         for (int figureIndex = 0; figureIndex < sourceFigures.Count; figureIndex++)
         {
             var figure = sourceFigures[figureIndex];
+            if (figure == null || !float.IsFinite(figure.StartPoint.X) || !float.IsFinite(figure.StartPoint.Y))
+                return false;
             var dashedFigureStartIndex = dashedPath.Figures.Count;
             var patternIndex = pattern.InitialIndex;
             var distanceInPattern = pattern.InitialDistance;
+            bool sourceStartEligible = (patternIndex & 1) == 0;
+            bool sourceEndHasStrokedTraversal = false;
             PathFigure? activeDashFigure = null;
             var activeDashEnd = default(Vector2);
             var currentPoint = figure.StartPoint;
@@ -8425,9 +8854,14 @@ SceneStateUploadComplete:
             for (int segmentIndex = 0; segmentIndex < figureSegments.Count; segmentIndex++)
             {
                 var segment = figureSegments[segmentIndex];
+                if (segment == null) return false;
                 var segmentStart = currentPoint;
+                bool startsInVisibleDash = (patternIndex & 1) == 0;
                 if (!segment.IsStroked)
                 {
+                    if (dashedPath.Figures.Count == dashedFigureStartIndex)
+                        sourceStartEligible = false;
+                    sourceEndHasStrokedTraversal = false;
                     if (TryGetPathSegmentEndPoint(segment, out var skippedEndPoint))
                     {
                         currentPoint = skippedEndPoint;
@@ -8443,6 +8877,11 @@ SceneStateUploadComplete:
                 switch (segment)
                 {
                     case LineSegment line:
+                        if (Vector2.DistanceSquared(segmentStart, line.Point) <= StrokeEpsilon * StrokeEpsilon)
+                        {
+                            currentPoint = line.Point;
+                            continue;
+                        }
                         AddDashedLineFigures(
                             dashedPath,
                             pattern,
@@ -8451,11 +8890,14 @@ SceneStateUploadComplete:
                             ref patternIndex,
                             ref distanceInPattern,
                             ref activeDashFigure,
-                            ref activeDashEnd);
+                            ref activeDashEnd,
+                            line.IsSmoothJoin);
                         currentPoint = line.Point;
                         break;
 
                     case QuadraticBezierSegment quadratic:
+                        if (quadratic.ControlPoint == segmentStart && quadratic.Point == segmentStart)
+                            continue;
                         if (BezierSegmentGeometry.TryCreateDashedQuadraticBezierSegments(
                                 segmentStart,
                                 quadratic,
@@ -8469,6 +8911,8 @@ SceneStateUploadComplete:
                             for (int dashIndex = 0; dashIndex < quadraticSegments.Length; dashIndex++)
                             {
                                 var dashSegment = quadraticSegments[dashIndex];
+                                PrepareCurveDashContinuation(ref activeDashFigure, dashSegment.Segment,
+                                    dashIndex, startsInVisibleDash, quadratic.IsSmoothJoin);
                                 AppendDashedSegment(
                                     dashedPath,
                                     ref activeDashFigure,
@@ -8476,12 +8920,16 @@ SceneStateUploadComplete:
                                     dashSegment.Start,
                                     dashSegment.Segment);
                             }
+                            if (quadraticSegments.Length == 0) activeDashFigure = null;
                         }
+                        else return false;
 
                         currentPoint = quadratic.Point;
                         break;
 
                     case CubicBezierSegment cubic:
+                        if (cubic.ControlPoint1 == segmentStart && cubic.ControlPoint2 == segmentStart
+                            && cubic.Point == segmentStart) continue;
                         if (BezierSegmentGeometry.TryCreateDashedCubicBezierSegments(
                                 segmentStart,
                                 cubic,
@@ -8495,6 +8943,8 @@ SceneStateUploadComplete:
                             for (int dashIndex = 0; dashIndex < cubicSegments.Length; dashIndex++)
                             {
                                 var dashSegment = cubicSegments[dashIndex];
+                                PrepareCurveDashContinuation(ref activeDashFigure, dashSegment.Segment,
+                                    dashIndex, startsInVisibleDash, cubic.IsSmoothJoin);
                                 AppendDashedSegment(
                                     dashedPath,
                                     ref activeDashFigure,
@@ -8502,12 +8952,17 @@ SceneStateUploadComplete:
                                     dashSegment.Start,
                                     dashSegment.Segment);
                             }
+                            if (cubicSegments.Length == 0) activeDashFigure = null;
                         }
+                        else return false;
 
                         currentPoint = cubic.Point;
                         break;
 
                     case ArcSegment arc:
+                        if (arc.Point == segmentStart && float.IsFinite(arc.Size.X) && float.IsFinite(arc.Size.Y)
+                            && arc.Size.X >= 0 && arc.Size.Y >= 0 && float.IsFinite(arc.RotationAngle)
+                            && (uint)arc.SweepDirection <= 1) continue;
                         if (ArcSegmentGeometry.TryCreateDashedArcSegments(
                                 segmentStart,
                                 arc,
@@ -8521,6 +8976,8 @@ SceneStateUploadComplete:
                             for (int dashIndex = 0; dashIndex < arcSegments.Length; dashIndex++)
                             {
                                 var dashSegment = arcSegments[dashIndex];
+                                PrepareCurveDashContinuation(ref activeDashFigure, dashSegment.Arc,
+                                    dashIndex, startsInVisibleDash, arc.IsSmoothJoin);
                                 AppendDashedSegment(
                                     dashedPath,
                                     ref activeDashFigure,
@@ -8528,7 +8985,9 @@ SceneStateUploadComplete:
                                     dashSegment.Start,
                                     dashSegment.Arc);
                             }
+                            if (arcSegments.Length == 0) activeDashFigure = null;
                         }
+                        else return false;
 
                         currentPoint = arc.Point;
                         break;
@@ -8536,6 +8995,14 @@ SceneStateUploadComplete:
                     default:
                         return false;
                 }
+                sourceEndHasStrokedTraversal = true;
+                // Native curve_dash closes the run at every hidden interval or
+                // visible interval boundary, even when a curve returns to the
+                // same coordinate. Final phase, not positional equality, owns
+                // continuation into the next source segment.
+                if (segment is not LineSegment &&
+                    ((patternIndex & 1) != 0 || distanceInPattern <= StrokeEpsilon))
+                    activeDashFigure = null;
             }
 
             if (figure.IsClosed && Vector2.DistanceSquared(currentPoint, figure.StartPoint) > StrokeEpsilon * StrokeEpsilon)
@@ -8549,22 +9016,47 @@ SceneStateUploadComplete:
                     ref distanceInPattern,
                     ref activeDashFigure,
                     ref activeDashEnd);
+                sourceEndHasStrokedTraversal = true;
             }
 
+            bool sourceEndEligible = sourceEndHasStrokedTraversal &&
+                ((patternIndex & 1) == 0 ? distanceInPattern > StrokeEpsilon : distanceInPattern <= StrokeEpsilon);
             if (figure.IsClosed)
             {
-                MergeClosedDashSeam(dashedPath, dashedFigureStartIndex, figure.StartPoint);
+                if (sourceStartEligible && sourceEndEligible)
+                    MergeClosedDashSeam(
+                        dashedPath,
+                        dashedFigureStartIndex,
+                        figure.StartPoint,
+                        figureSegments.Count > 0 && figureSegments[0].IsSmoothJoin);
             }
             else
             {
+                // Native terminal intervals own two directed caps even though
+                // they have no centerline length. Keep that metadata separate
+                // until one compound filled coverage path can be prepared.
+                if (captureTerminalCaps && sourceEndHasStrokedTraversal && (patternIndex & 1) == 0
+                    && distanceInPattern <= StrokeEpsilon
+                    && (pen.DashCap != PenLineCap.Flat
+                        || (figure.StrokeEndLineCap ?? pen.EndLineCap) != PenLineCap.Flat))
+                {
+                    if (figureSegments.Count == 0 || figureSegments[^1] is not LineSegment) return false;
+                    var adjacent = figure.StartPoint;
+                    if (figureSegments.Count > 1
+                        && !TryGetPathSegmentEndPoint(figureSegments[^2], out adjacent)) return false;
+                    (terminalCaps ??= new()).Add(new(currentPoint, adjacent, pen.DashCap,
+                        figure.StrokeEndLineCap ?? pen.EndLineCap));
+                }
                 ApplyOpenDashEndpointCaps(
                     dashedPath,
                     dashedFigureStartIndex,
                     figure.StartPoint,
                     currentPoint,
-                    pen.StartLineCap,
-                    pen.EndLineCap,
-                    pen.DashCap);
+                    figure.StrokeStartLineCap ?? pen.StartLineCap,
+                    figure.StrokeEndLineCap ?? pen.EndLineCap,
+                    pen.DashCap,
+                    sourceStartEligible,
+                    sourceEndEligible);
             }
         }
 
@@ -8578,7 +9070,9 @@ SceneStateUploadComplete:
         Vector2 sourceEnd,
         PenLineCap startLineCap,
         PenLineCap endLineCap,
-        PenLineCap dashCap)
+        PenLineCap dashCap,
+        bool sourceStartEligible,
+        bool sourceEndEligible)
     {
         var figures = dashedPath.Figures;
         if ((uint)firstFigureIndex >= (uint)figures.Count)
@@ -8587,14 +9081,14 @@ SceneStateUploadComplete:
         }
 
         var firstFigure = figures[firstFigureIndex];
-        if (startLineCap != dashCap &&
+        if (sourceStartEligible && startLineCap != dashCap &&
             Vector2.DistanceSquared(firstFigure.StartPoint, sourceStart) <= StrokeEpsilon * StrokeEpsilon)
         {
             firstFigure.StrokeStartLineCap = startLineCap;
         }
 
         var lastFigure = figures[^1];
-        if (endLineCap != dashCap &&
+        if (sourceEndEligible && endLineCap != dashCap &&
             TryGetPathFigureEndPoint(lastFigure, out var lastEnd) &&
             Vector2.DistanceSquared(lastEnd, sourceEnd) <= StrokeEpsilon * StrokeEpsilon)
         {
@@ -8605,7 +9099,8 @@ SceneStateUploadComplete:
     private static void MergeClosedDashSeam(
         PathGeometry dashedPath,
         int firstFigureIndex,
-        Vector2 seam)
+        Vector2 seam,
+        bool smoothJoin)
     {
         var figures = dashedPath.Figures;
         if ((uint)firstFigureIndex >= (uint)figures.Count)
@@ -8627,6 +9122,7 @@ SceneStateUploadComplete:
             // The drawn interval covers the complete contour. Closing the retained figure
             // produces the source seam join without synthesizing two coincident dash caps.
             firstFigure.IsClosed = true;
+            firstFigure.Segments[0].IsSmoothJoin = smoothJoin;
             firstFigure.StrokeStartLineCap = null;
             firstFigure.StrokeEndLineCap = null;
             return;
@@ -8635,6 +9131,9 @@ SceneStateUploadComplete:
         // The final and initial drawn intervals are one cyclic run. Reuse both retained
         // segment lists and move the initial span behind the final span, preserving O(S)
         // construction while keeping cache hits allocation- and traversal-free.
+        // The first segment originally began at a cap. Once the seam is joined,
+        // restore the source's start-join flag on that now-interior segment.
+        firstFigure.Segments[0].IsSmoothJoin = smoothJoin;
         lastFigure.Segments.AddRange(firstFigure.Segments);
         lastFigure.StrokeStartLineCap = null;
         lastFigure.StrokeEndLineCap = null;
@@ -8664,7 +9163,8 @@ SceneStateUploadComplete:
         ref int patternIndex,
         ref float distanceInPattern,
         ref PathFigure? activeDashFigure,
-        ref Vector2 activeDashEnd)
+        ref Vector2 activeDashEnd,
+        bool isSmoothJoin = false)
     {
         var intervals = pattern.Intervals;
         if (!DashPattern.TryValidateState(intervals, patternIndex, distanceInPattern))
@@ -8689,14 +9189,26 @@ SceneStateUploadComplete:
         {
             var remainingInElement = intervals[localPatternIndex] - localDistanceInPattern;
             var step = MathF.Min(remainingInElement, length - distance);
-            if ((localPatternIndex % 2) == 0 && step > StrokeEpsilon)
+            bool visible = (localPatternIndex & 1) == 0;
+            if (visible && step > StrokeEpsilon)
             {
                 AppendDashedSegment(
                     dashedPath,
                     ref activeDashFigure,
                     ref activeDashEnd,
                     start + direction * distance,
-                    new LineSegment(start + direction * (distance + step)));
+                    new LineSegment(
+                        start + direction * (distance + step),
+                        isSmoothJoin: distance <= StrokeEpsilon && isSmoothJoin));
+            }
+
+            // Position equality alone does not prove dash continuity: a hidden
+            // loop can return to the previous endpoint. Native run construction
+            // ends the active run at an interval boundary even at that position.
+            if (!visible || step >= remainingInElement - StrokeEpsilon)
+            {
+                activeDashFigure = null;
+                activeDashEnd = default;
             }
 
             DashPattern.Advance(
@@ -8712,6 +9224,16 @@ SceneStateUploadComplete:
         distanceInPattern = localDistanceInPattern;
     }
 
+    private static void PrepareCurveDashContinuation(ref PathFigure? activeDashFigure,
+        PathSegment segment, int dashIndex, bool startsInVisibleDash, bool sourceSmoothJoin)
+    {
+        // Each emitted curve span is a distinct visible interval. Only the
+        // first span beginning at the source segment can continue a prior run.
+        bool atSourceStart = dashIndex == 0 && startsInVisibleDash;
+        if (!atSourceStart) activeDashFigure = null;
+        segment.IsSmoothJoin = atSourceStart && sourceSmoothJoin;
+    }
+
     private static void AppendDashedSegment(
         PathGeometry dashedPath,
         ref PathFigure? activeDashFigure,
@@ -8719,7 +9241,10 @@ SceneStateUploadComplete:
         Vector2 start,
         PathSegment segment)
     {
-        if (TryGetPathSegmentEndPoint(segment, out var endPoint) &&
+        if (!TryGetPathSegmentEndPoint(segment, out var endPoint)) return;
+        // Coincident endpoints do not make a Bézier or elliptical curve
+        // constant. Preserve its controls/analytic span rather than dropping it.
+        if (segment is LineSegment &&
             Vector2.DistanceSquared(start, endPoint) <= StrokeEpsilon * StrokeEpsilon)
         {
             return;
@@ -10454,6 +10979,17 @@ SceneStateUploadComplete:
                     out direction,
                     quadratic.ControlPoint - segmentStart,
                     quadratic.Point - segmentStart);
+            case RationalQuadraticBezierSegment rationalQuadratic:
+                return TrySelectDirection(
+                    out direction,
+                    rationalQuadratic.ControlPoint - segmentStart,
+                    rationalQuadratic.Point - segmentStart);
+            case RationalCubicBezierSegment rationalCubic:
+                return TrySelectDirection(
+                    out direction,
+                    rationalCubic.ControlPoint1 - segmentStart,
+                    rationalCubic.ControlPoint2 - segmentStart,
+                    rationalCubic.Point - segmentStart);
             case CubicBezierSegment cubic:
                 return TrySelectDirection(
                     out direction,
@@ -10479,6 +11015,17 @@ SceneStateUploadComplete:
                     out direction,
                     quadratic.Point - quadratic.ControlPoint,
                     quadratic.Point - segmentStart);
+            case RationalQuadraticBezierSegment rationalQuadratic:
+                return TrySelectDirection(
+                    out direction,
+                    rationalQuadratic.Point - rationalQuadratic.ControlPoint,
+                    rationalQuadratic.Point - segmentStart);
+            case RationalCubicBezierSegment rationalCubic:
+                return TrySelectDirection(
+                    out direction,
+                    rationalCubic.Point - rationalCubic.ControlPoint2,
+                    rationalCubic.Point - rationalCubic.ControlPoint1,
+                    rationalCubic.Point - segmentStart);
             case CubicBezierSegment cubic:
                 return TrySelectDirection(
                     out direction,
@@ -10594,6 +11141,12 @@ SceneStateUploadComplete:
                 return true;
             case QuadraticBezierSegment quadratic:
                 endPoint = quadratic.Point;
+                return true;
+            case RationalQuadraticBezierSegment rationalQuadratic:
+                endPoint = rationalQuadratic.Point;
+                return true;
+            case RationalCubicBezierSegment rationalCubic:
+                endPoint = rationalCubic.Point;
                 return true;
             case CubicBezierSegment cubic:
                 endPoint = cubic.Point;
@@ -10746,6 +11299,11 @@ SceneStateUploadComplete:
         in StrokeCompileState stroke,
         Matrix4x4 transform)
     {
+        if (TryPrepareLinearDashCommand(cmd, sourcePath, stroke.LocalThickness, out var preparedCommand))
+        {
+            CompilePathCommand(preparedCommand, transform);
+            return;
+        }
         var pen = cmd.Pen!;
         PathGeometry dashedPath;
         Pen undashedPen;
@@ -10776,6 +11334,28 @@ SceneStateUploadComplete:
         pathCommand.Transform = default;
         pathCommand.IsPenThicknessLocal = true;
         CompilePathCommand(pathCommand, transform);
+    }
+
+    internal static bool TryPrepareLinearDashCommand(in RenderCommand source, PathGeometry path,
+        float localThickness, out RenderCommand prepared)
+    {
+        prepared = default;
+        var pen = source.Pen!;
+        if (!RenderCommandGeometryCache.IsLinearDashCandidate(pen)) return false;
+        var cache = source.GeometryCache is { } existing && ReferenceEquals(existing.StrokePath, path)
+            ? existing : RenderCommandGeometryCache.ForStrokePath(path);
+        if (!cache.SupportsLinearDashCoverage(pen)) return false;
+        if (!cache.TryGetLinearDashCoverage(pen, localThickness, out var coverage))
+            throw new NotSupportedException("The linear dashed stroke cannot be prepared without losing coverage.");
+        prepared = source;
+        prepared.Type = RenderCommandType.DrawPath;
+        prepared.Path = coverage.Path;
+        prepared.Brush = coverage.Pen == null ? pen.Brush : null;
+        prepared.Pen = coverage.Pen;
+        prepared.GeometryCache = coverage.GeometryCache;
+        prepared.Transform = default;
+        prepared.IsPenThicknessLocal = coverage.Pen != null;
+        return true;
     }
 
     private void CompileRetainedStrokePath(
@@ -11566,9 +12146,17 @@ SceneStateUploadComplete:
         }
     }
 
-    private void CompilePointBatchCommand(RenderCommand cmd, Matrix4x4 transform)
+    private void CompilePointBatchCommand(
+        IRenderDataProvider? provider,
+        RenderCommand cmd,
+        Matrix4x4 transform)
     {
-        if (cmd.Brush is null || cmd.PolylinePoints is not { Length: > 0 } points)
+        ReadOnlySpan<Vector2> points = cmd.PolylinePoints is { Length: > 0 } inlinePoints
+            ? inlinePoints
+            : provider is not null && cmd.PointBufferCount > 0
+                ? provider.GetPoints(cmd.PointBufferOffset, cmd.PointBufferCount)
+                : ReadOnlySpan<Vector2>.Empty;
+        if (cmd.Brush is null || points.IsEmpty)
         {
             return;
         }
@@ -11773,6 +12361,70 @@ SceneStateUploadComplete:
                 vertices[index] = vertex;
             }
         }
+    }
+
+    private void CompileDeviceDotGridCommand(RenderCommand cmd, Matrix4x4 transform)
+    {
+        bool isLineGrid = cmd.RadiusY > 0f;
+        if (cmd.Brush == null || !IsFiniteRect(cmd.Rect) || cmd.Rect.IsEmpty ||
+            !float.IsFinite(cmd.Position2.X) || cmd.Position2.X <= 0f ||
+            !float.IsFinite(cmd.Position2.Y) || cmd.Position2.Y <= 0f ||
+            !float.IsFinite(cmd.RadiusX) || cmd.RadiusX <= 0f ||
+            !float.IsFinite(cmd.RadiusY) || cmd.RadiusY < 0f ||
+            (isLineGrid && (cmd.RadiusY > 100f ||
+                cmd.RadiusY != MathF.Round(cmd.RadiusY))) ||
+            !IsFiniteInvertibleAffine2D(transform))
+        {
+            return;
+        }
+
+        SwitchBatch(BatchType.Vector);
+        float brushIndex = RegisterBrush(cmd.Brush);
+        Vector4 brushColor = cmd.Brush is SolidColorBrush solid
+            ? solid.Color
+            : Vector4.One;
+        Vector2 local0 = new(cmd.Rect.X, cmd.Rect.Y);
+        Vector2 local1 = new(cmd.Rect.Right, cmd.Rect.Y);
+        Vector2 local2 = new(cmd.Rect.Right, cmd.Rect.Bottom);
+        Vector2 local3 = new(cmd.Rect.X, cmd.Rect.Bottom);
+        float shapeType = EncodeShapeType(cmd, DeviceDotGridShapeType);
+        uint baseVertex = (uint)_vectorVerticesList.Count;
+
+        int vertexStart = _vectorVerticesList.Count;
+        CollectionsMarshal.SetCount(_vectorVerticesList, vertexStart + 4);
+        Span<VectorVertex> vertices = CollectionsMarshal.AsSpan(
+            _vectorVerticesList).Slice(vertexStart, 4);
+        float encodedRadiusOrWidth = isLineGrid ? -cmd.RadiusX : cmd.RadiusX;
+        vertices[0] = new VectorVertex(
+            Vector2.Transform(local0, transform), brushColor, local0,
+            brushIndex, cmd.Position2, encodedRadiusOrWidth, cmd.RadiusY,
+            shapeType);
+        vertices[1] = new VectorVertex(
+            Vector2.Transform(local1, transform), brushColor, local1,
+            brushIndex, cmd.Position2, encodedRadiusOrWidth, cmd.RadiusY,
+            shapeType);
+        vertices[2] = new VectorVertex(
+            Vector2.Transform(local2, transform), brushColor, local2,
+            brushIndex, cmd.Position2, encodedRadiusOrWidth, cmd.RadiusY,
+            shapeType);
+        vertices[3] = new VectorVertex(
+            Vector2.Transform(local3, transform), brushColor, local3,
+            brushIndex, cmd.Position2, encodedRadiusOrWidth, cmd.RadiusY,
+            shapeType);
+
+        int indexStart = _vectorIndicesList.Count;
+        CollectionsMarshal.SetCount(_vectorIndicesList, indexStart + 6);
+        Span<uint> indices = CollectionsMarshal.AsSpan(
+            _vectorIndicesList).Slice(indexStart, 6);
+        indices[0] = baseVertex;
+        indices[1] = baseVertex + 1;
+        indices[2] = baseVertex + 2;
+        indices[3] = baseVertex;
+        indices[4] = baseVertex + 2;
+        indices[5] = baseVertex + 3;
+
+        // Draw-call scissoring owns clipping. Moving affine-quad vertices while
+        // retaining their local coordinates would corrupt the derivative map.
     }
 
     private void CompileEllipseCommand(RenderCommand cmd, Matrix4x4 transform)
@@ -12121,6 +12773,27 @@ SceneStateUploadComplete:
             gpuBrush.ColorInterpolationMode = (uint)radial.ColorInterpolationMode;
             ApplyGradientStops(ref gpuBrush, radial.Stops);
         }
+        else if (brush is PathGradientBrush pathGradient)
+        {
+            gpuBrush.Type = 10;
+            gpuBrush.Center = pathGradient.Center;
+            gpuBrush.EndPoint = pathGradient.FocusScales;
+            gpuBrush.Color0 = pathGradient.CenterColor;
+            gpuBrush.Color1 = new Vector4(pathGradient.UsesPresetColors ? 1f : 0f, 0f, 0f, 0f);
+            SetBrushCoordinateTransform(ref gpuBrush, pathGradient.CoordinateTransform);
+            gpuBrush.SpreadMethod = (uint)pathGradient.SpreadMethod;
+            gpuBrush.ColorInterpolationMode = (uint)pathGradient.ColorInterpolationMode;
+            if (!ApplyPathGradientRecords(ref gpuBrush, pathGradient))
+            {
+                gpuBrush = new GpuBrush
+                {
+                    Type = 0,
+                    Opacity = 0f,
+                    Color0 = Vector4.Zero
+                };
+                SetBrushCoordinateTransform(ref gpuBrush, Matrix4x4.Identity);
+            }
+        }
         else if (brush is TwoPointConicalGradientBrush conical)
         {
             gpuBrush.Type = 5;
@@ -12168,6 +12841,7 @@ SceneStateUploadComplete:
             gpuBrush.Center = new Vector2(hatch.Spacing, hatch.Thickness);
             gpuBrush.Color0 = hatch.Color;
             gpuBrush.StopCount = 1;
+            SetBrushCoordinateTransform(ref gpuBrush, hatch.CoordinateTransform);
         }
         else if (brush is CrossHatchBrush crossHatch)
         {
@@ -12176,6 +12850,31 @@ SceneStateUploadComplete:
             gpuBrush.Center = new Vector2(crossHatch.Spacing, crossHatch.Thickness);
             gpuBrush.Color0 = crossHatch.Color;
             gpuBrush.StopCount = 1;
+            SetBrushCoordinateTransform(ref gpuBrush, crossHatch.CoordinateTransform);
+        }
+        else if (brush is HatchPatternSetBrush hatchSet)
+        {
+            gpuBrush.Type = 8;
+            gpuBrush.Radius = hatchSet.Thickness;
+            gpuBrush.Color0 = hatchSet.Color;
+            gpuBrush.SpreadMethod = checked((uint)hatchSet.Families.Length);
+            SetBrushCoordinateTransform(ref gpuBrush, hatchSet.CoordinateTransform);
+            if (!ApplyHatchPatternSet(ref gpuBrush, hatchSet))
+            {
+                TrimGradientStops((uint)gradientStopStart);
+                return 0f;
+            }
+        }
+        else if (brush is TilePatternBrush tilePattern)
+        {
+            gpuBrush.Type = 9;
+            gpuBrush.StopCount = (uint)tilePattern.Pattern;
+            gpuBrush.StopOffset = (uint)(tilePattern.Pattern >> 32);
+            gpuBrush.Color0 = tilePattern.ForegroundColor;
+            gpuBrush.Color1 = tilePattern.BackgroundColor;
+            SetBrushCoordinateTransform(
+                ref gpuBrush,
+                Matrix4x4.CreateTranslation(-tilePattern.Origin.X, -tilePattern.Origin.Y, 0f));
         }
 
         for (int i = 0; i < _activeBrushes.Count; i++)
@@ -12230,7 +12929,12 @@ SceneStateUploadComplete:
             return false;
         }
 
-        return !IsGradientBrushType(a.Type) || GradientStopsEqual(a, b);
+        if (a.Type == 9 && a.StopOffset != b.StopOffset)
+        {
+            return false;
+        }
+
+        return !UsesAuxiliaryBrushRecords(a.Type) || GradientStopsEqual(a, b);
     }
 
     private float RegisterTextStyle(
@@ -12271,9 +12975,63 @@ SceneStateUploadComplete:
         }
     }
 
-    private static bool IsGradientBrushType(uint brushType)
+    private static bool UsesAuxiliaryBrushRecords(uint brushType)
     {
-        return brushType == 1 || brushType == 2 || brushType == 5 || brushType == 6;
+        return brushType == 1 || brushType == 2 || brushType == 5 ||
+            brushType == 6 || brushType == 8 || brushType == 10;
+    }
+
+    private bool ApplyHatchPatternSet(
+        ref GpuBrush gpuBrush,
+        HatchPatternSetBrush brush)
+    {
+        const int recordsPerFamily = 4;
+        ReadOnlySpan<HatchPatternLineFamily> families = brush.Families.Span;
+        int recordCount = checked(families.Length * recordsPerFamily);
+        if (recordCount > MaxGradientStops - _activeGradientStops.Count)
+            return false;
+
+        gpuBrush.StopOffset = checked((uint)_activeGradientStops.Count);
+        gpuBrush.StopCount = checked((uint)recordCount);
+        ReadOnlySpan<float> dashes = brush.Dashes.Span;
+        Span<float> packedDashes = stackalloc float[HatchPatternSetBrush.MaximumDashCount];
+        for (int i = 0; i < families.Length; i++)
+        {
+            HatchPatternLineFamily family = families[i];
+            packedDashes.Clear();
+            for (int dashIndex = 0; dashIndex < family.DashCount; dashIndex++)
+                packedDashes[dashIndex] = dashes[family.DashOffset + dashIndex];
+
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = new Vector4(
+                    family.BasePoint.X,
+                    family.BasePoint.Y,
+                    family.Direction.X,
+                    family.Direction.Y),
+                Offset = family.Spacing,
+            });
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = new Vector4(
+                    family.TangentShift,
+                    family.DashPeriod,
+                    family.DashCount,
+                    0f),
+            });
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = new Vector4(
+                    packedDashes[0], packedDashes[1],
+                    packedDashes[2], packedDashes[3]),
+                Offset = packedDashes[4],
+            });
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = new Vector4(packedDashes[5], 0f, 0f, 0f),
+            });
+        }
+        return true;
     }
 
     private static void SetBrushCoordinateTransform(ref GpuBrush gpuBrush, Matrix4x4 transform)
@@ -12499,6 +13257,109 @@ SceneStateUploadComplete:
         gpuBrush.Offsets1 = new Vector4(o4, o5, o6, o7);
     }
 
+    private bool ApplyPathGradientRecords(
+        ref GpuBrush gpuBrush,
+        PathGradientBrush brush)
+    {
+        ReadOnlySpan<Vector2> points = brush.BoundaryPoints.Span;
+        ReadOnlySpan<Vector4> colors = brush.SurroundColors.Span;
+        ReadOnlySpan<PathGradientBlendStop> blendStops = brush.BlendStops.Span;
+        ReadOnlySpan<GradientStop> presetStops = brush.PresetStops.Span;
+        int curveCount = brush.UsesPresetColors ? presetStops.Length : blendStops.Length;
+        int recordCount = checked(points.Length * 2 + curveCount);
+        if (!IsFinite(brush.Center) ||
+            !IsFiniteVector4(brush.CenterColor) ||
+            !IsFinite(brush.FocusScales) ||
+            !IsFiniteInvertibleAffine2D(brush.CoordinateTransform) ||
+            brush.SpreadMethod is < GradientSpreadMethod.Pad or > GradientSpreadMethod.Decal ||
+            brush.ColorInterpolationMode is < GradientColorInterpolationMode.SRgbLinearInterpolation or > GradientColorInterpolationMode.ScRgbLinearInterpolation ||
+            points.Length is < 2 or > PathGradientBrush.MaximumBoundaryPoints ||
+            colors.Length != points.Length ||
+            curveCount == 0 ||
+            recordCount > MaxGradientStops - _activeGradientStops.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < points.Length; index++)
+        {
+            if (!IsFinite(points[index]) || !IsFiniteVector4(colors[index]))
+            {
+                return false;
+            }
+        }
+
+        float previousOffset = float.NegativeInfinity;
+        if (brush.UsesPresetColors)
+        {
+            foreach (GradientStop stop in presetStops)
+            {
+                if (!IsFiniteVector4(stop.Color) || !IsValidCurveOffset(stop.Offset, previousOffset))
+                {
+                    return false;
+                }
+                previousOffset = stop.Offset;
+            }
+        }
+        else
+        {
+            foreach (PathGradientBlendStop stop in blendStops)
+            {
+                if (!float.IsFinite(stop.Factor) || stop.Factor is < 0f or > 1f ||
+                    !IsValidCurveOffset(stop.Offset, previousOffset))
+                {
+                    return false;
+                }
+                previousOffset = stop.Offset;
+            }
+        }
+
+        gpuBrush.StopOffset = checked((uint)_activeGradientStops.Count);
+        gpuBrush.StopCount = checked((uint)recordCount);
+        gpuBrush.Radius = points.Length;
+        gpuBrush.RadiusY = curveCount;
+        for (int index = 0; index < points.Length; index++)
+        {
+            Vector2 point = points[index];
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = new Vector4(point.X, point.Y, 0f, 0f)
+            });
+            _activeGradientStops.Add(new GpuGradientStop
+            {
+                Color = colors[index]
+            });
+        }
+
+        if (brush.UsesPresetColors)
+        {
+            foreach (GradientStop stop in presetStops)
+            {
+                _activeGradientStops.Add(new GpuGradientStop
+                {
+                    Color = stop.Color,
+                    Offset = stop.Offset
+                });
+            }
+        }
+        else
+        {
+            foreach (PathGradientBlendStop stop in blendStops)
+            {
+                _activeGradientStops.Add(new GpuGradientStop
+                {
+                    Color = new Vector4(stop.Factor, 0f, 0f, 0f),
+                    Offset = stop.Offset
+                });
+            }
+        }
+
+        return true;
+
+        static bool IsValidCurveOffset(float value, float prior) =>
+            float.IsFinite(value) && value is >= 0f and <= 1f && value >= prior;
+    }
+
     private bool TryGetCachedTextLayout(TextLayoutCacheKey key, out TextLayout? layout)
     {
         if (!_layoutCache.TryGetValue(key, out var entry))
@@ -12611,6 +13472,7 @@ SceneStateUploadComplete:
 
     private void CompileTextCommand(RenderCommand cmd, ITextLayoutProvider? textNode, Matrix4x4 transform)
     {
+        cmd.TextRenderingMode = ResolveCachedTextRenderingMode(cmd.TextRenderingMode, _suppressCachedClearType);
         if (ActiveCompilationContext != null &&
             !ActiveCompilationContext.IsRecompiling &&
             ActiveCompilationContext.RetainedGlyphBuilder == null)
@@ -12710,7 +13572,7 @@ SceneStateUploadComplete:
             * MathF.Max(1f, MathF.Abs(fontScaleX));
         var textPathCoverageGamma = MathF.Abs(fontSkewX) > 0.0001f || fontScaleX < 0f
             ? TransformedTextPathCoverageGamma
-            : GetTextPathCoverageGamma(
+            : GetActiveTextPathCoverageGamma(
                 cmd.FontSize,
                 activeTransform,
                 transformScale,
@@ -12897,6 +13759,7 @@ SceneStateUploadComplete:
 
     private void CompileGlyphRunCommand(RenderCommand cmd, Matrix4x4 transform)
     {
+        cmd.TextRenderingMode = ResolveCachedTextRenderingMode(cmd.TextRenderingMode, _suppressCachedClearType);
         if (ActiveCompilationContext != null &&
             !ActiveCompilationContext.IsRecompiling &&
             ActiveCompilationContext.RetainedGlyphBuilder == null)
@@ -12975,7 +13838,7 @@ SceneStateUploadComplete:
             * MathF.Max(1f, MathF.Abs(fontScaleX));
         var textPathCoverageGamma = MathF.Abs(fontSkewX) > 0.0001f || fontScaleX < 0f
             ? TransformedTextPathCoverageGamma
-            : GetTextPathCoverageGamma(
+            : GetActiveTextPathCoverageGamma(
                 cmd.FontSize,
                 activeTransform,
                 transformScale,
@@ -13449,6 +14312,20 @@ SceneStateUploadComplete:
             rasterScale: rasterScale);
     }
 
+    private float GetActiveTextPathCoverageGamma(
+        float fontSize,
+        Matrix4x4 transform,
+        float transformScale,
+        float effectiveDpiScale)
+    {
+        if (_useGpuTransformsActive)
+        {
+            transform *= _cameraViewMatrix;
+            transformScale = TransformMetrics.GetStrokeScale(transform);
+        }
+        return GetTextPathCoverageGamma(fontSize, transform, transformScale, effectiveDpiScale);
+    }
+
     private static float GetTextPathCoverageGamma(
         float fontSize,
         Matrix4x4 transform,
@@ -13512,6 +14389,26 @@ SceneStateUploadComplete:
                             TransformPoint(quadratic.Point),
                             quadratic.IsSmoothJoin,
                             quadratic.IsStroked));
+                        break;
+                    case RationalQuadraticBezierSegment rationalQuadratic:
+                        transformedFigure.Segments.Add(
+                            new RationalQuadraticBezierSegment(
+                                TransformPoint(rationalQuadratic.ControlPoint),
+                                TransformPoint(rationalQuadratic.Point),
+                                rationalQuadratic.Weight,
+                                rationalQuadratic.IsSmoothJoin,
+                                rationalQuadratic.IsStroked));
+                        break;
+                    case RationalCubicBezierSegment rationalCubic:
+                        transformedFigure.Segments.Add(
+                            new RationalCubicBezierSegment(
+                                TransformPoint(rationalCubic.ControlPoint1),
+                                TransformPoint(rationalCubic.ControlPoint2),
+                                TransformPoint(rationalCubic.Point),
+                                rationalCubic.Weight1,
+                                rationalCubic.Weight2,
+                                rationalCubic.IsSmoothJoin,
+                                rationalCubic.IsStroked));
                         break;
                     case CubicBezierSegment cubic:
                         transformedFigure.Segments.Add(new CubicBezierSegment(
@@ -13592,6 +14489,31 @@ SceneStateUploadComplete:
         }
     }
 
+    private static PathGradientBrush ClonePathGradientBrush(
+        PathGradientBrush source,
+        Matrix4x4 coordinateTransform)
+    {
+        PathGradientBrush clone = source.UsesPresetColors
+            ? new PathGradientBrush(
+                source.BoundaryPoints.Span,
+                source.SurroundColors.Span,
+                source.Center,
+                source.CenterColor,
+                source.PresetStops.Span)
+            : new PathGradientBrush(
+                source.BoundaryPoints.Span,
+                source.SurroundColors.Span,
+                source.Center,
+                source.CenterColor,
+                source.BlendStops.Span);
+        clone.Opacity = source.Opacity;
+        clone.FocusScales = source.FocusScales;
+        clone.SpreadMethod = source.SpreadMethod;
+        clone.ColorInterpolationMode = source.ColorInterpolationMode;
+        clone.CoordinateTransform = coordinateTransform;
+        return clone;
+    }
+
     private void EnsureTextVertexCapacity(int additionalCapacity)
     {
         if (additionalCapacity <= 0)
@@ -13603,17 +14525,43 @@ SceneStateUploadComplete:
         _textVerticesList.EnsureCapacity(requiredCapacity);
     }
 
+    // Algorithm: Select shared shader encoding without changing the requested
+    // reconstruction kernel. Time/space complexity: O(1), allocation-free.
+    internal static Vector2 ResolveImageSamplingCoefficients(
+        GpuImageSamplingPath path, TextureSamplingMode sampling, Vector2 coefficients)
+    {
+        if (path != GpuImageSamplingPath.ExplicitShader) return coefficients;
+        if (coefficients.X == -32f)
+            return new Vector2(GpuImageSamplingPolicy.ExplicitFantCoefficient, coefficients.Y);
+        // Cubic, mipmapped and pre-encoded modes retain their algorithms.
+        if (coefficients.X >= -16f &&
+            sampling is TextureSamplingMode.Nearest or TextureSamplingMode.Linear)
+            return new Vector2(sampling == TextureSamplingMode.Nearest
+                ? GpuImageSamplingPolicy.ExplicitNearestCoefficient
+                : GpuImageSamplingPolicy.ExplicitLinearCoefficient, 0.5f);
+        return coefficients;
+    }
+
     private void CompileTextureCommand(RenderCommand cmd, Matrix4x4 transform)
     {
         if (cmd.Texture == null) return;
 
         CommitPendingDrawCalls();
 
+        float commandOpacity = cmd.HasTextureOpacity
+            ? cmd.TextureOpacity
+            : 1f;
+        if (!float.IsFinite(commandOpacity) || commandOpacity is < 0f or > 1f)
+        {
+            throw new InvalidOperationException(
+                "Texture command opacity must be finite and between zero and one.");
+        }
+        float effectiveOpacity = _activeOpacity * commandOpacity;
         var textureOpacity = cmd.TextureSamplingMode == TextureSamplingMode.Cubic
-            ? -_activeOpacity
-            : _activeOpacity;
+            ? -effectiveOpacity
+            : effectiveOpacity;
         var isPremultiplied = cmd.Texture.AlphaMode == GpuTextureAlphaMode.Premultiplied;
-        var premultipliedOpacityScale = isPremultiplied ? _activeOpacity : 1f;
+        var premultipliedOpacityScale = isPremultiplied ? effectiveOpacity : 1f;
         var color = new Vector4(
             premultipliedOpacityScale,
             isPremultiplied ? 1f : 0f,
@@ -13624,6 +14572,8 @@ SceneStateUploadComplete:
             float.IsFinite(cmd.TextureCubicCoefficients.Y)
                 ? cmd.TextureCubicCoefficients
                 : new Vector2(0f, 0.5f);
+        cubicCoefficients = ResolveImageSamplingCoefficients(
+            _imageSamplingPath, cmd.TextureSamplingMode, cubicCoefficients);
         var indexStart = _textureIndicesList.Count;
         var patches = cmd.TexturePatches;
         var patchCount = patches?.Length ?? 1;
@@ -13644,7 +14594,13 @@ SceneStateUploadComplete:
                 hasDestinationTransform: false,
                 colorBlendMode: 0f,
                 patchOpacity: 1f,
-                cmd.SnapTextureToPixels);
+                cmd.SnapTextureToPixels,
+                hasExplicitDestination: cmd.HasTextureDestinationQuad,
+                destination0: cmd.TextureDestination0,
+                destination1: cmd.TextureDestination1,
+                destination2: cmd.TextureDestination2,
+                destination3: cmd.TextureDestination3,
+                projectiveWeights: cmd.TextureDestinationProjectiveWeights);
         }
         else
         {
@@ -13736,7 +14692,10 @@ SceneStateUploadComplete:
             BlendMode = _activeBlendMode,
             TextureSamplingMode = cmd.TextureSamplingMode,
             TextureMaxAnisotropy = cmd.TextureMaxAnisotropy,
-            TextureAlphaMode = cmd.Texture.AlphaMode
+            TextureAddressModeU = cmd.TextureAddressModeU,
+            TextureAddressModeV = cmd.TextureAddressModeV,
+            TextureAlphaMode = cmd.Texture.AlphaMode,
+            RasterOperation = cmd.RasterOperation
         };
         AppendOrMergeTextureDrawCall(drawCall);
     }
@@ -13772,7 +14731,10 @@ SceneStateUploadComplete:
             previous.BlendMode != current.BlendMode ||
             previous.TextureSamplingMode != current.TextureSamplingMode ||
             previous.TextureMaxAnisotropy != current.TextureMaxAnisotropy ||
+            previous.TextureAddressModeU != current.TextureAddressModeU ||
+            previous.TextureAddressModeV != current.TextureAddressModeV ||
             previous.TextureAlphaMode != current.TextureAlphaMode ||
+            previous.RasterOperation != current.RasterOperation ||
             previous.HasImageEffect || current.HasImageEffect)
         {
             return false;
@@ -13794,13 +14756,33 @@ SceneStateUploadComplete:
         bool hasDestinationTransform,
         float colorBlendMode,
         float patchOpacity,
-        bool snapToPixels)
+        bool snapToPixels,
+        bool hasExplicitDestination = false,
+        Vector2 destination0 = default,
+        Vector2 destination1 = default,
+        Vector2 destination2 = default,
+        Vector2 destination3 = default,
+        Vector4 projectiveWeights = default)
     {
-        var r = destination;
-        var v0 = new Vector2(r.X, r.Y);
-        var v1 = new Vector2(r.X + r.Width, r.Y);
-        var v2 = new Vector2(r.X + r.Width, r.Y + r.Height);
-        var v3 = new Vector2(r.X, r.Y + r.Height);
+        Vector2 v0;
+        Vector2 v1;
+        Vector2 v2;
+        Vector2 v3;
+        if (hasExplicitDestination)
+        {
+            v0 = destination0;
+            v1 = destination1;
+            v2 = destination2;
+            v3 = destination3;
+        }
+        else
+        {
+            var r = destination;
+            v0 = new Vector2(r.X, r.Y);
+            v1 = new Vector2(r.X + r.Width, r.Y);
+            v2 = new Vector2(r.X + r.Width, r.Y + r.Height);
+            v3 = new Vector2(r.X, r.Y + r.Height);
+        }
         if (hasDestinationTransform)
         {
             v0 = Vector2.Transform(v0, destinationTransform);
@@ -13864,7 +14846,8 @@ SceneStateUploadComplete:
                 return;
             }
 
-            if (!QuadClipper.TryClipAxisAlignedQuad(
+            if (!hasExplicitDestination &&
+                !QuadClipper.TryClipAxisAlignedQuad(
                     _activeClipRect.Value,
                     ref v0,
                     ref v1,
@@ -13884,14 +14867,18 @@ SceneStateUploadComplete:
         CollectionsMarshal.SetCount(_textureVerticesList, originalVertexCount + 4);
         var vertexSpan = CollectionsMarshal.AsSpan(_textureVerticesList).Slice(originalVertexCount, 4);
 
+        Vector4 q = hasExplicitDestination
+            ? projectiveWeights
+            : Vector4.One;
+
         vertexSpan[0] = new VectorVertex(
-            v0, color, uv0, patchKind, cubicCoefficients, colorBlendMode, patchOpacity);
+            v0, color, uv0, patchKind, cubicCoefficients, colorBlendMode, patchOpacity, q.X);
         vertexSpan[1] = new VectorVertex(
-            v1, color, uv1, patchKind, cubicCoefficients, colorBlendMode, patchOpacity);
+            v1, color, uv1, patchKind, cubicCoefficients, colorBlendMode, patchOpacity, q.Y);
         vertexSpan[2] = new VectorVertex(
-            v2, color, uv2, patchKind, cubicCoefficients, colorBlendMode, patchOpacity);
+            v2, color, uv2, patchKind, cubicCoefficients, colorBlendMode, patchOpacity, q.Z);
         vertexSpan[3] = new VectorVertex(
-            v3, color, uv3, patchKind, cubicCoefficients, colorBlendMode, patchOpacity);
+            v3, color, uv3, patchKind, cubicCoefficients, colorBlendMode, patchOpacity, q.W);
 
         int originalIndexCount = _textureIndicesList.Count;
         CollectionsMarshal.SetCount(_textureIndicesList, originalIndexCount + 6);
@@ -13910,8 +14897,27 @@ SceneStateUploadComplete:
             MathF.Round(value.X * dpiScale) / dpiScale,
             MathF.Round(value.Y * dpiScale) / dpiScale);
 
-    internal Sampler* GetTextureSampler(TextureSamplingMode samplingMode, byte maxAnisotropy = 1)
+    internal Sampler* GetTextureSampler(
+        TextureSamplingMode samplingMode,
+        byte maxAnisotropy = 1,
+        TextureAddressMode addressModeU = TextureAddressMode.Clamp,
+        TextureAddressMode addressModeV = TextureAddressMode.Clamp)
     {
+        if ((uint)addressModeU > (uint)TextureAddressMode.MirrorRepeat ||
+            (uint)addressModeV > (uint)TextureAddressMode.MirrorRepeat)
+        {
+            throw new ArgumentOutOfRangeException(nameof(addressModeU));
+        }
+        if (addressModeU != TextureAddressMode.Clamp ||
+            addressModeV != TextureAddressMode.Clamp)
+        {
+            return GetAddressedTextureSampler(
+                samplingMode,
+                maxAnisotropy,
+                addressModeU,
+                addressModeV);
+        }
+
         if (samplingMode == TextureSamplingMode.LinearMipmap && maxAnisotropy > 1)
         {
             return GetAnisotropicTextureSampler(maxAnisotropy);
@@ -13933,6 +14939,79 @@ SceneStateUploadComplete:
             _ => _atlasSampler
         };
     }
+
+    private readonly record struct TextureSamplerKey(
+        TextureSamplingMode SamplingMode,
+        byte MaxAnisotropy,
+        TextureAddressMode AddressModeU,
+        TextureAddressMode AddressModeV);
+
+    private Sampler* GetAddressedTextureSampler(
+        TextureSamplingMode samplingMode,
+        byte requestedMaxAnisotropy,
+        TextureAddressMode addressModeU,
+        TextureAddressMode addressModeV)
+    {
+        byte maxAnisotropy = samplingMode == TextureSamplingMode.LinearMipmap
+            ? (byte)Math.Clamp((int)requestedMaxAnisotropy, 1, 16)
+            : (byte)1;
+        var key = new TextureSamplerKey(
+            samplingMode,
+            maxAnisotropy,
+            addressModeU,
+            addressModeV);
+        lock (_addressedTextureSamplers)
+        {
+            if (_addressedTextureSamplers.TryGetValue(key, out nint existing))
+            {
+                return (Sampler*)existing;
+            }
+
+            bool magLinear = samplingMode is not TextureSamplingMode.Nearest and
+                not TextureSamplingMode.MagNearestMinLinearMipLinear and
+                not TextureSamplingMode.MagNearestMinLinearMipNearest and
+                not TextureSamplingMode.MagNearestMinNearestMipLinear;
+            bool minLinear = samplingMode is not TextureSamplingMode.Nearest and
+                not TextureSamplingMode.MagLinearMinNearestMipLinear and
+                not TextureSamplingMode.MagLinearMinNearestMipNearest and
+                not TextureSamplingMode.MagNearestMinNearestMipLinear;
+            bool mipLinear = samplingMode is TextureSamplingMode.LinearMipmap or
+                TextureSamplingMode.MagLinearMinNearestMipLinear or
+                TextureSamplingMode.MagNearestMinLinearMipLinear or
+                TextureSamplingMode.MagNearestMinNearestMipLinear;
+            var descriptor = new SamplerDescriptor
+            {
+                AddressModeU = MapAddressMode(addressModeU),
+                AddressModeV = MapAddressMode(addressModeV),
+                AddressModeW = AddressMode.ClampToEdge,
+                MagFilter = magLinear ? FilterMode.Linear : FilterMode.Nearest,
+                MinFilter = minLinear ? FilterMode.Linear : FilterMode.Nearest,
+                MipmapFilter = mipLinear
+                    ? MipmapFilterMode.Linear
+                    : MipmapFilterMode.Nearest,
+                LodMaxClamp = samplingMode is TextureSamplingMode.Linear or
+                    TextureSamplingMode.Nearest or TextureSamplingMode.Cubic
+                    ? 0f
+                    : 32f,
+                LodMinClamp = 0f,
+                MaxAnisotropy = maxAnisotropy
+            };
+            Sampler* sampler = _context.Api.DeviceCreateSampler(
+                _context.Device,
+                &descriptor);
+            _addressedTextureSamplers.Add(key, (nint)sampler);
+            return sampler;
+        }
+    }
+
+    private static AddressMode MapAddressMode(TextureAddressMode mode) =>
+        mode switch
+        {
+            TextureAddressMode.Clamp => AddressMode.ClampToEdge,
+            TextureAddressMode.Repeat => AddressMode.Repeat,
+            TextureAddressMode.MirrorRepeat => AddressMode.MirrorRepeat,
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
 
     private Sampler* GetFilteredTextureSampler(TextureSamplingMode mode)
     {
@@ -14322,6 +15401,8 @@ SceneStateUploadComplete:
             }
 
             ReleaseMsaaResources();
+            _rasterPresentationTexture?.Dispose();
+            _rasterPresentationTexture = null;
 
             _uniformBuffer.Dispose();
             _brushesStorageBuffer.Dispose();
@@ -14419,6 +15500,11 @@ SceneStateUploadComplete:
                     _context.QueueSamplerDisposal(sampler);
                 }
                 _filteredTextureSamplers.Clear();
+                foreach (var sampler in _addressedTextureSamplers.Values)
+                {
+                    _context.QueueSamplerDisposal(sampler);
+                }
+                _addressedTextureSamplers.Clear();
 
                 if (_vectorUniformBindGroup != null) _context.QueueBindGroupDisposal((IntPtr)_vectorUniformBindGroup);
                 if (_vectorUniformBindGroupOffscreen != null &&
@@ -14631,11 +15717,26 @@ SceneStateUploadComplete:
             GpuBlendMode.Luminosity;
     }
 
+    private bool HasRasterOperationDrawCall()
+    {
+        for (int index = 0; index < _drawCalls.Count; index++)
+        {
+            if (_drawCalls[index].RasterOperation.IsEnabled)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private bool CanEncodeAdvancedBlend(in CompositorDrawCall drawCall, GpuTexture targetTexture)
     {
+        GpuTexture? patternTexture = drawCall.RasterOperation.TexturePattern?.Texture;
         return drawCall.Type == DrawCallType.Texture &&
             IsTextureBindable(drawCall.Texture) &&
-            RequiresDestinationSampling(drawCall.BlendMode) &&
+            (patternTexture is null || IsTextureBindable(patternTexture)) &&
+            (RequiresDestinationSampling(drawCall.BlendMode) ||
+                drawCall.RasterOperation.IsEnabled) &&
             (targetTexture.Usage & TextureUsage.TextureBinding) != 0;
     }
 
@@ -14869,8 +15970,8 @@ SceneStateUploadComplete:
             return;
         }
 
-        var entries = stackalloc BindGroupLayoutEntry[3];
-        for (var index = 0; index < 2; index++)
+        var entries = stackalloc BindGroupLayoutEntry[4];
+        for (var index = 0; index < 3; index++)
         {
             entries[index] = new BindGroupLayoutEntry
             {
@@ -14884,9 +15985,9 @@ SceneStateUploadComplete:
                 }
             };
         }
-        entries[2] = new BindGroupLayoutEntry
+        entries[3] = new BindGroupLayoutEntry
         {
-            Binding = 2,
+            Binding = 3,
             Visibility = ShaderStage.Fragment,
             Buffer = new BufferBindingLayout
             {
@@ -14898,7 +15999,7 @@ SceneStateUploadComplete:
 
         var bindGroupLayoutDescriptor = new BindGroupLayoutDescriptor
         {
-            EntryCount = 3,
+            EntryCount = 4,
             Entries = entries
         };
         _advancedBlendBindGroupLayout = _context.Api.DeviceCreateBindGroupLayout(
@@ -14928,7 +16029,8 @@ SceneStateUploadComplete:
     private AdvancedBlendPassResource AcquireAdvancedBlendPassResource(
         MaskPixelBounds bounds,
         GpuTexture sourceTarget,
-        GpuBlendMode blendMode)
+        GpuBlendMode blendMode,
+        GpuRasterOperation rasterOperation = default)
     {
         AdvancedBlendPassResource resource;
         if (_advancedBlendPassResourceCount < _advancedBlendPassResources.Count)
@@ -14974,6 +16076,7 @@ SceneStateUploadComplete:
         }
 
         _advancedBlendPassResourceCount++;
+        resource.RasterPatternTexture = rasterOperation.TexturePattern?.Texture;
         float dpiScale = _currentDpiScale;
         float sourceWidth = sourceTarget.Width;
         float sourceHeight = sourceTarget.Height;
@@ -14994,15 +16097,44 @@ SceneStateUploadComplete:
             // origin only when Pad0 opts this bounded source pass in.
             CanvasSize = new Vector2(bounds.X, bounds.Y),
             DpiScale = dpiScale,
-            Pad0 = 1f
+            Pad0 = rasterOperation.IsEnabled ? 2f : 1f
         };
         resource.UniformBuffer.WriteSingle(sourceUniforms);
+        TilePatternBrush? patternBrush = rasterOperation.PatternBrush;
+        GpuRasterTexturePattern? texturePattern = rasterOperation.TexturePattern;
         resource.UniformBuffer.WriteSingle(
             new AdvancedBlendSamplingUniforms
             {
                 SourceOrigin = new Vector2(bounds.X, bounds.Y),
                 SourceExtent = new Vector2(bounds.Width, bounds.Height),
-                BlendMode = (uint)blendMode
+                BlendMode = (uint)blendMode,
+                OperationKind = rasterOperation.IsEnabled ? 1u : 0u,
+                RasterOperationCode = rasterOperation.Code,
+                PatternKind = texturePattern is not null
+                    ? 2u
+                    : patternBrush is null ? 0u : 1u,
+                PatternColor = rasterOperation.PatternColor,
+                PatternBackgroundColor = patternBrush?.BackgroundColor ?? default,
+                PatternOrigin = texturePattern is not null
+                    ? texturePattern.Origin * dpiScale
+                    : patternBrush is null
+                        ? default
+                        : patternBrush.Origin * dpiScale,
+                PatternMaskLow = patternBrush is null
+                    ? 0u
+                    : (uint)patternBrush.Pattern,
+                PatternMaskHigh = patternBrush is null
+                    ? 0u
+                    : (uint)(patternBrush.Pattern >> 32),
+                PatternFlags = patternBrush is not null &&
+                    patternBrush.BackgroundColor.W <= 0f
+                    ? 1u
+                    : 0u,
+                PatternTextureExtent = texturePattern is null
+                    ? default
+                    : new Vector2(
+                        texturePattern.Texture.Width,
+                        texturePattern.Texture.Height)
             },
             256);
         return resource;
@@ -15117,6 +16249,8 @@ SceneStateUploadComplete:
                 isOffscreen: true,
                 drawCall.TextureSamplingMode,
                 drawCall.TextureMaxAnisotropy,
+                drawCall.TextureAddressModeU,
+                drawCall.TextureAddressModeV,
                 _textureBindGroupLayoutOffscreen);
 
             _context.Api.RenderPassEncoderSetBindGroup(
@@ -15148,7 +16282,7 @@ SceneStateUploadComplete:
         AdvancedBlendPassResource passResource)
     {
         EnsureAdvancedBlendLayout();
-        var entries = stackalloc BindGroupEntry[3];
+        var entries = stackalloc BindGroupEntry[4];
         entries[0] = new BindGroupEntry
         {
             Binding = 0,
@@ -15162,6 +16296,11 @@ SceneStateUploadComplete:
         entries[2] = new BindGroupEntry
         {
             Binding = 2,
+            TextureView = (passResource.RasterPatternTexture ?? source).ViewPtr
+        };
+        entries[3] = new BindGroupEntry
+        {
+            Binding = 3,
             Buffer = passResource.UniformBuffer.BufferPtr,
             Offset = 256,
             Size = (uint)Marshal.SizeOf<AdvancedBlendSamplingUniforms>()
@@ -15169,7 +16308,7 @@ SceneStateUploadComplete:
         var bindGroupDescriptor = new BindGroupDescriptor
         {
             Layout = _advancedBlendBindGroupLayout,
-            EntryCount = 3,
+            EntryCount = 4,
             Entries = entries
         };
         var bindGroup = _context.Api.DeviceCreateBindGroup(
@@ -15362,6 +16501,8 @@ SceneStateUploadComplete:
                             isOffscreen: false,
                             drawCall.TextureSamplingMode,
                             drawCall.TextureMaxAnisotropy,
+                            drawCall.TextureAddressModeU,
+                            drawCall.TextureAddressModeV,
                             _textureBindGroupLayout);
                     bundleApi.RenderBundleEncoderSetBindGroup(
                         encoder,
@@ -15574,7 +16715,34 @@ SceneStateUploadComplete:
     // Helper methods for real-time drop shadows and Gaussian/backdrop blurs
     private void ApplyAndDrawEffect(Visual fe, Matrix4x4 parentTransform)
     {
-        PrepareAndDrawEffect(fe, parentTransform, drawOnMain: true);
+        if (!TryCaptureSourceCompositeInput(fe, parentTransform))
+        {
+            PrepareAndDrawEffect(fe, parentTransform, drawOnMain: true);
+            return;
+        }
+
+        bool savedSuspendHitTestCacheWrites = _suspendHitTestCacheWrites;
+        _suspendHitTestCacheWrites = true;
+        try
+        {
+            PrepareAndDrawEffect(fe, parentTransform, drawOnMain: true);
+        }
+        finally
+        {
+            _suspendHitTestCacheWrites = savedSuspendHitTestCacheWrites;
+        }
+    }
+
+    private bool TryCaptureSourceCompositeInput(Visual source, Matrix4x4 parentTransform)
+    {
+        if (!Options.EnableGpuHitTesting || _suspendHitTestCacheWrites ||
+            source is not ISourceGeometryHitTestCommands)
+            return false;
+        // Capture the original source frame before raster sizing, cache snapping
+        // or effect padding. Empty/suppressed raster content can still own input.
+        _hitTestCacheBuilder.AddSourceVisual(source, parentTransform,
+            null, true, true, _sourceHitTestEmbeddedVisualObserver);
+        return true;
     }
 
     private void PrepareEffectTexture(Visual fe)
@@ -15595,7 +16763,10 @@ SceneStateUploadComplete:
 
         if (effect is BlurEffect blur)
         {
-            float padding = MathF.Ceiling(blur.BlurRadius * 2f);
+            float padding = MathF.Ceiling(
+                blur.KernelType == BlurKernelType.Box
+                    ? blur.BlurRadius
+                    : blur.BlurRadius * 2f);
             paddingX = padding;
             paddingY = padding;
         }
@@ -15645,6 +16816,7 @@ SceneStateUploadComplete:
             fe.IsDirty ||
             !hasCachedEffectKey ||
             cachedEffectKey != effectCacheKey ||
+            textures!.SuppressesClearType != _suppressCachedClearType ||
             textures!.Source.Width != w ||
             textures.Source.Height != h;
 
@@ -15669,6 +16841,8 @@ SceneStateUploadComplete:
             }
 
             var activeTextures = textures!;
+            // Only a fully rendered and filtered result may qualify for reuse.
+            activeTextures.SuppressesClearType = null;
             if (effect is BlurEffect blurResources && blurResources.BlurRadius > 0.01f)
             {
                 activeTextures.EnsureTemporary(_context, w, h, TextureFormat.Rgba8Unorm);
@@ -15733,11 +16907,22 @@ SceneStateUploadComplete:
             {
                 if (blurEffect.BlurRadius > 0.01f)
                 {
-                    _compute.ApplyGaussianBlur(
-                        activeTextures.Source,
-                        activeTextures.Temporary!,
-                        activeTextures.Destination!,
-                        blurEffect.BlurRadius * dpiScale);
+                    if (blurEffect.KernelType == BlurKernelType.Box)
+                    {
+                        _compute.ApplyBoxBlur(
+                            activeTextures.Source,
+                            activeTextures.Temporary!,
+                            activeTextures.Destination!,
+                            blurEffect.BlurRadius * dpiScale);
+                    }
+                    else
+                    {
+                        _compute.ApplyGaussianBlur(
+                            activeTextures.Source,
+                            activeTextures.Temporary!,
+                            activeTextures.Destination!,
+                            blurEffect.BlurRadius * dpiScale);
+                    }
                 }
             }
             else if (fe.Effect is DropShadowEffect shadowEffect)
@@ -15780,6 +16965,7 @@ SceneStateUploadComplete:
             }
 
             _effectCacheKeys[fe] = effectCacheKey;
+            activeTextures.SuppressesClearType = _suppressCachedClearType;
         }
 
         if (!drawOnMain)
@@ -15856,6 +17042,25 @@ SceneStateUploadComplete:
 
     private void ApplyAndDrawLayer(Visual node, Matrix4x4 parentTransform)
     {
+        if (!TryCaptureSourceCompositeInput(node, parentTransform))
+        {
+            ApplyAndDrawLayerCore(node, parentTransform);
+            return;
+        }
+        bool savedSuspendHitTestCacheWrites = _suspendHitTestCacheWrites;
+        _suspendHitTestCacheWrites = true;
+        try
+        {
+            ApplyAndDrawLayerCore(node, parentTransform);
+        }
+        finally
+        {
+            _suspendHitTestCacheWrites = savedSuspendHitTestCacheWrites;
+        }
+    }
+
+    private void ApplyAndDrawLayerCore(Visual node, Matrix4x4 parentTransform)
+    {
         if (!EnsureLayerTexture(node)) return;
 
         float dpiScale = _currentDpiScale > 0f ? _currentDpiScale : 1f;
@@ -15893,6 +17098,10 @@ SceneStateUploadComplete:
 
     private bool EnsureLayerTexture(Visual node)
     {
+        // Source refresh may change bounds, scale or commands. It must precede
+        // allocation sizing and cached-texture qualification, including empty
+        // and zero-scale sources that become visible after invalidation.
+        node.PrepareLayerCache();
         if (node.Size.X <= 0f || node.Size.Y <= 0f) return false;
 
         // Compute high-DPI scaling factor dynamically from the compositor target context
@@ -15925,7 +17134,10 @@ SceneStateUploadComplete:
         bool hasCached = node.LayerTexture != null;
         bool cachedTextureSizeChanged = hasCached
             && (node.LayerTexture!.Width != w || node.LayerTexture.Height != h);
-        bool needsUpdate = !hasCached || node.IsDirty || cachedTextureSizeChanged;
+        bool suppressClearType = node.LayerCacheClearTypePolicy is bool enableClearType
+            ? !enableClearType : _suppressCachedClearType;
+        bool needsUpdate = !hasCached || node.IsDirty || cachedTextureSizeChanged
+            || node.LayerTextureSuppressesClearType != suppressClearType;
 
         if (needsUpdate)
         {
@@ -15941,6 +17153,8 @@ SceneStateUploadComplete:
             }
 
             _elementsRenderingLayers.Add(node);
+            bool savedClearTypeSuppression = _suppressCachedClearType;
+            _suppressCachedClearType = suppressClearType;
             try
             {
                 // Render the subtree of node offscreen centered with 0 padding into node.LayerTexture
@@ -15949,13 +17163,23 @@ SceneStateUploadComplete:
                     logicalRenderWidth,
                     logicalRenderHeight,
                     node.LayerTexture,
-                    0f,
+                    Vector2.Zero,
                     rasterScale,
                     includeRootTransform: false,
-                    includeRootVisualState: false);
+                    includeRootVisualState: false,
+                    logicalExtent: node.RequiresLayerCache ? node.Size : null);
+                node.LayerTextureSuppressesClearType = suppressClearType;
+            }
+            catch
+            {
+                // A failed recapture must never qualify the old pixels under
+                // a new inherited text policy on the next attempt.
+                node.IsDirty = true;
+                throw;
             }
             finally
             {
+                _suppressCachedClearType = savedClearTypeSuppression;
                 _elementsRenderingLayers.Remove(node);
             }
         }
@@ -15983,10 +17207,15 @@ SceneStateUploadComplete:
 
     private void AddVisualHitTestBoundsSubtree(Visual visual, Matrix4x4 parentTransform)
     {
-        if (!visual.IsVisible || visual.Opacity <= 0.0001f)
+        if (!visual.IsVisible)
+            return;
+        if (visual is ISourceGeometryHitTestCommands)
         {
+            _hitTestCacheBuilder.AddSourceVisual(visual, parentTransform,
+                null, true, true, _sourceHitTestEmbeddedVisualObserver);
             return;
         }
+        if (visual.Opacity <= 0.0001f) return;
 
         Matrix4x4 globalTransform = visual.GetLocalTransform() * parentTransform;
         bool hasClip = visual.ClipBounds.HasValue;
@@ -16555,7 +17784,8 @@ SceneStateUploadComplete:
         Vector4? clearColor = null,
         bool loadExistingContents = false,
         bool includeRootTransform = true,
-        bool includeRootVisualState = true)
+        bool includeRootVisualState = true,
+        Vector2? logicalExtent = null)
     {
         _compiledSceneReusable = false;
         lock (_offscreenRenderLock)
@@ -16592,7 +17822,8 @@ SceneStateUploadComplete:
                             clearColor,
                             loadExistingContents,
                             includeRootTransform,
-                            includeRootVisualState);
+                            includeRootVisualState,
+                            logicalExtent);
                         break;
                     }
                     catch (PathAtlasCapacityExceededException)
@@ -16637,7 +17868,8 @@ SceneStateUploadComplete:
         Vector4? clearColor,
         bool loadExistingContents,
         bool includeRootTransform,
-        bool includeRootVisualState)
+        bool includeRootVisualState,
+        Vector2? logicalExtent)
     {
         long totalStartTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         using var currentContextScope = WgpuContext.PushCurrent(_context);
@@ -16661,10 +17893,12 @@ SceneStateUploadComplete:
             ResetIncrementalScenePageFrameMetrics();
         }
 
-        // 1. Calculate orthographic projection matrix for offscreen
+        // Cached source geometry keeps exact logical extents even though texture
+        // allocation and frame bookkeeping use integer pixel dimensions.
+        Vector2 projectionExtent = logicalExtent ?? new Vector2(width, height);
         var projection = new Matrix4x4(
-            2.0f / width, 0f, 0f, 0f,
-            0f, -2.0f / height, 0f, 0f,
+            2.0f / projectionExtent.X, 0f, 0f, 0f,
+            0f, -2.0f / projectionExtent.Y, 0f, 0f,
             0f, 0f, 1f, 0f,
             -1.0f, 1.0f, 0f, 1.0f
         );
@@ -16729,7 +17963,9 @@ SceneStateUploadComplete:
         _blendModeStack.Clear();
         _activeBlendMode = GpuBlendMode.SrcOver;
         _maskStack.Clear();
-        ReturnMaskRenderPassDrawCallLists();
+        // The outer frame snapshot still owns these lists. Returning them here
+        // clears pending masks and lets the child reuse their storage.
+        _maskRenderPasses.Clear();
         _masksToReturnToPool.Clear();
 
         _pendingVectorStart = 0;
@@ -17012,7 +18248,8 @@ SceneStateUploadComplete:
                 var advancedBlendPassResource = AcquireAdvancedBlendPassResource(
                     advancedBlendBounds,
                     _advancedBlendSourceTexture!,
-                    dc.BlendMode);
+                    dc.BlendMode,
+                    dc.RasterOperation);
                 EncodeAdvancedBlendSource(
                     encoder,
                     _advancedBlendSourceTexture!,
@@ -17162,6 +18399,8 @@ SceneStateUploadComplete:
                     isOffscreen: true,
                     dc.TextureSamplingMode,
                     dc.TextureMaxAnisotropy,
+                    dc.TextureAddressModeU,
+                    dc.TextureAddressModeV,
                     _textureBindGroupLayoutOffscreen);
 
                 var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;
@@ -17405,6 +18644,7 @@ SceneStateUploadComplete:
             AdvancedBlendScratchTextureBytes = GetTextureBytes(_advancedBlendScratchTexture),
             AdvancedBlendSourceTextureBytes = GetTextureBytes(_advancedBlendSourceTexture),
             AdvancedBlendTextureBytes = GetAdvancedBlendTextureBytes(),
+            RasterPresentationTextureBytes = GetTextureBytes(_rasterPresentationTexture),
             WavefrontTextureBytes = GetTextureBytes(_wavefrontColorTexture),
             MsaaTextureBytes = GetMsaaTextureBytes(),
             TrackedIntermediateTextureBytes = GetTrackedIntermediateTextureBytes(),
@@ -17502,6 +18742,7 @@ SceneStateUploadComplete:
 
             RestoreStack(ref _maskStack, savedMaskStack, savedMaskStackCount);
 
+            ReturnMaskRenderPassDrawCallLists();
             RestoreList(_maskRenderPasses, savedMaskRenderPasses, savedMaskRenderPassesCount);
 
             RestoreList(_masksToReturnToPool, savedMasksToReturnToPool, savedMasksToReturnToPoolCount);
@@ -17799,6 +19040,9 @@ SceneStateUploadComplete:
                     case RenderCommandType.DrawDotGrid:
                         CompileDotGridCommand(cmd, activeTransform);
                         break;
+                    case RenderCommandType.DrawDeviceDotGrid:
+                        CompileDeviceDotGridCommand(cmd, activeTransform);
+                        break;
                     case RenderCommandType.DrawCircle:
                         CompileCircleCommand(cmd, activeTransform);
                         break;
@@ -17897,7 +19141,7 @@ SceneStateUploadComplete:
                         CompileVertexMeshCommand(cmd, activeTransform);
                         break;
                     case RenderCommandType.DrawPointBatch:
-                        CompilePointBatchCommand(cmd, activeTransform);
+                        CompilePointBatchCommand(null, cmd, activeTransform);
                         break;
                     case RenderCommandType.FillQuad:
                         CompileFillQuadCommand(cmd, activeTransform);
@@ -18265,6 +19509,9 @@ SceneStateUploadComplete:
                     case RenderCommandType.DrawDotGrid:
                         CompileDotGridCommand(cmd, activeTransform);
                         break;
+                    case RenderCommandType.DrawDeviceDotGrid:
+                        CompileDeviceDotGridCommand(cmd, activeTransform);
+                        break;
                     case RenderCommandType.DrawCircle:
                         CompileCircleCommand(cmd, activeTransform);
                         break;
@@ -18363,7 +19610,7 @@ SceneStateUploadComplete:
                         CompileVertexMeshCommand(cmd, activeTransform);
                         break;
                     case RenderCommandType.DrawPointBatch:
-                        CompilePointBatchCommand(cmd, activeTransform);
+                        CompilePointBatchCommand(context, cmd, activeTransform);
                         break;
                     case RenderCommandType.FillQuad:
                         CompileFillQuadCommand(cmd, activeTransform);
@@ -19748,9 +20995,10 @@ SceneStateUploadComplete:
     private static GpuTextureAlphaMode GetPipelineSourceAlphaMode(
         DrawCallType type,
         GpuBlendMode blendMode,
-        GpuTextureAlphaMode textureAlphaMode)
+        GpuTextureAlphaMode textureAlphaMode,
+        bool writesOpacityMask = false)
     {
-        if (BlendModeRequiresPremultipliedSource(blendMode))
+        if (writesOpacityMask || BlendModeRequiresPremultipliedSource(blendMode))
         {
             return GpuTextureAlphaMode.Premultiplied;
         }
@@ -19873,7 +21121,7 @@ SceneStateUploadComplete:
                 sourceAlphaMode: GetPipelineSourceAlphaMode(
                     DrawCallType.Vector,
                     blendMode,
-                    GpuTextureAlphaMode.Straight));
+                    GpuTextureAlphaMode.Straight, writesOpacityMask));
             _selectedPipelines[selectionKey] = (nint)pipeline;
             return pipeline;
         }
@@ -19963,7 +21211,7 @@ SceneStateUploadComplete:
                 sourceAlphaMode: GetPipelineSourceAlphaMode(
                     DrawCallType.Vector,
                     blendMode,
-                    GpuTextureAlphaMode.Straight));
+                    GpuTextureAlphaMode.Straight, writesOpacityMask));
             if (!overrideFormat.HasValue &&
                 blendMode == GpuBlendMode.SrcOver &&
                 !hasMask)
@@ -20127,7 +21375,8 @@ SceneStateUploadComplete:
                     GpuTextureAlphaMode.Straight,
                     writesOpacityMask,
                     hasMask);
-                var textSourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, GpuTextureAlphaMode.Straight);
+                var textSourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, GpuTextureAlphaMode.Straight,
+                    overrideFormat == TextureFormat.R8Unorm);
                 string textFragmentKey = textFragmentEntryPoint == "fs_main" ? string.Empty : $"_{textFragmentEntryPoint}";
                 string textPipelineKey = overrideFormat.HasValue
                     ? $"{textBaseName}_{blendMode}_{overrideFormat.Value}{textFragmentKey}"
@@ -20199,7 +21448,7 @@ SceneStateUploadComplete:
                 textureAlphaMode,
                 writesMaskTarget,
                 hasMask);
-            var sourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, textureAlphaMode);
+            var sourceAlphaMode = GetPipelineSourceAlphaMode(type, blendMode, textureAlphaMode, writesMaskTarget);
             string alphaModeKey = type == DrawCallType.Texture ? $"_{textureAlphaMode}" : string.Empty;
             string fragmentKey = fragmentEntryPoint == "fs_main" ? string.Empty : $"_{fragmentEntryPoint}";
             string pipelineKey = overrideFormat.HasValue
@@ -20909,7 +22158,8 @@ SceneStateUploadComplete:
         Matrix4x4 transform,
         bool isPenThicknessLocal,
         Matrix4x4 recordedTransform,
-        RenderCommandGeometryCache? geometryCache)
+        RenderCommandGeometryCache? geometryCache,
+        bool isEdgeAliased)
     {
         _currentFrameOpacityMaskDemand++;
         _peakOpacityMaskDemand = Math.Max(
@@ -20940,6 +22190,7 @@ SceneStateUploadComplete:
                         Type = RenderCommandType.DrawPath,
                         Path = path,
                         Pen = retainedPen,
+                        IsEdgeAliased = isEdgeAliased,
                         IsPenThicknessLocal = true,
                         GeometryCache = geometryCache
                     },
@@ -21318,6 +22569,8 @@ SceneStateUploadComplete:
                         isOffscreen: true,
                         dc.TextureSamplingMode,
                         dc.TextureMaxAnisotropy,
+                        dc.TextureAddressModeU,
+                        dc.TextureAddressModeV,
                         _textureBindGroupLayoutOffscreen);
 
                     var bindGroup = (BindGroup*)cachedBg.BindGroupPtr;

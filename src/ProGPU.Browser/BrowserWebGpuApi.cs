@@ -411,6 +411,18 @@ public unsafe sealed partial class BrowserWebGpuApi : IWebGpuApi, IDisposable
         _commands.CompleteCommand();
     }
     public void ComputePassEncoderEnd(ComputePassEncoder* pass) => WriteOneHandle(BrowserGpuOpcode.EndComputePass, HandleOf(pass));
+    public void ComputePassEncoderDispatchWorkgroupsIndirect(ComputePassEncoder* pass, WgpuBuffer* indirectBuffer, ulong indirectOffset)
+    {
+        // WebGPU's JavaScript boundary cannot represent larger byte offsets
+        // exactly. Reject before mutating the packet rather than rounding it.
+        if (indirectOffset > 9007199254740991UL)
+            throw new ArgumentOutOfRangeException(nameof(indirectOffset));
+        var payload = _commands.BeginCommand(BrowserGpuOpcode.DispatchWorkgroupsIndirect, 16);
+        WriteHandle(payload, 0, HandleOf(pass));
+        WriteHandle(payload, 4, HandleOf(indirectBuffer));
+        WriteUInt64(payload, 8, indirectOffset);
+        _commands.CompleteCommand();
+    }
     public void RenderPassEncoderSetPipeline(RenderPassEncoder* pass, RenderPipeline* pipeline) => WriteTwoHandles(BrowserGpuOpcode.SetRenderPipeline, HandleOf(pass), HandleOf(pipeline));
     public void RenderPassEncoderSetBindGroup(RenderPassEncoder* pass, uint groupIndex, BindGroup* group, nuint dynamicOffsetCount, uint* dynamicOffsets) => WriteBindGroup(HandleOf(pass), groupIndex, HandleOf(group), dynamicOffsetCount, dynamicOffsets);
     public void RenderPassEncoderSetVertexBuffer(RenderPassEncoder* pass, uint slot, WgpuBuffer* buffer, ulong offset, ulong size)

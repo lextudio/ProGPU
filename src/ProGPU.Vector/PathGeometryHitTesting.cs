@@ -24,15 +24,63 @@ static class PathGeometryHitTesting
         float tolerance,
         bool relativeTolerance,
         out bool contains)
+        => TryContainsFillCore(
+            geometry,
+            point,
+            tolerance,
+            relativeTolerance,
+            depth: 0,
+            out contains);
+
+    private static bool TryContainsFillCore(
+        PathGeometry? geometry,
+        Vector2 point,
+        float tolerance,
+        bool relativeTolerance,
+        int depth,
+        out bool contains)
     {
         contains = false;
 
         if (geometry == null ||
-            geometry.IsCombined ||
             !IsFinite(point) ||
             !float.IsFinite(tolerance))
         {
             return false;
+        }
+
+        if (geometry.IsCombined)
+        {
+            if (depth >= 256 || geometry.PathA == null || geometry.PathB == null ||
+                (uint)geometry.Op > (uint)PathBooleanOperation.ReverseDifference ||
+                !TryContainsFillCore(
+                    geometry.PathA,
+                    point,
+                    tolerance,
+                    relativeTolerance,
+                    depth + 1,
+                    out bool containsA) ||
+                !TryContainsFillCore(
+                    geometry.PathB,
+                    point,
+                    tolerance,
+                    relativeTolerance,
+                    depth + 1,
+                    out bool containsB))
+            {
+                return false;
+            }
+
+            contains = (PathBooleanOperation)geometry.Op switch
+            {
+                PathBooleanOperation.Difference => containsA && !containsB,
+                PathBooleanOperation.Intersect => containsA && containsB,
+                PathBooleanOperation.Union => containsA || containsB,
+                PathBooleanOperation.ExclusiveOr => containsA != containsB,
+                PathBooleanOperation.ReverseDifference => containsB && !containsA,
+                _ => false,
+            };
+            return true;
         }
 
         var figures = geometry.Figures;
@@ -161,6 +209,97 @@ static class PathGeometryHitTesting
                     currentPoint = quadratic.Point;
                     break;
 
+                case RationalQuadraticBezierSegment rationalQuadratic:
+                    double coordinateScale = Math.Max(
+                        1.0,
+                        Math.Max(
+                            Math.Max(
+                                Math.Abs(currentPoint.X),
+                                Math.Abs(currentPoint.Y)),
+                            Math.Max(
+                                Math.Max(
+                                    Math.Abs(rationalQuadratic.ControlPoint.X),
+                                    Math.Abs(rationalQuadratic.ControlPoint.Y)),
+                                Math.Max(
+                                    Math.Abs(rationalQuadratic.Point.X),
+                                    Math.Abs(rationalQuadratic.Point.Y)))));
+                    if (!IsFinite(rationalQuadratic.ControlPoint) ||
+                        !IsFinite(rationalQuadratic.Point) ||
+                        !float.IsFinite(rationalQuadratic.Weight) ||
+                        rationalQuadratic.Weight <= 0f ||
+                        rationalQuadratic.Weight >
+                            float.MaxValue / (4.0 * coordinateScale))
+                    {
+                        return false;
+                    }
+
+                    for (int i = 1; i <= QuadraticFlattenSegmentCount; i++)
+                    {
+                        float t = (float)i / QuadraticFlattenSegmentCount;
+                        if (!AddPoint(points, EvaluateRationalQuadratic(
+                                currentPoint,
+                                rationalQuadratic.ControlPoint,
+                                rationalQuadratic.Point,
+                                rationalQuadratic.Weight,
+                                t)))
+                        {
+                            return false;
+                        }
+                    }
+
+                    currentPoint = rationalQuadratic.Point;
+                    break;
+
+                case RationalCubicBezierSegment rationalCubic:
+                    double cubicCoordinateScale = Math.Max(
+                        1.0,
+                        Math.Max(
+                            Math.Max(Math.Abs(currentPoint.X), Math.Abs(currentPoint.Y)),
+                            Math.Max(
+                                Math.Max(
+                                    Math.Abs(rationalCubic.ControlPoint1.X),
+                                    Math.Abs(rationalCubic.ControlPoint1.Y)),
+                                Math.Max(
+                                    Math.Max(
+                                        Math.Abs(rationalCubic.ControlPoint2.X),
+                                        Math.Abs(rationalCubic.ControlPoint2.Y)),
+                                    Math.Max(
+                                        Math.Abs(rationalCubic.Point.X),
+                                        Math.Abs(rationalCubic.Point.Y))))));
+                    double cubicWeightLimit = float.MaxValue /
+                        (8.0 * cubicCoordinateScale);
+                    if (!IsFinite(rationalCubic.ControlPoint1) ||
+                        !IsFinite(rationalCubic.ControlPoint2) ||
+                        !IsFinite(rationalCubic.Point) ||
+                        !float.IsFinite(rationalCubic.Weight1) ||
+                        !float.IsFinite(rationalCubic.Weight2) ||
+                        rationalCubic.Weight1 <= 0f ||
+                        rationalCubic.Weight2 <= 0f ||
+                        rationalCubic.Weight1 > cubicWeightLimit ||
+                        rationalCubic.Weight2 > cubicWeightLimit)
+                    {
+                        return false;
+                    }
+
+                    for (int i = 1; i <= CubicFlattenSegmentCount; i++)
+                    {
+                        float t = (float)i / CubicFlattenSegmentCount;
+                        if (!AddPoint(points, EvaluateRationalCubic(
+                                currentPoint,
+                                rationalCubic.ControlPoint1,
+                                rationalCubic.ControlPoint2,
+                                rationalCubic.Point,
+                                rationalCubic.Weight1,
+                                rationalCubic.Weight2,
+                                t)))
+                        {
+                            return false;
+                        }
+                    }
+
+                    currentPoint = rationalCubic.Point;
+                    break;
+
                 case CubicBezierSegment cubic:
                     if (!IsFinite(cubic.ControlPoint1) ||
                         !IsFinite(cubic.ControlPoint2) ||
@@ -212,6 +351,8 @@ static class PathGeometryHitTesting
             {
                 LineSegment => 1,
                 QuadraticBezierSegment => QuadraticFlattenSegmentCount,
+                RationalQuadraticBezierSegment => QuadraticFlattenSegmentCount,
+                RationalCubicBezierSegment => CubicFlattenSegmentCount,
                 CubicBezierSegment => CubicFlattenSegmentCount,
                 ArcSegment => CubicFlattenSegmentCount,
                 _ => 1
@@ -337,6 +478,40 @@ static class PathGeometryHitTesting
                (3.0f * uu * t * control1) +
                (3.0f * u * tt * control2) +
                (tt * t * end);
+    }
+
+    private static Vector2 EvaluateRationalQuadratic(
+        Vector2 start,
+        Vector2 control,
+        Vector2 end,
+        float weight,
+        float t)
+    {
+        float u = 1.0f - t;
+        float startBasis = u * u;
+        float controlBasis = 2.0f * weight * u * t;
+        float endBasis = t * t;
+        return ((startBasis * start) + (controlBasis * control) +
+            (endBasis * end)) / (startBasis + controlBasis + endBasis);
+    }
+
+    private static Vector2 EvaluateRationalCubic(
+        Vector2 start,
+        Vector2 control1,
+        Vector2 control2,
+        Vector2 end,
+        float weight1,
+        float weight2,
+        float t)
+    {
+        float u = 1.0f - t;
+        float startBasis = u * u * u;
+        float control1Basis = 3.0f * weight1 * u * u * t;
+        float control2Basis = 3.0f * weight2 * u * t * t;
+        float endBasis = t * t * t;
+        return ((startBasis * start) + (control1Basis * control1) +
+            (control2Basis * control2) + (endBasis * end)) /
+            (startBasis + control1Basis + control2Basis + endBasis);
     }
 
     private static float Cross(Vector2 left, Vector2 right)

@@ -47,7 +47,8 @@ WGPURenderPipeline create_chain_pipeline(
     std::uint64_t stride,
     WGPUVertexStepMode step_mode,
     const char* fragment_entry,
-    const char* label) {
+    const char* label,
+    bool premultiplied_output = false) {
     WGPUPipelineLayoutDescriptor layout_descriptor{};
     layout_descriptor.label = progpu::native::webgpu::string_view(label);
     layout_descriptor.bindGroupLayoutCount = layout_count;
@@ -72,7 +73,7 @@ WGPURenderPipeline create_chain_pipeline(
     vertex_state.buffers = &vertex_layout;
 
     WGPUBlendState blend{};
-    blend.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blend.color.srcFactor = premultiplied_output ? WGPUBlendFactor_One : WGPUBlendFactor_SrcAlpha;
     blend.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
     blend.color.operation = WGPUBlendOperation_Add;
     blend.alpha.srcFactor = WGPUBlendFactor_One;
@@ -195,14 +196,15 @@ bool create_image_chain_pipelines(progpu_native_engine& engine) {
         !create_chain_layouts(engine)) {
         return false;
     }
-    const std::array<WGPUVertexAttribute, 7U> attributes{{
+    const std::array<WGPUVertexAttribute, 8U> attributes{{
         progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32x2, 0U, 0U),
         progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32x4, 8U, 1U),
         progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32x2, 24U, 2U),
         progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32, 32U, 3U),
         progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32x2, 36U, 4U),
         progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32, 44U, 5U),
-        progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32, 48U, 6U)
+        progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32, 48U, 6U),
+        progpu::native::webgpu::vertex_attribute(WGPUVertexFormat_Float32, 52U, 7U)
     }};
     const std::array<WGPUBindGroupLayout, 3U> plain_layouts{{
         engine.image_uniform_layout,
@@ -218,8 +220,8 @@ bool create_image_chain_pipelines(progpu_native_engine& engine) {
         attributes.size(),
         sizeof(progpu::native::vector_vertex),
         WGPUVertexStepMode_Vertex,
-        "fs_main_chain",
-        "ProGPU native bounded analytic mask-chain image pipeline");
+        "fs_retained_image_chain",
+        "ProGPU native bounded analytic mask-chain image pipeline", true);
     const std::array<WGPUBindGroupLayout, 4U> matrix_layouts{{
         engine.image_uniform_layout,
         engine.image_texture_layout,

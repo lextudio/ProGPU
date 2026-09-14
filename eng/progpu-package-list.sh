@@ -6,6 +6,7 @@ progpu_portable_package_ids=(
   ProGPU.Backend
   ProGPU.GameEngine
   ProGPU.Backend.Native
+  ProGPU.Backend.Dx12
   ProGPU.Backend.Dawn
   ProGPU.Media
   ProGPU.Media.Editing
@@ -16,6 +17,8 @@ progpu_portable_package_ids=(
   ProGPU.Text.Shaping
   ProGPU.Browser
   ProGPU.DirectX
+  ProGPU.Direct2D
+  ProGPU.Win2D
   ProGPU.Transpiler
   ProGPU.Compute
   ProGPU.Vector
@@ -40,6 +43,9 @@ progpu_portable_package_ids=(
   ProGPU.Avalonia
   ProGPU.Uno
   ProGPU.Dxf
+  ACadSharp.ProGPU
+  ProGPU.CAD
+  ProGPU.CAD.Native
   ProGPU.SkiaSharp
   ProGPU.BinaryCompatibility
   ProGPU.System.Drawing.Common
@@ -50,6 +56,7 @@ progpu_portable_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
   src/ProGPU.GameEngine/ProGPU.GameEngine.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
+  src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
   src/ProGPU.Media/ProGPU.Media.csproj
   src/ProGPU.Media.Editing/ProGPU.Media.Editing.csproj
@@ -60,6 +67,8 @@ progpu_portable_package_projects=(
   src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
   src/ProGPU.Browser/ProGPU.Browser.csproj
   src/ProGPU.DirectX/ProGPU.DirectX.csproj
+  src/ProGPU.Direct2D/ProGPU.Direct2D.csproj
+  src/ProGPU.Win2D/ProGPU.Win2D.csproj
   src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
   src/ProGPU.Compute/ProGPU.Compute.csproj
   src/ProGPU.Vector/ProGPU.Vector.csproj
@@ -84,6 +93,9 @@ progpu_portable_package_projects=(
   src/ProGPU.Avalonia/ProGPU.Avalonia.csproj
   src/ProGPU.Uno/ProGPU.Uno.csproj
   src/ProGPU.Dxf/ProGPU.Dxf.csproj
+  external/ACadSharp/src/ACadSharp/ACadSharp.csproj
+  src/ProGPU.CAD/ProGPU.CAD.csproj
+  src/ProGPU.CAD.Native/ProGPU.CAD.Native.csproj
   src/SkiaSharp/SkiaSharp.csproj
   src/ProGPU.BinaryCompatibility/ProGPU.BinaryCompatibility.csproj
   src/System.Drawing.Common/System.Drawing.Common.csproj
@@ -94,6 +106,7 @@ progpu_portable_package_purposes=(
   "WebGPU device, swapchain, Silk.NET windowing, and platform backend services."
   "Reusable bounded game rendering, scene, and procedural material infrastructure."
   "Experimental typed .NET host plus validated x64/arm64 desktop runtimes for the ProGPU C++ WebGPU renderer."
+  "Optional pinned Windows x64/arm64 DXC-capable WebGPU and shader compiler runtime assets."
   "Exact-ABI Dawn shared texture memory and cross-queue fence extensions."
   "Framework-neutral media playback, diagnostics, audio processing, effects, and provider contracts."
   "Reusable non-destructive composition, project serialization, overlays, effects, and native export coordination."
@@ -104,6 +117,8 @@ progpu_portable_package_purposes=(
   "AOT-safe OpenType shaping contracts and execution primitives."
   "Batched .NET WebAssembly dispatcher and navigator.gpu browser host services."
   "DirectX-compatible facade and shader-oriented API surface implemented on ProGPU/WebGPU."
+  "Genuine Windows Direct2D COM surfaces with zero-copy synchronized Dawn/WebGPU texture sharing."
+  "Portable Win2D-compatible Canvas API compiled to the retained ProGPU C++ WebGPU renderer."
   "Shader/source transformation helpers used by generated GPU pipelines."
   "Compute pipeline helpers for GPU-side effects, acceleration, and future hit-test indexes."
   "Vector primitives, paths, geometry, brushes, pens, and rasterization data models."
@@ -128,10 +143,46 @@ progpu_portable_package_purposes=(
   "Avalonia integration and compositor backend adapter."
   "Uno/WinUI integration and compositor backend adapter."
   "DXF import/rendering support for ProGPU vector scenes."
+  "Pinned ProGPU-reviewed ACadSharp fork used by ProGPU.CAD."
+  "ACadSharp-backed DXF/DWG document sessions and retained GPU-accelerated CAD engine foundation."
+  "Optional native C++ scene adapter for immutable ProGPU CAD content."
   "ProGPU-backed portable SkiaSharp compatibility shim used by drawing and imaging adapters."
   "Opt-in official-identity SkiaSharp and Avalonia.Skia runtime/publish compatibility assets."
   "ProGPU-backed portable System.Drawing.Common compatibility shim for LibreWinForms and GDI-style callers."
   "LibreWPF portable interop contracts consumed by the ProGPU/Silk.NET SDK lane."
+)
+
+# Exact runtime dependency closure of ProGPU.CAD. Keep this list topologically
+# ordered so the focused CAD pack can be restored by an isolated consumer
+# without falling back to previously published ProGPU packages. Keep the
+# reviewed fork before ProGPU.CAD so the latter records the same-version package
+# dependency generated from the pinned submodule source.
+progpu_cad_package_ids=(
+  ProGPU.Backend
+  ProGPU.Text.Shaping
+  ProGPU.Transpiler
+  ProGPU.WinRT
+  ProGPU.Vector
+  ProGPU.Text
+  ProGPU.Compute
+  ProGPU.Scene
+  ProGPU.SkiaSharp
+  ACadSharp.ProGPU
+  ProGPU.CAD
+)
+
+progpu_cad_package_projects=(
+  src/ProGPU.Backend/ProGPU.Backend.csproj
+  src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
+  src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
+  src/ProGPU.WinRT/ProGPU.WinRT.csproj
+  src/ProGPU.Vector/ProGPU.Vector.csproj
+  src/ProGPU.Text/ProGPU.Text.csproj
+  src/ProGPU.Compute/ProGPU.Compute.csproj
+  src/ProGPU.Scene/ProGPU.Scene.csproj
+  src/SkiaSharp/SkiaSharp.csproj
+  external/ACadSharp/src/ACadSharp/ACadSharp.csproj
+  src/ProGPU.CAD/ProGPU.CAD.csproj
 )
 
 # Exact runtime dependency closure of the Avalonia renderer and Silk.NET host.
@@ -180,6 +231,48 @@ progpu_avalonia_runtime_package_purposes=(
   "Avalonia runtime closure: opt-in official assembly identity substitution."
 )
 
+# Exact package closure required by the ProGPU System.Drawing.Common adapter.
+# Keep this topologically ordered so source-first consumers can produce a small,
+# internally version-aligned local feed without packing unrelated UI frameworks.
+progpu_drawing_runtime_package_ids=(
+  ProGPU.Backend
+  ProGPU.Text.Shaping
+  ProGPU.Transpiler
+  ProGPU.WinRT
+  ProGPU.Vector
+  ProGPU.Text
+  ProGPU.Compute
+  ProGPU.Scene
+  ProGPU.SkiaSharp
+  ProGPU.System.Drawing.Common
+)
+
+progpu_drawing_runtime_package_projects=(
+  src/ProGPU.Backend/ProGPU.Backend.csproj
+  src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
+  src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
+  src/ProGPU.WinRT/ProGPU.WinRT.csproj
+  src/ProGPU.Vector/ProGPU.Vector.csproj
+  src/ProGPU.Text/ProGPU.Text.csproj
+  src/ProGPU.Compute/ProGPU.Compute.csproj
+  src/ProGPU.Scene/ProGPU.Scene.csproj
+  src/SkiaSharp/SkiaSharp.csproj
+  src/System.Drawing.Common/System.Drawing.Common.csproj
+)
+
+progpu_drawing_runtime_package_purposes=(
+  "Drawing runtime closure: WebGPU device and platform backend."
+  "Drawing runtime closure: AOT-safe OpenType shaping."
+  "Drawing runtime closure: shader/source transformation."
+  "Drawing runtime closure: platform-neutral WinRT value contracts."
+  "Drawing runtime closure: retained vector primitives."
+  "Drawing runtime closure: text layout and rendering."
+  "Drawing runtime closure: compute pipelines."
+  "Drawing runtime closure: retained compositor scene."
+  "Drawing runtime closure: SkiaSharp compatibility surface."
+  "Drawing runtime closure: portable System.Drawing.Common implementation."
+)
+
 progpu_mobile_package_ids=(
   ProGPU.Android
   ProGPU.iOS
@@ -209,9 +302,14 @@ progpu_package_purposes=("${progpu_portable_package_purposes[@]}" "${progpu_mobi
 # non-shipping. The verifier fails when a newly added project is omitted.
 progpu_nonshipping_projects=(
   src/PresentationCore/PresentationCore.csproj
+  src/ProGPU.Backend.Tests/ProGPU.Backend.Tests.csproj
   src/ProGPU.Avalonia.SkiaSourceCompatibility/ProGPU.Avalonia.SkiaSourceCompatibility.csproj
   src/ProGPU.Avalonia.Skia.BinaryCompatibility/ProGPU.Avalonia.Skia.BinaryCompatibility.csproj
   src/ProGPU.Avalonia.Skia.BinaryCompatibility.V11/ProGPU.Avalonia.Skia.BinaryCompatibility.V11.csproj
+  src/ProGPU.CAD.Benchmarks/ProGPU.CAD.Benchmarks.csproj
+  src/ProGPU.CAD.Sample/ProGPU.CAD.Sample.csproj
+  src/ProGPU.CAD.Sample.Browser/ProGPU.CAD.Sample.Browser.csproj
+  src/ProGPU.CAD.Sample.Desktop/ProGPU.CAD.Sample.Desktop.csproj
   src/ProGPU.Native.Benchmarks/ProGPU.Native.Benchmarks.csproj
   src/ProGPU.Native.ManagedSample/ProGPU.Native.ManagedSample.csproj
   src/ProGPU.Samples.ActivityMonitor/ProGPU.Samples.ActivityMonitor.csproj
@@ -227,6 +325,9 @@ progpu_nonshipping_projects=(
   src/ProGPU.Samples.Suntrail/ProGPU.Samples.Suntrail.csproj
   src/ProGPU.Samples.Suntrail.Tests/ProGPU.Samples.Suntrail.Tests.csproj
   src/ProGPU.Samples/ProGPU.Samples.csproj
+  src/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj
+  src/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj
+  src/ProGPU.CAD.Tests/ProGPU.CAD.Tests.csproj
   src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj
   src/ProGPU.Tests/ProGPU.Tests.csproj
   src/ProGPU.Voxel.Tests/ProGPU.Voxel.Tests.csproj
@@ -236,9 +337,14 @@ progpu_nonshipping_projects=(
 
 progpu_nonshipping_reasons=(
   "Framework implementation shim; shipped through consuming compatibility packages."
+  "Backend ownership-registry and native-window state test project."
   "Non-shipping source dependency used to validate the ProGPU SkiaSharp contract against Avalonia's ordinary Skia backend."
   "Non-shipping Avalonia.Skia facade shipped inside ProGPU.BinaryCompatibility."
   "Non-shipping Avalonia 11 validation facade for the universal compatibility identity."
+  "ProGPU.CAD immutable snapshot, retained-scene, and spatial-query benchmark."
+  "Shared interactive ProGPU.CAD sample surface."
+  "Standalone browser WebAssembly ProGPU.CAD sample application."
+  "Standalone desktop ProGPU.CAD sample application."
   "Native C++ renderer differential and performance benchmark."
   "Native C++ renderer managed-host sample."
   "Activity Monitor sample application."
@@ -254,6 +360,9 @@ progpu_nonshipping_reasons=(
   "Shared Suntrail sample application."
   "Suntrail test project."
   "Shared sample gallery."
+  "System.Drawing performance benchmark project."
+  "System.Drawing API and behavior test project."
+  "ProGPU.CAD foundation and conformance test project."
   "Headless test project."
   "Test project."
   "Voxel engine test project."
@@ -292,6 +401,7 @@ validate_parallel_arrays() {
 
 validate_parallel_arrays portable "${#progpu_portable_package_ids[@]}" "${#progpu_portable_package_projects[@]}" "${#progpu_portable_package_purposes[@]}"
 validate_parallel_arrays avalonia-runtime "${#progpu_avalonia_runtime_package_ids[@]}" "${#progpu_avalonia_runtime_package_projects[@]}" "${#progpu_avalonia_runtime_package_purposes[@]}"
+validate_parallel_arrays drawing-runtime "${#progpu_drawing_runtime_package_ids[@]}" "${#progpu_drawing_runtime_package_projects[@]}" "${#progpu_drawing_runtime_package_purposes[@]}"
 validate_parallel_arrays mobile "${#progpu_mobile_package_ids[@]}" "${#progpu_mobile_package_projects[@]}" "${#progpu_mobile_package_purposes[@]}"
 validate_parallel_arrays complete "${#progpu_package_ids[@]}" "${#progpu_package_projects[@]}" "${#progpu_package_purposes[@]}"
 

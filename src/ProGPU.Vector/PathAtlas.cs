@@ -66,6 +66,25 @@ public struct GpuPathRecord
     public uint Pad1;
 }
 
+internal static class GpuPathFillRuleEncoding
+{
+    // The native raster and path-operation shader ABI uses 0 for nonzero and 1 for even-odd.
+    // Keep this conversion separate from the managed FillRule enum, whose values are reversed.
+    public static uint Encode(FillRule fillRule) => fillRule switch
+    {
+        FillRule.Nonzero => 0u,
+        FillRule.EvenOdd => 1u,
+        _ => throw new ArgumentOutOfRangeException(nameof(fillRule))
+    };
+
+    public static FillRule Decode(uint encodedFillRule) => encodedFillRule switch
+    {
+        0u => FillRule.Nonzero,
+        1u => FillRule.EvenOdd,
+        _ => throw new ArgumentOutOfRangeException(nameof(encodedFillRule))
+    };
+}
+
 [StructLayout(LayoutKind.Sequential, Pack = 16)]
 public struct GpuPathSegment
 {
@@ -393,7 +412,7 @@ public unsafe class PathAtlas : IDisposable
     private readonly WgpuPipelineLayoutLease _computePipelineLayoutLease;
     private readonly BindGroupLayout* _computeBindGroupLayout;
     private readonly PipelineLayout* _computePipelineLayout;
-    private readonly ComputePipeline* _computePipeline;
+    private ComputePipeline* _computePipeline;
     private bool _isDisposed;
 
     public GpuTexture AtlasTexture => _atlasTexture;
@@ -594,11 +613,16 @@ public unsafe class PathAtlas : IDisposable
                 _computeBindGroupLayout);
         _computePipelineLayout =
             _computePipelineLayoutLease.Handle;
+    }
+
+    private void EnsureComputePipeline()
+    {
+        if (_computePipeline != null) return;
         var shaderModule = _pipelineCache.GetOrCreateShader("PathRasterizer", Shaders.PathRasterizerShader, "PathRasterizerShader");
         _computePipeline = _pipelineCache.GetOrCreateComputePipeline(
             "PathRasterizer",
             shaderModule,
-            "cs_main",
+            "cs_main_ordinary",
             _computePipelineLayout);
     }
 
@@ -737,6 +761,29 @@ public unsafe class PathAtlas : IDisposable
                     hash.Add(cubic.Point.X);
                     hash.Add(cubic.Point.Y);
                 }
+                else if (segment is RationalQuadraticBezierSegment rationalQuadratic)
+                {
+                    hash.Add(4); // Segment type: Rational quadratic
+                    hash.Add(rationalQuadratic.IsStroked);
+                    hash.Add(rationalQuadratic.ControlPoint.X);
+                    hash.Add(rationalQuadratic.ControlPoint.Y);
+                    hash.Add(rationalQuadratic.Point.X);
+                    hash.Add(rationalQuadratic.Point.Y);
+                    hash.Add(rationalQuadratic.Weight);
+                }
+                else if (segment is RationalCubicBezierSegment rationalCubic)
+                {
+                    hash.Add(5); // Segment type: Rational cubic
+                    hash.Add(rationalCubic.IsStroked);
+                    hash.Add(rationalCubic.ControlPoint1.X);
+                    hash.Add(rationalCubic.ControlPoint1.Y);
+                    hash.Add(rationalCubic.ControlPoint2.X);
+                    hash.Add(rationalCubic.ControlPoint2.Y);
+                    hash.Add(rationalCubic.Point.X);
+                    hash.Add(rationalCubic.Point.Y);
+                    hash.Add(rationalCubic.Weight1);
+                    hash.Add(rationalCubic.Weight2);
+                }
                 else if (segment is ArcSegment arc)
                 {
                     hash.Add(3); // Segment type: Arc
@@ -786,13 +833,40 @@ public unsafe class PathAtlas : IDisposable
             out localMaxY);
     }
 
+    /// <summary>
+    /// CPU-only complete-figure query encoding. Rejects deferred boolean paths;
+    /// preserves gaps and incoming joins, including degenerate source segments.
+    /// Segment flags are bit 0 stroked, bit 1 incoming forced-round join.
+    /// </summary>
+    public static (PathQueryFigure[] Figures, GpuPathSegment[] Segments, byte[] SegmentFlags) CompileStrokeQuery(PathGeometry path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (path.IsCombined) throw new ArgumentException("Materialize boolean geometry before querying strokes.", nameof(path));
+        long budget = 1 << 20;
+        budget -= path.Figures.Count;
+        for (int i = 0; i < path.Figures.Count; i++)
+        {
+            var figure = path.Figures[i];
+            budget -= (long)figure.Segments.Count + 1;
+            if (budget < 0) throw new ArgumentException("Stroke query segment budget exceeded.", nameof(path));
+            if (figure.StrokeStartLineCap.HasValue || figure.StrokeEndLineCap.HasValue)
+                throw new NotSupportedException("Per-figure cap overrides must be supplied as separate query pens.");
+        }
+        var figures = new List<PathQueryFigure>(path.Figures.Count);
+        var flags = new List<byte>();
+        var (_, segments) = CompilePathCore(path, false, out _, out _, out _, out _, figures, flags);
+        return (figures.ToArray(), segments, flags.ToArray());
+    }
+
     private static (GpuPathRecord[] Records, GpuPathSegment[] Segments) CompilePathCore(
         PathGeometry path,
         bool fillOnly,
         out float localMinX,
         out float localMinY,
         out float localMaxX,
-        out float localMaxY)
+        out float localMaxY,
+        List<PathQueryFigure>? queryFigures = null,
+        List<byte>? queryFlags = null)
     {
         if (path.IsCombined)
         {
@@ -863,9 +937,11 @@ public unsafe class PathAtlas : IDisposable
             var figureSegments = figure.Segments;
             if ((fillOnly && !figure.IsFilled) || figureSegments.Count == 0)
             {
+                queryFigures?.Add(new(figure.StartPoint, segments.Count, 0, figure.IsClosed, figure.IsFilled));
                 continue;
             }
 
+            int firstSegment = segments.Count;
             Vector2 currentPoint = figure.StartPoint;
             UpdateBounds(currentPoint);
 
@@ -911,6 +987,87 @@ public unsafe class PathAtlas : IDisposable
                     UpdateBounds(cubic.Point);
                     currentPoint = cubic.Point;
                 }
+                else if (segment is RationalQuadraticBezierSegment rationalQuadratic)
+                {
+                    double coordinateScale = Math.Max(
+                        1.0,
+                        Math.Max(
+                            Math.Max(
+                                Math.Abs(currentPoint.X),
+                                Math.Abs(currentPoint.Y)),
+                            Math.Max(
+                                Math.Max(
+                                    Math.Abs(rationalQuadratic.ControlPoint.X),
+                                    Math.Abs(rationalQuadratic.ControlPoint.Y)),
+                                Math.Max(
+                                    Math.Abs(rationalQuadratic.Point.X),
+                                    Math.Abs(rationalQuadratic.Point.Y)))));
+                    if (!float.IsFinite(rationalQuadratic.Weight) ||
+                        rationalQuadratic.Weight <= 0f ||
+                        rationalQuadratic.Weight >
+                            float.MaxValue / (4.0 * coordinateScale))
+                    {
+                        throw new InvalidOperationException(
+                            "Rational quadratic path weights must be positive and keep weighted coordinates finite.");
+                    }
+
+                    segments.Add(new GpuPathSegment
+                    {
+                        P0 = currentPoint,
+                        P1 = rationalQuadratic.ControlPoint,
+                        P2 = rationalQuadratic.Point,
+                        SegmentType = 4,
+                        Pad0 = BitConverter.SingleToUInt32Bits(
+                            rationalQuadratic.Weight)
+                    });
+                    UpdateBounds(rationalQuadratic.ControlPoint);
+                    UpdateBounds(rationalQuadratic.Point);
+                    currentPoint = rationalQuadratic.Point;
+                }
+                else if (segment is RationalCubicBezierSegment rationalCubic)
+                {
+                    double coordinateScale = Math.Max(
+                        1.0,
+                        Math.Max(
+                            Math.Max(Math.Abs(currentPoint.X), Math.Abs(currentPoint.Y)),
+                            Math.Max(
+                                Math.Max(
+                                    Math.Abs(rationalCubic.ControlPoint1.X),
+                                    Math.Abs(rationalCubic.ControlPoint1.Y)),
+                                Math.Max(
+                                    Math.Max(
+                                        Math.Abs(rationalCubic.ControlPoint2.X),
+                                        Math.Abs(rationalCubic.ControlPoint2.Y)),
+                                    Math.Max(
+                                        Math.Abs(rationalCubic.Point.X),
+                                        Math.Abs(rationalCubic.Point.Y))))));
+                    double weightLimit = float.MaxValue / (8.0 * coordinateScale);
+                    if (!float.IsFinite(rationalCubic.Weight1) ||
+                        !float.IsFinite(rationalCubic.Weight2) ||
+                        rationalCubic.Weight1 <= 0f ||
+                        rationalCubic.Weight2 <= 0f ||
+                        rationalCubic.Weight1 > weightLimit ||
+                        rationalCubic.Weight2 > weightLimit)
+                    {
+                        throw new InvalidOperationException(
+                            "Rational cubic path weights must be positive and keep weighted coordinates finite.");
+                    }
+
+                    segments.Add(new GpuPathSegment
+                    {
+                        P0 = currentPoint,
+                        P1 = rationalCubic.ControlPoint1,
+                        P2 = rationalCubic.ControlPoint2,
+                        P3 = rationalCubic.Point,
+                        SegmentType = 5,
+                        Pad0 = BitConverter.SingleToUInt32Bits(rationalCubic.Weight1),
+                        Pad1 = BitConverter.SingleToUInt32Bits(rationalCubic.Weight2)
+                    });
+                    UpdateBounds(rationalCubic.ControlPoint1);
+                    UpdateBounds(rationalCubic.ControlPoint2);
+                    UpdateBounds(rationalCubic.Point);
+                    currentPoint = rationalCubic.Point;
+                }
                 else if (segment is ArcSegment arc)
                 {
                     if (!ArcSegmentGeometry.TryGetArcCenter(
@@ -918,7 +1075,7 @@ public unsafe class PathAtlas : IDisposable
                         out Vector2 center, out float theta1, out float deltaTheta, out float rx, out float ry
                     ))
                     {
-                        if (currentPoint != arc.Point)
+                        if (currentPoint != arc.Point || queryFlags != null)
                         {
                             segments.Add(new GpuPathSegment
                             {
@@ -930,6 +1087,7 @@ public unsafe class PathAtlas : IDisposable
 
                         UpdateBounds(arc.Point);
                         currentPoint = arc.Point;
+                        queryFlags?.Add((byte)((segment.IsStroked ? 1 : 0) | (segment.IsSmoothJoin ? 2 : 0)));
                         continue;
                     }
 
@@ -958,6 +1116,8 @@ public unsafe class PathAtlas : IDisposable
 
                     currentPoint = arc.Point;
                 }
+                else if (queryFlags != null) throw new NotSupportedException("Unsupported query segment type.");
+                queryFlags?.Add((byte)((segment.IsStroked ? 1 : 0) | (segment.IsSmoothJoin ? 2 : 0)));
             }
 
             if ((fillOnly || figure.IsClosed) && currentPoint != figure.StartPoint)
@@ -969,7 +1129,9 @@ public unsafe class PathAtlas : IDisposable
                     SegmentType = 0
                 });
                 UpdateBounds(figure.StartPoint);
+                queryFlags?.Add(1); // implicit closing edge is stroked, not a new source smooth join
             }
+            queryFigures?.Add(new(figure.StartPoint, firstSegment, segments.Count - firstSegment, figure.IsClosed, figure.IsFilled));
         }
 
         if (segments.Count == 0)
@@ -983,6 +1145,8 @@ public unsafe class PathAtlas : IDisposable
         localMaxX = maxX;
         localMaxY = maxY;
 
+        if (queryFigures != null) return (Array.Empty<GpuPathRecord>(), CopySegments(segments));
+
         var records = new GpuPathRecord[1];
         records[0] = new GpuPathRecord
         {
@@ -992,7 +1156,7 @@ public unsafe class PathAtlas : IDisposable
             MinY = minY,
             MaxX = maxX,
             MaxY = maxY,
-            FillRule = (uint)path.FillRule
+            FillRule = GpuPathFillRuleEncoding.Encode(path.FillRule)
         };
 
         return (records, CopySegments(segments));
@@ -3732,6 +3896,10 @@ public unsafe class PathAtlas : IDisposable
                     LineSegment line => line.Point,
                     QuadraticBezierSegment quadratic =>
                         quadratic.Point,
+                    RationalQuadraticBezierSegment rationalQuadratic =>
+                        rationalQuadratic.Point,
+                    RationalCubicBezierSegment rationalCubic =>
+                        rationalCubic.Point,
                     CubicBezierSegment cubic => cubic.Point,
                     ArcSegment arc => arc.Point,
                     _ => null
@@ -3913,6 +4081,7 @@ public unsafe class PathAtlas : IDisposable
         LastDirectBooleanRasterizationCount = 0;
         LastBooleanProgramRasterizationCount = 0;
         if (_pendingPaths.Count == 0) return;
+        EnsureComputePipeline();
 
         PendingRasterization[]? rasterizations = null;
         RasterizationDispatch[]? dispatches = null;

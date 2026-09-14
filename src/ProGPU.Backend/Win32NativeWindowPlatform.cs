@@ -109,7 +109,7 @@ internal sealed partial class Win32NativeWindowPlatform :
         _canResize = state.CanResize;
         var nativeResizable = RequiresNativeResizableStyle(state);
         var style = GetWindowLongPtr(_hwnd, GwlStyle).ToInt64();
-        style |= WsSysMenu;
+        style = SetFlag(style, WsSysMenu, state.CanClose);
         style = SetFlag(style, WsThickFrame, nativeResizable);
         style = SetFlag(style, WsMinimizeBox, state.CanMinimize);
         style = SetFlag(style, WsMaximizeBox, state.CanMaximize && state.CanResize);
@@ -153,7 +153,22 @@ internal sealed partial class Win32NativeWindowPlatform :
             SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
-    public override bool SetEnabled(bool value) => EnableWindow(_hwnd, value);
+    public override bool SetZOrder(NativeWindowZOrder value)
+    {
+        if (value is not NativeWindowZOrder.Front and not NativeWindowZOrder.Back)
+        {
+            return false;
+        }
+
+        return SetWindowPos(
+            _hwnd,
+            value == NativeWindowZOrder.Front ? nint.Zero : new nint(1),
+            0,
+            0,
+            0,
+            0,
+            SwpNoMove | SwpNoSize);
+    }
 
     public override bool SetShowInTaskbar(bool value)
     {
@@ -172,8 +187,8 @@ internal sealed partial class Win32NativeWindowPlatform :
             return false;
         }
 
-        SetWindowLongPtr(_hwnd, GwlpHwndParent, parent.IsValid ? parent.Handle : 0);
-        return true;
+        var operations = new WindowOwnerOperations();
+        return Win32WindowOwnerState.Apply(_hwnd, parent.IsValid ? parent.Handle : 0, ref operations);
     }
 
     public override bool SetClientAreaExtension(bool enabled, double titleBarHeight)
@@ -674,8 +689,6 @@ internal sealed partial class Win32NativeWindowPlatform :
     private static extern uint SetClassLong32(nint hwnd, int index, int value);
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int cx, int cy, uint flags);
-    [DllImport("user32.dll")]
-    private static extern bool EnableWindow(nint hwnd, bool enabled);
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
     [LibraryImport("user32.dll")]

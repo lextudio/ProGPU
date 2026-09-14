@@ -37,6 +37,7 @@ public unsafe interface IWebGpuApi
     void ComputePassEncoderSetPipeline(ComputePassEncoder* pass, ComputePipeline* pipeline);
     void ComputePassEncoderSetBindGroup(ComputePassEncoder* pass, uint groupIndex, BindGroup* group, nuint dynamicOffsetCount, uint* dynamicOffsets);
     void ComputePassEncoderDispatchWorkgroups(ComputePassEncoder* pass, uint x, uint y, uint z);
+    void ComputePassEncoderDispatchWorkgroupsIndirect(ComputePassEncoder* pass, WgpuBuffer* indirectBuffer, ulong indirectOffset);
     void ComputePassEncoderEnd(ComputePassEncoder* pass);
 
     void RenderPassEncoderSetPipeline(RenderPassEncoder* pass, RenderPipeline* pipeline);
@@ -271,6 +272,7 @@ internal unsafe sealed class SilkWebGpuApi(
     public void ComputePassEncoderSetPipeline(ComputePassEncoder* p, ComputePipeline* x) => api.ComputePassEncoderSetPipeline(p, x);
     public void ComputePassEncoderSetBindGroup(ComputePassEncoder* p, uint i, BindGroup* g, nuint c, uint* o) => api.ComputePassEncoderSetBindGroup(p, i, g, c, o);
     public void ComputePassEncoderDispatchWorkgroups(ComputePassEncoder* p, uint x, uint y, uint z) => api.ComputePassEncoderDispatchWorkgroups(p, x, y, z);
+    public void ComputePassEncoderDispatchWorkgroupsIndirect(ComputePassEncoder* p, WgpuBuffer* buffer, ulong offset) => api.ComputePassEncoderDispatchWorkgroupsIndirect(p, buffer, offset);
     public void ComputePassEncoderEnd(ComputePassEncoder* p) => api.ComputePassEncoderEnd(p);
     public void RenderPassEncoderSetPipeline(RenderPassEncoder* p, RenderPipeline* x) => api.RenderPassEncoderSetPipeline(p, x);
     public void RenderPassEncoderSetBindGroup(RenderPassEncoder* p, uint i, BindGroup* g, nuint c, uint* o) => api.RenderPassEncoderSetBindGroup(p, i, g, c, o);

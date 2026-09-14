@@ -15,14 +15,20 @@ case "${package_group}" in
   portable)
     selected_package_ids=("${progpu_portable_package_ids[@]}")
     ;;
+  cad)
+    selected_package_ids=("${progpu_cad_package_ids[@]}")
+    ;;
   avalonia-runtime)
     selected_package_ids=("${progpu_avalonia_runtime_package_ids[@]}")
+    ;;
+  drawing-runtime)
+    selected_package_ids=("${progpu_drawing_runtime_package_ids[@]}")
     ;;
   mobile)
     selected_package_ids=("${progpu_mobile_package_ids[@]}")
     ;;
   *)
-    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, or mobile." >&2
+    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, cad, avalonia-runtime, drawing-runtime, or mobile." >&2
     exit 1
     ;;
 esac
@@ -113,6 +119,12 @@ for package_id in "${selected_package_ids[@]}"; do
         exit 1
       fi
     done
+  elif [[ "${package_id}" == "ProGPU.Backend.Dx12" ]]; then
+    if [[ -f "${symbols}" ]]; then
+      echo "Native-assets-only package must not produce an empty symbol package: ${symbols}" >&2
+      exit 1
+    fi
+    "${repo_root}/eng/progpu-verify-dx12-package.sh" "${package}"
   elif [[ ! -f "${symbols}" ]]; then
     echo "Expected symbol package was not produced: ${symbols}" >&2
     exit 1
@@ -125,13 +137,32 @@ for package_id in "${selected_package_ids[@]}"; do
       runtimes/osx-x64/native/libprogpu_native.dylib \
       runtimes/osx-arm64/native/libprogpu_native.dylib \
       runtimes/win-x64/native/progpu_native.dll \
+      runtimes/win-x64/native/progpu_native_direct2d.dll \
       runtimes/win-arm64/native/progpu_native.dll \
+      runtimes/win-arm64/native/progpu_native_direct2d.dll \
       build/native/include/progpu_native.h; do
       if ! unzip -Z1 "${package}" | grep -Fx "${native_entry}" >/dev/null; then
         echo "${package_id} is missing ${native_entry}." >&2
         exit 1
       fi
     done
+  fi
+
+  if [[ "${package_id}" == "ACadSharp.ProGPU" ]]; then
+    if ! unzip -Z1 "${package}" | grep -Fx "lib/net10.0/ACadSharp.dll" >/dev/null; then
+      echo "${package_id} is missing its net10.0 ACadSharp assembly." >&2
+      exit 1
+    fi
+  elif [[ "${package_id}" == "ProGPU.CAD" ]]; then
+    cad_nuspec="$(unzip -p "${package}" '*.nuspec')"
+    if ! grep -F '<dependency id="ACadSharp.ProGPU" version="' <<<"${cad_nuspec}" >/dev/null; then
+      echo "${package_id} must depend on the reviewed ACadSharp.ProGPU fork package." >&2
+      exit 1
+    fi
+    if grep -F '<dependency id="ACadSharp" ' <<<"${cad_nuspec}" >/dev/null; then
+      echo "${package_id} must not resolve the upstream ACadSharp package identity." >&2
+      exit 1
+    fi
   fi
 
   while IFS=$'\t' read -r dependency_id dependency_version; do
@@ -141,8 +172,8 @@ for package_id in "${selected_package_ids[@]}"; do
         echo "${package_id} depends on ${dependency_id} ${dependency_version}, expected ${package_version}." >&2
         exit 1
       fi
-      if [[ "${package_group}" == "avalonia-runtime" ]] && ! is_selected_package_id "${dependency_id}"; then
-        echo "${package_id} depends on ${dependency_id}, which is missing from the isolated avalonia-runtime package closure." >&2
+      if [[ "${package_group}" == "avalonia-runtime" || "${package_group}" == "cad" || "${package_group}" == "drawing-runtime" ]] && ! is_selected_package_id "${dependency_id}"; then
+        echo "${package_id} depends on ${dependency_id}, which is missing from the isolated ${package_group} package closure." >&2
         exit 1
       fi
     elif [[ "${dependency_id}" == ProGPU.* || "${dependency_id}" == LibreWPF.* ]] || is_owned_nonshipping_project_id "${dependency_id}"; then

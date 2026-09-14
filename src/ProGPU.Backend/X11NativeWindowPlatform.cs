@@ -3,7 +3,7 @@ using Silk.NET.Windowing;
 
 namespace ProGPU.Backend;
 
-internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
+internal sealed unsafe partial class X11NativeWindowPlatform : GlfwNativeWindowPlatform, INativeWindowModalHintOperations
 {
     private const string X11Library = "libX11.so.6";
     private const int ClientMessage = 33;
@@ -51,7 +51,11 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
     {
         base.ApplyChrome(state);
         var nativeResizable = RequiresNativeResizableStyle(state);
-        var functions = MotifFunctionMove | MotifFunctionClose;
+        var functions = MotifFunctionMove;
+        if (state.CanClose)
+        {
+            functions |= MotifFunctionClose;
+        }
         if (nativeResizable)
         {
             functions |= MotifFunctionResize;
@@ -76,7 +80,7 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
                     (nativeResizable ? MotifDecorationResize : 0),
                 NativeWindowDecorations.Full => MotifDecorationBorder |
                     MotifDecorationTitle |
-                    MotifDecorationMenu |
+                    (state.CanClose ? MotifDecorationMenu : 0) |
                     (nativeResizable ? MotifDecorationResize : 0) |
                     (state.CanMinimize ? MotifDecorationMinimize : 0) |
                     (state.CanMaximize && state.CanResize ? MotifDecorationMaximize : 0),
@@ -110,11 +114,25 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
         return SendWindowState("_NET_WM_STATE_ABOVE", value);
     }
 
+    public override bool SetZOrder(NativeWindowZOrder value)
+    {
+        int result = value switch
+        {
+            NativeWindowZOrder.Front => XRaiseWindow(_display, _window),
+            NativeWindowZOrder.Back => XLowerWindow(_display, _window),
+            _ => 0
+        };
+        XFlush(_display);
+        return result != 0;
+    }
+
     public override bool SetShowInTaskbar(bool value) =>
         SendWindowState("_NET_WM_STATE_SKIP_TASKBAR", !value);
 
     public override bool SetParent(NativeWindowHandle parent)
     {
+        if (parent.IsValid && (parent.Kind != NativeWindowKind.X11 || parent.Display != _display ||
+            (nuint)parent.Handle == _window)) return false;
         if (!parent.IsValid)
         {
             var transientFor = XInternAtom(_display, "WM_TRANSIENT_FOR", false);
@@ -123,8 +141,9 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
             return true;
         }
 
-        return parent.Kind == NativeWindowKind.X11 &&
-            XSetTransientForHint(_display, _window, (nuint)parent.Handle) != 0;
+        bool accepted = XSetTransientForHint(_display, _window, (nuint)parent.Handle) != 0;
+        if (accepted) XFlush(_display);
+        return accepted;
     }
 
     public override bool SetClientAreaExtension(bool enabled, double titleBarHeight) => true;
@@ -210,9 +229,9 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
         return SendClientMessage(stateAtom, data);
     }
 
-    private bool SendClientMessage(nuint messageType, long* values)
+    private bool SendClientMessage(nuint messageType, long* values, nuint rootWindow = 0)
     {
-        var root = XDefaultRootWindow(_display);
+        var root = rootWindow != 0 ? rootWindow : XDefaultRootWindow(_display);
         var clientMessage = new XClientMessageEvent
         {
             Type = ClientMessage,
@@ -317,6 +336,10 @@ internal sealed unsafe class X11NativeWindowPlatform : GlfwNativeWindowPlatform
         bool propagate,
         long eventMask,
         ref XEvent sendEvent);
+    [DllImport(X11Library)]
+    private static extern int XRaiseWindow(nint display, nuint window);
+    [DllImport(X11Library)]
+    private static extern int XLowerWindow(nint display, nuint window);
     [DllImport(X11Library)]
     private static extern int XFlush(nint display);
 }

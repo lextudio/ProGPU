@@ -122,7 +122,7 @@ bool create_image_resources(progpu_native_engine& engine) {
         return false;
     }
 
-    const std::array<WGPUVertexAttribute, 7U> attributes{{
+    const std::array<WGPUVertexAttribute, 8U> attributes{{
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32x2, 0U, 0U),
         progpu::native::webgpu::vertex_attribute(
@@ -136,7 +136,9 @@ bool create_image_resources(progpu_native_engine& engine) {
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32, 44U, 5U),
         progpu::native::webgpu::vertex_attribute(
-            WGPUVertexFormat_Float32, 48U, 6U)
+            WGPUVertexFormat_Float32, 48U, 6U),
+        progpu::native::webgpu::vertex_attribute(
+            WGPUVertexFormat_Float32, 52U, 7U)
     }};
     WGPUVertexBufferLayout vertex_layout{};
     vertex_layout.arrayStride = sizeof(progpu::native::vector_vertex);
@@ -149,7 +151,7 @@ bool create_image_resources(progpu_native_engine& engine) {
     vertex_state.bufferCount = 1U;
     vertex_state.buffers = &vertex_layout;
     WGPUBlendState blend{};
-    blend.color.srcFactor = WGPUBlendFactor_SrcAlpha;
+    blend.color.srcFactor = WGPUBlendFactor_One;
     blend.color.dstFactor = WGPUBlendFactor_OneMinusSrcAlpha;
     blend.color.operation = WGPUBlendOperation_Add;
     blend.alpha.srcFactor = WGPUBlendFactor_One;
@@ -161,7 +163,7 @@ bool create_image_resources(progpu_native_engine& engine) {
     target.writeMask = WGPUColorWriteMask_All;
     WGPUFragmentState fragment{};
     fragment.module = engine.image_shader;
-    fragment.entryPoint = progpu::native::webgpu::string_view("fs_main_unmasked");
+    fragment.entryPoint = progpu::native::webgpu::string_view("fs_retained_image_unmasked");
     fragment.targetCount = 1U;
     fragment.targets = &target;
     WGPURenderPipelineDescriptor pipeline_descriptor{};
@@ -288,7 +290,7 @@ bool create_layer_resources(progpu_native_engine& engine) {
         return false;
     }
 
-    const std::array<WGPUVertexAttribute, 7U> attributes{{
+    const std::array<WGPUVertexAttribute, 8U> attributes{{
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32x2, 0U, 0U),
         progpu::native::webgpu::vertex_attribute(
@@ -302,7 +304,9 @@ bool create_layer_resources(progpu_native_engine& engine) {
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32, 44U, 5U),
         progpu::native::webgpu::vertex_attribute(
-            WGPUVertexFormat_Float32, 48U, 6U)
+            WGPUVertexFormat_Float32, 48U, 6U),
+        progpu::native::webgpu::vertex_attribute(
+            WGPUVertexFormat_Float32, 52U, 7U)
     }};
     WGPUVertexBufferLayout vertex_layout{};
     vertex_layout.arrayStride = sizeof(progpu::native::vector_vertex);
@@ -491,7 +495,7 @@ bool create_layer_mask_resources(progpu_native_engine& engine) {
         return false;
     }
 
-    const std::array<WGPUVertexAttribute, 7U> attributes{{
+    const std::array<WGPUVertexAttribute, 8U> attributes{{
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32x2, 0U, 0U),
         progpu::native::webgpu::vertex_attribute(
@@ -505,7 +509,9 @@ bool create_layer_mask_resources(progpu_native_engine& engine) {
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32, 44U, 5U),
         progpu::native::webgpu::vertex_attribute(
-            WGPUVertexFormat_Float32, 48U, 6U)
+            WGPUVertexFormat_Float32, 48U, 6U),
+        progpu::native::webgpu::vertex_attribute(
+            WGPUVertexFormat_Float32, 52U, 7U)
     }};
     WGPUVertexBufferLayout vertex_layout{};
     vertex_layout.arrayStride = sizeof(progpu::native::vector_vertex);
@@ -748,7 +754,7 @@ WGPURenderPipeline get_or_create_fixed_group_blend_pipeline(
         return nullptr;
     }
 
-    const std::array<WGPUVertexAttribute, 7U> attributes{{
+    const std::array<WGPUVertexAttribute, 8U> attributes{{
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32x2, 0U, 0U),
         progpu::native::webgpu::vertex_attribute(
@@ -762,7 +768,9 @@ WGPURenderPipeline get_or_create_fixed_group_blend_pipeline(
         progpu::native::webgpu::vertex_attribute(
             WGPUVertexFormat_Float32, 44U, 5U),
         progpu::native::webgpu::vertex_attribute(
-            WGPUVertexFormat_Float32, 48U, 6U)
+            WGPUVertexFormat_Float32, 48U, 6U),
+        progpu::native::webgpu::vertex_attribute(
+            WGPUVertexFormat_Float32, 52U, 7U)
     }};
     WGPUVertexBufferLayout vertex_layout{};
     vertex_layout.arrayStride = sizeof(progpu::native::vector_vertex);

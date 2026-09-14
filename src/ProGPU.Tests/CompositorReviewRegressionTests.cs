@@ -451,7 +451,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
         Assert.Equal(source, picture.RetainedCommands.Clone());
         Assert.True(Unsafe.SizeOf<RetainedSimpleGlyphRunCommand>() <= 96);
-        Assert.Equal(8, Unsafe.SizeOf<RetainedScalarStateCommand>());
+        // The source opacity policy is retained independently of its float value.
+        Assert.Equal(12, Unsafe.SizeOf<RetainedScalarStateCommand>());
         Assert.True(Unsafe.SizeOf<RetainedSimpleRoundedRectangleCommand>() <= 80);
         Assert.Equal(16, Unsafe.SizeOf<RetainedSimpleVisualCommand>());
         Assert.True(
@@ -473,8 +474,19 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 Rect = new Rect(index & 7, index & 3, 16f, 16f),
                 SrcRect = new Rect(0f, 0f, 16f, 16f),
                 Transform = transform,
-                TextureSamplingMode = TextureSamplingMode.Linear,
-                TextureMaxAnisotropy = 1
+                TextureSamplingMode =
+                    TextureSamplingMode.MagNearestMinLinearMipLinear,
+                TextureMaxAnisotropy = byte.MaxValue,
+                TextureAddressModeU = TextureAddressMode.Repeat,
+                TextureAddressModeV = TextureAddressMode.MirrorRepeat,
+                TextureOpacity = 0.375f,
+                HasTextureOpacity = true,
+                AllowExtendedTextureSourceRect = true,
+                SnapTextureToPixels = true,
+                IsEdgeAliased = true,
+                PresentationDependencies =
+                    RenderCommandPresentationDependencies.TextureSampling |
+                    RenderCommandPresentationDependencies.TextHinting
             };
         }
 
@@ -689,6 +701,94 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal((byte)255, pixels[GetPathAtlasPixelOffset(narrow, 1, 1, 256)]);
         Assert.Equal((byte)0, pixels[GetPathAtlasPixelOffset(narrow, 5, 1, 256)]);
         Assert.Equal((byte)255, pixels[GetPathAtlasPixelOffset(wide, 8, 1, 256)]);
+    }
+
+    [Fact]
+    public void PathAtlasRasterizesAndRetainsPositiveWeightRationalQuadratic()
+    {
+        using var atlas = new PathAtlas(
+            HeadlessWindow.Shared.Context,
+            atlasSize: 256);
+        var path = new PathGeometry();
+        var figure = new PathFigure(Vector2.Zero, isClosed: true);
+        figure.Segments.Add(new RationalQuadraticBezierSegment(
+            new Vector2(5f, 10f),
+            new Vector2(10f, 0f),
+            0.5f));
+        path.Figures.Add(figure);
+        PathAtlas.PathInfo first = atlas.GetOrCreatePath(
+            path,
+            scale: 1f,
+            sampleGrid: PathAtlas.HighPrecisionCoverageSampleGrid);
+
+        atlas.RasterizePendingPaths();
+
+        byte[] pixels = atlas.AtlasTexture.ReadPixels();
+        Assert.InRange(
+            pixels[GetPathAtlasPixelOffset(first, 5, 2, 256)],
+            (byte)252,
+            byte.MaxValue);
+        Assert.InRange(
+            pixels[GetPathAtlasPixelOffset(first, 5, 5, 256)],
+            byte.MinValue,
+            (byte)3);
+        ulong generation = atlas.Generation;
+
+        atlas.CleanupFrame(anticipatedWidth: 1920, anticipatedHeight: 1080);
+        PathAtlas.PathInfo replayed = atlas.GetOrCreatePath(
+            path,
+            scale: 1f,
+            sampleGrid: PathAtlas.HighPrecisionCoverageSampleGrid);
+
+        Assert.Equal(generation, atlas.Generation);
+        Assert.Equal(first.X, replayed.X);
+        Assert.Equal(first.Y, replayed.Y);
+        Assert.Equal(1, atlas.CachedPathCount);
+    }
+
+    [Fact]
+    public void PathAtlasRasterizesAndRetainsPositiveWeightRationalCubic()
+    {
+        using var atlas = new PathAtlas(
+            HeadlessWindow.Shared.Context,
+            atlasSize: 256);
+        var path = new PathGeometry();
+        var figure = new PathFigure(Vector2.Zero, isClosed: true);
+        figure.Segments.Add(new RationalCubicBezierSegment(
+            new Vector2(0f, 10f),
+            new Vector2(10f, 10f),
+            new Vector2(10f, 0f),
+            0.5f,
+            1.5f));
+        path.Figures.Add(figure);
+        PathAtlas.PathInfo first = atlas.GetOrCreatePath(
+            path,
+            scale: 1f,
+            sampleGrid: PathAtlas.HighPrecisionCoverageSampleGrid);
+
+        atlas.RasterizePendingPaths();
+
+        byte[] pixels = atlas.AtlasTexture.ReadPixels();
+        Assert.InRange(
+            pixels[GetPathAtlasPixelOffset(first, 6, 3, 256)],
+            (byte)252,
+            byte.MaxValue);
+        Assert.InRange(
+            pixels[GetPathAtlasPixelOffset(first, 6, 9, 256)],
+            byte.MinValue,
+            (byte)3);
+        ulong generation = atlas.Generation;
+
+        atlas.CleanupFrame(anticipatedWidth: 1920, anticipatedHeight: 1080);
+        PathAtlas.PathInfo replayed = atlas.GetOrCreatePath(
+            path,
+            scale: 1f,
+            sampleGrid: PathAtlas.HighPrecisionCoverageSampleGrid);
+
+        Assert.Equal(generation, atlas.Generation);
+        Assert.Equal(first.X, replayed.X);
+        Assert.Equal(first.Y, replayed.Y);
+        Assert.Equal(1, atlas.CachedPathCount);
     }
 
     [Theory]
@@ -956,7 +1056,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
         window.Render();
 
-        Assert.True(window.Compositor.Metrics.SceneCacheHit);
+        Assert.True(window.Compositor.Metrics.SceneCacheHit,
+            window.Compositor.Metrics.SceneCacheMissReason);
         Assert.True(Assert.Single(
             GetDrawCalls(window.Compositor),
             static candidate => candidate.Type == Compositor.DrawCallType.Vector).IsSolidRounded);
@@ -1969,6 +2070,44 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     }
 
     [Fact]
+    public unsafe void CompositorCullsFarSeparatedFiguresBeforePathAtlasRasterization()
+    {
+        using var window = new HeadlessWindow(
+            96,
+            96,
+            CompositorOptions.Default with { PathAtlasSize = 64 });
+        var path = new PathGeometry();
+        var visible = new PathFigure(new Vector2(12f, 12f), isClosed: true);
+        visible.Segments.Add(new LineSegment(new Vector2(36f, 12f)));
+        visible.Segments.Add(new LineSegment(new Vector2(24f, 36f)));
+        path.Figures.Add(visible);
+        var distant = new PathFigure(new Vector2(10_000f, 12f), isClosed: true);
+        distant.Segments.Add(new LineSegment(new Vector2(10_024f, 12f)));
+        distant.Segments.Add(new LineSegment(new Vector2(10_012f, 36f)));
+        path.Figures.Add(distant);
+
+        var visual = new DrawingVisual { Size = new Vector2(96f, 96f) };
+        visual.Context.DrawPath(
+            new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
+            pen: null,
+            path);
+        using var target = new GpuTexture(
+            window.Context,
+            96,
+            96,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "Far-separated path figure render target");
+
+        window.Compositor.RenderScene(visual, 96, 96, target.ViewPtr);
+
+        Assert.False(window.Compositor.PathAtlas.CapacityExceeded);
+        Assert.Equal(1, window.Compositor.PathAtlas.CachedPathCount);
+        byte[] pixels = target.ReadPixels();
+        Assert.True(pixels[(20 * 96 + 24) * 4] > 200);
+    }
+
+    [Fact]
     public unsafe void TallCanonicalRoundedPathBypassesAtlasAndRendersOnTheFirstFrame()
     {
         using var window = new HeadlessWindow(
@@ -2520,27 +2659,37 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
     [Fact]
     public void GpuPictureRecorderPreservesTransformedPictureWrapper()
     {
+        var resource = new CountingDisposable();
         var childRecorder = new GpuPictureRecorder();
         DrawingContext childContext = childRecorder.BeginRecording(
             new Rect(0f, 0f, 16f, 16f));
+        childContext.RetainResource(resource);
         childContext.DrawRectangle(
             new SolidColorBrush(new Vector4(1f, 0f, 0f, 1f)),
             null,
             new Rect(0f, 0f, 16f, 16f));
-        using GpuPicture child = childRecorder.EndRecording();
+        GpuPicture child = childRecorder.EndRecording();
 
         Matrix4x4 transform = Matrix4x4.CreateTranslation(4f, 6f, 0f);
         var parentRecorder = new GpuPictureRecorder();
         DrawingContext parentContext = parentRecorder.BeginRecording(
             new Rect(0f, 0f, 16f, 16f));
         parentContext.DrawPictureTransformed(child, transform);
-        using GpuPicture parent = parentRecorder.EndRecording();
+        GpuPicture parent = parentRecorder.EndRecording();
 
         Assert.Equal(1, parent.CommandCount);
         RenderCommand command = parent.GetCommand(0);
         Assert.Equal(RenderCommandType.DrawPicture, command.Type);
         Assert.Equal(transform, command.Transform);
         Assert.False(parent.SharesRetainedCommandStorageWith(child));
+        GpuPicture parentClone = parent.Clone();
+        child.Dispose();
+        Assert.Equal(0, resource.DisposeCount);
+        Assert.Throws<ObjectDisposedException>(() => child.Clone());
+        parent.Dispose();
+        Assert.Equal(0, resource.DisposeCount);
+        parentClone.Dispose();
+        Assert.Equal(1, resource.DisposeCount);
     }
 
     [Fact]
@@ -2563,7 +2712,7 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         GpuPicture parentPicture = parentRecorder.EndRecording();
 
         Assert.Equal(1, maskPicture.RetainedResourceCount);
-        Assert.Equal(1, parentPicture.RetainedResourceCount);
+        Assert.Equal(2, parentPicture.RetainedResourceCount);
         maskPicture.Dispose();
         Assert.Equal(0, resource.DisposeCount);
         parentPicture.Dispose();
@@ -3185,6 +3334,57 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(first.TexCoordMax, cached.TexCoordMax);
     }
 
+    [Theory]
+    [InlineData(GpuComputeExecutionPreference.NativeCompute, false)]
+    [InlineData(GpuComputeExecutionPreference.NativeCompute, true)]
+    [InlineData(GpuComputeExecutionPreference.RasterShader, false)]
+    [InlineData(GpuComputeExecutionPreference.RasterShader, true)]
+    public void AtlasPipelinesCompileOnlyForActualRasterRequests(
+        GpuComputeExecutionPreference preference, bool batch)
+    {
+        using var context = new WgpuContext { ComputeExecutionPreference = preference };
+        context.Initialize(null);
+        using var glyphs = new GlyphAtlas(context, atlasSize: 64);
+        using var paths = new PathAtlas(context, atlasSize: 64);
+        // The atlas captures its typed policy at construction, before lazy
+        // compilation; changing the context preference cannot switch its path.
+        context.ComputeExecutionPreference = GpuComputeExecutionPreference.ScalarCpu;
+        paths.RasterizePendingPaths();
+        Assert.Equal(0, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(0, context.CachedDeviceComputePipelineCount);
+        Assert.Equal(0, context.CachedDeviceRenderPipelineCount);
+
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        GlyphInfo glyph;
+        if (batch) glyphs.BeginBatch();
+        try { glyph = glyphs.GetOrCreateGlyph(font, 'A', 8f); }
+        finally { if (batch) glyphs.EndBatch(); }
+        Assert.True(ReadGlyphAtlasCoverage(glyphs.AtlasTexture.ReadPixels(), glyph, 64, 6, 6) > 200);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(preference == GpuComputeExecutionPreference.NativeCompute ? 1 : 0,
+            context.CachedDeviceComputePipelineCount);
+        Assert.Equal(preference == GpuComputeExecutionPreference.RasterShader ? 1 : 0,
+            context.CachedDeviceRenderPipelineCount);
+        GlyphInfo cached = glyphs.GetOrCreateGlyph(font, 'A', 8f);
+        Assert.Equal(glyph.TexCoordMin, cached.TexCoordMin);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+
+        paths.GetOrCreatePath(PrimitivePathGeometry.CreateRectangle(0, 0, 8, 8), 1f);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+        paths.RasterizePendingPaths();
+        Assert.Contains(paths.AtlasTexture.ReadPixels(), value => value > 200);
+        Assert.Equal(2, context.CachedDeviceShaderModuleCount);
+        int pipelines = context.CachedDeviceComputePipelineCount;
+        Assert.Equal(preference == GpuComputeExecutionPreference.NativeCompute ? 2 : 1, pipelines);
+        paths.RasterizePendingPaths();
+        Assert.Equal(pipelines, context.CachedDeviceComputePipelineCount);
+        paths.Dispose();
+        glyphs.Dispose();
+        Assert.Equal(0, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(0, context.CachedDeviceComputePipelineCount);
+        Assert.Equal(0, context.CachedDeviceRenderPipelineCount);
+    }
+
     [Fact]
     public void GlyphAtlasBatchFlushesBeforeUniformRingWraps()
     {
@@ -3512,17 +3712,17 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         {
             Assert.Equal(8, context.CachedDeviceBindGroupLayoutCount);
             Assert.Equal(6, context.CachedDevicePipelineLayoutCount);
-            Assert.Equal(5, context.CachedDeviceShaderModuleCount);
+            Assert.Equal(3, context.CachedDeviceShaderModuleCount);
             Assert.Equal(8, context.CachedDeviceRenderPipelineCount);
-            Assert.Equal(2, context.CachedDeviceComputePipelineCount);
+            Assert.Equal(0, context.CachedDeviceComputePipelineCount);
 
             first.Dispose();
 
             Assert.Equal(8, context.CachedDeviceBindGroupLayoutCount);
             Assert.Equal(6, context.CachedDevicePipelineLayoutCount);
-            Assert.Equal(5, context.CachedDeviceShaderModuleCount);
+            Assert.Equal(3, context.CachedDeviceShaderModuleCount);
             Assert.Equal(8, context.CachedDeviceRenderPipelineCount);
-            Assert.Equal(2, context.CachedDeviceComputePipelineCount);
+            Assert.Equal(0, context.CachedDeviceComputePipelineCount);
 
             second.Dispose();
 
@@ -4670,6 +4870,40 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 255, 0, 0, 255, 255, 255, 255, 255
             },
             destination.ReadPixels());
+    }
+
+    [Fact]
+    public unsafe void GpuTextureBlitterBoundsFractionalViewportWithoutClippingEdgePixels()
+    {
+        using var window = new HeadlessWindow(5, 5);
+        using var source = new GpuTexture(
+            window.Context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "GPU bounded-blit source");
+        using var destination = new GpuTexture(
+            window.Context,
+            5,
+            5,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "GPU bounded-blit destination");
+        source.WritePixels<byte>([255, 0, 0, 255]);
+
+        GpuTextureBlitter.Blit(
+            source,
+            destination.ViewPtr,
+            destination.Format,
+            new GpuTextureBlitViewport(1.25f, 1.25f, 2.5f, 2.5f),
+            new Silk.NET.WebGPU.Color { B = 1f, A = 1f });
+
+        byte[] pixels = destination.ReadPixels();
+        Assert.Equal(new RgbaPixel(255, 0, 0, 255), ReadPixel(pixels, 5, 1, 1));
+        Assert.Equal(new RgbaPixel(255, 0, 0, 255), ReadPixel(pixels, 5, 3, 3));
+        Assert.Equal(new RgbaPixel(0, 0, 255, 255), ReadPixel(pixels, 5, 0, 0));
+        Assert.Equal(new RgbaPixel(0, 0, 255, 255), ReadPixel(pixels, 5, 4, 4));
     }
 
     [Fact]
@@ -5822,6 +6056,23 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         }
     }
 
+    [Theory]
+    [InlineData(2.9f, 2u)]
+    [InlineData(-1f, 0u)]
+    [InlineData(200f, 128u)]
+    public void BoxBlurParamsUseBoundedIntegerRadius(
+        float radius,
+        uint expectedRadius)
+    {
+        ComputeAccelerator.GaussianBlurParams parameters =
+            ComputeAccelerator.GaussianBlurParams.Box(radius);
+
+        Assert.Equal(0f, parameters.Sigma);
+        Assert.Equal(expectedRadius, parameters.Radius);
+        Assert.Equal(1u, parameters.KernelType);
+        Assert.Equal(16, Marshal.SizeOf<ComputeAccelerator.GaussianBlurParams>());
+    }
+
     [Fact]
     public void ComputeAcceleratorCreatesOnlyTheRequestedEffectFamilyAndReusesIt()
     {
@@ -5882,6 +6133,15 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(2, accelerator.CachedEffectPipelineCount);
         Assert.Equal(32UL, accelerator.PersistentEffectParameterBufferBytes);
         Assert.Equal(firstResult, destination.ReadPixels());
+
+        accelerator.ApplyBoxBlur(source, temporary, destination, 1f);
+        byte[] boxResult = destination.ReadPixels();
+
+        Assert.Equal(2, accelerator.CachedEffectShaderCount);
+        Assert.Equal(2, accelerator.CachedEffectPipelineCount);
+        Assert.Equal(32UL, accelerator.PersistentEffectParameterBufferBytes);
+        Assert.Contains(boxResult, static value => value != 0);
+        Assert.NotEqual(firstResult, boxResult);
     }
 
     [Fact]
