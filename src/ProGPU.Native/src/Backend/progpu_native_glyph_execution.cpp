@@ -948,8 +948,28 @@ progpu_native_status render_glyphs(
             PROGPU_NATIVE_GEOMETRY_FRAME_RETAIN_COMPILED_PAYLOAD) != 0U;
     const bool compiled_payload_hit = retain_compiled_payload &&
         engine->glyph_cache_valid &&
+        engine->glyph_raster_cache_valid &&
+        engine->glyph_raster_generation == engine->glyph_atlas_generation &&
         engine->glyph_content_revision == frame->content_revision &&
         engine->glyph_dpi_scale == frame->dpi_scale;
+    // Exact, bounded native byte comparisons avoid hash-collision admission.
+    // Scale, phase, bounds and segment offsets are part of the owned payload;
+    // glyph positions, colors and brushes only change the instance upload.
+    const bool raster_payload_hit = retain_compiled_payload &&
+        engine->glyph_raster_cache_valid &&
+        engine->glyph_raster_generation == engine->glyph_atlas_generation &&
+        engine->glyph_raster_dpi_scale == frame->dpi_scale &&
+        engine->glyph_raster_outlines.size() == frame->outline_count &&
+        engine->glyph_raster_segments.size() == frame->segment_count &&
+        engine->glyph_rasters.size() == frame->outline_count &&
+        (compiled_payload_hit ||
+            (semantic::scene_bytes_equal(
+                std::as_bytes(std::span(engine->glyph_raster_outlines)),
+                std::as_bytes(std::span(frame->outlines, frame->outline_count))) &&
+             semantic::scene_bytes_equal(
+                std::as_bytes(std::span(engine->glyph_raster_segments)),
+                std::as_bytes(std::span(frame->segments, frame->segment_count)))));
+    const bool rebuild_rasters = !compiled_payload_hit && !raster_payload_hit;
     std::vector<gpu_glyph_record> records;
     std::vector<gpu_glyph_uniforms> uniforms;
     std::uint64_t coverage_staging_bytes = 0U;
@@ -961,157 +981,175 @@ progpu_native_status render_glyphs(
         engine->glyph_cache_valid = false;
         engine->glyph_gpu_cache_valid = false;
         try {
-            records.reserve(frame->outline_count);
-            uniforms.reserve(frame->outline_count);
-            engine->glyph_rasters.clear();
-            engine->glyph_rasters.reserve(frame->outline_count);
             engine->glyph_instances.clear();
             engine->glyph_instances.reserve(frame->glyph_count);
             engine->glyph_source_alphas.clear();
             engine->glyph_source_alphas.reserve(frame->glyph_count);
 
-            for (std::size_t index = 0U;
-                 index < frame->segment_count;
-                 ++index) {
-                const auto& segment = frame->segments[index];
-                if (segment.kind > PROGPU_NATIVE_PATH_SEGMENT_CUBIC ||
-                    !progpu::native::is_finite(segment.p0) ||
-                    !progpu::native::is_finite(segment.p1) ||
-                    !progpu::native::is_finite(segment.p2) ||
-                    !progpu::native::is_finite(segment.p3) ||
-                    segment.pad0 != 0U || segment.pad1 != 0U ||
-                    segment.pad2 != 0U) {
-                    return engine->fail(
-                        PROGPU_NATIVE_STATUS_INVALID_ARGUMENT,
-                        "A glyph segment kind, point, or reserved field is invalid.");
+            if (rebuild_rasters) {
+                engine->glyph_raster_cache_valid = false;
+                records.reserve(frame->outline_count);
+                uniforms.reserve(frame->outline_count);
+                engine->glyph_rasters.clear();
+                engine->glyph_rasters.reserve(frame->outline_count);
+                for (std::size_t index = 0U;
+                     index < frame->segment_count;
+                     ++index) {
+                    const auto& segment = frame->segments[index];
+                    if (segment.kind > PROGPU_NATIVE_PATH_SEGMENT_CUBIC ||
+                        !progpu::native::is_finite(segment.p0) ||
+                        !progpu::native::is_finite(segment.p1) ||
+                        !progpu::native::is_finite(segment.p2) ||
+                        !progpu::native::is_finite(segment.p3) ||
+                        segment.pad0 != 0U || segment.pad1 != 0U ||
+                        segment.pad2 != 0U) {
+                        return engine->fail(
+                            PROGPU_NATIVE_STATUS_INVALID_ARGUMENT,
+                            "A glyph segment kind, point, or reserved field is invalid.");
+                    }
                 }
-            }
 
-            std::uint32_t atlas_x = 2U;
-            std::uint32_t atlas_y = 2U;
-            std::uint32_t row_height = 0U;
-            std::uint32_t output_offset = 0U;
-            for (std::size_t index = 0U;
-                 index < frame->outline_count;
-                 ++index) {
-                const auto& outline = frame->outlines[index];
-                if (outline.segment_count == 0U ||
-                    outline.segment_offset > frame->segment_count ||
-                    outline.segment_count >
-                        frame->segment_count - outline.segment_offset ||
-                    !std::isfinite(outline.min_x) ||
-                    !std::isfinite(outline.min_y) ||
-                    !std::isfinite(outline.max_x) ||
-                    !std::isfinite(outline.max_y) ||
-                    outline.max_x <= outline.min_x ||
-                    outline.max_y <= outline.min_y ||
-                    !std::isfinite(outline.raster_scale) ||
-                    outline.raster_scale <= 0.0F ||
-                    !std::isfinite(outline.subpixel_x) ||
-                    outline.subpixel_x < 0.0F ||
-                    outline.subpixel_x > 0.75F ||
-                    std::abs(
-                        outline.subpixel_x * 4.0F -
-                        std::round(outline.subpixel_x * 4.0F)) > 0.0001F) {
-                    return engine->fail(
-                        PROGPU_NATIVE_STATUS_INVALID_ARGUMENT,
-                        "A glyph outline range, bound, scale, or phase is invalid.");
+                std::uint32_t atlas_x = 2U;
+                std::uint32_t atlas_y = 2U;
+                std::uint32_t row_height = 0U;
+                std::uint32_t output_offset = 0U;
+                for (std::size_t index = 0U;
+                     index < frame->outline_count;
+                     ++index) {
+                    const auto& outline = frame->outlines[index];
+                    if (outline.segment_count == 0U ||
+                        outline.segment_offset > frame->segment_count ||
+                        outline.segment_count >
+                            frame->segment_count - outline.segment_offset ||
+                        !std::isfinite(outline.min_x) ||
+                        !std::isfinite(outline.min_y) ||
+                        !std::isfinite(outline.max_x) ||
+                        !std::isfinite(outline.max_y) ||
+                        outline.max_x <= outline.min_x ||
+                        outline.max_y <= outline.min_y ||
+                        !std::isfinite(outline.raster_scale) ||
+                        outline.raster_scale <= 0.0F ||
+                        !std::isfinite(outline.subpixel_x) ||
+                        outline.subpixel_x < 0.0F ||
+                        outline.subpixel_x > 0.75F ||
+                        std::abs(
+                            outline.subpixel_x * 4.0F -
+                            std::round(outline.subpixel_x * 4.0F)) > 0.0001F) {
+                        return engine->fail(
+                            PROGPU_NATIVE_STATUS_INVALID_ARGUMENT,
+                            "A glyph outline range, bound, scale, or phase is invalid.");
+                    }
+                    const float scaled_min_x =
+                        outline.min_x * outline.raster_scale;
+                    const float scaled_min_y =
+                        -outline.max_y * outline.raster_scale;
+                    const float scaled_max_x =
+                        outline.max_x * outline.raster_scale;
+                    const float scaled_max_y =
+                        -outline.min_y * outline.raster_scale;
+                    const float x_start = std::floor(scaled_min_x) - path_padding;
+                    const float y_start = std::floor(scaled_min_y) - path_padding;
+                    const double width_value =
+                        std::ceil(scaled_max_x) + path_padding - x_start;
+                    const double height_value =
+                        std::ceil(scaled_max_y) + path_padding - y_start;
+                    if (!std::isfinite(width_value) ||
+                        !std::isfinite(height_value) ||
+                        width_value <= 0.0 || height_value <= 0.0 ||
+                        width_value > native_max_atlas_size - 4U ||
+                        height_value > native_max_atlas_size - 4U) {
+                        return engine->fail(
+                            PROGPU_NATIVE_STATUS_UNSUPPORTED,
+                            "A glyph exceeds the bounded native atlas tile size.");
+                    }
+                    const auto width = static_cast<std::uint32_t>(width_value);
+                    const auto height = static_cast<std::uint32_t>(height_value);
+                    while (width + 4U > required_atlas_size &&
+                           required_atlas_size < native_max_atlas_size) {
+                        required_atlas_size *= 2U;
+                    }
+                    if (atlas_x + width + 2U > required_atlas_size) {
+                        atlas_x = 2U;
+                        atlas_y += row_height + 2U;
+                        row_height = 0U;
+                    }
+                    while (atlas_y + height + 2U > required_atlas_size &&
+                           required_atlas_size < native_max_atlas_size) {
+                        required_atlas_size *= 2U;
+                    }
+                    if (atlas_y + height + 2U > required_atlas_size) {
+                        return engine->fail(
+                            PROGPU_NATIVE_STATUS_OUT_OF_MEMORY,
+                            "The retained native glyph set does not fit the bounded atlas.");
+                    }
+                    const std::uint32_t output_bytes_per_row = align_up(
+                        width,
+                        webgpu_copy_row_alignment);
+                    output_offset = align_up(
+                        output_offset,
+                        webgpu_copy_offset_alignment);
+                    const std::uint64_t next_output =
+                        static_cast<std::uint64_t>(output_offset) +
+                        static_cast<std::uint64_t>(output_bytes_per_row) * height;
+                    if (next_output >
+                        std::numeric_limits<std::uint32_t>::max()) {
+                        return engine->fail(
+                            PROGPU_NATIVE_STATUS_OUT_OF_MEMORY,
+                            "The glyph coverage staging batch exceeds 4 GiB.");
+                    }
+                    engine->glyph_rasters.push_back({
+                        atlas_x,
+                        atlas_y,
+                        width,
+                        height,
+                        output_offset,
+                        output_bytes_per_row,
+                        x_start,
+                        y_start
+                    });
+                    records.push_back({
+                        static_cast<std::uint32_t>(outline.segment_offset),
+                        static_cast<std::uint32_t>(outline.segment_count),
+                        outline.min_x,
+                        outline.min_y,
+                        outline.max_x,
+                        outline.max_y,
+                        0U,
+                        0U
+                    });
+                    uniforms.push_back({
+                        x_start,
+                        y_start,
+                        outline.raster_scale,
+                        static_cast<std::uint32_t>(index),
+                        output_offset / 4U,
+                        output_bytes_per_row / 4U,
+                        width,
+                        height,
+                        outline.subpixel_x,
+                        static_cast<float>(atlas_x),
+                        static_cast<float>(atlas_y),
+                        0.0F
+                    });
+                    output_offset = static_cast<std::uint32_t>(next_output);
+                    atlas_x += width + 2U;
+                    row_height = std::max(row_height, height);
                 }
-                const float scaled_min_x =
-                    outline.min_x * outline.raster_scale;
-                const float scaled_min_y =
-                    -outline.max_y * outline.raster_scale;
-                const float scaled_max_x =
-                    outline.max_x * outline.raster_scale;
-                const float scaled_max_y =
-                    -outline.min_y * outline.raster_scale;
-                const float x_start = std::floor(scaled_min_x) - path_padding;
-                const float y_start = std::floor(scaled_min_y) - path_padding;
-                const double width_value =
-                    std::ceil(scaled_max_x) + path_padding - x_start;
-                const double height_value =
-                    std::ceil(scaled_max_y) + path_padding - y_start;
-                if (!std::isfinite(width_value) ||
-                    !std::isfinite(height_value) ||
-                    width_value <= 0.0 || height_value <= 0.0 ||
-                    width_value > native_max_atlas_size - 4U ||
-                    height_value > native_max_atlas_size - 4U) {
-                    return engine->fail(
-                        PROGPU_NATIVE_STATUS_UNSUPPORTED,
-                        "A glyph exceeds the bounded native atlas tile size.");
+                coverage_staging_bytes = output_offset;
+                rasterized_glyph_count = static_cast<std::uint32_t>(
+                    engine->glyph_rasters.size());
+                if (retain_compiled_payload) {
+                    engine->glyph_raster_outlines.resize(frame->outline_count);
+                    engine->glyph_raster_segments.resize(frame->segment_count);
+                    if (frame->outline_count != 0U) {
+                        std::memcpy(engine->glyph_raster_outlines.data(), frame->outlines,
+                            frame->outline_count * sizeof(progpu_native_glyph_outline));
+                    }
+                    if (frame->segment_count != 0U) {
+                        std::memcpy(engine->glyph_raster_segments.data(), frame->segments,
+                            frame->segment_count * sizeof(progpu_native_path_segment));
+                    }
                 }
-                const auto width = static_cast<std::uint32_t>(width_value);
-                const auto height = static_cast<std::uint32_t>(height_value);
-                while (width + 4U > required_atlas_size &&
-                       required_atlas_size < native_max_atlas_size) {
-                    required_atlas_size *= 2U;
-                }
-                if (atlas_x + width + 2U > required_atlas_size) {
-                    atlas_x = 2U;
-                    atlas_y += row_height + 2U;
-                    row_height = 0U;
-                }
-                while (atlas_y + height + 2U > required_atlas_size &&
-                       required_atlas_size < native_max_atlas_size) {
-                    required_atlas_size *= 2U;
-                }
-                if (atlas_y + height + 2U > required_atlas_size) {
-                    return engine->fail(
-                        PROGPU_NATIVE_STATUS_OUT_OF_MEMORY,
-                        "The retained native glyph set does not fit the bounded atlas.");
-                }
-                const std::uint32_t output_bytes_per_row = align_up(
-                    width,
-                    webgpu_copy_row_alignment);
-                output_offset = align_up(
-                    output_offset,
-                    webgpu_copy_offset_alignment);
-                const std::uint64_t next_output =
-                    static_cast<std::uint64_t>(output_offset) +
-                    static_cast<std::uint64_t>(output_bytes_per_row) * height;
-                if (next_output >
-                    std::numeric_limits<std::uint32_t>::max()) {
-                    return engine->fail(
-                        PROGPU_NATIVE_STATUS_OUT_OF_MEMORY,
-                        "The glyph coverage staging batch exceeds 4 GiB.");
-                }
-                engine->glyph_rasters.push_back({
-                    atlas_x,
-                    atlas_y,
-                    width,
-                    height,
-                    output_offset,
-                    output_bytes_per_row,
-                    x_start,
-                    y_start
-                });
-                records.push_back({
-                    static_cast<std::uint32_t>(outline.segment_offset),
-                    static_cast<std::uint32_t>(outline.segment_count),
-                    outline.min_x,
-                    outline.min_y,
-                    outline.max_x,
-                    outline.max_y,
-                    0U,
-                    0U
-                });
-                uniforms.push_back({
-                    x_start,
-                    y_start,
-                    outline.raster_scale,
-                    static_cast<std::uint32_t>(index),
-                    output_offset / 4U,
-                    output_bytes_per_row / 4U,
-                    width,
-                    height,
-                    outline.subpixel_x,
-                    static_cast<float>(atlas_x),
-                    static_cast<float>(atlas_y),
-                    0.0F
-                });
-                output_offset = static_cast<std::uint32_t>(next_output);
-                atlas_x += width + 2U;
-                row_height = std::max(row_height, height);
             }
 
             for (std::size_t index = 0U;
@@ -1231,9 +1269,6 @@ progpu_native_status render_glyphs(
                 engine->glyph_source_alphas.push_back(glyph.color.a);
             }
 
-            coverage_staging_bytes = output_offset;
-            rasterized_glyph_count = static_cast<std::uint32_t>(
-                engine->glyph_rasters.size());
             if (retain_compiled_payload) {
                 engine->glyph_content_revision = frame->content_revision;
                 engine->glyph_dpi_scale = frame->dpi_scale;
@@ -1306,7 +1341,7 @@ progpu_native_status render_glyphs(
             PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
             "The native glyph atlas WebGPU resources could not be created.");
     }
-    if (!compiled_payload_hit && frame->outline_count != 0U &&
+    if (rebuild_rasters && frame->outline_count != 0U &&
         engine->glyph_atlas_generation == atlas_generation_before) {
         ++engine->glyph_atlas_generation;
     }
@@ -1343,7 +1378,7 @@ progpu_native_status render_glyphs(
         }
     }
     progpu_native_engine::raster_resource_lease temporary_lease(
-        *engine, !compiled_payload_hit && frame->outline_count != 0U);
+        *engine, rebuild_rasters && frame->outline_count != 0U);
     auto& temporary = temporary_lease.get();
     std::vector<std::byte> uniform_bytes;
     std::vector<std::byte> cpu_coverage;
@@ -1357,7 +1392,7 @@ progpu_native_status render_glyphs(
     const bool glyph_intrinsic_simd_fallback =
         (engine->engine_flags &
             PROGPU_NATIVE_ENGINE_GLYPH_INTRINSIC_SIMD_CPU_FALLBACK) != 0U;
-    if (!compiled_payload_hit && frame->outline_count != 0U) {
+    if (rebuild_rasters && frame->outline_count != 0U) {
         if (glyph_cpu_fallback) {
             if (!rasterize_glyph_coverage_cpu(
                     *frame,
@@ -1759,6 +1794,9 @@ progpu_native_status render_glyphs(
     }
     }
 
+    engine->glyph_raster_generation = engine->glyph_atlas_generation;
+    engine->glyph_raster_dpi_scale = frame->dpi_scale;
+    engine->glyph_raster_cache_valid = retain_compiled_payload;
     std::uint64_t payload_hash = 0U;
     if ((frame->flags &
             PROGPU_NATIVE_GEOMETRY_FRAME_CAPTURE_PAYLOAD_HASH) != 0U) {

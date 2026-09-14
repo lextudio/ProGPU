@@ -703,7 +703,6 @@ uint nativeAtlasWidth = 0;
 uint nativeAtlasGeneration = 0;
 uint nativeAtlasGrowthCount = 0;
 NativeGlyphFrameMetrics lastNativeGlyphMetrics = default;
-uint nativeGlyphContentRevision = 1U;
 NativePathFrameMetrics lastNativePathMetrics = default;
 uint nativePathContentRevision = 1U;
 NativeGeometryFrameMetrics lastNativeGeometryMetrics = default;
@@ -1226,6 +1225,11 @@ else if (forceAtlasGrowth && usePathScene)
         capturePayloadHash: false,
         contentRevision: uint.MaxValue);
     context.PollDevice(wait: true);
+}
+
+if (useGlyphScene && !rerasterizeGlyphs && !forceAtlasGrowth && !useDrawState)
+{
+    GlyphRasterRetentionQualification.Run(native, nativeTarget);
 }
 
 // Compile both shader/pipeline paths before correctness or timing evidence.
@@ -2333,7 +2337,7 @@ ulong RenderNative(bool capturePayloadHash = false)
             clearColor,
             capturePayloadHash,
             contentRevision: rerasterizeGlyphs
-                ? nativeGlyphContentRevision++
+                ? 0U
                 : 1U,
             drawState: nativeDrawState);
         lastNativeGlyphMetrics = metrics;

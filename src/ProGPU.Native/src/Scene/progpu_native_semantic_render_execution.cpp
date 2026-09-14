@@ -3256,6 +3256,10 @@ progpu_native_status render_scene(
     std::uint32_t semantic_3d_draw_index = 0U;
 
     const auto discard_encoder = [&]() noexcept {
+        // Prepared coverage is not resident if its command encoder is abandoned.
+        engine->glyph_raster_cache_valid = false;
+        engine->glyph_cache_valid = false;
+        engine->glyph_gpu_cache_valid = false;
         if (engine->semantic_encoder != nullptr) {
             wgpuCommandEncoderRelease(engine->semantic_encoder);
             engine->semantic_encoder = nullptr;
@@ -3289,6 +3293,7 @@ progpu_native_status render_scene(
             &descriptor);
         wgpuCommandEncoderRelease(encoder);
         if (command == nullptr) {
+            discard_encoder();
             return engine->fail(
                 PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
                 "The semantic scene command buffer could not be finished.");

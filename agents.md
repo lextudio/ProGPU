@@ -1,5 +1,13 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native glyph raster identity is independent of positioned scene revisions.
+Reuse only owned exact outline/segment bytes, DPI and live atlas generation;
+placement/paint changes still upload current instances. Keep intrinsic byte
+comparison, all coverage execution paths and abandoned-encoder invalidation.
+Forced raster benchmarks disable retention explicitly. Idle managed counters
+never qualify native application performance or residency. See
+docs/native-glyph-raster-retention.md for evidence and remaining gates.
+
 Native input may intersect a vector clip as a rectangle only after proving its
 four closed axis-aligned edges and unique corners in the active input frame.
 Reuse intrinsic intersection and scope/frame-qualified clip ranges. Declared

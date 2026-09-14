@@ -163,6 +163,13 @@ struct progpu_native_engine {
     std::vector<gpu_glyph_instance> glyph_instances;
     std::vector<float> glyph_source_alphas;
     std::vector<native_glyph_raster> glyph_rasters;
+    // Raster identity is independent of positioned instances and scene revision.
+    // Own the validated bytes: callers may replace or mutate their next batch.
+    std::vector<progpu_native_glyph_outline> glyph_raster_outlines;
+    std::vector<progpu_native_path_segment> glyph_raster_segments;
+    std::uint32_t glyph_raster_generation = 0U;
+    float glyph_raster_dpi_scale = 0.0F;
+    bool glyph_raster_cache_valid = false;
     std::uint32_t glyph_content_revision = 0U;
     float glyph_dpi_scale = 0.0F;
     float glyph_opacity = 1.0F;
