@@ -10505,7 +10505,11 @@ struct channel::implementation {
                         {1.0F, 0.0F},
                         {0.0F, 1.0F},
                         {1.0F, 1.0F, 1.0F, 1.0F},
-                        glyph_run.em_size / target_raster_size,
+                        // Text.wgsl converts atlas pixels to logical units by
+                        // dividing by the frame DPI. Preserve the physical
+                        // font-size ratio here so high-DPI glyph ink and WPF's
+                        // already-logical advances retain the same scale.
+                        glyph_run.em_size * dpi_scale / target_raster_size,
                         pass * glyph_run.em_size * 0.035F,
                         italic ? 0.22F : 0.0F,
                         0.0F});
