@@ -1,5 +1,11 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Static MIL visual guidelines preserve infinite anchors produced by float
+narrowing of unbounded source adorners. Keep NaN rejection atomic, dynamic
+explicit offsets finite, mirrored ordering and zero infinite displacement.
+Do not clamp these coordinates or filter caret/other visuals by type name.
+See docs/native-mil-unbounded-guidelines.md; application qualification is separate.
+
 The resumable GPU query iterator keeps its 64-entry stack invocation-private,
 not in an inout aggregate or workgroup memory. Each entrypoint initializes one
 traversal; no invocation interleaves two traversals. Preserve node/local-reference/

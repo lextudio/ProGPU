@@ -267,9 +267,9 @@ bool semantic_scene_builder::add_guideline_set(
         !std::ranges::is_sorted(guidelines_x) ||
         !std::ranges::is_sorted(guidelines_y) ||
         std::ranges::any_of(guidelines_x,
-            [](double value) { return !std::isfinite(value); }) ||
+            [](double value) { return std::isnan(value); }) ||
         std::ranges::any_of(guidelines_y,
-            [](double value) { return !std::isfinite(value); })) {
+            [](double value) { return std::isnan(value); })) {
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {

@@ -1329,6 +1329,22 @@ public class NativeRendererInteropTests
     }
 
     [Fact]
+    public void NativeMilVisualGuidelinesPreserveUnboundedAnchorsAndRejectNaNAtomically()
+    {
+        var batch = new NativeMilBatchBuilder();
+        batch.SetVisualGuidelines(7, [-double.MaxValue / 2, 2.25], [0, double.MaxValue / 2]);
+        byte[] encoded = batch.ToArray();
+        Assert.Equal(float.NegativeInfinity, ReadSingle(encoded, 20));
+        Assert.Equal(2.25F, ReadSingle(encoded, 24));
+        Assert.Equal(0F, ReadSingle(encoded, 28));
+        Assert.Equal(float.PositiveInfinity, ReadSingle(encoded, 32));
+        Assert.Throws<ArgumentOutOfRangeException>(() => batch.SetVisualGuidelines(7, [double.NaN], [0]));
+        Assert.Equal(encoded, batch.ToArray());
+        Assert.Throws<ArgumentOutOfRangeException>(() => batch.SetVisualGuidelines(7, [0], [double.NaN]));
+        Assert.Equal(encoded, batch.ToArray());
+    }
+
+    [Fact]
     public void NativeMilBuildersWriteCanonicalRenderDataGuidelineScope()
     {
         var renderData = new NativeMilRenderDataBuilder();
@@ -4096,12 +4112,14 @@ public class NativeRendererInteropTests
             out _));
     }
 
-    [Fact]
-    public void SemanticSceneBuilderWritesBoundedStaticGuidelineState()
+    [Theory]
+    [InlineData(12.25, 23.5)]
+    [InlineData(double.NegativeInfinity, double.PositiveInfinity)]
+    public void SemanticSceneBuilderWritesStaticGuidelineState(double x, double y)
     {
         Span<byte> destination = stackalloc byte[2048];
-        Span<double> guidelinesX = stackalloc double[1] { 12.25 };
-        Span<double> guidelinesY = stackalloc double[1] { 23.5 };
+        Span<double> guidelinesX = stackalloc double[1] { x };
+        Span<double> guidelinesY = stackalloc double[1] { y };
         var builder = new NativeSceneStreamBuilder(
             destination,
             sceneId: 83U,
@@ -4140,11 +4158,11 @@ public class NativeRendererInteropTests
             guidelineResource.Kind);
         Assert.Equal(32U, guidelineResource.PayloadSize);
         Assert.Equal(
-            12.25,
+            x,
             MemoryMarshal.Read<double>(
                 stream[((int)guidelineResource.PayloadOffset + 16)..]));
         Assert.Equal(
-            23.5,
+            y,
             MemoryMarshal.Read<double>(
                 stream[((int)guidelineResource.PayloadOffset + 24)..]));
         Assert.Equal(

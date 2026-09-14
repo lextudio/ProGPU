@@ -656,7 +656,10 @@ validation_result validate(
                         bytes,
                         resource.payload_offset + sizeof(guidelines) +
                             coordinate_index * sizeof(double));
-                    if (!std::isfinite(coordinate) ||
+                    // Static infinite anchors have zero snapping displacement.
+                    // Resolved dynamic offsets retain their finite-only contract.
+                    if (std::isnan(coordinate) ||
+                        (explicit_offsets && !std::isfinite(coordinate)) ||
                         coordinate < previous) {
                         return fail(
                             header,

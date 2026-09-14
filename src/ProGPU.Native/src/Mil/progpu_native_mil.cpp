@@ -6010,7 +6010,7 @@ struct channel::implementation {
             for (double& coordinate : guidelines_x) {
                 float value = 0.0F;
                 if (!read_at(view.packet, offset, value) ||
-                    !std::isfinite(value)) {
+                    std::isnan(value)) {
                     return status::malformed_batch;
                 }
                 coordinate = value;
@@ -6019,7 +6019,7 @@ struct channel::implementation {
             for (double& coordinate : guidelines_y) {
                 float value = 0.0F;
                 if (!read_at(view.packet, offset, value) ||
-                    !std::isfinite(value)) {
+                    std::isnan(value)) {
                     return status::malformed_batch;
                 }
                 coordinate = value;

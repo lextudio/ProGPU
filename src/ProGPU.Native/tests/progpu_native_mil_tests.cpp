@@ -10956,6 +10956,64 @@ bool retained_drawing_group_composes_children_transform_and_opacity() {
     return true;
 }
 
+bool visual_static_guidelines_preserve_unbounded_anchors() {
+    using namespace progpu::native;
+    const float infinity = std::numeric_limits<float>::infinity();
+    for (const double scale : {1.0, -1.0}) {
+        channel state;
+        std::vector<std::byte> batch, content;
+        append_create(batch, 1U, 39U); append_create(batch, 2U, 43U);
+        append_create(batch, 3U, 47U); append_create(batch, 4U, 75U);
+        append_create(batch, 5U, 66U);
+        append_command(batch, command::visual_create, 1U);
+        append_command(batch, command::matrix_transform, 5U,
+            scale, 0.0, 0.0, scale, 32.0, 32.0, 0U);
+        append_command(batch, command::visual_set_transform, 1U, 5U);
+        append_command(batch, command::visual_set_guideline_collection, 1U,
+            std::uint16_t{0}, std::uint16_t{0}, std::uint16_t{3}, std::uint16_t{0},
+            -infinity, 2.25F, infinity);
+        append_command(batch, command::solid_color_brush, 4U, 1.0,
+            progpu_native_color{1, 1, 1, 1}, 0U, 0U, 0U, 0U);
+        append_command(content, command::draw_rectangle, 2.25, 2.25, 8.0, 8.0, 4U, 0U);
+        append_render_data(batch, 2U, content);
+        append_command(batch, command::visual_set_content, 1U, 2U);
+        append_command(batch, command::generic_target_create, 3U,
+            std::uint64_t{0}, std::uint64_t{0}, 64U, 64U, 0U);
+        append_command(batch, command::target_set_root, 3U, 1U);
+        PROGPU_REQUIRE(state.apply(batch) == status::success);
+        std::vector<std::byte> stream;
+        PROGPU_REQUIRE(state.build_scene(3U, 10800U, 1U, stream) == status::success);
+        const auto scene_header = read_value<progpu_native_scene_header>(stream, 0U);
+        bool found = false;
+        for (std::uint32_t i = 0U; i < scene_header.resource_count; ++i) {
+            const auto resource = read_value<progpu_native_scene_resource>(stream,
+                scene_header.resource_offset + i * scene_header.resource_stride);
+            if (resource.kind != PROGPU_NATIVE_SCENE_RESOURCE_GUIDELINE_SET) continue;
+            const auto header = read_value<progpu_native_scene_guideline_set>(stream, resource.payload_offset);
+            PROGPU_REQUIRE(header.guideline_x_count == 0U && header.guideline_y_count == 3U);
+            PROGPU_REQUIRE(read_value<double>(stream, resource.payload_offset + sizeof(header)) == -infinity);
+            PROGPU_REQUIRE(read_value<double>(stream, resource.payload_offset + sizeof(header) + 2U * sizeof(double)) == infinity);
+            auto raster = semantic_scene_builder::identity_state();
+            raster.flags = PROGPU_NATIVE_SCENE_STATE_GUIDELINE_SET;
+            raster.guideline_resource_index = i;
+            semantic::semantic_state_cursor cursor(stream.data(), scene_header, 1.0F);
+            float x = 10.25F, y = static_cast<float>(32.0 + scale * 2.25);
+            cursor.snap_draw_point(raster, x, y);
+            PROGPU_REQUIRE(x == 10.25F && y == (scale > 0.0 ? 34.0F : 30.0F));
+            found = true;
+        }
+        PROGPU_REQUIRE(found);
+        std::vector<std::byte> malformed;
+        append_command(malformed, command::visual_set_guideline_collection, 1U,
+            std::uint16_t{0}, std::uint16_t{0}, std::uint16_t{1}, std::uint16_t{0},
+            std::numeric_limits<float>::quiet_NaN());
+        PROGPU_REQUIRE(state.apply(malformed) == status::malformed_batch);
+    }
+    PROGPU_REQUIRE(semantic::wpf_guideline_offset(infinity) == 0.0F);
+    PROGPU_REQUIRE(semantic::wpf_guideline_offset(-infinity) == 0.0F);
+    return true;
+}
+
 bool retained_static_guideline_set_snaps_one_guide_per_axis() {
     constexpr std::uint32_t visual = 1U;
     constexpr std::uint32_t content = 2U;
@@ -24675,6 +24733,7 @@ int main() {
     PROGPU_REQUIRE(
         visual_bitmap_cache_preserves_nested_effect_ordering());
     PROGPU_REQUIRE(visual_static_guidelines_reset_at_child_boundaries());
+    PROGPU_REQUIRE(visual_static_guidelines_preserve_unbounded_anchors());
     PROGPU_REQUIRE(matrix_transform_scopes_compile_to_semantic_state());
     PROGPU_REQUIRE(
         static_transform_resources_compose_and_retain_dependencies());

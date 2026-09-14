@@ -1103,8 +1103,8 @@ public ref struct NativeSceneStreamBuilder
                 NativeMethods.SceneMaximumGuidelinesPerAxis ||
             (uint)guidelinesY.Length >
                 NativeMethods.SceneMaximumGuidelinesPerAxis ||
-            !AreFiniteAndSorted(guidelinesX) ||
-            !AreFiniteAndSorted(guidelinesY))
+            !AreStaticGuidelinesOrdered(guidelinesX) ||
+            !AreStaticGuidelinesOrdered(guidelinesY))
         {
             return false;
         }
@@ -3064,8 +3064,8 @@ public ref struct NativeSceneStreamBuilder
                     Unsafe.SizeOf<NativeSceneGuidelineSetHeader>(),
                 checked((int)(coordinateCount * sizeof(double)))));
         int xCount = checked((int)header.GuidelineXCount);
-        if (!AreFiniteAndSorted(coordinates[..xCount]) ||
-            !AreFiniteAndSorted(coordinates[xCount..]))
+        if (!AreStaticGuidelinesOrdered(coordinates[..xCount]) ||
+            !AreStaticGuidelinesOrdered(coordinates[xCount..]))
         {
             return false;
         }
@@ -3851,12 +3851,12 @@ public ref struct NativeSceneStreamBuilder
         float.IsFinite(value.M21) && float.IsFinite(value.M22) &&
         float.IsFinite(value.M31) && float.IsFinite(value.M32);
 
-    private static bool AreFiniteAndSorted(ReadOnlySpan<double> values)
+    private static bool AreStaticGuidelinesOrdered(ReadOnlySpan<double> values)
     {
         double previous = double.NegativeInfinity;
         foreach (double value in values)
         {
-            if (!double.IsFinite(value) || value < previous)
+            if (double.IsNaN(value) || value < previous)
                 return false;
             previous = value;
         }

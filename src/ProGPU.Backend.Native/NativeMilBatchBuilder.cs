@@ -315,6 +315,19 @@ public sealed class NativeMilBatchBuilder
         {
             throw new ArgumentOutOfRangeException(nameof(guidelinesX));
         }
+        // Unbounded source adorners can carry finite doubles beyond float range.
+        // The visual protocol preserves their infinite static anchors; NaN is
+        // malformed. Validate both axes before reserving any packet bytes.
+        foreach (double coordinate in guidelinesX)
+        {
+            if (double.IsNaN(coordinate))
+                throw new ArgumentOutOfRangeException(nameof(guidelinesX));
+        }
+        foreach (double coordinate in guidelinesY)
+        {
+            if (double.IsNaN(coordinate))
+                throw new ArgumentOutOfRangeException(nameof(guidelinesY));
+        }
         int count = checked(guidelinesX.Length + guidelinesY.Length);
         Span<byte> packet = NativeMilBatchEncoding.Allocate(
             _writer,
@@ -327,20 +340,12 @@ public sealed class NativeMilBatchBuilder
         foreach (double coordinate in guidelinesX)
         {
             float value = (float)coordinate;
-            if (!float.IsFinite(value))
-            {
-                throw new ArgumentOutOfRangeException(nameof(guidelinesX));
-            }
             WriteSingle(packet, offset, value);
             offset += sizeof(float);
         }
         foreach (double coordinate in guidelinesY)
         {
             float value = (float)coordinate;
-            if (!float.IsFinite(value))
-            {
-                throw new ArgumentOutOfRangeException(nameof(guidelinesY));
-            }
             WriteSingle(packet, offset, value);
             offset += sizeof(float);
         }

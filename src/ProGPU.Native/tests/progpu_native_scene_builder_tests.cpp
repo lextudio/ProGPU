@@ -267,6 +267,30 @@ bool semantic_scene_builder_is_deterministic_and_valid() {
 }
 
 bool semantic_scene_builder_bounds_composite_only_guidelines() {
+    // Unbounded static coordinates survive scene validation, but never NaN or
+    // nonfinite coordinates in explicit dynamic-offset resources.
+    {
+        semantic_scene_builder unbounded(10799U, 1U);
+        const double infinity = std::numeric_limits<double>::infinity();
+        const std::array anchors{-infinity, 2.25, infinity};
+        const std::array offsets{0.0, -0.25, 0.0};
+        std::uint32_t index = PROGPU_NATIVE_SCENE_NO_INDEX;
+        if (!unbounded.add_guideline_set({}, anchors, index, false, true)) return false;
+        float displacement = 1.0F;
+        if (!unbounded.try_glyph_guideline_offset(index, 2.25F, 1.0F, displacement) ||
+            displacement != -0.25F) return false;
+        std::vector<std::byte> bytes;
+        if (!unbounded.build(bytes)) return false;
+        const auto result = scene::validate(bytes.data(), bytes.size());
+        if (result.status != PROGPU_NATIVE_STATUS_SUCCESS) return false;
+        const auto record = read<progpu_native_scene_resource>(bytes, result.header.resource_offset);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        std::memcpy(bytes.data() + record.payload_offset + sizeof(progpu_native_scene_guideline_set),
+            &nan, sizeof(nan));
+        if (scene::validate(bytes.data(), bytes.size()).status == PROGPU_NATIVE_STATUS_SUCCESS ||
+            unbounded.add_guideline_set_with_offsets({}, anchors, {}, offsets, index, false, true) ||
+            unbounded.add_guideline_set({}, std::array{nan}, index)) return false;
+    }
     semantic_scene_builder builder(702U, 1U);
     if (!builder.reserve(2U, 2U, 512U)) {
         return false;
