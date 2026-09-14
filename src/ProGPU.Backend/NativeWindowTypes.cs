@@ -24,6 +24,16 @@ public enum NativeWindowTheme
     Dark = 2
 }
 
+[Flags]
+public enum NativeWindowChromeHints
+{
+    NoChrome = 0,
+    SystemChrome = 1 << 0,
+    PreferSystemChrome = 1 << 1,
+    MacOsThickTitleBar = 1 << 3,
+    Default = PreferSystemChrome
+}
+
 public enum NativeWindowBackdrop
 {
     None = 0,
@@ -46,6 +56,12 @@ public enum NativeResizeEdge
     BottomRight = 7
 }
 
+public enum NativeWindowZOrder
+{
+    Front = 0,
+    Back = 1
+}
+
 [Flags]
 public enum NativeWindowFeatures
 {
@@ -65,7 +81,10 @@ public enum NativeWindowFeatures
     Transparent = 1 << 12,
     Blur = 1 << 13,
     Acrylic = 1 << 14,
-    Mica = 1 << 15
+    Mica = 1 << 15,
+    CloseButton = 1 << 16,
+    Opacity = 1 << 17,
+    ZOrder = 1 << 18
 }
 
 [Flags]
@@ -89,6 +108,24 @@ public readonly record struct NativeWindowHandle(
 }
 
 public readonly record struct NativeWindowPoint(int X, int Y);
+
+public enum NativeTouchPhase
+{
+    Begin,
+    Update,
+    End,
+    Cancel
+}
+
+public readonly record struct NativeTouchEvent(
+    uint Id,
+    NativeTouchPhase Phase,
+    double X,
+    double Y,
+    double ContactWidth,
+    double ContactHeight,
+    uint Timestamp,
+    bool IsPointerEmulation = false);
 
 public readonly record struct NativeWindowSize(int Width, int Height)
 {
@@ -141,6 +178,9 @@ public readonly record struct NativeWindowCapabilities(
         {
             NativeWindowKind.Win32 => new NativeWindowCapabilities(kind,
                 common |
+                NativeWindowFeatures.ZOrder |
+                NativeWindowFeatures.Opacity |
+                NativeWindowFeatures.CloseButton |
                 NativeWindowFeatures.MinimizeButton |
                 NativeWindowFeatures.MaximizeButton |
                 NativeWindowFeatures.ClientAreaExtension |
@@ -154,6 +194,9 @@ public readonly record struct NativeWindowCapabilities(
                 NativeWindowFeatures.Mica),
             NativeWindowKind.Cocoa => new NativeWindowCapabilities(kind,
                 common |
+                NativeWindowFeatures.ZOrder |
+                NativeWindowFeatures.Opacity |
+                NativeWindowFeatures.CloseButton |
                 NativeWindowFeatures.MinimizeButton |
                 NativeWindowFeatures.MaximizeButton |
                 NativeWindowFeatures.ClientAreaExtension |
@@ -166,6 +209,9 @@ public readonly record struct NativeWindowCapabilities(
                 NativeWindowFeatures.Mica),
             NativeWindowKind.X11 => new NativeWindowCapabilities(kind,
                 common |
+                NativeWindowFeatures.ZOrder |
+                NativeWindowFeatures.Opacity |
+                NativeWindowFeatures.CloseButton |
                 NativeWindowFeatures.MinimizeButton |
                 NativeWindowFeatures.MaximizeButton |
                 NativeWindowFeatures.ClientAreaExtension |
@@ -191,34 +237,42 @@ public readonly record struct NativeWindowCapabilities(
 internal readonly record struct NativeWindowState(
     NativeWindowDecorations Decorations,
     bool CanResize,
+    bool CanClose,
     bool CanMinimize,
     bool CanMaximize,
     bool TopMost,
     bool Enabled,
+    double Opacity,
     bool ShowInTaskbar,
     bool AddShadow,
     bool ExtendClientArea,
+    NativeWindowChromeHints ChromeHints,
     double TitleBarHeight,
     NativeWindowSize MinimumSize,
     NativeWindowSize MaximumSize,
     NativeWindowTheme Theme,
     NativeWindowBackdrop Backdrop,
-    NativeWindowHandle Parent)
+    NativeWindowHandle Parent,
+    bool IsPopup = false)
 {
     public static NativeWindowState Default => new(
         NativeWindowDecorations.Full,
         CanResize: true,
+        CanClose: true,
         CanMinimize: true,
         CanMaximize: true,
         TopMost: false,
         Enabled: true,
+        Opacity: 1d,
         ShowInTaskbar: true,
         AddShadow: true,
         ExtendClientArea: false,
+        ChromeHints: NativeWindowChromeHints.Default,
         TitleBarHeight: -1d,
         MinimumSize: new NativeWindowSize(0, 0),
         MaximumSize: NativeWindowSize.Unbounded,
         Theme: NativeWindowTheme.Default,
         Backdrop: NativeWindowBackdrop.None,
-        Parent: NativeWindowHandle.Empty);
+        Parent: NativeWindowHandle.Empty,
+        IsPopup: false);
 }

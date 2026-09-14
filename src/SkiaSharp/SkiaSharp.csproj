@@ -6,6 +6,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SkiaSharp</AssemblyName>
     <RootNamespace>SkiaSharp</RootNamespace>
+    <AssemblyVersion>4.151.0.0</AssemblyVersion>
+    <FileVersion>4.151.0.0</FileVersion>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>..\..\eng\SkiaSharp.public.snk</AssemblyOriginatorKeyFile>
     <PackageId>ProGPU.SkiaSharp</PackageId>
     <Description>ProGPU-backed portable SkiaSharp compatibility shim.</Description>
     <PackageTags>progpu;skiasharp;compatibility;cross-platform</PackageTags>
@@ -20,5 +24,9 @@
     <ProjectReference Include="..\ProGPU.Vector\ProGPU.Vector.csproj" />
     <ProjectReference Include="..\ProGPU.Text\ProGPU.Text.csproj" />
     <ProjectReference Include="..\ProGPU.Scene\ProGPU.Scene.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Avalonia.ProGpu, PublicKey=$(ProGPUPublicKey)" />
+    <InternalsVisibleTo Include="ProGPU.CAD, PublicKey=$(ProGPUPublicKey)" />
   </ItemGroup>
 </Project>

@@ -6,7 +6,7 @@ on:
       version:
         description: NuGet package version to build.
         required: true
-        default: 0.1.0-preview.55
+        default: 0.1.0-preview.62
       publish:
         description: Push packages to NuGet.org after validation.
         required: true
@@ -20,6 +20,34 @@ permissions:
   contents: write
 
 jobs:
+  dx12-runtime:
+    name: Build Windows compiler runtime (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Build verified compiler runtime
+        shell: pwsh
+        run: |
+          ./eng/test-dx12-runtime-inputs.ps1
+          ./eng/build-progpu-dx12-runtime-windows.ps1 -Rid '${{ matrix.rid }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: progpu-dx12-runtime-${{ matrix.rid }}
+          path: artifacts/progpu-dx12/package
+          if-no-files-found: error
+
   native-runtime:
     name: Build native runtime (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
@@ -136,7 +164,7 @@ jobs:
 
   portable:
     name: Validate and pack portable packages
-    needs: native-runtime
+    needs: [native-runtime, dx12-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -186,6 +214,13 @@ jobs:
           path: artifacts/progpu-native/package
           merge-multiple: true
 
+      - name: Download Windows compiler runtimes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-dx12-runtime-*
+          path: artifacts/progpu-dx12/package
+          merge-multiple: true
+
       - name: Verify docs and package manifest
         run: ./eng/progpu-verify-docs.sh
 
@@ -201,6 +236,10 @@ jobs:
 
       - name: Test
         shell: bash
+        # Allocation contracts measure optimized steady-state hot paths. Avoid
+        # crossing a tiered-compilation threshold inside a measured loop.
+        env:
+          DOTNET_TieredCompilation: "0"
         run: |
           native_root="${GITHUB_WORKSPACE}/src/ProGPU.Tests/bin/Release/net10.0/linux-x64"
           native_rid_root="${native_root}/runtimes/linux-x64/native"
@@ -242,6 +281,54 @@ jobs:
             artifacts/packages-avalonia/Release/*.nupkg
             artifacts/packages-avalonia/Release/*.snupkg
           if-no-files-found: error
+
+  native-dx12-package-consumer:
+    name: Native DX12 release consumer (${{ matrix.rid }})
+    needs: portable
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    env:
+      PROGPU_HIT_TEST_EXECUTION: ordered-stages
+      PROGPU_DX12_SHADER_COMPILER: dxc
+      PROGPU_BACKEND_DIAGNOSTICS: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Resolve release version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "PROGPU_PACKAGE_VERSION=${version}" >> "${GITHUB_ENV}"
+      - uses: actions/download-artifact@v8
+        with:
+          name: progpu-portable-${{ env.PROGPU_PACKAGE_VERSION }}
+          path: artifacts/packages/Release
+      - name: Run full JIT and NativeAOT system-WARP consumers
+        shell: pwsh
+        run: |
+          $project = 'tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj'
+          $properties = @('-p:ProGpuUseDx12Runtime=true', "-p:ProGpuNativePackageSource=$env:GITHUB_WORKSPACE/artifacts/packages/Release", "-p:ProGpuNativePackageVersion=$env:PROGPU_PACKAGE_VERSION")
+          dotnet run --project $project --configuration Release --runtime '${{ matrix.rid }}' @properties -- --software-adapter
+          if ($LASTEXITCODE -ne 0) { throw 'Full release DX12 consumer failed.' }
+          $output = "$env:GITHUB_WORKSPACE/artifacts/dx12-consumer-aot"
+          dotnet publish $project --configuration Release --runtime '${{ matrix.rid }}' -p:PublishAot=true --output $output @properties
+          if ($LASTEXITCODE -ne 0) { throw 'Release DX12 NativeAOT publication failed.' }
+          & "$output/ProGPU.Native.PackageConsumer.exe" --software-adapter
+          if ($LASTEXITCODE -ne 0) { throw 'Full release DX12 NativeAOT consumer failed.' }
 
   native-package-consumer:
     name: Native release package consumer (${{ matrix.rid }})
@@ -307,6 +394,51 @@ jobs:
             --configuration Release --no-restore \
             -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
             -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}"
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-drawing-group-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-glyph-run-drawing-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-text-render-options-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-visual-clip-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-visual-opacity-mask-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-visual-effect-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-visual-guideline-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-restore \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-drawing-image-only
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release --no-build \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages/Release" \
+            -p:ProGpuNativePackageVersion="${PROGPU_PACKAGE_VERSION}" -- \
+            --mil-guideline-only
 
   mobile:
     name: Pack mobile packages
@@ -316,6 +448,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -380,7 +514,7 @@ jobs:
 
   publish:
     name: Verify and publish complete release
-    needs: [portable, native-package-consumer, mobile]
+    needs: [portable, native-package-consumer, native-dx12-package-consumer, mobile]
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

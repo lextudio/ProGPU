@@ -152,15 +152,73 @@ public sealed class VisualChangeVersionTests
         blur.BlurRadius = 4f;
         Assert.True(blur.ChangeVersion > blurVersion);
 
+        blurVersion = blur.ChangeVersion;
+        blur.KernelType = BlurKernelType.Box;
+        Assert.True(blur.ChangeVersion > blurVersion);
+        Assert.Equal(BlurKernelType.Box, blur.KernelType);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => blur.KernelType = (BlurKernelType)2);
+
         var shadow = new DropShadowEffect(2f);
         var shadowVersion = shadow.ChangeVersion;
         shadow.Offset = new Vector2(3f, 4f);
+        Assert.True(shadow.ChangeVersion > shadowVersion);
+
+        shadowVersion = shadow.ChangeVersion;
+        shadow.DrawSource = false;
         Assert.True(shadow.ChangeVersion > shadowVersion);
 
         var shader = new WpfShaderEffect(new WpfShaderEffectParams());
         var shaderVersion = shader.ChangeVersion;
         shader.Padding = 6f;
         Assert.True(shader.ChangeVersion > shaderVersion);
+
+        var colorMatrix = new ColorMatrixEffect(new ImageEffectColorMatrix(
+            Vector4.UnitX,
+            Vector4.UnitY,
+            Vector4.UnitZ,
+            Vector4.UnitW,
+            Vector4.Zero));
+        var colorMatrixVersion = colorMatrix.ChangeVersion;
+        colorMatrix.ColorMatrix = new ImageEffectColorMatrix(
+            Vector4.UnitZ,
+            Vector4.UnitY,
+            Vector4.UnitX,
+            Vector4.UnitW,
+            Vector4.Zero);
+        Assert.True(colorMatrix.ChangeVersion > colorMatrixVersion);
+
+        var blendMode = new BlendModeEffect(GpuBlendMode.Multiply);
+        var blendModeVersion = blendMode.ChangeVersion;
+        blendMode.BlendMode = GpuBlendMode.Screen;
+        Assert.True(blendMode.ChangeVersion > blendModeVersion);
+    }
+
+    [Fact]
+    public void DropShadowAxesPreserveScalarCompatibilityAndInvalidation()
+    {
+        var effect = new DropShadowEffect(2f, 4f);
+
+        Assert.Equal(2f, effect.BlurRadiusX);
+        Assert.Equal(4f, effect.BlurRadiusY);
+        Assert.Equal(4f, effect.BlurRadius);
+
+        var version = effect.ChangeVersion;
+        effect.BlurRadiusX = 3f;
+        Assert.True(effect.ChangeVersion > version);
+        Assert.Equal(3f, effect.BlurRadiusX);
+        Assert.Equal(4f, effect.BlurRadiusY);
+
+        version = effect.ChangeVersion;
+        effect.BlurRadius = 5f;
+        Assert.True(effect.ChangeVersion > version);
+        Assert.Equal(5f, effect.BlurRadiusX);
+        Assert.Equal(5f, effect.BlurRadiusY);
+        Assert.Equal(5f, effect.BlurRadius);
+
+        version = effect.ChangeVersion;
+        effect.BlurRadius = 5f;
+        Assert.Equal(version, effect.ChangeVersion);
     }
 
     [Fact]

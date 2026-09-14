@@ -1,9 +1,12 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 using Silk.NET.Windowing;
 
 namespace ProGPU.Backend;
 
-internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
+internal sealed partial class Win32NativeWindowPlatform :
+    GlfwNativeWindowPlatform
 {
     private const int GwlStyle = -16;
     private const int GwlExStyle = -20;
@@ -27,9 +30,16 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
     private const uint SwpFrameChanged = 0x0020;
     private const uint WmNcCalcSize = 0x0083;
     private const uint WmNcHitTest = 0x0084;
-    private const uint WmNcLButtonDown = 0x00A1;
+    private const uint WmSysCommand = 0x0112;
+    private const uint WmTouch = 0x0240;
+    private const uint WmMouseFirst = 0x0200;
+    private const uint WmMouseLast = 0x020e;
+    private const uint WmEnterSizeMove = 0x0231;
+    private const uint WmExitSizeMove = 0x0232;
     private const int HtClient = 1;
     private const int HtCaption = 2;
+    private const int ScMove = 0xF010;
+    private const int ScSize = 0xF000;
     private const int HtLeft = 10;
     private const int HtRight = 11;
     private const int HtTop = 12;
@@ -45,12 +55,22 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
     private const int AccentDisabled = 0;
     private const int AccentEnableBlurBehind = 3;
     private const int AccentEnableAcrylicBlurBehind = 4;
+    private const uint TouchEventMove = 0x0001;
+    private const uint TouchEventDown = 0x0002;
+    private const uint TouchEventUp = 0x0004;
+    private const uint TouchMaskContactArea = 0x0004;
+    private const int MaximumTouchContacts = 256;
+    private const nuint MouseEventFromTouchSignature = 0xff515700;
+    private const nuint MouseEventFromTouchMask = 0xffffff00;
+    private const nuint MouseEventTouchFlag = 0x80;
 
     private readonly nint _hwnd;
     private readonly WndProc _wndProc;
     private nint _previousWndProc;
     private bool _extended;
     private bool _canResize = true;
+    private bool _isInteractiveMoveResize;
+    private bool _isProcessingPromotedTouchMouse;
     private NativeWindowBackdrop _backdrop;
 
     public Win32NativeWindowPlatform(IWindow window, nint hwnd)
@@ -75,14 +95,21 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
     }
     public override bool SupportsManagedMove => true;
     public override bool SupportsManagedResize => true;
+    public override bool SupportsSystemChromeExtension => true;
+    public override bool IsInteractiveMoveResize =>
+        _isInteractiveMoveResize;
+    public override bool IsProcessingPromotedTouchMouse =>
+        _isProcessingPromotedTouchMouse;
 
     public override bool ApplyChrome(in NativeWindowState state)
     {
-        _extended = state.ExtendClientArea;
+        _extended = state.ExtendClientArea &&
+            !SilkWindowController.UsesSystemChrome(
+                state.ChromeHints);
         _canResize = state.CanResize;
         var nativeResizable = RequiresNativeResizableStyle(state);
         var style = GetWindowLongPtr(_hwnd, GwlStyle).ToInt64();
-        style |= WsSysMenu;
+        style = SetFlag(style, WsSysMenu, state.CanClose);
         style = SetFlag(style, WsThickFrame, nativeResizable);
         style = SetFlag(style, WsMinimizeBox, state.CanMinimize);
         style = SetFlag(style, WsMaximizeBox, state.CanMaximize && state.CanResize);
@@ -107,7 +134,8 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
         }
 
         SetWindowLongPtr(_hwnd, GwlStyle, (nint)style);
-        EnsureWindowProcedure(_extended);
+        EnsureWindowProcedure(true);
+        _ = RegisterTouchWindow(_hwnd, 0);
         RefreshFrame();
         SetBackdrop(_backdrop);
         return true;
@@ -125,7 +153,22 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
             SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
-    public override bool SetEnabled(bool value) => EnableWindow(_hwnd, value);
+    public override bool SetZOrder(NativeWindowZOrder value)
+    {
+        if (value is not NativeWindowZOrder.Front and not NativeWindowZOrder.Back)
+        {
+            return false;
+        }
+
+        return SetWindowPos(
+            _hwnd,
+            value == NativeWindowZOrder.Front ? nint.Zero : new nint(1),
+            0,
+            0,
+            0,
+            0,
+            SwpNoMove | SwpNoSize);
+    }
 
     public override bool SetShowInTaskbar(bool value)
     {
@@ -144,14 +187,14 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
             return false;
         }
 
-        SetWindowLongPtr(_hwnd, GwlpHwndParent, parent.IsValid ? parent.Handle : 0);
-        return true;
+        var operations = new WindowOwnerOperations();
+        return Win32WindowOwnerState.Apply(_hwnd, parent.IsValid ? parent.Handle : 0, ref operations);
     }
 
     public override bool SetClientAreaExtension(bool enabled, double titleBarHeight)
     {
         _extended = enabled;
-        EnsureWindowProcedure(enabled);
+        EnsureWindowProcedure(true);
         var margins = enabled
             ? new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 }
             : default;
@@ -162,8 +205,29 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
 
     public override bool SetTheme(NativeWindowTheme theme)
     {
-        var dark = theme == NativeWindowTheme.Dark ? 1 : 0;
+        var dark = theme == NativeWindowTheme.Dark ||
+            theme == NativeWindowTheme.Default &&
+            SystemUsesDarkTheme()
+                ? 1
+                : 0;
         return DwmSetWindowAttribute(_hwnd, DwmwaUseImmersiveDarkMode, ref dark, sizeof(int)) >= 0;
+    }
+
+    private static bool SystemUsesDarkTheme()
+    {
+        try
+        {
+            object? value = Registry.GetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                "AppsUseLightTheme",
+                1);
+            return value is int appsUseLightTheme &&
+                appsUseLightTheme == 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     public override bool SetBackdrop(NativeWindowBackdrop backdrop)
@@ -225,9 +289,13 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
 
     public override bool TryBeginMove(NativeWindowPoint pointer)
     {
+        _ = pointer;
         ReleaseCapture();
-        SendMessage(_hwnd, WmNcLButtonDown, HtCaption, 0);
-        return true;
+        return PostMessage(
+            _hwnd,
+            WmSysCommand,
+            ScMove | HtCaption,
+            0) != 0;
     }
 
     public override bool TryBeginResize(NativeResizeEdge edge, NativeWindowPoint pointer)
@@ -238,12 +306,26 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
         }
 
         ReleaseCapture();
-        SendMessage(_hwnd, WmNcLButtonDown, MapHitTest(edge), 0);
-        return true;
+        NativeWindowPoint screenPointer = GetCursorPos(out Point cursor) != 0
+            ? new NativeWindowPoint(cursor.X, cursor.Y)
+            : pointer;
+        return PostMessage(
+            _hwnd,
+            WmSysCommand,
+            ScSize | MapSizeCommand(edge),
+            PackScreenPoint(screenPointer)) != 0;
     }
 
     private nint WindowProcedure(nint hwnd, uint message, nint wParam, nint lParam)
     {
+        if (message == WmEnterSizeMove)
+            _isInteractiveMoveResize = true;
+        else if (message == WmExitSizeMove)
+            _isInteractiveMoveResize = false;
+
+        if (message == WmTouch && TryDispatchTouch(wParam, lParam))
+            return 0;
+
         if (_extended && message == WmNcCalcSize)
         {
             return 0;
@@ -258,9 +340,134 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
             }
         }
 
-        return _previousWndProc != 0
-            ? CallWindowProc(_previousWndProc, hwnd, message, wParam, lParam)
-            : DefWindowProc(hwnd, message, wParam, lParam);
+        bool promotedTouchMouse =
+            IsPromotedTouchMouseMessage(
+                message,
+                GetMessageExtraInfo());
+        bool previousPromotedTouchMouse =
+            _isProcessingPromotedTouchMouse;
+        _isProcessingPromotedTouchMouse =
+            previousPromotedTouchMouse || promotedTouchMouse;
+        try
+        {
+            return _previousWndProc != 0
+                ? CallWindowProc(
+                    _previousWndProc,
+                    hwnd,
+                    message,
+                    wParam,
+                    lParam)
+                : DefWindowProc(hwnd, message, wParam, lParam);
+        }
+        finally
+        {
+            _isProcessingPromotedTouchMouse =
+                previousPromotedTouchMouse;
+        }
+    }
+
+    internal static bool IsPromotedTouchMouseMessage(
+        uint message,
+        nint extraInfo)
+    {
+        if (message is < WmMouseFirst or > WmMouseLast)
+            return false;
+
+        nuint value = unchecked((nuint)extraInfo);
+        return (value & MouseEventFromTouchMask) ==
+                MouseEventFromTouchSignature &&
+            (value & MouseEventTouchFlag) != 0;
+    }
+
+    private unsafe bool TryDispatchTouch(nint wParam, nint lParam)
+    {
+        int count = unchecked((ushort)(nuint)wParam);
+        if (count <= 0)
+            return false;
+        if (count > MaximumTouchContacts)
+        {
+            _ = CloseTouchInputHandle(lParam);
+            return true;
+        }
+
+        var touches = stackalloc TouchInput[count];
+        bool acquired = GetTouchInputInfo(
+            lParam,
+            (uint)count,
+            touches,
+            Marshal.SizeOf<TouchInput>());
+        if (!acquired)
+        {
+            _ = CloseTouchInputHandle(lParam);
+            return true;
+        }
+
+        try
+        {
+            Action<NativeTouchEvent>? handler = TouchHandler;
+            if (handler is null)
+                return true;
+
+            for (int index = 0; index < count; index++)
+            {
+                ref TouchInput touch = ref touches[index];
+                if (!TryMapTouchPhase(touch.Flags, out NativeTouchPhase phase))
+                    continue;
+
+                var point = new Point
+                {
+                    X = checked((int)Math.Round(touch.X / 100d)),
+                    Y = checked((int)Math.Round(touch.Y / 100d))
+                };
+                if (!ScreenToClient(_hwnd, ref point))
+                    continue;
+
+                double width = (touch.Mask & TouchMaskContactArea) != 0
+                    ? touch.ContactWidth / 100d
+                    : 0d;
+                double height = (touch.Mask & TouchMaskContactArea) != 0
+                    ? touch.ContactHeight / 100d
+                    : 0d;
+                handler(new NativeTouchEvent(
+                    touch.Id,
+                    phase,
+                    point.X,
+                    point.Y,
+                    width,
+                    height,
+                    touch.Timestamp));
+            }
+
+            return true;
+        }
+        finally
+        {
+            _ = CloseTouchInputHandle(lParam);
+        }
+    }
+
+    internal static bool TryMapTouchPhase(
+        uint flags,
+        out NativeTouchPhase phase)
+    {
+        if ((flags & TouchEventDown) != 0)
+        {
+            phase = NativeTouchPhase.Begin;
+            return true;
+        }
+        if ((flags & TouchEventUp) != 0)
+        {
+            phase = NativeTouchPhase.End;
+            return true;
+        }
+        if ((flags & TouchEventMove) != 0)
+        {
+            phase = NativeTouchPhase.Update;
+            return true;
+        }
+
+        phase = default;
+        return false;
     }
 
     private int HitTestResizeBorder(nint lParam)
@@ -365,20 +572,29 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
 
     private static long SetFlag(long value, long flag, bool enabled) => enabled ? value | flag : value & ~flag;
 
-    private static int MapHitTest(NativeResizeEdge edge) => edge switch
+    private static int MapSizeCommand(NativeResizeEdge edge) => edge switch
     {
-        NativeResizeEdge.Left => HtLeft,
-        NativeResizeEdge.Top => HtTop,
-        NativeResizeEdge.Right => HtRight,
-        NativeResizeEdge.Bottom => HtBottom,
-        NativeResizeEdge.TopLeft => HtTopLeft,
-        NativeResizeEdge.TopRight => HtTopRight,
-        NativeResizeEdge.BottomLeft => HtBottomLeft,
-        _ => HtBottomRight
+        NativeResizeEdge.Left => 1,
+        NativeResizeEdge.Right => 2,
+        NativeResizeEdge.Top => 3,
+        NativeResizeEdge.TopLeft => 4,
+        NativeResizeEdge.TopRight => 5,
+        NativeResizeEdge.Bottom => 6,
+        NativeResizeEdge.BottomLeft => 7,
+        _ => 8
     };
+
+    private static nint PackScreenPoint(
+        NativeWindowPoint pointer)
+    {
+        uint x = unchecked((ushort)(short)pointer.X);
+        uint y = unchecked((ushort)(short)pointer.Y);
+        return unchecked((nint)(x | (y << 16)));
+    }
 
     public override void Dispose()
     {
+        _ = UnregisterTouchWindow(_hwnd);
         EnsureWindowProcedure(false);
         base.Dispose();
     }
@@ -412,6 +628,21 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
     {
         public int X;
         public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TouchInput
+    {
+        public int X;
+        public int Y;
+        public nint Source;
+        public uint Id;
+        public uint Flags;
+        public uint Mask;
+        public uint Timestamp;
+        public nuint ExtraInfo;
+        public uint ContactWidth;
+        public uint ContactHeight;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -459,11 +690,33 @@ internal sealed class Win32NativeWindowPlatform : GlfwNativeWindowPlatform
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")]
-    private static extern bool EnableWindow(nint hwnd, bool enabled);
-    [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
-    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
-    private static extern nint SendMessage(nint hwnd, uint message, nint wParam, nint lParam);
+    [LibraryImport("user32.dll")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvStdcall)])]
+    private static partial int GetCursorPos(out Point point);
+    [DllImport("user32.dll")]
+    private static extern bool RegisterTouchWindow(nint hwnd, uint flags);
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterTouchWindow(nint hwnd);
+    [DllImport("user32.dll")]
+    private static extern unsafe bool GetTouchInputInfo(
+        nint touchInputHandle,
+        uint inputCount,
+        TouchInput* inputs,
+        int touchInputSize);
+    [DllImport("user32.dll")]
+    private static extern bool CloseTouchInputHandle(nint touchInputHandle);
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(nint hwnd, ref Point point);
+    [DllImport("user32.dll")]
+    private static extern nint GetMessageExtraInfo();
+    [LibraryImport("user32.dll", EntryPoint = "PostMessageW")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvStdcall)])]
+    private static partial int PostMessage(
+        nint hwnd,
+        uint message,
+        nint wParam,
+        nint lParam);
     [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
     private static extern nint CallWindowProc(nint previous, nint hwnd, uint message, nint wParam, nint lParam);
     [DllImport("user32.dll", EntryPoint = "DefWindowProcW")]

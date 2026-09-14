@@ -72,10 +72,16 @@ bool valid_picture_mask(
     const progpu_native_scene_layer_picture_mask& mask,
     const std::byte* streams,
     std::uint32_t stream_bytes) noexcept {
+    const bool source_extent =
+        (mask.flags & PROGPU_NATIVE_SCENE_PICTURE_MASK_SOURCE_EXTENT) != 0U;
     return mask.struct_size == sizeof(mask) &&
         mask.kind == PROGPU_NATIVE_SCENE_LAYER_MASK_PICTURE &&
-        mask.flags == 0U && mask.reserved0 == 0U &&
-        mask.reserved1 == 0U && mask.stream_size != 0U &&
+        (mask.flags & ~PROGPU_NATIVE_SCENE_PICTURE_MASK_SOURCE_EXTENT) == 0U &&
+        (source_extent
+                ? mask.reserved0 > 0U && mask.reserved0 <= 16384U &&
+                    mask.reserved1 > 0U && mask.reserved1 <= 16384U
+                : mask.reserved0 == 0U && mask.reserved1 == 0U) &&
+        mask.stream_size != 0U &&
         mask.stream_offset <= stream_bytes &&
         mask.stream_size <= stream_bytes - mask.stream_offset &&
         valid_bounds(mask.bounds) && valid_transform(mask.transform) &&
@@ -150,7 +156,24 @@ bool valid_chain(const progpu_native_scene_layer_mask_chain& chain) noexcept {
 bool valid_vector_segment(
     const progpu_native_path_segment& segment) noexcept {
     const bool arc = segment.kind == PROGPU_NATIVE_PATH_SEGMENT_ARC;
-    return segment.kind <= PROGPU_NATIVE_PATH_SEGMENT_ARC &&
+    const bool rational_quadratic = segment.kind ==
+        PROGPU_NATIVE_PATH_SEGMENT_RATIONAL_QUADRATIC;
+    const bool rational_cubic = segment.kind ==
+        PROGPU_NATIVE_PATH_SEGMENT_RATIONAL_CUBIC;
+    const float rational_weight1 = std::bit_cast<float>(segment.pad0);
+    const float rational_weight2 = std::bit_cast<float>(segment.pad1);
+    const double rational_scale = std::fmax(1.0, std::fmax(
+        std::fmax(std::abs(segment.p0.x), std::abs(segment.p0.y)),
+        std::fmax(
+            std::fmax(std::abs(segment.p1.x), std::abs(segment.p1.y)),
+            std::fmax(
+                std::fmax(std::abs(segment.p2.x), std::abs(segment.p2.y)),
+                std::fmax(std::abs(segment.p3.x), std::abs(segment.p3.y))))));
+    const double quadratic_weight_limit =
+        std::numeric_limits<float>::max() / (4.0 * rational_scale);
+    const double cubic_weight_limit =
+        std::numeric_limits<float>::max() / (8.0 * rational_scale);
+    return segment.kind <= PROGPU_NATIVE_PATH_SEGMENT_RATIONAL_CUBIC &&
         std::isfinite(segment.p0.x) && std::isfinite(segment.p0.y) &&
         std::isfinite(segment.p1.x) && std::isfinite(segment.p1.y) &&
         std::isfinite(segment.p2.x) && std::isfinite(segment.p2.y) &&
@@ -160,8 +183,22 @@ bool valid_vector_segment(
                 std::isfinite(std::bit_cast<float>(segment.pad0)) &&
                 std::isfinite(std::bit_cast<float>(segment.pad1)) &&
                 std::isfinite(std::bit_cast<float>(segment.pad2))
-            : segment.pad0 == 0U && segment.pad1 == 0U &&
-                segment.pad2 == 0U);
+            : rational_quadratic
+                ? segment.p3.x == 0.0F && segment.p3.y == 0.0F &&
+                    std::isfinite(rational_weight1) &&
+                    rational_weight1 > 0.0F &&
+                    rational_weight1 <= quadratic_weight_limit &&
+                    segment.pad1 == 0U &&
+                    segment.pad2 == 0U
+                : rational_cubic
+                    ? std::isfinite(rational_weight1) &&
+                        std::isfinite(rational_weight2) &&
+                        rational_weight1 > 0.0F && rational_weight2 > 0.0F &&
+                        rational_weight1 <= cubic_weight_limit &&
+                        rational_weight2 <= cubic_weight_limit &&
+                        segment.pad2 == 0U
+                    : segment.pad0 == 0U && segment.pad1 == 0U &&
+                        segment.pad2 == 0U);
 }
 
 bool valid_vector_path(
@@ -177,7 +214,8 @@ bool valid_vector_path(
         path.max_x > path.min_x && path.max_y > path.min_y &&
         valid_transform(path.transform) &&
         path.fill_rule <= PROGPU_NATIVE_FILL_RULE_EVEN_ODD &&
-        (path.sample_grid == 4U || path.sample_grid == 8U) &&
+        (path.sample_grid == 1U || path.sample_grid == 4U ||
+            path.sample_grid == 8U) &&
         path.operation <= PROGPU_NATIVE_CLIP_DIFFERENCE &&
         path.reserved == 0U)) {
         return false;
@@ -257,7 +295,8 @@ bool valid_brush_mask(
         !valid_bounds(mask.bounds) || !valid_transform(mask.transform) ||
         !std::isfinite(mask.opacity) || mask.opacity < 0.0F ||
         mask.opacity > 1.0F || mask.reserved0 != 0U ||
-        mask.brush.stop_offset != 0U ||
+        (mask.brush.type != PROGPU_NATIVE_SCENE_BRUSH_TILE_PATTERN &&
+            mask.brush.stop_offset != 0U) ||
         (stop_count != 0U && stops == nullptr)) {
         return false;
     }
@@ -280,8 +319,9 @@ bool valid_composite_brush(
         valid_bounds(mask.bounds) && valid_transform(mask.transform) &&
         std::isfinite(mask.opacity) && mask.opacity >= 0.0F &&
         mask.opacity <= 1.0F && mask.reserved0 == 0U &&
-        mask.brush.stop_offset <= stop_count &&
-        stored_stop_count <= stop_count - mask.brush.stop_offset &&
+        (mask.brush.type == PROGPU_NATIVE_SCENE_BRUSH_TILE_PATTERN ||
+            (mask.brush.stop_offset <= stop_count &&
+             stored_stop_count <= stop_count - mask.brush.stop_offset)) &&
         is_valid_semantic_brush(
             mask.brush,
             std::span<const progpu_native_scene_gradient_stop>(
@@ -307,8 +347,10 @@ bool valid_geometry_mask(
         mask.gradient_stop_count != stored_stop_count ||
         !valid_bounds(mask.bounds) || !valid_transform(mask.transform) ||
         !std::isfinite(mask.opacity) || mask.opacity < 0.0F ||
-        mask.opacity > 1.0F || mask.brush.stop_offset > stop_count ||
-        stored_stop_count > stop_count - mask.brush.stop_offset ||
+        mask.opacity > 1.0F ||
+        (mask.brush.type != PROGPU_NATIVE_SCENE_BRUSH_TILE_PATTERN &&
+            (mask.brush.stop_offset > stop_count ||
+             stored_stop_count > stop_count - mask.brush.stop_offset)) ||
         primitives == nullptr ||
         !is_valid_semantic_brush(
             mask.brush,

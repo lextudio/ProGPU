@@ -9,6 +9,7 @@ using ProGPU.Vector;
 using ProGPU.Text;
 using ProGPU.Backend;
 using ProGPU.Scene.Extensions;
+using Silk.NET.WebGPU;
 
 namespace ProGPU.Scene;
 
@@ -50,7 +51,8 @@ public enum RenderCommandType
     DrawGlyphRun,
     DrawVertexMesh,
     DrawPointBatch,
-    DrawDotGrid
+    DrawDotGrid,
+    DrawDeviceDotGrid
 }
 
 public enum VertexMeshTopology
@@ -91,6 +93,181 @@ public enum VertexColorBlendMode
     Saturation,
     Color,
     Luminosity
+}
+
+/// <summary>
+/// Describes an immutable same-device texture used as the pattern input of a
+/// Win32/GDI ternary raster operation.
+/// </summary>
+/// <remarks>
+/// The texture is sampled as a repeating device-pixel tile. Its owner must
+/// retain the texture lease for every command or picture that references this
+/// value.
+/// </remarks>
+public sealed class GpuRasterTexturePattern
+{
+    public GpuTexture Texture { get; }
+    public Vector2 Origin { get; }
+
+    public GpuRasterTexturePattern(GpuTexture texture, Vector2 origin = default)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        if (texture.IsDisposed ||
+            (texture.Usage & TextureUsage.TextureBinding) == 0)
+        {
+            throw new ArgumentException(
+                "The raster pattern texture must be live and texture-bindable.",
+                nameof(texture));
+        }
+        if (!float.IsFinite(origin.X) || !float.IsFinite(origin.Y))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(origin),
+                "The raster pattern origin must be finite.");
+        }
+
+        Texture = texture;
+        Origin = origin;
+    }
+}
+
+/// <summary>
+/// Describes an exact Win32/GDI ternary raster operation for a texture draw.
+/// </summary>
+/// <remarks>
+/// <c>Code</c> is the ROP3 truth-table byte. Bit selection uses
+/// the conventional pattern/source/destination input order. Pattern colors
+/// are straight, normalized RGBA values; GDI raster-operation output is
+/// treated as an opaque device pixel. <see cref="PatternBrush"/> carries an
+/// optional immutable 8 by 8 pattern and <see cref="TexturePattern"/> carries
+/// an arbitrary typed texture tile without expanding the retained
+/// <see cref="RenderCommand"/> union.
+/// </remarks>
+public readonly struct GpuRasterOperation : IEquatable<GpuRasterOperation>
+{
+    public bool IsEnabled { get; }
+    public byte Code { get; }
+    public Vector4 PatternColor { get; }
+    public TilePatternBrush? PatternBrush { get; }
+    public GpuRasterTexturePattern? TexturePattern { get; }
+
+    public GpuRasterOperation(byte code, Vector4 patternColor)
+    {
+        if (!IsFiniteNormalized(patternColor))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(patternColor),
+                "Pattern color components must be finite normalized values.");
+        }
+
+        IsEnabled = true;
+        Code = code;
+        PatternColor = patternColor;
+        PatternBrush = null;
+        TexturePattern = null;
+    }
+
+    public GpuRasterOperation(byte code, TilePatternBrush patternBrush)
+    {
+        ArgumentNullException.ThrowIfNull(patternBrush);
+        if (!IsFiniteNormalized(patternBrush.ForegroundColor) ||
+            !IsFiniteNormalized(patternBrush.BackgroundColor) ||
+            !float.IsFinite(patternBrush.Origin.X) ||
+            !float.IsFinite(patternBrush.Origin.Y))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(patternBrush),
+                "Pattern colors must be finite normalized values and the origin must be finite.");
+        }
+
+        IsEnabled = true;
+        Code = code;
+        PatternColor = patternBrush.ForegroundColor;
+        PatternBrush = patternBrush;
+        TexturePattern = null;
+    }
+
+    public GpuRasterOperation(byte code, GpuRasterTexturePattern texturePattern)
+    {
+        ArgumentNullException.ThrowIfNull(texturePattern);
+        if (texturePattern.Texture.IsDisposed ||
+            !float.IsFinite(texturePattern.Origin.X) ||
+            !float.IsFinite(texturePattern.Origin.Y))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(texturePattern),
+                "The pattern texture must be live and its origin must be finite.");
+        }
+
+        IsEnabled = true;
+        Code = code;
+        PatternColor = default;
+        PatternBrush = null;
+        TexturePattern = texturePattern;
+    }
+
+    public bool Equals(GpuRasterOperation other) =>
+        IsEnabled == other.IsEnabled &&
+        Code == other.Code &&
+        PatternColor == other.PatternColor &&
+        PatternBrushesEqual(PatternBrush, other.PatternBrush) &&
+        TexturePatternsEqual(TexturePattern, other.TexturePattern);
+
+    public override bool Equals(object? obj) =>
+        obj is GpuRasterOperation other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(IsEnabled);
+        hash.Add(Code);
+        hash.Add(PatternColor);
+        if (PatternBrush is not null)
+        {
+            hash.Add(PatternBrush.Pattern);
+            hash.Add(PatternBrush.ForegroundColor);
+            hash.Add(PatternBrush.BackgroundColor);
+            hash.Add(PatternBrush.Origin);
+        }
+        if (TexturePattern is not null)
+        {
+            hash.Add(TexturePattern.Texture);
+            hash.Add(TexturePattern.Origin);
+        }
+        return hash.ToHashCode();
+    }
+
+    public static bool operator ==(GpuRasterOperation left, GpuRasterOperation right) =>
+        left.Equals(right);
+
+    public static bool operator !=(GpuRasterOperation left, GpuRasterOperation right) =>
+        !left.Equals(right);
+
+    private static bool IsFiniteNormalized(Vector4 value) =>
+        float.IsFinite(value.X) && value.X is >= 0f and <= 1f &&
+        float.IsFinite(value.Y) && value.Y is >= 0f and <= 1f &&
+        float.IsFinite(value.Z) && value.Z is >= 0f and <= 1f &&
+        float.IsFinite(value.W) && value.W is >= 0f and <= 1f;
+
+    private static bool PatternBrushesEqual(
+        TilePatternBrush? left,
+        TilePatternBrush? right) =>
+        ReferenceEquals(left, right) ||
+        left is not null &&
+        right is not null &&
+        left.Pattern == right.Pattern &&
+        left.ForegroundColor == right.ForegroundColor &&
+        left.BackgroundColor == right.BackgroundColor &&
+        left.Origin == right.Origin;
+
+    private static bool TexturePatternsEqual(
+        GpuRasterTexturePattern? left,
+        GpuRasterTexturePattern? right) =>
+        ReferenceEquals(left, right) ||
+        left is not null &&
+        right is not null &&
+        ReferenceEquals(left.Texture, right.Texture) &&
+        left.Origin == right.Origin;
 }
 
 public sealed class VertexMesh2D
@@ -230,6 +407,17 @@ public enum TextureSamplingMode
     MagNearestMinLinearMipLinear,
     MagNearestMinLinearMipNearest,
     MagNearestMinNearestMipLinear
+}
+
+/// <summary>
+/// Selects how normalized texture coordinates outside the source extent are
+/// resolved by retained image draws.
+/// </summary>
+public enum TextureAddressMode : byte
+{
+    Clamp = 0,
+    Repeat = 1,
+    MirrorRepeat = 2
 }
 
 public enum TexturePatchKind : byte
@@ -398,7 +586,7 @@ internal interface IImageEffectDataProvider
     ImageEffectCommandData GetImageEffect(int index);
 }
 
-public sealed class RenderCommandGeometryCache
+public sealed partial class RenderCommandGeometryCache
 {
     private PathGeometry? _dashedStrokePath;
     private float _dashedStrokeLocalThickness;
@@ -706,6 +894,30 @@ public sealed class RenderCommandGeometryCache
 
 public struct RenderCommand
 {
+    private SourceHitTestGeometryKind _sourceHitGeometryKind;
+    // Source annotations apply to primitive and scope commands, never text or
+    // textures. Reuse those commands' otherwise-unused two-vector slots while
+    // keeping raster Rect/Position/radii independent of unsnapped input.
+    public SourceHitTestGeometry SourceHitGeometry
+    {
+        readonly get => _sourceHitGeometryKind == SourceHitTestGeometryKind.None
+            ? default
+            : new(_sourceHitGeometryKind, new Vector4(_fontTransformOrSourceStart, _textureCubicOrSourceEnd.X, _textureCubicOrSourceEnd.Y));
+        set
+        {
+            if (value.Kind != SourceHitTestGeometryKind.None)
+            {
+                _fontTransformOrSourceStart = new(value.Coordinates.X, value.Coordinates.Y);
+                _textureCubicOrSourceEnd = new(value.Coordinates.Z, value.Coordinates.W);
+            }
+            else if (_sourceHitGeometryKind != SourceHitTestGeometryKind.None)
+            {
+                _fontTransformOrSourceStart = default;
+                _textureCubicOrSourceEnd = default;
+            }
+            _sourceHitGeometryKind = value.Kind;
+        }
+    }
     public RenderCommandType Type;
     public int HitTestId;
     public Rect Rect;
@@ -719,19 +931,53 @@ public struct RenderCommand
     public TtfFont? Font;
     public float FontSize;
     public Vector2 Position;
-    public bool IsBold;
-    public bool IsItalic;
+    public bool IsBold
+    {
+        readonly get => (_textureOptions & (1u << 22)) != 0;
+        set => SetTextureOption(1u << 22, value);
+    }
+    public bool IsItalic
+    {
+        readonly get => (_textureOptions & (1u << 23)) != 0;
+        set => SetTextureOption(1u << 23, value);
+    }
+    // PushClip only: source image input is the destination rectangle, not the
+    // flattened drawing inside its balanced clip scope. Rendering is unchanged.
+    public bool IsImageHitTestScope;
+    // PushOpacity only: source geometric input does not depend on draw opacity.
+    public bool IsSourceOpacityScope;
     public TextShapingOptions? TextShapingOptions;
     public TextAlignment TextAlignment;
-    public Vector2 FontTransform;
-    public bool HasFontTransform;
+    private Vector2 _fontTransformOrSourceStart;
+    public Vector2 FontTransform
+    {
+        readonly get => _sourceHitGeometryKind == SourceHitTestGeometryKind.None ? _fontTransformOrSourceStart : default;
+        set => _fontTransformOrSourceStart = value;
+    }
+    public bool HasFontTransform
+    {
+        readonly get => (_textureOptions & (1u << 24)) != 0;
+        set => SetTextureOption(1u << 24, value);
+    }
     public float Rotation;
     public TextRenderingMode TextRenderingMode;
     public TextHintingMode TextHintingMode;
     public RenderCommandPresentationDependencies PresentationDependencies;
-    public bool UseVectorGlyphRendering;
-    public bool PreferGlyphAtlas;
-    public bool UseLogicalGlyphAtlasResolution;
+    public bool UseVectorGlyphRendering
+    {
+        readonly get => (_textureOptions & (1u << 25)) != 0;
+        set => SetTextureOption(1u << 25, value);
+    }
+    public bool PreferGlyphAtlas
+    {
+        readonly get => (_textureOptions & (1u << 26)) != 0;
+        set => SetTextureOption(1u << 26, value);
+    }
+    public bool UseLogicalGlyphAtlasResolution
+    {
+        readonly get => (_textureOptions & (1u << 27)) != 0;
+        set => SetTextureOption(1u << 27, value);
+    }
     public bool IsTextAliased
     {
         readonly get => TextRenderingMode == TextRenderingMode.Aliased;
@@ -742,15 +988,220 @@ public struct RenderCommand
     public GpuTexture? Texture;
     public Rect SrcRect;
     public TexturePatch[]? TexturePatches;
-    public TextureSamplingMode TextureSamplingMode;
-    public byte TextureMaxAnisotropy;
-    public Vector2 TextureCubicCoefficients;
-    public bool HasTextureCubicCoefficients;
-    public bool SnapTextureToPixels;
-    public bool HasImageEffect;
+    // Bits 0..21 are texture state; bits 22..31 are independent command flags.
+    private uint _textureOptions;
+    public float TextureOpacity;
+    private Vector2 _textureCubicOrSourceEnd;
+    public Vector2 TextureCubicCoefficients
+    {
+        readonly get => _sourceHitGeometryKind == SourceHitTestGeometryKind.None ? _textureCubicOrSourceEnd : default;
+        set => _textureCubicOrSourceEnd = value;
+    }
+    private const int TextureRasterOperationMarker = 0x100;
+
+    // Texture ROP3 data shares scalar union slots that DrawTexture otherwise
+    // does not use. This preserves the hot RenderCommand size for every draw.
+    public GpuRasterOperation RasterOperation
+    {
+        readonly get
+        {
+            if (Type != RenderCommandType.DrawTexture ||
+                (IntParam & ~0xFF) != TextureRasterOperationMarker)
+            {
+                return default;
+            }
+            return DataParam switch
+            {
+                TilePatternBrush patternBrush =>
+                    new GpuRasterOperation((byte)IntParam, patternBrush),
+                GpuRasterTexturePattern texturePattern =>
+                    new GpuRasterOperation((byte)IntParam, texturePattern),
+                _ => new GpuRasterOperation(
+                    (byte)IntParam,
+                    new Vector4(Position3D1, FloatParam))
+            };
+        }
+        set
+        {
+            if (!value.IsEnabled)
+            {
+                if ((IntParam & ~0xFF) == TextureRasterOperationMarker)
+                {
+                    IntParam = 0;
+                    Position3D1 = default;
+                    FloatParam = 0f;
+                }
+                if (DataParam is TilePatternBrush or GpuRasterTexturePattern)
+                {
+                    DataParam = null;
+                }
+                return;
+            }
+
+            IntParam = TextureRasterOperationMarker | value.Code;
+            Position3D1 = new Vector3(
+                value.PatternColor.X,
+                value.PatternColor.Y,
+                value.PatternColor.Z);
+            FloatParam = value.PatternColor.W;
+            if (value.PatternBrush is not null)
+            {
+                DataParam = value.PatternBrush;
+            }
+            else if (value.TexturePattern is not null)
+            {
+                DataParam = value.TexturePattern;
+            }
+            else if (DataParam is TilePatternBrush or GpuRasterTexturePattern)
+            {
+                DataParam = null;
+            }
+        }
+    }
+    // Destination-point image mapping is stored in scalar slots that are
+    // otherwise unused by DrawTexture. RenderCommand is the hot retained
+    // command union, so dedicated fields here would penalize every command
+    // (including ordinary rectangles and text) by 52 bytes.
+    public Vector2 TextureDestination0
+    {
+        readonly get => Type == RenderCommandType.DrawTexture ? Position : default;
+        set => Position = value;
+    }
+
+    public Vector2 TextureDestination1
+    {
+        readonly get => Type == RenderCommandType.DrawTexture ? Position2 : default;
+        set => Position2 = value;
+    }
+
+    public Vector2 TextureDestination2
+    {
+        readonly get => Type == RenderCommandType.DrawTexture ? Position3 : default;
+        set => Position3 = value;
+    }
+
+    public Vector2 TextureDestination3
+    {
+        readonly get => Type == RenderCommandType.DrawTexture ? Position4 : default;
+        set => Position4 = value;
+    }
+
+    public Vector4 TextureDestinationProjectiveWeights
+    {
+        readonly get => Type == RenderCommandType.DrawTexture
+            ? new(Scale.X, Scale.Y, Translate.X, Translate.Y)
+            : default;
+        set
+        {
+            Scale = new Vector2(value.X, value.Y);
+            Translate = new Vector2(value.Z, value.W);
+        }
+    }
+
+    public bool HasTextureDestinationQuad
+    {
+        readonly get => Type == RenderCommandType.DrawTexture && IsClosed;
+        set => IsClosed = value;
+    }
     private ImageEffectCommandDataBox? _imageEffect;
     internal int ImageEffectBufferIndex;
-    internal bool HasBufferedImageEffect;
+
+    public TextureSamplingMode TextureSamplingMode
+    {
+        readonly get => (TextureSamplingMode)(_textureOptions & 0x0fu);
+        set
+        {
+            if ((uint)value >
+                (uint)TextureSamplingMode.MagNearestMinNearestMipLinear)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            _textureOptions = (_textureOptions & ~0x0fu) | (uint)value;
+        }
+    }
+
+    public byte TextureMaxAnisotropy
+    {
+        readonly get => (byte)((_textureOptions >> 4) & 0xffu);
+        set => _textureOptions = (_textureOptions & ~(0xffu << 4)) |
+            ((uint)value << 4);
+    }
+
+    public TextureAddressMode TextureAddressModeU
+    {
+        readonly get => (TextureAddressMode)((_textureOptions >> 12) & 0x03u);
+        set
+        {
+            if ((uint)value > (uint)TextureAddressMode.MirrorRepeat)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            _textureOptions = (_textureOptions & ~(0x03u << 12)) |
+                ((uint)value << 12);
+        }
+    }
+
+    public TextureAddressMode TextureAddressModeV
+    {
+        readonly get => (TextureAddressMode)((_textureOptions >> 14) & 0x03u);
+        set
+        {
+            if ((uint)value > (uint)TextureAddressMode.MirrorRepeat)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            _textureOptions = (_textureOptions & ~(0x03u << 14)) |
+                ((uint)value << 14);
+        }
+    }
+
+    public bool HasTextureOpacity
+    {
+        readonly get => (_textureOptions & (1u << 16)) != 0;
+        set => SetTextureOption(1u << 16, value);
+    }
+
+    public bool AllowExtendedTextureSourceRect
+    {
+        readonly get => (_textureOptions & (1u << 17)) != 0;
+        set => SetTextureOption(1u << 17, value);
+    }
+
+    public bool HasTextureCubicCoefficients
+    {
+        readonly get => (_textureOptions & (1u << 18)) != 0;
+        set => SetTextureOption(1u << 18, value);
+    }
+
+    public bool SnapTextureToPixels
+    {
+        readonly get => (_textureOptions & (1u << 19)) != 0;
+        set => SetTextureOption(1u << 19, value);
+    }
+
+    public bool HasImageEffect
+    {
+        readonly get => (_textureOptions & (1u << 20)) != 0;
+        set => SetTextureOption(1u << 20, value);
+    }
+
+    internal bool HasBufferedImageEffect
+    {
+        readonly get => (_textureOptions & (1u << 21)) != 0;
+        set => SetTextureOption(1u << 21, value);
+    }
+
+    private void SetTextureOption(uint mask, bool value)
+    {
+        if (value)
+        {
+            _textureOptions |= mask;
+        }
+        else
+        {
+            _textureOptions &= ~mask;
+        }
+    }
 
     public ImageEffectCommandData ImageEffect
     {
@@ -782,8 +1233,16 @@ public struct RenderCommand
     }
 
     // Vector render options
-    public bool IsEdgeAliased;
-    public bool IsPenThicknessLocal;
+    public bool IsEdgeAliased
+    {
+        readonly get => (_textureOptions & (1u << 28)) != 0;
+        set => SetTextureOption(1u << 28, value);
+    }
+    public bool IsPenThicknessLocal
+    {
+        readonly get => (_textureOptions & (1u << 29)) != 0;
+        set => SetTextureOption(1u << 29, value);
+    }
     public uint PathSampleGrid;
     public float PathCoverageGamma;
 
@@ -797,7 +1256,11 @@ public struct RenderCommand
 
     // Polyline properties (Retained for WinUI backward compatibility)
     public Vector2[]? PolylinePoints;
-    public bool IsClosed;
+    public bool IsClosed
+    {
+        readonly get => (_textureOptions & (1u << 30)) != 0;
+        set => SetTextureOption(1u << 30, value);
+    }
 
     // Spline properties (Retained for WinUI backward compatibility)
     public double[]? SplineKnots;
@@ -820,7 +1283,11 @@ public struct RenderCommand
     public int GpuPointsCount;
 
     // GPU Transform properties
-    public bool UseGpuTransforms;
+    public bool UseGpuTransforms
+    {
+        readonly get => (_textureOptions & (1u << 31)) != 0;
+        set => SetTextureOption(1u << 31, value);
+    }
     public Matrix4x4 CameraView;
 
     // GPU Chart scaling parameters
@@ -868,6 +1335,38 @@ public struct RenderCommand
     public int IntParam;
     public float FloatParam;
     public object? DataParam;
+
+    internal readonly bool SupportsRetainedCompositionPicture =>
+        !UseGpuTransforms &&
+        Type != RenderCommandType.DrawVisual &&
+        IsIncrementalScenePageCommandSupported(Type);
+
+    internal static bool IsIncrementalScenePageCommandSupported(
+        RenderCommandType type) =>
+        type is
+            RenderCommandType.DrawRect or
+            RenderCommandType.DrawPath or
+            RenderCommandType.DrawText or
+            RenderCommandType.DrawTexture or
+            RenderCommandType.DrawPicture or
+            RenderCommandType.PushClip or
+            RenderCommandType.PopClip or
+            RenderCommandType.PushOpacity or
+            RenderCommandType.PopOpacity or
+            RenderCommandType.PushBlendMode or
+            RenderCommandType.PopBlendMode or
+            RenderCommandType.DrawLine or
+            RenderCommandType.DrawEllipse or
+            RenderCommandType.DrawCircle or
+            RenderCommandType.DrawRoundedRect or
+            RenderCommandType.DrawBezier or
+            RenderCommandType.DrawCubicBezier or
+            RenderCommandType.DrawPolyline or
+            RenderCommandType.FillTriangle or
+            RenderCommandType.FillQuad or
+            RenderCommandType.DrawGlyphRun or
+            RenderCommandType.DrawVertexMesh or
+            RenderCommandType.DrawPointBatch;
 }
 
 internal enum RetainedCommandDataKind : byte
@@ -967,9 +1466,21 @@ internal readonly struct RetainedTextureCommandData
     private readonly TexturePatch[]? _patches;
     private readonly TextureSamplingMode _samplingMode;
     private readonly byte _maxAnisotropy;
+    private readonly TextureAddressMode _addressModeU;
+    private readonly TextureAddressMode _addressModeV;
+    private readonly float _opacity;
+    private readonly bool _hasOpacity;
+    private readonly bool _allowExtendedSourceRect;
     private readonly Vector2 _cubicCoefficients;
     private readonly bool _hasCubicCoefficients;
     private readonly bool _snapToPixels;
+    private readonly GpuRasterOperation _rasterOperation;
+    private readonly Vector2 _destination0;
+    private readonly Vector2 _destination1;
+    private readonly Vector2 _destination2;
+    private readonly Vector2 _destination3;
+    private readonly Vector4 _destinationProjectiveWeights;
+    private readonly bool _hasDestinationQuad;
     private readonly bool _hasImageEffect;
     private readonly ImageEffectCommandDataBox? _inlineImageEffect;
     private readonly int _imageEffectBufferIndex;
@@ -982,9 +1493,21 @@ internal readonly struct RetainedTextureCommandData
         _patches = command.TexturePatches;
         _samplingMode = command.TextureSamplingMode;
         _maxAnisotropy = command.TextureMaxAnisotropy;
+        _addressModeU = command.TextureAddressModeU;
+        _addressModeV = command.TextureAddressModeV;
+        _opacity = command.TextureOpacity;
+        _hasOpacity = command.HasTextureOpacity;
+        _allowExtendedSourceRect = command.AllowExtendedTextureSourceRect;
         _cubicCoefficients = command.TextureCubicCoefficients;
         _hasCubicCoefficients = command.HasTextureCubicCoefficients;
         _snapToPixels = command.SnapTextureToPixels;
+        _rasterOperation = command.RasterOperation;
+        _destination0 = command.TextureDestination0;
+        _destination1 = command.TextureDestination1;
+        _destination2 = command.TextureDestination2;
+        _destination3 = command.TextureDestination3;
+        _destinationProjectiveWeights = command.TextureDestinationProjectiveWeights;
+        _hasDestinationQuad = command.HasTextureDestinationQuad;
         _hasImageEffect = command.HasImageEffect;
         _inlineImageEffect = command.InlineImageEffectBox;
         _imageEffectBufferIndex = command.ImageEffectBufferIndex;
@@ -998,9 +1521,21 @@ internal readonly struct RetainedTextureCommandData
         command.TexturePatches = _patches;
         command.TextureSamplingMode = _samplingMode;
         command.TextureMaxAnisotropy = _maxAnisotropy;
+        command.TextureAddressModeU = _addressModeU;
+        command.TextureAddressModeV = _addressModeV;
+        command.TextureOpacity = _opacity;
+        command.HasTextureOpacity = _hasOpacity;
+        command.AllowExtendedTextureSourceRect = _allowExtendedSourceRect;
         command.TextureCubicCoefficients = _cubicCoefficients;
         command.HasTextureCubicCoefficients = _hasCubicCoefficients;
         command.SnapTextureToPixels = _snapToPixels;
+        command.RasterOperation = _rasterOperation;
+        command.TextureDestination0 = _destination0;
+        command.TextureDestination1 = _destination1;
+        command.TextureDestination2 = _destination2;
+        command.TextureDestination3 = _destination3;
+        command.TextureDestinationProjectiveWeights = _destinationProjectiveWeights;
+        command.HasTextureDestinationQuad = _hasDestinationQuad;
         command.HasImageEffect = _hasImageEffect;
         command.InlineImageEffectBox = _inlineImageEffect;
         command.ImageEffectBufferIndex = _imageEffectBufferIndex;
@@ -1021,6 +1556,8 @@ internal readonly struct RetainedRenderCommand
     private readonly RenderCommandPresentationDependencies _presentationDependencies;
     private readonly bool _isEdgeAliased;
     private readonly bool _isPenThicknessLocal;
+    private readonly bool _isImageHitTestScope;
+    private readonly bool _isSourceOpacityScope;
     private readonly uint _pathSampleGrid;
     private readonly float _pathCoverageGamma;
 
@@ -1030,6 +1567,8 @@ internal readonly struct RetainedRenderCommand
     {
         _type = command.Type;
         _hitTestId = command.HitTestId;
+        _isImageHitTestScope = command.IsImageHitTestScope;
+        _isSourceOpacityScope = command.IsSourceOpacityScope;
         _rect = command.Rect;
         _brush = command.Brush;
         _pen = command.Pen;
@@ -1049,6 +1588,8 @@ internal readonly struct RetainedRenderCommand
         {
             Type = _type,
             HitTestId = _hitTestId,
+            IsImageHitTestScope = _isImageHitTestScope,
+            IsSourceOpacityScope = _isSourceOpacityScope,
             Rect = _rect,
             Brush = _brush,
             Pen = _pen,
@@ -1072,7 +1613,9 @@ internal readonly struct RetainedRenderCommand
                 if (IsSimpleTexture(
                     in command,
                     HasTextData(in command),
-                    HasOtherData(in command)))
+                    HasOtherData(
+                        in command,
+                        allowTextureRasterOperation: command.RasterOperation.IsEnabled)))
                 {
                     return RetainedCommandDataKind.SimpleTexture;
                 }
@@ -1108,7 +1651,9 @@ internal readonly struct RetainedRenderCommand
 
         bool hasText = HasTextData(in command);
         bool hasTexture = HasTextureData(in command);
-        bool hasOther = HasOtherData(in command);
+        bool hasOther = HasOtherData(
+            in command,
+            allowTextureRasterOperation: command.RasterOperation.IsEnabled);
 
         if (IsNoDataCommand(in command, hasText, hasTexture, hasOther))
         {
@@ -1237,7 +1782,9 @@ internal readonly struct RetainedRenderCommand
         command.GeometryCache is null &&
         command.TexturePatches is null &&
         !command.HasTextureCubicCoefficients &&
+        !command.HasTextureDestinationQuad &&
         !command.HasImageEffect &&
+        !command.RasterOperation.IsEnabled &&
         command.InlineImageEffectBox is null &&
         command.ImageEffectBufferIndex == 0 &&
         !command.HasBufferedImageEffect &&
@@ -1390,9 +1937,21 @@ internal readonly struct RetainedRenderCommand
         command.TexturePatches is not null ||
         command.TextureSamplingMode != default ||
         command.TextureMaxAnisotropy != 0 ||
+        command.TextureAddressModeU != default ||
+        command.TextureAddressModeV != default ||
+        command.TextureOpacity != 0f ||
+        command.HasTextureOpacity ||
+        command.AllowExtendedTextureSourceRect ||
         command.TextureCubicCoefficients != default ||
         command.HasTextureCubicCoefficients ||
         command.SnapTextureToPixels ||
+        command.RasterOperation.IsEnabled ||
+        command.TextureDestination0 != default ||
+        command.TextureDestination1 != default ||
+        command.TextureDestination2 != default ||
+        command.TextureDestination3 != default ||
+        command.TextureDestinationProjectiveWeights != default ||
+        command.HasTextureDestinationQuad ||
         command.HasImageEffect ||
         command.InlineImageEffectBox is not null ||
         command.ImageEffectBufferIndex != 0 ||
@@ -1402,7 +1961,8 @@ internal readonly struct RetainedRenderCommand
         in RenderCommand command,
         bool allowRadii = false,
         bool allowVisual = false,
-        bool allowIntParam = false) =>
+        bool allowIntParam = false,
+        bool allowTextureRasterOperation = false) =>
         command.Position2 != default ||
         command.Position3 != default ||
         command.Position4 != default ||
@@ -1414,7 +1974,7 @@ internal readonly struct RetainedRenderCommand
         command.SplineKnots is not null ||
         command.SplineWeights is not null ||
         command.SplineDegree != 0 ||
-        command.Position3D1 != default ||
+        (!allowTextureRasterOperation && command.Position3D1 != default) ||
         command.Position3D2 != default ||
         command.Edges3D is not null ||
         command.StaticBuffer is not null ||
@@ -1440,9 +2000,11 @@ internal readonly struct RetainedRenderCommand
         command.VertexMesh is not null ||
         command.VertexColorBlendMode != default ||
         command.ExtensionId != 0 ||
-        (!allowIntParam && command.IntParam != 0) ||
-        command.FloatParam != 0f ||
-        command.DataParam is not null;
+        (!allowIntParam && !allowTextureRasterOperation && command.IntParam != 0) ||
+        (!allowTextureRasterOperation && command.FloatParam != 0f) ||
+        command.DataParam is not null &&
+        (!allowTextureRasterOperation ||
+            command.DataParam is not TilePatternBrush and not GpuRasterTexturePattern);
 }
 
 internal readonly struct RetainedTextRenderCommand
@@ -1494,11 +2056,8 @@ internal readonly struct RetainedSimpleTextureCommand
     private readonly Rect _source;
     private readonly int _hitTestId;
     private readonly int _transformIndex;
-    private readonly RenderCommandPresentationDependencies _presentationDependencies;
-    private readonly byte _samplingMode;
-    private readonly byte _maxAnisotropy;
-    private readonly bool _snapToPixels;
-    private readonly bool _isEdgeAliased;
+    private readonly uint _options;
+    private readonly float _opacity;
 
     public RetainedSimpleTextureCommand(
         in RenderCommand command,
@@ -1509,11 +2068,8 @@ internal readonly struct RetainedSimpleTextureCommand
         _source = command.SrcRect;
         _hitTestId = command.HitTestId;
         _transformIndex = transformIndex;
-        _presentationDependencies = command.PresentationDependencies;
-        _samplingMode = checked((byte)command.TextureSamplingMode);
-        _maxAnisotropy = command.TextureMaxAnisotropy;
-        _snapToPixels = command.SnapTextureToPixels;
-        _isEdgeAliased = command.IsEdgeAliased;
+        _options = PackOptions(in command);
+        _opacity = command.TextureOpacity;
     }
 
     public RenderCommand Expand(Matrix4x4[] transforms) =>
@@ -1525,12 +2081,29 @@ internal readonly struct RetainedSimpleTextureCommand
             Texture = _texture,
             SrcRect = _source,
             Transform = transforms[_transformIndex],
-            PresentationDependencies = _presentationDependencies,
-            TextureSamplingMode = (TextureSamplingMode)_samplingMode,
-            TextureMaxAnisotropy = _maxAnisotropy,
-            SnapTextureToPixels = _snapToPixels,
-            IsEdgeAliased = _isEdgeAliased
+            PresentationDependencies =
+                (RenderCommandPresentationDependencies)((_options >> 16) & 0xffu),
+            TextureSamplingMode = (TextureSamplingMode)(_options & 0x0fu),
+            TextureMaxAnisotropy = (byte)((_options >> 4) & 0xffu),
+            TextureAddressModeU = (TextureAddressMode)((_options >> 12) & 0x03u),
+            TextureAddressModeV = (TextureAddressMode)((_options >> 14) & 0x03u),
+            TextureOpacity = _opacity,
+            HasTextureOpacity = (_options & (1u << 24)) != 0,
+            AllowExtendedTextureSourceRect = (_options & (1u << 25)) != 0,
+            SnapTextureToPixels = (_options & (1u << 26)) != 0,
+            IsEdgeAliased = (_options & (1u << 27)) != 0
         };
+
+    private static uint PackOptions(in RenderCommand command) =>
+        ((uint)command.TextureSamplingMode & 0x0fu) |
+        ((uint)command.TextureMaxAnisotropy << 4) |
+        (((uint)command.TextureAddressModeU & 0x03u) << 12) |
+        (((uint)command.TextureAddressModeV & 0x03u) << 14) |
+        (((uint)command.PresentationDependencies & 0xffu) << 16) |
+        (command.HasTextureOpacity ? 1u << 24 : 0u) |
+        (command.AllowExtendedTextureSourceRect ? 1u << 25 : 0u) |
+        (command.SnapTextureToPixels ? 1u << 26 : 0u) |
+        (command.IsEdgeAliased ? 1u << 27 : 0u);
 }
 
 internal readonly struct RetainedSimpleRectangleCommand
@@ -1632,6 +2205,7 @@ internal readonly struct RetainedRectangleClipCommand
 {
     private readonly Rect _rectangle;
     private readonly int _transformIndex;
+    private readonly bool _isImageHitTestScope;
 
     public RetainedRectangleClipCommand(
         in RenderCommand command,
@@ -1639,14 +2213,19 @@ internal readonly struct RetainedRectangleClipCommand
     {
         _rectangle = command.Rect;
         _transformIndex = transformIndex;
+        _isImageHitTestScope = command.IsImageHitTestScope;
     }
 
     public RenderCommand Expand(Matrix4x4[] transforms) =>
+        Expand(in transforms[_transformIndex]);
+
+    public RenderCommand Expand(in Matrix4x4 transform) =>
         new()
         {
             Type = RenderCommandType.PushClip,
             Rect = _rectangle,
-            Transform = transforms[_transformIndex]
+            Transform = transform,
+            IsImageHitTestScope = _isImageHitTestScope
         };
 }
 
@@ -1761,10 +2340,12 @@ internal readonly struct RetainedScalarStateCommand
 {
     private readonly RenderCommandType _type;
     private readonly int _value;
+    private readonly bool _isSourceOpacityScope;
 
     public RetainedScalarStateCommand(in RenderCommand command)
     {
         _type = command.Type;
+        _isSourceOpacityScope = command.IsSourceOpacityScope;
         _value = command.Type == RenderCommandType.PushOpacity
             ? BitConverter.SingleToInt32Bits(command.FontSize)
             : command.IntParam;
@@ -1775,7 +2356,8 @@ internal readonly struct RetainedScalarStateCommand
             ? new RenderCommand
             {
                 Type = _type,
-                FontSize = BitConverter.Int32BitsToSingle(_value)
+                FontSize = BitConverter.Int32BitsToSingle(_value),
+                IsSourceOpacityScope = _isSourceOpacityScope
             }
             : new RenderCommand
             {
@@ -1818,6 +2400,9 @@ internal readonly struct RetainedSimpleRoundedRectangleCommand
     }
 
     public RenderCommand Expand(Matrix4x4[] transforms) =>
+        Expand(in transforms[_transformIndex]);
+
+    public RenderCommand Expand(in Matrix4x4 transform) =>
         new()
         {
             Type = RenderCommandType.DrawRoundedRect,
@@ -1827,7 +2412,7 @@ internal readonly struct RetainedSimpleRoundedRectangleCommand
             Pen = _pen,
             RadiusX = _radiusX,
             RadiusY = _radiusY,
-            Transform = transforms[_transformIndex],
+            Transform = transform,
             PresentationDependencies = _presentationDependencies,
             IsEdgeAliased = _isEdgeAliased,
             IsPenThicknessLocal = _isPenThicknessLocal,
@@ -1886,11 +2471,17 @@ internal sealed class GpuPictureCommandCollection : IReadOnlyList<RenderCommand>
     private readonly RetainedSimpleVisualCommand[] _simpleVisuals;
     private readonly Matrix4x4[] _transforms;
     private readonly Visual[] _embeddedVisuals;
+    // Optional O(1)-indexed sidecar keeps all existing compact raster formats.
+    // Ordinary pictures allocate no source-geometry metadata array.
+    private readonly SourceHitTestGeometry[]? _sourceHitGeometry;
+
+    internal bool SupportsRetainedCompositionPicture { get; }
 
     internal GpuPictureCommandCollection(ReadOnlySpan<RenderCommand> commands)
     {
         if (commands.IsEmpty)
         {
+            SupportsRetainedCompositionPicture = true;
             _order = [];
             _basic = [];
             _auxiliary = [];
@@ -1924,6 +2515,7 @@ internal sealed class GpuPictureCommandCollection : IReadOnlyList<RenderCommand>
         int simpleRoundedRectangleCount = 0;
         int simpleVisualCount = 0;
         int embeddedVisualCount = 0;
+        bool supportsRetainedCompositionPicture = true;
         byte[] classifications =
             ArrayPool<byte>.Shared.Rent(commands.Length);
         int[] transformIndices =
@@ -1939,6 +2531,13 @@ internal sealed class GpuPictureCommandCollection : IReadOnlyList<RenderCommand>
             int transformCount = 0;
             for (int index = 0; index < commands.Length; index++)
             {
+                if (commands[index].SourceHitGeometry.Kind != SourceHitTestGeometryKind.None)
+                {
+                    _sourceHitGeometry ??= new SourceHitTestGeometry[commands.Length];
+                    _sourceHitGeometry[index] = commands[index].SourceHitGeometry;
+                }
+                supportsRetainedCompositionPicture &=
+                    commands[index].SupportsRetainedCompositionPicture;
                 RetainedCommandDataKind dataKind =
                     RetainedRenderCommand.Classify(in commands[index]);
                 classifications[index] = (byte)dataKind;
@@ -1998,6 +2597,9 @@ internal sealed class GpuPictureCommandCollection : IReadOnlyList<RenderCommand>
                     embeddedVisualCount++;
                 }
             }
+
+            SupportsRetainedCompositionPicture =
+                supportsRetainedCompositionPicture;
 
             _order = new uint[commands.Length];
             _basic = basicCount == 0
@@ -2190,7 +2792,7 @@ internal sealed class GpuPictureCommandCollection : IReadOnlyList<RenderCommand>
             uint token = _order[index];
             var dataKind = (RetainedCommandDataKind)(token >> TokenKindShift);
             int dataIndex = (int)(token & TokenIndexMask);
-            return dataKind switch
+            var command = dataKind switch
             {
                 RetainedCommandDataKind.Basic =>
                     _basic[dataIndex].Expand(_transforms),
@@ -2224,10 +2826,13 @@ internal sealed class GpuPictureCommandCollection : IReadOnlyList<RenderCommand>
                 _ => throw new InvalidOperationException(
                     $"Unknown retained command data kind: {dataKind}.")
             };
+            if (_sourceHitGeometry is not null) command.SourceHitGeometry = _sourceHitGeometry[index];
+            return command;
         }
     }
 
     internal long ApproximateStorageBytes =>
+        (long)(_sourceHitGeometry?.Length ?? 0) * System.Runtime.CompilerServices.Unsafe.SizeOf<SourceHitTestGeometry>() +
         (long)_order.Length * sizeof(uint) +
         (long)_basic.Length *
             System.Runtime.CompilerServices.Unsafe.SizeOf<RetainedRenderCommand>() +
@@ -2493,13 +3098,29 @@ public class GpuPicture :
     private readonly ImageEffectCommandData[] _imageEffectBuffer;
     private readonly RetainedResourceLease[] _retainedResources;
     private bool _disposed;
+    private int _ownerReleased;
+    private int _lifetimeReferenceCount;
+    private int _disposeStarted;
 
+    internal bool IsDisposed => _disposed;
     public int RetainedResourceCount => _retainedResources.Length;
     internal int ImageEffectCount => _imageEffectBuffer.Length;
     internal GpuPictureCommandCollection RetainedCommands =>
         _retainedCommands;
+    internal bool SupportsRetainedCompositionPicture =>
+        _retainedCommands.SupportsRetainedCompositionPicture;
     internal long CommandStorageBytes =>
         _retainedCommands.ApproximateStorageBytes;
+
+    /// <summary>
+    /// Returns whether two pictures share the same immutable retained command
+    /// storage. Clones share storage while owning independent resource leases.
+    /// Hosts can use this identity check to avoid invalidating a visual when a
+    /// short-lived ownership clone replaces an otherwise identical picture.
+    /// </summary>
+    public bool SharesRetainedCommandStorageWith(GpuPicture? other) =>
+        other is not null &&
+        ReferenceEquals(_retainedCommands, other._retainedCommands);
 
     public GpuPicture(
         RenderCommand[] commands,
@@ -2570,6 +3191,16 @@ public class GpuPicture :
 
     public GpuPicture Clone()
     {
+        if (Volatile.Read(ref _ownerReleased) != 0)
+        {
+            throw new ObjectDisposedException(nameof(GpuPicture));
+        }
+
+        return CloneRetained();
+    }
+
+    internal GpuPicture CloneRetained()
+    {
         if (_disposed)
         {
             throw new ObjectDisposedException(nameof(GpuPicture));
@@ -2635,6 +3266,24 @@ public class GpuPicture :
         }
     }
 
+    internal IDisposable RetainLifetime()
+    {
+        if (Volatile.Read(ref _ownerReleased) != 0 ||
+            Volatile.Read(ref _disposeStarted) != 0)
+        {
+            throw new ObjectDisposedException(nameof(GpuPicture));
+        }
+        Interlocked.Increment(ref _lifetimeReferenceCount);
+        if (Volatile.Read(ref _ownerReleased) == 0 &&
+            Volatile.Read(ref _disposeStarted) == 0)
+        {
+            return new LifetimeLease(this);
+        }
+
+        ReleaseLifetime();
+        throw new ObjectDisposedException(nameof(GpuPicture));
+    }
+
     private static bool HasRetainedResourceIdentity(
         List<RetainedResourceLease> resources,
         object identity)
@@ -2652,13 +3301,44 @@ public class GpuPicture :
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _ownerReleased, 1) != 0)
+        {
+            return;
+        }
+
+        TryCompleteDispose();
+    }
+
+    private void ReleaseLifetime()
+    {
+        int remaining = Interlocked.Decrement(ref _lifetimeReferenceCount);
+        if (remaining < 0)
+        {
+            throw new InvalidOperationException(
+                "A retained GPU picture lifetime reference was released more than once.");
+        }
+        TryCompleteDispose();
+    }
+
+    private void TryCompleteDispose()
+    {
+        if (Volatile.Read(ref _ownerReleased) == 0 ||
+            Volatile.Read(ref _lifetimeReferenceCount) != 0 ||
+            Interlocked.Exchange(ref _disposeStarted, 1) != 0)
         {
             return;
         }
 
         _disposed = true;
         DisposeRetainedResources(_retainedResources);
+    }
+
+    private sealed class LifetimeLease(GpuPicture picture) : IDisposable
+    {
+        private GpuPicture? _picture = picture;
+
+        public void Dispose() =>
+            Interlocked.Exchange(ref _picture, null)?.ReleaseLifetime();
     }
 
     private static void DisposeRetainedResources(RetainedResourceLease[] resources)
@@ -2682,6 +3362,12 @@ public class GpuPictureRecorder
 
     public GpuPicture EndRecording()
     {
+        if (TryCloneSingleIdentityPicture(out GpuPicture? flattened))
+        {
+            _recordingContext.Clear();
+            return flattened;
+        }
+
         var picture = new GpuPicture(
             _recordingContext.Commands.AsSpan(),
             CopyList(_recordingContext.PointBuffer),
@@ -2693,6 +3379,31 @@ public class GpuPictureRecorder
         );
         _recordingContext.Clear();
         return picture;
+    }
+
+    private bool TryCloneSingleIdentityPicture(out GpuPicture picture)
+    {
+        picture = null!;
+        if (_recordingContext.Commands.Count != 1 ||
+            _recordingContext.HasCommandSideBuffers)
+        {
+            return false;
+        }
+
+        RenderCommand command = _recordingContext.Commands[0];
+        GpuPicture? child = command.Picture;
+        if (command.Type != RenderCommandType.DrawPicture ||
+            child is null ||
+            command.UseGpuTransforms ||
+            command.Transform != default ||
+            _recordingContext.RetainedResourceCount !=
+                child.RetainedResourceCount + 1)
+        {
+            return false;
+        }
+
+        picture = child.CloneRetained();
+        return true;
     }
 
     private static T[] CopyList<T>(List<T> values)
@@ -3234,6 +3945,48 @@ public class DrawingContext :
     }
 
     /// <summary>
+    /// Adds an independent reference to a texture lease already retained by this
+    /// context to <paramref name="destination"/>. No GPU work or resource lookup is
+    /// performed; the method is O(R) for the bounded retained-resource lists.
+    /// </summary>
+    public bool TryShareRetainedTexture(
+        GpuTexture texture,
+        DrawingContext destination)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        ArgumentNullException.ThrowIfNull(destination);
+        if (texture.IsDisposed || _retainedResources is null)
+        {
+            return false;
+        }
+        if (destination.HasRetainedResourceIdentity(texture))
+        {
+            return true;
+        }
+        for (int index = 0; index < _retainedResources.Count; index++)
+        {
+            RetainedResourceLease resource = _retainedResources[index];
+            if (!ReferenceEquals(resource.Identity, texture))
+            {
+                continue;
+            }
+            RetainedResourceLease shared = resource.AddRef();
+            try
+            {
+                (destination._retainedResources ??=
+                    new List<RetainedResourceLease>()).Add(shared);
+            }
+            catch
+            {
+                shared.Dispose();
+                throw;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Retains the current texture from <paramref name="source"/> for deferred
     /// command replay. A context keeps at most one lease for a given texture,
     /// so repeated draws reuse both the texture and its lifetime token.
@@ -3351,6 +4104,36 @@ public class DrawingContext :
                 .Add(RetainedResourceLease.Create(lease, leasedTexture));
         }
 
+        texture = leasedTexture;
+        return true;
+    }
+
+    /// <summary>
+    /// Transfers an already acquired texture lease into this retained drawing
+    /// context without selecting a consumer device. Device compatibility remains
+    /// validated when the retained picture is compiled or submitted.
+    /// </summary>
+    public bool TryRetainTextureLease(
+        IProGpuTextureLease textureLease,
+        out GpuTexture texture)
+    {
+        ArgumentNullException.ThrowIfNull(textureLease);
+        GpuTexture leasedTexture = textureLease.Texture;
+        if (leasedTexture is null || leasedTexture.IsDisposed)
+        {
+            textureLease.Dispose();
+            texture = null!;
+            return false;
+        }
+        if (HasRetainedResourceIdentity(leasedTexture))
+        {
+            textureLease.Dispose();
+        }
+        else
+        {
+            (_retainedResources ??= new List<RetainedResourceLease>())
+                .Add(RetainedResourceLease.Create(textureLease, leasedTexture));
+        }
         texture = leasedTexture;
         return true;
     }
@@ -3901,6 +4684,62 @@ public class DrawingContext :
             fontSkewX);
     }
 
+    /// <summary>
+    /// Records a transformed range of an existing shaped glyph stream without
+    /// allocating sliced arrays. Glyph positions remain outside the local font
+    /// stretch and shear, matching <see cref="DrawTransformedGlyphRun"/>.
+    /// </summary>
+    public void DrawTransformedGlyphRunRange(
+        ushort[] glyphIndices,
+        Vector2[] glyphPositions,
+        int glyphRangeStart,
+        int glyphRangeCount,
+        TtfFont font,
+        float fontSize,
+        Brush brush,
+        Vector2 position,
+        Matrix4x4 transform = default,
+        bool isBold = false,
+        bool isItalic = false,
+        TextRenderingMode textRenderingMode = TextRenderingMode.Grayscale,
+        TextHintingMode textHintingMode = TextHintingMode.Auto,
+        bool useVectorGlyphRendering = false,
+        bool preferGlyphAtlas = false,
+        bool useLogicalGlyphAtlasResolution = false,
+        float fontScaleX = 1f,
+        float fontSkewX = 0f)
+    {
+        ArgumentNullException.ThrowIfNull(glyphIndices);
+        ArgumentNullException.ThrowIfNull(glyphPositions);
+        ArgumentOutOfRangeException.ThrowIfNegative(glyphRangeStart);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(glyphRangeCount);
+        if (glyphRangeStart > glyphIndices.Length - glyphRangeCount ||
+            glyphRangeStart > glyphPositions.Length - glyphRangeCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(glyphRangeCount));
+        }
+
+        AddGlyphRun(
+            glyphIndices,
+            glyphPositions,
+            glyphRangeStart,
+            glyphRangeCount,
+            font,
+            fontSize,
+            brush,
+            position,
+            transform,
+            isBold,
+            isItalic,
+            textRenderingMode,
+            textHintingMode,
+            useVectorGlyphRendering,
+            preferGlyphAtlas,
+            useLogicalGlyphAtlasResolution,
+            fontScaleX,
+            fontSkewX);
+    }
+
     private void AddGlyphRun(
         ushort[] glyphIndices,
         Vector2[] glyphPositions,
@@ -4002,11 +4841,16 @@ public class DrawingContext :
     }
 
     public void PushOpacity(float opacity)
+        => PushOpacity(opacity, affectsHitTesting: true);
+
+    /// <summary>Records pixel opacity and an independent source input policy.</summary>
+    public void PushOpacity(float opacity, bool affectsHitTesting)
     {
         Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.PushOpacity,
-            FontSize = opacity
+            FontSize = opacity,
+            IsSourceOpacityScope = !affectsHitTesting
         });
     }
 
@@ -4032,6 +4876,39 @@ public class DrawingContext :
             Path = geometry,
             Transform = transform
         });
+    }
+
+    /// <summary>
+    /// Records an exact analytic ellipse clip in local coordinates. Pair with
+    /// PopGeometryClip. Geometry is retained; recording does not initialize a
+    /// device or submit work. The transform stays on the command.
+    /// </summary>
+    public void PushEllipseClip(Vector2 center, float radiusX, float radiusY, Matrix4x4 transform = default)
+    {
+        if (!float.IsFinite(center.X) || !float.IsFinite(center.Y)
+            || !float.IsFinite(radiusX) || !float.IsFinite(radiusY) || radiusX <= 0 || radiusY <= 0
+            || !float.IsFinite(center.X + radiusX) || !float.IsFinite(center.X - radiusX)
+            || !float.IsFinite(center.Y + radiusY) || !float.IsFinite(center.Y - radiusY))
+            throw new ArgumentOutOfRangeException(nameof(radiusX), "Ellipse clip coordinates and positive radii must be finite.");
+        PushGeometryClip(PrimitivePathGeometry.CreateEllipse(center, radiusX, radiusY), transform);
+    }
+
+    /// <summary>
+    /// Records a rounded rectangle clip with analytic corner arcs. Radii clamp
+    /// to half the extent; a zero radius axis produces a rectangle. Pair with
+    /// PopGeometryClip. Recording is bounded CPU setup with no GPU submission.
+    /// </summary>
+    public void PushRoundedRectangleClip(Rect bounds, float radiusX, float radiusY, Matrix4x4 transform = default)
+    {
+        if (!float.IsFinite(bounds.X) || !float.IsFinite(bounds.Y)
+            || !float.IsFinite(bounds.Width) || !float.IsFinite(bounds.Height)
+            || !float.IsFinite(bounds.X + bounds.Width) || !float.IsFinite(bounds.Y + bounds.Height)
+            || bounds.Width <= 0 || bounds.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(bounds));
+        if (!float.IsFinite(radiusX) || !float.IsFinite(radiusY) || radiusX < 0 || radiusY < 0)
+            throw new ArgumentOutOfRangeException(nameof(radiusX));
+        PushGeometryClip(PrimitivePathGeometry.CreateRoundedRectangle(bounds.X, bounds.Y,
+            bounds.Width, bounds.Height, radiusX, radiusY), transform);
     }
 
     public void PopGeometryClip()
@@ -4062,11 +4939,193 @@ public class DrawingContext :
         });
     }
 
+    /// <summary>
+    /// Records a cached source as an alpha mask. The source mapping is local to
+    /// the mask; transform positions both the mask bounds and the source in the
+    /// parent scene. A recording-owned picture retains the source independently
+    /// of the caller's lease. Pair with PopOpacityMask. No GPU work occurs here.
+    /// </summary>
+    public void PushCachedPictureOpacityMask(CachedPictureLease source, Rect bounds,
+        Matrix4x4 sourceTransform = default, float opacity = 1, Matrix4x4 transform = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (!float.IsFinite(bounds.X) || !float.IsFinite(bounds.Y)
+            || !float.IsFinite(bounds.Width) || !float.IsFinite(bounds.Height)
+            || !float.IsFinite(bounds.Right) || !float.IsFinite(bounds.Bottom)
+            || bounds.Width <= 0 || bounds.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(bounds));
+        if (!float.IsFinite(opacity) || opacity < 0 || opacity > 1)
+            throw new ArgumentOutOfRangeException(nameof(opacity));
+        if (!IsFiniteMaskTransform(sourceTransform) || !IsFiniteMaskTransform(transform))
+            throw new ArgumentOutOfRangeException(nameof(sourceTransform));
+
+        var recorder = new GpuPictureRecorder();
+        var recording = recorder.BeginRecording(bounds);
+        GpuPicture picture;
+        try
+        {
+            if (opacity != 1) recording.PushOpacity(opacity);
+            recording.DrawCachedPicture(source, sourceTransform);
+            if (opacity != 1) recording.PopOpacity();
+            picture = recorder.EndRecording();
+        }
+        finally { recording.Clear(); }
+
+        PushOwnedOpacityMaskPicture(picture, bounds, transform);
+    }
+
+    /// <summary>
+    /// Paints a shared cached source through retained alpha coverage. Coverage
+    /// can contain glyphs, strokes or other scene commands. Caller resources
+    /// are independently leased; recording never submits GPU work or reads pixels.
+    /// </summary>
+    public void DrawCachedPictureWithCoverage(CachedPictureLease source, GpuPicture coverage, Rect bounds,
+        Matrix4x4 sourceTransform = default, float opacity = 1, Matrix4x4 transform = default)
+    {
+        ArgumentNullException.ThrowIfNull(coverage);
+        var placement = ValidateCachedCoverage(source, bounds, sourceTransform, opacity, transform);
+        PushOwnedOpacityMaskPicture(coverage.Clone(), bounds, transform);
+        DrawCachedCoverageSource(source, placement, opacity);
+    }
+
+    /// <summary>
+    /// Paints a cached source through the ordinary retained path stroker. Pen
+    /// geometry state is snapshotted, but its material is replaced by opaque
+    /// coverage; source alpha and consumer opacity are applied exactly once.
+    /// </summary>
+    /// <remarks>
+    /// Bounds must enclose the stroked ink in path coordinates before transform,
+    /// including caps, joins and dashes. They are not inferred from fill bounds.
+    /// The caller retains immutable path geometry as for DrawPath. Source mapping
+    /// applies before the outer transform, which positions both coverage and paint.
+    /// Recording creates no picture wrapper, dash copy, CPU pixels or GPU work.
+    /// Hairline/fixed-width callers must supply bounds qualified for their target
+    /// transform and DPI. Ordinary non-positive widths produce no commands.
+    /// </remarks>
+    public void DrawCachedPictureStroke(CachedPictureLease source, PathGeometry path, Pen pen, Rect bounds,
+        Matrix4x4 sourceTransform = default, float opacity = 1, Matrix4x4 transform = default)
+        => DrawCachedPictureStroke(source, path, pen, bounds, sourceTransform, opacity, transform, false);
+
+    /// <summary>Records cached stroke coverage with explicit edge antialiasing policy.</summary>
+    public void DrawCachedPictureStroke(CachedPictureLease source, PathGeometry path, Pen pen, Rect bounds,
+        Matrix4x4 sourceTransform, float opacity, Matrix4x4 transform, bool isEdgeAliased)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(pen);
+        var placement = ValidateCachedCoverage(source, bounds, sourceTransform, opacity, transform);
+        if (!float.IsFinite(pen.Thickness)) throw new ArgumentOutOfRangeException(nameof(pen));
+        if ((!pen.IsHairline && pen.Thickness <= 0) || opacity == 0) return;
+        // Do not share a mutable static brush with caller-visible command data.
+        var coveragePen = pen.WithBrush(new SolidColorBrush(Vector4.One));
+        PushOpacityMask(path, coveragePen, bounds, transform, isEdgeAliased);
+        DrawCachedCoverageSource(source, placement, opacity);
+    }
+
+    /// <summary>
+    /// Paints a cached source through one retained filled coverage path. Compound
+    /// stroke outlines use this for directed terminal caps so overlapping pieces
+    /// are rasterized with one fill rule instead of alpha-blended separately.
+    /// </summary>
+    public void DrawCachedPictureFillCoverage(CachedPictureLease source, PathGeometry coverage, Rect bounds,
+        Matrix4x4 sourceTransform = default, float opacity = 1, Matrix4x4 transform = default,
+        bool isEdgeAliased = false)
+    {
+        ArgumentNullException.ThrowIfNull(coverage);
+        var placement = ValidateCachedCoverage(source, bounds, sourceTransform, opacity, transform);
+        if (opacity == 0) return;
+        var recorder = new GpuPictureRecorder();
+        var recording = recorder.BeginRecording(bounds);
+        GpuPicture picture;
+        try
+        {
+            recording.Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.DrawPath,
+                Path = coverage,
+                Brush = new SolidColorBrush(Vector4.One),
+                IsEdgeAliased = isEdgeAliased,
+                GeometryCache = RenderCommandGeometryCache.ForPath(coverage)
+            });
+            picture = recorder.EndRecording();
+        }
+        finally { recording.Clear(); }
+        PushOwnedOpacityMaskPicture(picture, bounds, transform);
+        DrawCachedCoverageSource(source, placement, opacity);
+    }
+
+    private void DrawCachedCoverageSource(CachedPictureLease source, Matrix4x4 placement, float opacity)
+    {
+        if (opacity != 1) PushOpacity(opacity);
+        DrawCachedPicture(source, placement);
+        if (opacity != 1) PopOpacity();
+        PopOpacityMask();
+    }
+
+    private static Matrix4x4 ValidateCachedCoverage(CachedPictureLease source, Rect bounds,
+        Matrix4x4 sourceTransform, float opacity, Matrix4x4 transform)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (!float.IsFinite(bounds.X) || !float.IsFinite(bounds.Y)
+            || !float.IsFinite(bounds.Width) || !float.IsFinite(bounds.Height)
+            || !float.IsFinite(bounds.Right) || !float.IsFinite(bounds.Bottom)
+            || bounds.Width <= 0 || bounds.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(bounds));
+        if (!float.IsFinite(opacity) || opacity < 0 || opacity > 1)
+            throw new ArgumentOutOfRangeException(nameof(opacity));
+        if (!IsFiniteMaskTransform(sourceTransform) || !IsFiniteMaskTransform(transform))
+            throw new ArgumentOutOfRangeException(nameof(sourceTransform));
+        _ = source.Picture.GetVisual();
+        var placement = (sourceTransform == default ? Matrix4x4.Identity : sourceTransform)
+            * (transform == default ? Matrix4x4.Identity : transform);
+        if (!IsFiniteMaskTransform(placement)) throw new ArgumentOutOfRangeException(nameof(transform));
+        return placement;
+    }
+
+    private void PushOwnedOpacityMaskPicture(GpuPicture picture, Rect bounds, Matrix4x4 transform)
+    {
+        // Own the complete mask recording, not merely a borrowed GpuPicture.
+        // Parent snapshots share this lease until their final disposal.
+        var owned = RetainedResourceLease.Create(picture, picture);
+        var resources = _retainedResources ??= new List<RetainedResourceLease>();
+        try { resources.Add(owned); }
+        catch { owned.Dispose(); throw; }
+        try
+        {
+            Commands.Add(new RenderCommand
+            {
+                Type = RenderCommandType.PushOpacityMask,
+                Picture = picture,
+                Rect = bounds,
+                Transform = transform
+            });
+        }
+        catch
+        {
+            resources.RemoveAt(resources.Count - 1);
+            owned.Dispose();
+            throw;
+        }
+    }
+
+    private static bool IsFiniteMaskTransform(Matrix4x4 value) =>
+        float.IsFinite(value.M11) && float.IsFinite(value.M12) && float.IsFinite(value.M13) && float.IsFinite(value.M14)
+        && float.IsFinite(value.M21) && float.IsFinite(value.M22) && float.IsFinite(value.M23) && float.IsFinite(value.M24)
+        && float.IsFinite(value.M31) && float.IsFinite(value.M32) && float.IsFinite(value.M33) && float.IsFinite(value.M34)
+        && float.IsFinite(value.M41) && float.IsFinite(value.M42) && float.IsFinite(value.M43) && float.IsFinite(value.M44);
+
     public void PushOpacityMask(
         PathGeometry geometry,
         Pen pen,
         Rect bounds,
         Matrix4x4 transform)
+        => PushOpacityMask(geometry, pen, bounds, transform, false);
+
+    public void PushOpacityMask(
+        PathGeometry geometry,
+        Pen pen,
+        Rect bounds,
+        Matrix4x4 transform,
+        bool isEdgeAliased)
     {
         ArgumentNullException.ThrowIfNull(geometry);
         ArgumentNullException.ThrowIfNull(pen);
@@ -4078,6 +5137,7 @@ public class DrawingContext :
             Rect = bounds,
             Transform = transform,
             IsPenThicknessLocal = true,
+            IsEdgeAliased = isEdgeAliased,
             GeometryCache = RenderCommandGeometryCache.ForStrokePath(geometry)
         });
     }
@@ -4230,6 +5290,82 @@ public class DrawingContext :
             Position2 = phase,
             RadiusX = spacing,
             RadiusY = radius
+        });
+    }
+
+    /// <summary>
+    /// Records an affine rectangular dot grid as one analytic quad. Grid centers
+    /// use local lattice coordinates while the dot radius remains fixed in physical
+    /// framebuffer pixels under rotation, anisotropic scale, and shear.
+    /// </summary>
+    public void DrawDeviceDotGrid(
+        Brush brush,
+        Rect bounds,
+        Vector2 spacing,
+        float radius,
+        Matrix4x4 transform = default)
+    {
+        ArgumentNullException.ThrowIfNull(brush);
+        if (!float.IsFinite(spacing.X) || spacing.X <= 0f ||
+            !float.IsFinite(spacing.Y) || spacing.Y <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(spacing));
+        }
+        if (!float.IsFinite(radius) || radius <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(radius));
+        }
+
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawDeviceDotGrid,
+            Brush = brush,
+            Rect = bounds,
+            Position2 = spacing,
+            RadiusX = radius,
+            Transform = transform
+        });
+    }
+
+    /// <summary>
+    /// Records an affine rectangular line grid as one analytic quad. Minor and
+    /// emphasized major lines retain fixed physical-framebuffer widths under
+    /// rotation, anisotropic scale, and shear.
+    /// </summary>
+    public void DrawDeviceLineGrid(
+        Brush brush,
+        Rect bounds,
+        Vector2 spacing,
+        float minorLineWidth,
+        int minorLinesPerMajorLine,
+        Matrix4x4 transform = default)
+    {
+        ArgumentNullException.ThrowIfNull(brush);
+        if (!float.IsFinite(spacing.X) || spacing.X <= 0f ||
+            !float.IsFinite(spacing.Y) || spacing.Y <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(spacing));
+        }
+        if (!float.IsFinite(minorLineWidth) || minorLineWidth <= 0f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minorLineWidth));
+        }
+        if (minorLinesPerMajorLine is < 1 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minorLinesPerMajorLine));
+        }
+
+        Commands.Add(new RenderCommand
+        {
+            // Keep one stable semantic/native primitive. RadiusY == 0 denotes
+            // dots; a positive integral RadiusY carries the major-line cadence.
+            Type = RenderCommandType.DrawDeviceDotGrid,
+            Brush = brush,
+            Rect = bounds,
+            Position2 = spacing,
+            RadiusX = minorLineWidth,
+            RadiusY = minorLinesPerMajorLine,
+            Transform = transform
         });
     }
 
@@ -4398,19 +5534,26 @@ public class DrawingContext :
 
     public void DrawPointBatch(
         Brush brush,
-        Vector2[] points,
+        ReadOnlySpan<Vector2> points,
         float radius,
         bool round,
         Matrix4x4 transform = default,
         bool isEdgeAliased = false)
     {
         ArgumentNullException.ThrowIfNull(brush);
-        ArgumentNullException.ThrowIfNull(points);
+        int offset = PointBuffer.Count;
+        int count = points.Length;
+        int required = checked(offset + count);
+        if (PointBuffer.Capacity < required)
+            PointBuffer.Capacity = Math.Max(required, PointBuffer.Capacity * 2);
+        CollectionsMarshal.SetCount(PointBuffer, required);
+        points.CopyTo(CollectionsMarshal.AsSpan(PointBuffer).Slice(offset, count));
         Commands.Add(new RenderCommand
         {
             Type = RenderCommandType.DrawPointBatch,
             Brush = brush,
-            PolylinePoints = points,
+            PointBufferOffset = offset,
+            PointBufferCount = count,
             RadiusX = radius,
             IntParam = round ? 1 : 0,
             Transform = transform,
@@ -4632,14 +5775,80 @@ public class DrawingContext :
         });
     }
 
+    /// <summary>
+    /// Records a reference to one shared cached source. The caller owns its
+    /// lifetime and serializes updates with rendering. Recording is O(1), adds
+    /// one command and performs no rasterization or pixel transfer.
+    /// </summary>
+    public void DrawCachedPicture(CachedPicture picture, Matrix4x4 transform = default)
+    {
+        ArgumentNullException.ThrowIfNull(picture);
+        DrawVisual(picture.GetVisual(), transform);
+    }
+
+    /// <summary>
+    /// Records and independently retains a shared source lease. Repeated draws
+    /// retain it once per recording; picture snapshots preserve that ownership.
+    /// </summary>
+    public void DrawCachedPicture(CachedPictureLease lease, Matrix4x4 transform = default)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        CachedPicture picture = lease.Picture;
+        Visual visual = picture.GetVisual();
+        if (!HasRetainedResourceIdentity(picture))
+        {
+            var retained = RetainedResourceLease.Create(lease.Clone(), picture);
+            try { (_retainedResources ??= new List<RetainedResourceLease>()).Add(retained); }
+            catch { retained.Dispose(); throw; }
+        }
+        DrawVisual(visual, transform);
+    }
+
     private void RetainPictureResources(GpuPicture picture)
     {
         ArgumentNullException.ThrowIfNull(picture);
-        if (picture.RetainedResourceCount == 0)
-            return;
+
+        _retainedResources ??= new List<RetainedResourceLease>();
+        if (!HasRetainedResourceIdentity(picture))
+        {
+            IDisposable lifetime = picture.RetainLifetime();
+            try
+            {
+                _retainedResources.Add(
+                    RetainedResourceLease.Create(lifetime, picture));
+            }
+            catch
+            {
+                lifetime.Dispose();
+                throw;
+            }
+        }
 
         picture.AppendRetainedResourcesTo(
-            _retainedResources ??= new List<RetainedResourceLease>());
+            _retainedResources);
+    }
+
+    /// <summary>
+    /// Records one application drawing command. Register the definition with the
+    /// target Window or Compositor before rendering. The payload remains caller
+    /// owned and must stay stable through submission; mutations require visual
+    /// invalidation and any extension-specific generation advance. Bounds are in
+    /// local logical coordinates. This method performs no GPU work or data copy.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void DrawExtension<TData>(DrawingExtension<TData> extension, Rect bounds, TData data, Matrix4x4 transform = default)
+        where TData : class
+    {
+        ArgumentNullException.ThrowIfNull(extension);
+        ArgumentNullException.ThrowIfNull(data);
+        Commands.Add(new RenderCommand
+        {
+            Type = RenderCommandType.DrawExtension,
+            ExtensionId = extension.Id,
+            Rect = bounds,
+            DataParam = data,
+            Transform = transform
+        });
     }
 
     public void DrawExtension(
@@ -4669,6 +5878,27 @@ public class DrawingContext :
     }
 
     // --- Backward Compatible Overloads (Forward to Spans) ---
+
+    public void DrawPointBatch(
+        Brush brush,
+        Vector2[] points,
+        float radius,
+        bool round,
+        Matrix4x4 transform = default,
+        bool isEdgeAliased = false)
+    {
+        ArgumentNullException.ThrowIfNull(points);
+        DrawPointBatch(
+            brush,
+            new ReadOnlySpan<Vector2>(points),
+            radius,
+            round,
+            transform,
+            isEdgeAliased);
+        RenderCommand command = Commands[^1];
+        command.PolylinePoints = points;
+        Commands[^1] = command;
+    }
 
     public void DrawPolyline(Pen pen, Vector2[] points, bool isClosed = false)
     {
@@ -5095,7 +6325,12 @@ public class DrawingContext :
 
     private static void TranslateRectBackedCommand(ref RenderCommand command, Vector2 translation)
     {
-        if (HasNonIdentityTransform(command))
+        if (command.Type == RenderCommandType.DrawTexture &&
+            command.HasTextureDestinationQuad)
+        {
+            ComposeAppendTranslation(ref command, translation);
+        }
+        else if (HasNonIdentityTransform(command))
         {
             ComposeAppendTranslation(ref command, translation);
         }
@@ -5136,6 +6371,7 @@ public class DrawingContext :
             RenderCommandType.DrawVisual or
             RenderCommandType.DrawHatch or
             RenderCommandType.DrawDotGrid or
+            RenderCommandType.DrawDeviceDotGrid or
             RenderCommandType.DrawLine3D or
             RenderCommandType.DrawAcisSolid or
             RenderCommandType.DrawStaticDxf)

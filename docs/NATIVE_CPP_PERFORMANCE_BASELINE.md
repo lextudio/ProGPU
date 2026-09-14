@@ -2715,6 +2715,30 @@ are respectively `00818eafe791a9fd5e09312bc373ab7ccbbafb36bee400b8b285008ae1ca18
 `bb355d0551464352ce8fdcdca887495101cd5343734fc74589f3cf4fbead813d`,
 and `104a10fe1ce6a99fa283af9166a0c084d8237dd89777e09c961490324d9bd61c`.
 
+## Signed-winding execution-policy checkpoint
+
+The signed-winding rerasterization benchmark compares four exact 8x8 Nonzero
+paths against the managed contour oracle on every frame. Four alternating Apple
+M3 Pro/Metal Release runs per execution mode used three warm-ups and 30
+synchronized measurements. The median-of-run native p50/p95 was
+`3.1407/3.3726 ms` for the bounded inline evaluator and `7.7894/9.3647 ms` for
+the vectorized three-stage compatibility pipeline. Inline is 2.48 times faster
+at p50 and 2.78 times faster at p95 and reduces coverage staging from
+`119,844,576` to `165,888` bytes (722.44-fold). Both paths allocated zero
+managed bytes per frame and produced exact full-frame hash `4026F1AF5062CEA5`.
+The fastest/default policy therefore selects inline while the staged route
+remains a typed forced mode with its resolved path reported in metrics. Time
+Profiler and Metal System Trace captures accompany the ignored benchmark JSON
+under `artifacts/performance/signed-winding-simd/`.
+
+Windows 11 ARM64 rebuilt checkpoint `cf0792aa` with strict MSVC `/W4 /WX`
+(315/315 steps), passed 11/11 native/Dawn CTests, and ran both forced modes on
+the Parallels WDDM D3D12 adapter without device loss. Both compared all 518,400
+pixels exactly against managed output with the same hash, reported the forced
+execution path, and retained the same staging-byte counts. The bounded VM p50
+samples were `10.699 ms` inline and `35.3319 ms` staged; they qualify
+correctness and selection only, not physical-D3D12 performance.
+
 ## Native retained-plan shaping optimization checkpoint
 
 The Apple M3 Pro Release text benchmark shapes decoded scalars through the
@@ -2979,3 +3003,122 @@ the final run and PNG SHA-256 values are respectively
 `11ad381e90b25261cc2a4b6b663914e80d926a52c8598dfadd6b37d378ab1dfe`,
 `6ac74aec5d0a6560b6f29d1de2f4aaa1fe637c361cfcb370c6bf8504a27537c7`,
 and `a44d89b517aca672857b29a985adf7ec9313f49230cfb487622b1f0e1d5a0e05`.
+
+## Process-wide WebGPU synchronization checkpoint
+
+Parallel managed renderers previously owned independent outer locks even though
+their wgpu-native devices entered one process-wide internal resource-lock
+graph. A captured deadlock placed queue submission, buffer destruction, and
+texture creation on different native lock edges. The managed backend now shares
+one process synchronization domain for Silk/wgpu-native contexts, includes
+submission and resource lifetime in that domain, and creates a persistent
+texture bind group outside the managed cache lock before race-safe publication.
+Browser and externally provided Dawn devices keep independent domains.
+
+The native C++ renderer receives the same applicable optimization rather than a
+reduced fix: every non-Dawn dispatch owns one process-wide recursive scope.
+Recursion preserves nested renderer/resource helpers while serializing complete
+wgpu-native operations across native engines. The C++ retained resource model
+has no managed bind-group dictionary, so the dictionary lock-order change is
+not applicable there; its equivalent resource-lifetime boundary is covered by
+the dispatch scope. This conclusion was checked against public wgpu device
+locking and queue-polling reports and the public wgpu device implementation,
+including [wgpu discussion 4814](https://github.com/gfx-rs/wgpu/discussions/4814),
+[wgpu issue 5279](https://github.com/gfx-rs/wgpu/issues/5279), and
+[the public device source](https://github.com/gfx-rs/wgpu/blob/trunk/wgpu/src/api/device.rs).
+
+Six alternating fresh-process Apple M3 Pro/Metal Release runs used 384 public-
+picture primitives, 60 warm-ups, and 300 measurements. Median-of-run results
+show no measurable regression:
+
+| Metric | Baseline | Synchronized candidate | Delta |
+|---|---:|---:|---:|
+| Native CPU submission p50 | 0.08775 ms | 0.08440 ms | -3.82% |
+| Managed CPU submission p50 | 0.51930 ms | 0.51825 ms | -0.20% |
+| Native GPU-complete total p50 | 1.61735 ms | 1.60715 ms | -0.63% |
+| Managed GPU-complete total p50 | 2.54845 ms | 2.45995 ms | -3.47% |
+| Stable managed allocation/frame | 0 bytes | 0 bytes | equal |
+
+The deterministic differential retained the existing quality band: maximum
+channel difference was 11/255, three pixels exceeded 3/255, and mean absolute
+channel difference was approximately 0.000311/255. Matched direct-apphost Time
+Profiler captures measured 3.1999 ms/frame baseline and 3.2080 ms/frame
+candidate (+0.25%, treated as noise). Matched Metal System Trace captures
+measured 3.1664 and 3.1677 ms/frame (+0.04%) with exactly 8,434 submissions in
+each run; peak and final tracked Metal allocation were identical. Allocation/
+VM Tracker could not qualify the unsigned direct apphost because the process
+was suspended before recording, so no Instruments native-allocation claim is
+made. The benchmark's own stable managed counter remains the stated zero-byte
+evidence.
+
+Correctness gates include 3,786 managed tests, 240 headless tests, nine native
+CTest executables, the complete native/managed differential matrix, Svg.Skia
+resvg 927/964 with 37 reviewed skips, the unchanged W3C inventory (native
+530/533; ProGPU 486/533 with 44 reviewed differences; three skips in each), the
+remaining 1,147/1,147 lane, and ten explicitly ProGPU-backed parallel passes of
+1,146/1,146 after excluding one unrelated external-font network test. The
+cross-context deadlock did not recur.
+
+## Managed compiled effect-scene ownership checkpoint
+
+An external retained-UI integration exposed a managed-only lifetime mismatch:
+unchanged anisotropic shadow pictures retained correct GPU effect output, but
+their deferred picture leases were moved into a frame-owned list. The compiled
+scene therefore failed closed on every frame and rebuilt 257 draw calls even
+though visual, effect, texture, target, glyph-atlas, and path-atlas generations
+were unchanged. Median scene compilation was approximately `0.75 ms` in the
+original strict redraw capture.
+
+The managed compositor now transfers those leases into compiled-scene
+ownership. Any cache miss releases the old scene leases before compilation;
+successful capture atomically adopts the new leases; disposal releases both
+frame and compiled ownership. Persistent effect textures remain keyed by their
+visual and effect render revision. Stable replay renders the current target
+while skipping only unchanged scene compilation and effect materialization.
+
+The clean-room decision used current primary contracts:
+
+- [Skia `SkPicture`](https://api.skia.org/classSkPicture.html) retains a
+  replayable command sequence with reference-counted lifetime;
+- [Win2D `CacheOutput`](https://microsoft.github.io/Win2D/WinUI2/html/P_Microsoft_Graphics_Canvas_Effects_CompositeEffect_CacheOutput.htm)
+  explicitly retains an unchanged effect result;
+- [Direct2D command lists and effect caching](https://learn.microsoft.com/en-us/windows/win32/api/_direct2d/)
+  separate replayable image commands from cached transform output;
+- [WebRender's rendering overview](https://firefox-source-docs.mozilla.org/gfx/RenderingOverview.html#caching)
+  retains picture slices in invalidation-tracked texture-cache tiles;
+- [Vello's retained-scene direction](https://github.com/linebender/vello/blob/main/doc/vision.md#retained-scene-graph-fragments)
+  couples retained fragments with explicit GPU-resource ownership;
+- [HarfBuzz shape-plan caching](https://harfbuzz.github.io/shaping-plans-and-caching.html)
+  and [Skia shaped text](https://skia.org/docs/dev/design/text_shaper/) were
+  checked and are orthogonal because no shaping, glyph, font, or paragraph
+  identity changes in this correction.
+
+Three alternating fresh-process Apple M3 Pro/Metal pairs then rendered 128
+anisotropic shadows to retained 1280-by-720 BGRA8 GPU textures. The strict lane
+forced a current-target redraw, used 6 warmups, 100 synchronized samples, and
+seven 60-frame batches per process. Median-of-process medians were:
+
+| Metric | ProGPU managed | Skia/Metal reference | ProGPU result |
+|---|---:|---:|---:|
+| Completed batch throughput | 0.3884 ms/frame | 0.4578 ms/frame | 19.5% faster |
+| CPU frame | 0.3895 ms | 0.4538 ms | 16.5% faster |
+| GPU-completion wait | 0.4019 ms | 0.3092 ms | 30.0% higher |
+| Blocking total | 0.7962 ms | 0.7757 ms | 2.6% higher / near parity |
+| Managed scene compilation | 0.0024 ms | not exposed | 99.7% below the original capture |
+
+All 300 measured ProGPU frames report a compiled-scene hit, zero scene upload,
+and no populated-target reuse. The full strict 15-workload matrix is valid in
+all 90 process artifacts with zero unsupported operations: ProGPU wins every
+completed-batch comparison and 14 of 15 blocking-total comparisons. Per-backend
+pixel hashes are stable across all three pairs and the semantic-state hash is
+identical. The remaining shadow completion-fence difference is retained as a
+GPU scheduling investigation; it is not hidden by the stronger throughput and
+CPU results.
+
+Native C++ already satisfies the applicable algorithmic contract through its
+immutable scene/resource generations and retained effect-output cache. The
+real-device semantic effect gate proves one cached composite draw, zero child
+content/effect passes, zero stable upload/allocation, and invalidation on any
+scene/effect/extent/texture-generation change. Because native scenes never
+create the managed frame lease that caused this defect, adding a second C++
+lifetime layer would duplicate ownership rather than apply an optimization.

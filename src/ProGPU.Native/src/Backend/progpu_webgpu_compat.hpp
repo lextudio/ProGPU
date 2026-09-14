@@ -1,12 +1,16 @@
 #pragma once
 
+#include "progpu_native_webgpu_synchronization.hpp"
+
 #include <webgpu.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <new>
+#include <thread>
 
 namespace progpu::native::webgpu {
 
@@ -56,6 +60,7 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(BufferDestroy) \
     X(BufferGetConstMappedRange) \
     X(BufferGetMapState) \
+    X(BufferGetSize) \
     X(BufferMapAsync) \
     X(BufferRelease) \
     X(BufferUnmap) \
@@ -69,12 +74,14 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(CommandEncoderFinish) \
     X(CommandEncoderRelease) \
     X(ComputePassEncoderDispatchWorkgroups) \
+    X(ComputePassEncoderDispatchWorkgroupsIndirect) \
     X(ComputePassEncoderEnd) \
     X(ComputePassEncoderRelease) \
     X(ComputePassEncoderSetBindGroup) \
     X(ComputePassEncoderSetPipeline) \
     X(ComputePipelineRelease) \
     X(DeviceAddRef) \
+    X(DeviceGetLimits) \
     X(DeviceCreateBindGroup) \
     X(DeviceCreateBindGroupLayout) \
     X(DeviceCreateBuffer) \
@@ -106,6 +113,7 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(RenderPassEncoderSetIndexBuffer) \
     X(RenderPassEncoderSetPipeline) \
     X(RenderPassEncoderSetScissorRect) \
+    X(RenderPassEncoderSetViewport) \
     X(RenderPassEncoderSetVertexBuffer) \
     X(RenderBundleEncoderDraw) \
     X(RenderBundleEncoderDrawIndexed) \
@@ -122,6 +130,13 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(ShaderModuleRelease) \
     X(TextureCreateView) \
     X(TextureDestroy) \
+    X(TextureGetDepthOrArrayLayers) \
+    X(TextureGetDimension) \
+    X(TextureGetFormat) \
+    X(TextureGetHeight) \
+    X(TextureGetMipLevelCount) \
+    X(TextureGetSampleCount) \
+    X(TextureGetWidth) \
     X(TextureRelease) \
     X(TextureViewAddRef) \
     X(TextureViewRelease)
@@ -222,6 +237,7 @@ using image_copy_texture = WGPUTexelCopyTextureInfo;
 using texture_data_layout = WGPUTexelCopyBufferLayout;
 using image_copy_buffer = WGPUTexelCopyBufferInfo;
 using buffer_usage_flags = WGPUBufferUsage;
+using texture_usage_flags = WGPUTextureUsage;
 
 inline void instance_add_ref(WGPUInstance instance) noexcept {
     active_dispatch().wgpuInstanceAddRef(instance);
@@ -296,7 +312,8 @@ inline WGPUBufferMapState poll_buffer_map(
     WGPUDevice,
     WGPUBuffer buffer,
     const buffer_map_read_state& state) noexcept {
-#if defined(PROGPU_NATIVE_BROWSER)
+    // Buffer state alone does not prove that the callback has published its
+    // completion. Do not recycle callback storage while it can still write it.
     (void)buffer;
     const auto completion = state.completion.load(std::memory_order_acquire);
     if (completion == buffer_map_pending) {
@@ -305,13 +322,9 @@ inline WGPUBufferMapState poll_buffer_map(
     return completion == buffer_map_succeeded
         ? WGPUBufferMapState_Mapped
         : WGPUBufferMapState_Unmapped;
-#else
-    (void)state;
-    return active_dispatch().wgpuBufferGetMapState(buffer);
-#endif
 }
 
-inline void buffer_map_async(
+inline std::uint64_t buffer_map_async(
     WGPUBuffer buffer,
     WGPUMapMode mode,
     std::uint64_t offset,
@@ -319,13 +332,14 @@ inline void buffer_map_async(
     WGPUBufferMapCallbackInfo callback) noexcept {
 #if defined(PROGPU_NATIVE_BROWSER)
     ::wgpuBufferMapAsync(buffer, mode, offset, size, callback);
+    return 0U;
 #else
-    active_dispatch().wgpuBufferMapAsync(
+    return active_dispatch().wgpuBufferMapAsync(
         buffer,
         mode,
         offset,
         size,
-        callback);
+        callback).id;
 #endif
 }
 
@@ -351,6 +365,12 @@ class dispatch_scope final {
 public:
     explicit dispatch_scope(const dispatch*) noexcept {
     }
+
+    dispatch_scope(const dispatch_scope&) = delete;
+    dispatch_scope& operator=(const dispatch_scope&) = delete;
+
+private:
+    process_render_scope synchronization_scope_;
 };
 
 template<std::size_t Size>
@@ -388,6 +408,7 @@ using image_copy_texture = WGPUImageCopyTexture;
 using texture_data_layout = WGPUTextureDataLayout;
 using image_copy_buffer = WGPUImageCopyBuffer;
 using buffer_usage_flags = WGPUBufferUsageFlags;
+using texture_usage_flags = WGPUTextureUsageFlags;
 
 inline void instance_add_ref(WGPUInstance instance) noexcept {
     wgpuInstanceReference(instance);
@@ -426,7 +447,14 @@ inline bool poll_submission(
         queue,
         submission_index
     };
-    return wgpuDevicePoll(device, wait, &wrapped) != 0U;
+    // Do not enter the pinned runtime's timed blocking wait: it can mistake
+    // its five-second timeout for fence completion (wgpu issue 4589).
+    // Queue-empty is conservative for the validated token and all prior work.
+    return poll_queue_completion(wait,
+        [&]() noexcept { return wgpuDevicePoll(device, false, &wrapped) != 0U; },
+        []() noexcept {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        });
 }
 
 inline WGPUBufferMapState poll_buffer_map(
@@ -479,6 +507,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuBufferGetConstMappedRange)
 #define wgpuBufferGetMapState \
     (::progpu::native::webgpu::active_dispatch().wgpuBufferGetMapState)
+#define wgpuBufferGetSize \
+    (::progpu::native::webgpu::active_dispatch().wgpuBufferGetSize)
 #define wgpuBufferMapAsync \
     (::progpu::native::webgpu::active_dispatch().wgpuBufferMapAsync)
 #define wgpuBufferRelease \
@@ -505,6 +535,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuCommandEncoderRelease)
 #define wgpuComputePassEncoderDispatchWorkgroups \
     (::progpu::native::webgpu::active_dispatch().wgpuComputePassEncoderDispatchWorkgroups)
+#define wgpuComputePassEncoderDispatchWorkgroupsIndirect \
+    (::progpu::native::webgpu::active_dispatch().wgpuComputePassEncoderDispatchWorkgroupsIndirect)
 #define wgpuComputePassEncoderEnd \
     (::progpu::native::webgpu::active_dispatch().wgpuComputePassEncoderEnd)
 #define wgpuComputePassEncoderRelease \
@@ -517,6 +549,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuComputePipelineRelease)
 #define wgpuDeviceCreateBindGroup \
     (::progpu::native::webgpu::active_dispatch().wgpuDeviceCreateBindGroup)
+#define wgpuDeviceGetLimits \
+    (::progpu::native::webgpu::active_dispatch().wgpuDeviceGetLimits)
 #define wgpuDeviceCreateBindGroupLayout \
     (::progpu::native::webgpu::active_dispatch().wgpuDeviceCreateBindGroupLayout)
 #define wgpuDeviceCreateBuffer \
@@ -565,6 +599,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuRenderPassEncoderSetPipeline)
 #define wgpuRenderPassEncoderSetScissorRect \
     (::progpu::native::webgpu::active_dispatch().wgpuRenderPassEncoderSetScissorRect)
+#define wgpuRenderPassEncoderSetViewport \
+    (::progpu::native::webgpu::active_dispatch().wgpuRenderPassEncoderSetViewport)
 #define wgpuRenderPassEncoderSetVertexBuffer \
     (::progpu::native::webgpu::active_dispatch().wgpuRenderPassEncoderSetVertexBuffer)
 #define wgpuRenderBundleEncoderDraw \
@@ -597,6 +633,20 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuTextureCreateView)
 #define wgpuTextureDestroy \
     (::progpu::native::webgpu::active_dispatch().wgpuTextureDestroy)
+#define wgpuTextureGetDepthOrArrayLayers \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetDepthOrArrayLayers)
+#define wgpuTextureGetDimension \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetDimension)
+#define wgpuTextureGetFormat \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetFormat)
+#define wgpuTextureGetHeight \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetHeight)
+#define wgpuTextureGetMipLevelCount \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetMipLevelCount)
+#define wgpuTextureGetSampleCount \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetSampleCount)
+#define wgpuTextureGetWidth \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetWidth)
 #define wgpuTextureRelease \
     (::progpu::native::webgpu::active_dispatch().wgpuTextureRelease)
 #define wgpuTextureViewRelease \

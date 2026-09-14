@@ -1,5 +1,5 @@
-// Algorithm: Expand and transform batched vector primitives and meshes; direct 2D strokes use a scalar screen-space fast path for conformal transforms and an exact transformed local-outline path with derivative anti-aliasing for anisotropic or sheared transforms; reserved negative width encodings select either the Skia one-framebuffer-pixel hairline or an arbitrary positive fixed-device width, both expanded after the late transform, while one fixed quad evaluates each device or affine round cap and device join analytically with hard-owned body seams; evaluate analytic curves, arcs, and quarter-pixel-snapped periodic dot grids; use exact single-evaluation box/rounded-box distance gradients; then shade fills, strokes, gradients, vertex-color blends, and edges. Dedicated solid-rectangle and adaptively selected circular-rounded-rectangle entry points avoid the general material/path program for dense UI chrome.
-// Time complexity: O(1) per vertex or fragment under the shader's fixed primitive and gradient limits; static draws reuse CPU-cached maximum/minimum singular values, dynamic GPU-transformed direct strokes and fixed-device bounds add fixed 2x2 matrix arithmetic and two square roots per vertex, non-conformal arc quads test four analytic extrema per vertex, fixed-device caps/joins use one fixed quad with bounded line-intersection and at most four signed-edge evaluations, non-conformal or analytic fixed-device stroke fragments add fixed derivative/gradient arithmetic, and a semantic mask chain evaluates at most four analytic rounded masks.
+// Algorithm: Expand and transform batched vector primitives and meshes; direct 2D strokes use a scalar screen-space fast path for conformal transforms and an exact transformed local-outline path with derivative anti-aliasing for anisotropic or sheared transforms; reserved negative width encodings select either the Skia one-framebuffer-pixel hairline or an arbitrary positive fixed-device width, both expanded after the late transform, while one fixed quad evaluates each device or affine round cap and device join analytically with hard-owned body seams; evaluate analytic curves, arcs, quarter-pixel-snapped periodic dot grids, nine-neighbor affine rectangular fixed-device dot grids, derivative-mapped affine minor/major line grids, affine pattern-space hatch families, fixed 8x8 tiles, and bounded path gradients; use exact single-evaluation box/rounded-box distance gradients; then shade fills, strokes, gradients, vertex-color blends, and edges. Dedicated solid-rectangle and adaptively selected circular-rounded-rectangle entry points avoid the general material/path program for dense UI chrome.
+// Time complexity: O(F * 6) for a multi-family DXF/PAT hatch with F retained families and the specified six-dash maximum; path-gradient fragments test at most 128 retained boundary edges; affine rectangular fixed-device dots evaluate exactly nine neighboring lattice centers, while affine minor/major line grids evaluate two line families with fixed work; all other material and primitive paths remain O(1) per vertex or fragment under their fixed limits. Static draws reuse CPU-cached maximum/minimum singular values, dynamic GPU-transformed direct strokes and fixed-device bounds add fixed 2x2 matrix arithmetic and two square roots per vertex, non-conformal arc quads test four analytic extrema per vertex, fixed-device caps/joins use one fixed quad with bounded line-intersection and at most four signed-edge evaluations, the general material path derives local brush/shape gradients once per fragment, non-conformal or analytic fixed-device stroke fragments add fixed derivative/gradient arithmetic, and a semantic mask chain evaluates at most four analytic rounded masks.
 // Space complexity: O(1) local storage and bounded uniform/storage reads; texture masks add one sample per fragment while analytic rounded and uniform-opacity masks add fixed derivative arithmetic and no texture bandwidth; a nested analytic chain reads one primary 96-byte record and one fixed 288-byte continuation record.
 struct Brush {
     brushType: u32,
@@ -69,11 +69,7 @@ struct MaskChainUniforms {
 
 @group(2) @binding(3) var<uniform> maskChain: MaskChainUniforms;
 
-fn analytic_rounded_mask_alpha_for(position: vec2<f32>, sampling: MaskSamplingUniforms) -> f32 {
-    let local = vec2<f32>(
-        dot(vec3<f32>(position, 1.0), sampling.coordinate0.xyz),
-        dot(vec3<f32>(position, 1.0), sampling.coordinate1.xyz));
-    let bounds = sampling.bounds;
+fn rounded_mask_alpha_local(local: vec2<f32>, bounds: vec4<f32>, radiiX: vec4<f32>, radiiY: vec4<f32>) -> f32 {
     let edge = max(
         max(bounds.x - local.x, local.x - bounds.z),
         max(bounds.y - local.y, local.y - bounds.w));
@@ -81,24 +77,24 @@ fn analytic_rounded_mask_alpha_for(position: vec2<f32>, sampling: MaskSamplingUn
     var center = vec2<f32>(0.0);
     var radius = vec2<f32>(0.0);
     var usesCorner = false;
-    if (local.x < bounds.x + sampling.cornerRadiiX.x &&
-        local.y < bounds.y + sampling.cornerRadiiY.x) {
-        radius = vec2<f32>(sampling.cornerRadiiX.x, sampling.cornerRadiiY.x);
+    if (local.x < bounds.x + radiiX.x &&
+        local.y < bounds.y + radiiY.x) {
+        radius = vec2<f32>(radiiX.x, radiiY.x);
         center = vec2<f32>(bounds.x + radius.x, bounds.y + radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
-    } else if (local.x > bounds.z - sampling.cornerRadiiX.y &&
-               local.y < bounds.y + sampling.cornerRadiiY.y) {
-        radius = vec2<f32>(sampling.cornerRadiiX.y, sampling.cornerRadiiY.y);
+    } else if (local.x > bounds.z - radiiX.y &&
+               local.y < bounds.y + radiiY.y) {
+        radius = vec2<f32>(radiiX.y, radiiY.y);
         center = vec2<f32>(bounds.z - radius.x, bounds.y + radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
-    } else if (local.x > bounds.z - sampling.cornerRadiiX.z &&
-               local.y > bounds.w - sampling.cornerRadiiY.z) {
-        radius = vec2<f32>(sampling.cornerRadiiX.z, sampling.cornerRadiiY.z);
+    } else if (local.x > bounds.z - radiiX.z &&
+               local.y > bounds.w - radiiY.z) {
+        radius = vec2<f32>(radiiX.z, radiiY.z);
         center = vec2<f32>(bounds.z - radius.x, bounds.w - radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
-    } else if (local.x < bounds.x + sampling.cornerRadiiX.w &&
-               local.y > bounds.w - sampling.cornerRadiiY.w) {
-        radius = vec2<f32>(sampling.cornerRadiiX.w, sampling.cornerRadiiY.w);
+    } else if (local.x < bounds.x + radiiX.w &&
+               local.y > bounds.w - radiiY.w) {
+        radius = vec2<f32>(radiiX.w, radiiY.w);
         center = vec2<f32>(bounds.x + radius.x, bounds.w - radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
     }
@@ -109,6 +105,35 @@ fn analytic_rounded_mask_alpha_for(position: vec2<f32>, sampling: MaskSamplingUn
     let implicit = select(edge, ellipse, usesCorner);
     let antialiasWidth = max(fwidth(implicit), 0.0001);
     return clamp(0.5 - implicit / antialiasWidth, 0.0, 1.0);
+}
+
+fn analytic_rounded_mask_alpha_for(position: vec2<f32>, sampling: MaskSamplingUniforms) -> f32 {
+    let local = vec2<f32>(
+        dot(vec3<f32>(position, 1.0), sampling.coordinate0.xyz),
+        dot(vec3<f32>(position, 1.0), sampling.coordinate1.xyz));
+    let outerAlpha = rounded_mask_alpha_local(
+        local, sampling.bounds, sampling.cornerRadiiX, sampling.cornerRadiiY);
+    if (sampling.options.x < 2.5) {
+        return outerAlpha;
+    }
+
+    if (sampling.options.x > 3.5) {
+        let innerAlpha = rounded_mask_alpha_local(
+            local,
+            vec4<f32>(sampling.coordinate0.w, sampling.coordinate1.w, sampling.options.z, sampling.options.w),
+            vec4<f32>(0.0),
+            vec4<f32>(0.0));
+        return outerAlpha * (1.0 - innerAlpha);
+    }
+
+    let inset = sampling.options.z;
+    let innerBounds = sampling.bounds + vec4<f32>(inset, inset, -inset, -inset);
+    let innerAlpha = rounded_mask_alpha_local(
+        local,
+        innerBounds,
+        max(sampling.cornerRadiiX - vec4<f32>(inset), vec4<f32>(0.0)),
+        max(sampling.cornerRadiiY - vec4<f32>(inset), vec4<f32>(0.0)));
+    return outerAlpha * (1.0 - innerAlpha);
 }
 
 fn analytic_rounded_mask_alpha(position: vec2<f32>) -> f32 {
@@ -138,7 +163,12 @@ fn sample_mask_alpha(position: vec2<f32>) -> f32 {
             maskSampling.options.y;
     }
 
-    let uv = (targetPosition - maskSampling.coordinate0.xy) * maskSampling.coordinate1.xy;
+    var uv = (targetPosition - maskSampling.coordinate0.xy) * maskSampling.coordinate1.xy;
+    if (maskSampling.options.z > 0.5) {
+        uv = vec2<f32>(
+            dot(vec3<f32>(targetPosition, 1.0), maskSampling.coordinate0.xyz),
+            dot(vec3<f32>(targetPosition, 1.0), maskSampling.coordinate1.xyz));
+    }
     let sample = textureSample(maskTexture, maskSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
     let sampled = select(sample.r, sample.a, maskSampling.options.w > 1.5);
     let inside = all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0));
@@ -182,7 +212,11 @@ fn apply_gradient_spread(t: f32, spreadMethod: u32) -> f32 {
         return fract(t);
     }
 
-    return clamp(t, 0.0, 1.0);
+    // Keep Pad coordinates outside the unit interval until stop sampling.
+    // sample_gradient_color clamps through its first/last stop while retaining
+    // the distinction between an outside coordinate and an exact duplicate
+    // endpoint, where the last stop at that offset must win.
+    return t;
 }
 
 fn get_gradient_stop_color(brush: Brush, index: u32) -> vec4<f32> {
@@ -239,6 +273,15 @@ fn sample_gradient_color(brush: Brush, t: f32) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
 
+    if ((brush.spreadMethod & 0x40000000u) != 0u) {
+        if (t < 0.0) {
+            return brush.stopColors0;
+        }
+        if (t > 1.0) {
+            return brush.stopColors1;
+        }
+    }
+
     var previousColor = get_gradient_stop_color(brush, 0u);
     var previousOffset = get_gradient_stop_offset(brush, 0u);
     var i = 1u;
@@ -249,7 +292,10 @@ fn sample_gradient_color(brush: Brush, t: f32) -> vec4<f32> {
 
         let currentColor = get_gradient_stop_color(brush, i);
         let currentOffset = get_gradient_stop_offset(brush, i);
-        if (t <= currentOffset) {
+        // An exact offset belongs to the last stop at that offset. Besides
+        // matching Skia, this preserves hard transitions and ensures Pad
+        // selects the final color when duplicate stops sit at t = 1.
+        if (t < currentOffset) {
             let factor = (t - previousOffset) / max(currentOffset - previousOffset, 0.0001);
             return interpolate_gradient_color(brush, previousColor, currentColor, clamp(factor, 0.0, 1.0));
         }
@@ -262,11 +308,319 @@ fn sample_gradient_color(brush: Brush, t: f32) -> vec4<f32> {
     return previousColor;
 }
 
+fn path_cross(left: vec2<f32>, right: vec2<f32>) -> f32 {
+    return left.x * right.y - left.y * right.x;
+}
+
+fn path_gradient_point(brush: Brush, index: u32) -> vec2<f32> {
+    return gradientStops[brush.stopOffset + index * 2u].color.xy;
+}
+
+fn path_gradient_surround_color(brush: Brush, index: u32) -> vec4<f32> {
+    return gradientStops[brush.stopOffset + index * 2u + 1u].color;
+}
+
+fn sample_path_curve_color(
+    brush: Brush,
+    curveOffset: u32,
+    curveCount: u32,
+    t: f32) -> vec4<f32> {
+    var previous = gradientStops[curveOffset];
+    var index = 1u;
+    loop {
+        if (index >= curveCount) {
+            break;
+        }
+        let current = gradientStops[curveOffset + index];
+        if (t < current.offset) {
+            let factor = clamp(
+                (t - previous.offset) /
+                    max(current.offset - previous.offset, 0.0001),
+                0.0,
+                1.0);
+            return interpolate_gradient_color(
+                brush,
+                previous.color,
+                current.color,
+                factor);
+        }
+        previous = current;
+        index = index + 1u;
+    }
+    return previous.color;
+}
+
+fn sample_path_blend_factor(
+    curveOffset: u32,
+    curveCount: u32,
+    t: f32) -> f32 {
+    var previous = gradientStops[curveOffset];
+    var index = 1u;
+    loop {
+        if (index >= curveCount) {
+            break;
+        }
+        let current = gradientStops[curveOffset + index];
+        if (t < current.offset) {
+            let interval = clamp(
+                (t - previous.offset) /
+                    max(current.offset - previous.offset, 0.0001),
+                0.0,
+                1.0);
+            return mix(previous.color.x, current.color.x, interval);
+        }
+        previous = current;
+        index = index + 1u;
+    }
+    return previous.color.x;
+}
+
+fn sample_path_gradient(brush: Brush, coordinate: vec2<f32>) -> vec4<f32> {
+    let boundaryCount = min(u32(round(brush.gradientRadius)), 128u);
+    let curveCount = u32(round(brush.gradientRadiusY));
+    if (boundaryCount < 2u || curveCount == 0u) {
+        return vec4<f32>(0.0);
+    }
+
+    let direction = coordinate - brush.gradientCenter;
+    var bestRay = 1e30;
+    var bestEdgeFactor = 0.0;
+    var bestEdge = 0u;
+    var bestFocusRay = 1e30;
+    let focusScale = clamp(abs(brush.gradientEnd), vec2<f32>(0.0), vec2<f32>(1.0));
+    var index = 0u;
+    loop {
+        if (index >= boundaryCount) {
+            break;
+        }
+        let next = select(index + 1u, 0u, index + 1u == boundaryCount);
+        let point0 = path_gradient_point(brush, index);
+        let point1 = path_gradient_point(brush, next);
+        let edge = point1 - point0;
+        let relative = point0 - brush.gradientCenter;
+        let denominator = path_cross(direction, edge);
+        if (abs(denominator) > 0.000001) {
+            let ray = path_cross(relative, edge) / denominator;
+            let edgeFactor = path_cross(relative, direction) / denominator;
+            if (ray > 0.0 && edgeFactor >= -0.00001 &&
+                edgeFactor <= 1.00001 && ray < bestRay) {
+                bestRay = ray;
+                bestEdgeFactor = clamp(edgeFactor, 0.0, 1.0);
+                bestEdge = index;
+            }
+
+            if (any(focusScale > vec2<f32>(0.000001))) {
+                let focus0 = brush.gradientCenter +
+                    (point0 - brush.gradientCenter) * focusScale;
+                let focus1 = brush.gradientCenter +
+                    (point1 - brush.gradientCenter) * focusScale;
+                let focusEdge = focus1 - focus0;
+                let focusDenominator = path_cross(direction, focusEdge);
+                if (abs(focusDenominator) > 0.000001) {
+                    let focusRay = path_cross(
+                        focus0 - brush.gradientCenter,
+                        focusEdge) / focusDenominator;
+                    let focusEdgeFactor = path_cross(
+                        focus0 - brush.gradientCenter,
+                        direction) / focusDenominator;
+                    if (focusRay > 0.0 && focusEdgeFactor >= -0.00001 &&
+                        focusEdgeFactor <= 1.00001 && focusRay < bestFocusRay) {
+                        bestFocusRay = focusRay;
+                    }
+                }
+            }
+        }
+        index = index + 1u;
+    }
+
+    var t = 0.0;
+    if (bestRay < 1e29) {
+        t = 1.0 / bestRay;
+        if (bestFocusRay < 1e29) {
+            let focusFraction = clamp(bestFocusRay / bestRay, 0.0, 0.999999);
+            t = max(0.0, (t - focusFraction) / (1.0 - focusFraction));
+        }
+    }
+
+    let spread = brush.spreadMethod & 0x7fffffffu;
+    if (spread == 3u && (t < 0.0 || t > 1.0)) {
+        return vec4<f32>(0.0);
+    }
+    t = apply_gradient_spread(t, spread);
+
+    let curveOffset = brush.stopOffset + boundaryCount * 2u;
+    if (brush.stopColors1.x > 0.5) {
+        return sample_path_curve_color(
+            brush,
+            curveOffset,
+            curveCount,
+            1.0 - t);
+    }
+
+    let nextEdge = select(bestEdge + 1u, 0u, bestEdge + 1u == boundaryCount);
+    let surround = interpolate_gradient_color(
+        brush,
+        path_gradient_surround_color(brush, bestEdge),
+        path_gradient_surround_color(brush, nextEdge),
+        bestEdgeFactor);
+    let factor = sample_path_blend_factor(curveOffset, curveCount, t);
+    return interpolate_gradient_color(
+        brush,
+        surround,
+        brush.stopColors0,
+        clamp(factor, 0.0, 1.0));
+}
+
 fn transform_brush_coordinate(brush: Brush, coord: vec2<f32>) -> vec2<f32> {
     let p = vec3<f32>(coord, 1.0);
     return vec2<f32>(
         dot(p, brush.coordinateTransform0.xyz),
         dot(p, brush.coordinateTransform1.xyz));
+}
+
+fn transform_brush_vector(brush: Brush, value: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(
+        dot(value, brush.coordinateTransform0.xy),
+        dot(value, brush.coordinateTransform1.xy));
+}
+
+// One periodic hatch family. A zero authored thickness is a one-device-pixel
+// hairline derived from the projected pattern-coordinate footprint; positive
+// widths remain in pattern coordinates. Work and storage are O(1).
+fn hatch_axis_coverage(
+    coord: vec2<f32>,
+    coordDx: vec2<f32>,
+    coordDy: vec2<f32>,
+    direction: vec2<f32>,
+    spacing: f32,
+    thickness: f32) -> f32 {
+    let distance = dot(coord, direction);
+    let phase = abs(fract(distance / spacing) * spacing - spacing * 0.5);
+    let filterWidth = max(
+        abs(dot(direction, coordDx)) + abs(dot(direction, coordDy)),
+        0.0001);
+    var halfWidth = thickness * 0.5;
+    if (thickness <= 0.0) {
+        halfWidth = filterWidth * 0.5;
+    }
+    return 1.0 - smoothstep(
+        max(halfWidth - filterWidth * 0.5, 0.0),
+        halfWidth + filterWidth * 0.5,
+        phase);
+}
+
+fn hatch_pattern_dash_value(record2: GradientStop, record3: GradientStop, index: u32) -> f32 {
+    switch index {
+        case 0u: { return record2.color.x; }
+        case 1u: { return record2.color.y; }
+        case 2u: { return record2.color.z; }
+        case 3u: { return record2.color.w; }
+        case 4u: { return record2.offset; }
+        default: { return record3.color.x; }
+    }
+}
+
+fn hatch_pattern_row_coverage(
+    brush: Brush,
+    familyRecord: u32,
+    coord: vec2<f32>,
+    coordDx: vec2<f32>,
+    coordDy: vec2<f32>,
+    row: f32) -> f32 {
+    let record0 = gradientStops[familyRecord];
+    let record1 = gradientStops[familyRecord + 1u];
+    let record2 = gradientStops[familyRecord + 2u];
+    let record3 = gradientStops[familyRecord + 3u];
+    let base = record0.color.xy;
+    let tangent = record0.color.zw;
+    let normal = vec2<f32>(-tangent.y, tangent.x);
+    let spacing = record0.offset;
+    let delta = coord - base;
+    let normalDistance = abs(dot(delta, normal) - row * spacing);
+    let normalFilter = max(
+        abs(dot(normal, coordDx)) + abs(dot(normal, coordDy)),
+        0.0001);
+    var halfWidth = brush.gradientRadius * 0.5;
+    if (brush.gradientRadius <= 0.0) {
+        halfWidth = normalFilter * 0.5;
+    }
+    let normalCoverage = 1.0 - smoothstep(
+        max(halfWidth - normalFilter * 0.5, 0.0),
+        halfWidth + normalFilter * 0.5,
+        normalDistance);
+    let dashCount = u32(round(record1.color.z));
+    if (dashCount == 0u || normalCoverage <= 0.0) {
+        return normalCoverage;
+    }
+
+    let period = record1.color.y;
+    let tangentCoordinate = dot(delta, tangent) - row * record1.color.x;
+    let phase = fract(tangentCoordinate / period) * period;
+    let tangentFilter = max(
+        abs(dot(tangent, coordDx)) + abs(dot(tangent, coordDy)),
+        0.0001);
+    let radialFilter = max(length(coordDx) + length(coordDy), 0.0001);
+    var cursor = 0.0;
+    var coverage = 0.0;
+    var dashIndex = 0u;
+    loop {
+        if (dashIndex >= dashCount || dashIndex >= 6u) { break; }
+        let dash = hatch_pattern_dash_value(record2, record3, dashIndex);
+        let lengthValue = abs(dash);
+        if (dash > 0.0) {
+            let center = cursor + lengthValue * 0.5;
+            let wrapped = abs(phase - center);
+            let tangentDistance = max(
+                min(wrapped, period - wrapped) - lengthValue * 0.5,
+                0.0);
+            let tangentCoverage = 1.0 - smoothstep(
+                0.0,
+                tangentFilter * 0.5,
+                tangentDistance);
+            coverage = max(coverage, normalCoverage * tangentCoverage);
+        } else if (dash == 0.0) {
+            let wrapped = abs(phase - cursor);
+            let tangentDistance = min(wrapped, period - wrapped);
+            let dotDistance = length(vec2<f32>(normalDistance, tangentDistance));
+            var dotRadius = brush.gradientRadius * 0.5;
+            if (brush.gradientRadius <= 0.0) {
+                dotRadius = radialFilter * 0.5;
+            }
+            coverage = max(coverage, 1.0 - smoothstep(
+                max(dotRadius - radialFilter * 0.5, 0.0),
+                dotRadius + radialFilter * 0.5,
+                dotDistance));
+        }
+        cursor = cursor + lengthValue;
+        dashIndex = dashIndex + 1u;
+    }
+    return coverage;
+}
+
+fn hatch_pattern_set_coverage(
+    brush: Brush,
+    coord: vec2<f32>,
+    coordDx: vec2<f32>,
+    coordDy: vec2<f32>) -> f32 {
+    var coverage = 0.0;
+    var familyIndex = 0u;
+    loop {
+        if (familyIndex >= brush.spreadMethod) { break; }
+        let familyRecord = brush.stopOffset + familyIndex * 4u;
+        let record0 = gradientStops[familyRecord];
+        let tangent = record0.color.zw;
+        let normal = vec2<f32>(-tangent.y, tangent.x);
+        let rowCoordinate = dot(coord - record0.color.xy, normal) / record0.offset;
+        let nearestRow = floor(rowCoordinate + 0.5);
+        coverage = max(coverage, hatch_pattern_row_coverage(
+            brush, familyRecord, coord, coordDx, coordDy, nearestRow - 1.0));
+        coverage = max(coverage, hatch_pattern_row_coverage(
+            brush, familyRecord, coord, coordDx, coordDy, nearestRow));
+        coverage = max(coverage, hatch_pattern_row_coverage(
+            brush, familyRecord, coord, coordDx, coordDy, nearestRow + 1.0));
+        familyIndex = familyIndex + 1u;
+    }
+    return coverage;
 }
 
 fn perlin_fade(value: vec2<f32>) -> vec2<f32> {
@@ -732,9 +1086,12 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         hasLateAffineTransform &&
         hasValidLateAffineTransform &&
         !is_conformal_stroke_transform(directStrokeScales);
+    // Projection consumes target DIPs. Only hairlines ignore the framebuffer
+    // scale; fixed-width Direct2D pens still scale with DPI.
+    let hairlineStrokeThickness = 1.0 / max(uniforms.dpiScale, 0.0001);
     var outputStrokeThickness = select(
         input.strokeThickness,
-        1.0,
+        hairlineStrokeThickness,
         isHairlineStroke);
     outputStrokeThickness = select(
         outputStrokeThickness,
@@ -923,7 +1280,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
         let outward = select(direction, -direction, isStart);
         let normal = vec2<f32>(-direction.y, direction.x);
         let deviceStrokeThickness = select(
-            1.0,
+            hairlineStrokeThickness,
             fixedDeviceStrokeThickness,
             isFixedDeviceStroke);
         let capExtent = deviceStrokeThickness * 0.5 + 1.5;
@@ -972,7 +1329,7 @@ fn vs_main(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> Verte
 
         let outerSign = select(1.0, -1.0, turn > 0.0);
         let deviceStrokeThickness = select(
-            1.0,
+            hairlineStrokeThickness,
             fixedDeviceStrokeThickness,
             isFixedDeviceStroke);
         let halfStrokeThickness = deviceStrokeThickness * 0.5;
@@ -1344,13 +1701,15 @@ fn fs_solid_rect_premultiplied_unmasked(input: VertexOutput) -> @location(0) vec
 @fragment
 fn fs_solid_rect_mask(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = solid_rect_fs_main(input, sample_mask_alpha(input.position.xy));
-    return vec4<f32>(color.a, 0.0, 0.0, 1.0);
+    // Premultiplied R8 coverage: transparent fragments preserve earlier ink.
+    return vec4<f32>(color.a, 0.0, 0.0, color.a);
 }
 
 @fragment
 fn fs_solid_rect_mask_unmasked(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = solid_rect_fs_main(input, 1.0);
-    return vec4<f32>(color.a, 0.0, 0.0, 1.0);
+    // Premultiplied R8 coverage: transparent fragments preserve earlier ink.
+    return vec4<f32>(color.a, 0.0, 0.0, color.a);
 }
 
 // Circular rounded rectangles use a separate bounded specialization only when
@@ -1447,13 +1806,15 @@ fn fs_solid_rounded_premultiplied_unmasked(input: VertexOutput) -> @location(0) 
 @fragment
 fn fs_solid_rounded_mask(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = solid_rounded_fs_main(input, sample_mask_alpha(input.position.xy));
-    return vec4<f32>(color.a, 0.0, 0.0, 1.0);
+    // Premultiplied R8 coverage: transparent fragments preserve earlier ink.
+    return vec4<f32>(color.a, 0.0, 0.0, color.a);
 }
 
 @fragment
 fn fs_solid_rounded_mask_unmasked(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = solid_rounded_fs_main(input, 1.0);
-    return vec4<f32>(color.a, 0.0, 0.0, 1.0);
+    // Premultiplied R8 coverage: transparent fragments preserve earlier ink.
+    return vec4<f32>(color.a, 0.0, 0.0, color.a);
 }
 fn mesh_unpremultiply(color: vec4<f32>) -> vec4<f32> {
     if (color.a <= 0.0) {
@@ -1700,6 +2061,10 @@ fn box_distance_gradient(
 fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
     let atlasCoordDx = dpdx(input.texCoord);
     let atlasCoordDy = dpdy(input.texCoord);
+    let localBrushCoordDx = dpdx(input.brushCoord);
+    let localBrushCoordDy = dpdy(input.brushCoord);
+    let shapeSizeDx = dpdx(input.shapeSize);
+    let shapeSizeDy = dpdy(input.shapeSize);
     let strokeDistanceDx = dpdx(input.gridIndex);
     let strokeDistanceDy = dpdy(input.gridIndex);
     var encodedShapeType = input.shapeType;
@@ -1715,10 +2080,16 @@ fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
     }
 
     var evalCoord = input.brushCoord;
+    var evalCoordDx = localBrushCoordDx;
+    var evalCoordDy = localBrushCoordDy;
     if (sType < 3u) {
         evalCoord = input.color.xy + input.texCoord;
+        evalCoordDx = atlasCoordDx;
+        evalCoordDy = atlasCoordDy;
     } else if (sType == 4u) {
         evalCoord = input.shapeSize;
+        evalCoordDx = shapeSizeDx;
+        evalCoordDy = shapeSizeDy;
     }
 
     var shapeAlpha: f32 = 1.0;
@@ -2152,6 +2523,64 @@ fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
             0.0001);
         shapeAlpha = 1.0 -
             smoothstep(-0.5 * filterWidth, 0.5 * filterWidth, dotDistance);
+    } else if (sType == 25u) {
+        // One affine quad covers either a rectangular fixed-device dot lattice
+        // or the two corresponding line families. A negative cornerRadius
+        // selects lines, with its magnitude the minor physical-pixel width and
+        // strokeThickness the integral major cadence. Derivatives map local
+        // level-set distance to framebuffer pixels, so minor and 2x major lines
+        // retain width under rotation, anisotropic scale, and shear.
+        let spacing = max(input.shapeSize, vec2<f32>(0.0001));
+        let determinant = atlasCoordDx.x * atlasCoordDy.y -
+            atlasCoordDx.y * atlasCoordDy.x;
+        var bestDistance = 1.0e20;
+        if (abs(determinant) > 0.00000001) {
+            if (input.cornerRadius < 0.0) {
+                let lineIndex = round(input.texCoord / spacing);
+                let localOffset = input.texCoord - lineIndex * spacing;
+                let cadence = max(round(input.strokeThickness), 1.0);
+                let xIsMajor = abs(
+                    lineIndex.x - round(lineIndex.x / cadence) * cadence) < 0.25;
+                let yIsMajor = abs(
+                    lineIndex.y - round(lineIndex.y / cadence) * cadence) < 0.25;
+                let xGradientLength = max(length(vec2<f32>(
+                    atlasCoordDx.x, atlasCoordDy.x)), 0.00000001);
+                let yGradientLength = max(length(vec2<f32>(
+                    atlasCoordDx.y, atlasCoordDy.y)), 0.00000001);
+                let minorHalfWidth = -input.cornerRadius * 0.5;
+                let xHalfWidth = minorHalfWidth * select(1.0, 2.0, xIsMajor);
+                let yHalfWidth = minorHalfWidth * select(1.0, 2.0, yIsMajor);
+                let xDistance = abs(localOffset.x) / xGradientLength - xHalfWidth;
+                let yDistance = abs(localOffset.y) / yGradientLength - yHalfWidth;
+                bestDistance = min(xDistance, yDistance);
+            } else {
+                // Nine fixed neighbors preserve dot coverage across ordinary
+                // shear while keeping work and private storage bounded.
+                let baseIndex = round(input.texCoord / spacing);
+                for (var offsetY = -1i; offsetY <= 1i; offsetY++) {
+                    for (var offsetX = -1i; offsetX <= 1i; offsetX++) {
+                        let candidateIndex = baseIndex + vec2<f32>(
+                            f32(offsetX), f32(offsetY));
+                        let candidateLocal = candidateIndex * spacing;
+                        let localOffset = input.texCoord - candidateLocal;
+                        let deviceOffset = vec2<f32>(
+                            (localOffset.x * atlasCoordDy.y -
+                                localOffset.y * atlasCoordDy.x) / determinant,
+                            (atlasCoordDx.x * localOffset.y -
+                                atlasCoordDx.y * localOffset.x) / determinant);
+                        let unsnappedCenter = input.position.xy - deviceOffset;
+                        let snappedCenter = round(unsnappedCenter * 4.0) * 0.25;
+                        bestDistance = min(
+                            bestDistance,
+                            length(input.position.xy - snappedCenter) -
+                                input.cornerRadius);
+                    }
+                }
+            }
+        }
+        let antialiasedAlpha = 1.0 - smoothstep(-0.5, 0.5, bestDistance);
+        let aliasedAlpha = select(0.0, 1.0, bestDistance <= 0.0);
+        shapeAlpha = select(antialiasedAlpha, aliasedAlpha, aliasedEdge);
     } else if (sType == 22u || sType == 24u) {
         // Analytic path cap. Shape 22 is expanded as a fixed-device adornment
         // in the vertex stage; shape 24 arrives as an already affine-expanded
@@ -2366,6 +2795,8 @@ fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
 
     } else {
         let brushCoord = transform_brush_coordinate(brush, evalCoord);
+        let brushCoordDx = transform_brush_vector(brush, evalCoordDx);
+        let brushCoordDy = transform_brush_vector(brush, evalCoordDy);
         var t: f32 = 0.0;
         var gradientCoverage: f32 = 1.0;
         if (brush.brushType == 1u) {
@@ -2396,28 +2827,49 @@ fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
                 }
             }
         } else if (brush.brushType == 3u || brush.brushType == 4u) {
-            // Analytic hatch: project the local point onto one periodic axis;
-            // cross-hatch evaluates the perpendicular axis as well. The native
-            // semantic compiler validates positive spacing before GPU upload.
+            // Analytic hatch: project the transformed pattern point onto one
+            // periodic normal axis; cross-hatch evaluates its perpendicular.
+            // The semantic compilers validate positive spacing before upload.
             let theta = brush.gradientRadius;
             let spacing = brush.gradientCenter.x;
             let thickness = brush.gradientCenter.y;
             let direction0 = vec2<f32>(cos(theta), sin(theta));
-            let distance0 = dot(evalCoord, direction0);
-            let phase0 = abs(fract(distance0 / spacing) * spacing - spacing * 0.5);
-            var hatchHit = phase0 < thickness * 0.5;
+            var hatchCoverage = hatch_axis_coverage(
+                brushCoord,
+                brushCoordDx,
+                brushCoordDy,
+                direction0,
+                spacing,
+                thickness);
             if (brush.brushType == 4u) {
                 let direction1 = vec2<f32>(-direction0.y, direction0.x);
-                let distance1 = dot(evalCoord, direction1);
-                let phase1 = abs(fract(distance1 / spacing) * spacing - spacing * 0.5);
-                hatchHit = hatchHit || phase1 < thickness * 0.5;
+                hatchCoverage = max(
+                    hatchCoverage,
+                    hatch_axis_coverage(
+                        brushCoord,
+                        brushCoordDx,
+                        brushCoordDy,
+                        direction1,
+                        spacing,
+                        thickness));
             }
-            if (!hatchHit) {
+            if (hatchCoverage <= 0.0) {
                 discard;
             }
             finalColor = vec4<f32>(
                 brush.stopColors0.rgb,
-                brush.stopColors0.a * brush.opacity);
+                brush.stopColors0.a * brush.opacity * hatchCoverage);
+        } else if (brush.brushType == 9u) {
+            // Fixed 8x8 System.Drawing hatch tile. Signed remainder keeps the
+            // pattern phase stable for negative world coordinates.
+            let integerCoord = vec2<i32>(floor(brushCoord));
+            let tileX = u32(((integerCoord.x % 8) + 8) % 8);
+            let tileY = u32(((integerCoord.y % 8) + 8) % 8);
+            let bitIndex = tileY * 8u + tileX;
+            let word = select(brush.stopCount, brush.stopOffset, bitIndex >= 32u);
+            let patternBit = (word >> (bitIndex & 31u)) & 1u;
+            let patternColor = select(brush.stopColors1, brush.stopColors0, patternBit != 0u);
+            finalColor = vec4<f32>(patternColor.rgb, patternColor.a * brush.opacity);
         } else if (brush.brushType == 5u) {
             // Two-point conical gradient: interpolate between two moving circle boundaries.
             let solution = solve_two_point_conical_gradient(brush, brushCoord);
@@ -2438,9 +2890,22 @@ fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
         } else if (brush.brushType == 7u) {
             let noiseColor = sample_perlin_noise(brush, brushCoord);
             finalColor = vec4<f32>(noiseColor.rgb, noiseColor.a * brush.opacity);
+        } else if (brush.brushType == 8u) {
+            let hatchCoverage = hatch_pattern_set_coverage(
+                brush, brushCoord, brushCoordDx, brushCoordDy);
+            if (hatchCoverage <= 0.0) {
+                discard;
+            }
+            finalColor = vec4<f32>(
+                brush.stopColors0.rgb,
+                brush.stopColors0.a * brush.opacity * hatchCoverage);
+        } else if (brush.brushType == 10u) {
+            let pathColor = sample_path_gradient(brush, brushCoord);
+            finalColor = vec4<f32>(pathColor.rgb, pathColor.a * brush.opacity);
         }
         if (brush.brushType == 3u || brush.brushType == 4u ||
-            brush.brushType == 7u) {
+            brush.brushType == 7u || brush.brushType == 8u ||
+            brush.brushType == 9u || brush.brushType == 10u) {
             // Procedural hatch/noise was evaluated directly above.
         } else if (gradientCoverage <= 0.0) {
             if ((brush.spreadMethod & 0x80000000u) != 0u) {
@@ -2448,10 +2913,10 @@ fn vector_fs_main(input: VertexOutput, maskAlpha: f32) -> vec4<f32> {
             } else {
                 finalColor = vec4<f32>(0.0);
             }
-        } else if ((brush.spreadMethod & 0x7fffffffu) == 3u && (t < 0.0 || t > 1.0)) {
+        } else if ((brush.spreadMethod & 0x3fffffffu) == 3u && (t < 0.0 || t > 1.0)) {
             finalColor = vec4<f32>(0.0);
         } else {
-            t = apply_gradient_spread(t, brush.spreadMethod & 0x7fffffffu);
+            t = apply_gradient_spread(t, brush.spreadMethod & 0x3fffffffu);
             let gradColor = sample_gradient_color(brush, t);
             finalColor = vec4<f32>(gradColor.rgb, gradColor.a * brush.opacity);
         }
@@ -2517,11 +2982,13 @@ fn fs_mask(input: VertexOutput) -> @location(0) vec4<f32> {
     if (maskAlpha <= 0.0) {
         discard;
     }
-    return vec4<f32>(color.a, 0.0, 0.0, 1.0);
+    // Premultiplied R8 coverage: transparent fragments preserve earlier ink.
+    return vec4<f32>(color.a, 0.0, 0.0, color.a);
 }
 
 @fragment
 fn fs_mask_unmasked(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = vector_fs_main(input, 1.0);
-    return vec4<f32>(color.a, 0.0, 0.0, 1.0);
+    // Premultiplied R8 coverage: transparent fragments preserve earlier ink.
+    return vec4<f32>(color.a, 0.0, 0.0, color.a);
 }

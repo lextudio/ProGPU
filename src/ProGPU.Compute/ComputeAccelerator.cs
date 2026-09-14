@@ -125,8 +125,7 @@ public unsafe class ComputeAccelerator : IDisposable
     {
         [FieldOffset(0)] public Vector2 Offset;
         [FieldOffset(16)] public Vector4 Color;
-        [FieldOffset(32)] public float BlurRadius;
-        [FieldOffset(36)] private float _padding;
+        [FieldOffset(32)] public Vector2 BlurRadius;
         [FieldOffset(40)] public Vector2 SourceSize;
         [FieldOffset(48)] private Vector4 _padding1;
 
@@ -136,11 +135,27 @@ public unsafe class ComputeAccelerator : IDisposable
             float blurRadius,
             uint sourceWidth = 0,
             uint sourceHeight = 0)
+            : this(
+                offset,
+                color,
+                blurRadius,
+                blurRadius,
+                sourceWidth,
+                sourceHeight)
+        {
+        }
+
+        public ShadowParams(
+            Vector2 offset,
+            Vector4 color,
+            float blurRadiusX,
+            float blurRadiusY,
+            uint sourceWidth = 0,
+            uint sourceHeight = 0)
         {
             Offset = offset;
             Color = color;
-            BlurRadius = blurRadius;
-            _padding = 0f;
+            BlurRadius = new Vector2(blurRadiusX, blurRadiusY);
             SourceSize = new Vector2(sourceWidth, sourceHeight);
             _padding1 = Vector4.Zero;
         }
@@ -151,11 +166,30 @@ public unsafe class ComputeAccelerator : IDisposable
     {
         [FieldOffset(0)] public float Sigma;
         [FieldOffset(4)] public uint Radius;
+        [FieldOffset(8)] public uint KernelType;
+        [FieldOffset(12)] private uint _padding;
 
         public GaussianBlurParams(float sigma)
         {
             Sigma = float.IsFinite(sigma) ? Math.Max(0f, sigma) : 0f;
             Radius = (uint)Math.Clamp((int)MathF.Ceiling(Sigma * 3f), 0, 128);
+            KernelType = 0u;
+            _padding = 0u;
+        }
+
+        public static GaussianBlurParams Box(float radius)
+        {
+            var result = new GaussianBlurParams(0f)
+            {
+                Radius = (uint)Math.Clamp(
+                    (int)MathF.Floor(float.IsFinite(radius)
+                        ? Math.Max(0f, radius)
+                        : 0f),
+                    0,
+                    128),
+                KernelType = 1u
+            };
+            return result;
         }
     }
 
@@ -703,6 +737,39 @@ public unsafe class ComputeAccelerator : IDisposable
         GpuTexture destination,
         float sigmaX,
         float sigmaY)
+        => ApplySeparableBlur(
+            source,
+            temp,
+            destination,
+            new GaussianBlurParams(sigmaX),
+            new GaussianBlurParams(sigmaY));
+
+    public void ApplyBoxBlur(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        float radiusX,
+        float radiusY)
+        => ApplySeparableBlur(
+            source,
+            temp,
+            destination,
+            GaussianBlurParams.Box(radiusX),
+            GaussianBlurParams.Box(radiusY));
+
+    public void ApplyBoxBlur(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        float radius)
+        => ApplyBoxBlur(source, temp, destination, radius, radius);
+
+    private void ApplySeparableBlur(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        GaussianBlurParams horizontalParams,
+        GaussianBlurParams verticalParams)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
         EnsureGaussianBlurResources();
@@ -714,8 +781,8 @@ public unsafe class ComputeAccelerator : IDisposable
         temp.Resize(width, height);
         destination.Resize(width, height);
 
-        _blurHorizontalParams!.WriteSingle(new GaussianBlurParams(sigmaX));
-        _blurVerticalParams!.WriteSingle(new GaussianBlurParams(sigmaY));
+        _blurHorizontalParams!.WriteSingle(horizontalParams);
+        _blurVerticalParams!.WriteSingle(verticalParams);
 
         CommandEncoder* encoder;
         fixed (byte* encoderLabel = "Compute Blur Encoder\0"u8)
@@ -1900,11 +1967,35 @@ public unsafe class ComputeAccelerator : IDisposable
         RunSharpDropShadow(source, destination, offset, shadowColor, blurRadius: 0f);
     }
 
-    public void ApplyDropShadow(GpuTexture source, GpuTexture temp, GpuTexture destination, Vector2 offset, Vector4 shadowColor, float blurRadius)
+    public void ApplyDropShadow(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        Vector2 offset,
+        Vector4 shadowColor,
+        float blurRadius) =>
+        ApplyDropShadow(
+            source,
+            temp,
+            destination,
+            offset,
+            shadowColor,
+            blurRadius,
+            blurRadius);
+
+    public void ApplyDropShadow(
+        GpuTexture source,
+        GpuTexture temp,
+        GpuTexture destination,
+        Vector2 offset,
+        Vector4 shadowColor,
+        float blurRadiusX,
+        float blurRadiusY)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(ComputeAccelerator));
 
-        float snappedBlurRadius = MathF.Round(blurRadius * 2f) / 2f;
+        float snappedBlurRadiusX = MathF.Round(blurRadiusX * 2f) / 2f;
+        float snappedBlurRadiusY = MathF.Round(blurRadiusY * 2f) / 2f;
 
         uint width = source.Width;
         uint height = source.Height;
@@ -1912,9 +2003,9 @@ public unsafe class ComputeAccelerator : IDisposable
         temp.Resize(checked((width + 3u) / 4u), height);
         destination.Resize(width, height);
 
-        if (snappedBlurRadius <= 0.01f)
+        if (snappedBlurRadiusX <= 0.01f && snappedBlurRadiusY <= 0.01f)
         {
-            RunSharpDropShadow(source, destination, offset, shadowColor, snappedBlurRadius);
+            RunSharpDropShadow(source, destination, offset, shadowColor, blurRadius: 0f);
             return;
         }
         EnsureShadowBlurResources();
@@ -1929,7 +2020,8 @@ public unsafe class ComputeAccelerator : IDisposable
         _shadowParams!.WriteSingle(new ShadowParams(
             offset,
             shadowColor,
-            snappedBlurRadius,
+            snappedBlurRadiusX,
+            snappedBlurRadiusY,
             width,
             height));
 

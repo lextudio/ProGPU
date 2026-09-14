@@ -33,7 +33,8 @@ bool gradient_kind(std::uint32_t kind) noexcept {
     return kind == PROGPU_NATIVE_SCENE_BRUSH_LINEAR_GRADIENT ||
         kind == PROGPU_NATIVE_SCENE_BRUSH_RADIAL_GRADIENT ||
         kind == PROGPU_NATIVE_SCENE_BRUSH_TWO_POINT_CONICAL_GRADIENT ||
-        kind == PROGPU_NATIVE_SCENE_BRUSH_SWEEP_GRADIENT;
+        kind == PROGPU_NATIVE_SCENE_BRUSH_SWEEP_GRADIENT ||
+        kind == PROGPU_NATIVE_SCENE_BRUSH_PATH_GRADIENT;
 }
 
 bool valid_gradient_stop(
@@ -43,21 +44,113 @@ bool valid_gradient_stop(
         stop.reserved2 == 0U;
 }
 
+float hatch_dash(
+    const progpu_native_scene_gradient_stop& record2,
+    const progpu_native_scene_gradient_stop& record3,
+    std::uint32_t index) noexcept {
+    switch (index) {
+        case 0U: return record2.color.r;
+        case 1U: return record2.color.g;
+        case 2U: return record2.color.b;
+        case 3U: return record2.color.a;
+        case 4U: return record2.offset;
+        default: return record3.color.r;
+    }
+}
+
+bool valid_hatch_pattern_set(
+    const progpu_native_scene_brush& brush,
+    std::span<const progpu_native_scene_gradient_stop> records) noexcept {
+    // Direct native port provenance: ProGPU-owned four-record family packing
+    // and validation in ProGPU.Scene.Native/NativeBrushTableBuilder.cs and
+    // ProGPU.Backend.Native/NativeSceneStreamBuilder.cs in this checkpoint.
+    const std::uint32_t family_count = brush.spread_method;
+    if (family_count == 0U || brush.radius < 0.0F ||
+        brush.radius_y != 0.0F ||
+        brush.color_interpolation_mode !=
+            PROGPU_NATIVE_SCENE_GRADIENT_INTERPOLATE_SRGB ||
+        family_count > std::numeric_limits<std::uint32_t>::max() /
+            PROGPU_NATIVE_SCENE_HATCH_PATTERN_RECORDS_PER_FAMILY ||
+        brush.stop_count != family_count *
+            PROGPU_NATIVE_SCENE_HATCH_PATTERN_RECORDS_PER_FAMILY ||
+        records.size() != brush.stop_count) {
+        return false;
+    }
+    for (std::uint32_t family = 0U; family < family_count; ++family) {
+        const std::size_t base = static_cast<std::size_t>(family) *
+            PROGPU_NATIVE_SCENE_HATCH_PATTERN_RECORDS_PER_FAMILY;
+        const auto& record0 = records[base];
+        const auto& record1 = records[base + 1U];
+        const auto& record2 = records[base + 2U];
+        const auto& record3 = records[base + 3U];
+        if (!valid_gradient_stop(record0) || !valid_gradient_stop(record1) ||
+            !valid_gradient_stop(record2) || !valid_gradient_stop(record3) ||
+            record0.offset <= 0.0F || brush.radius > record0.offset ||
+            record1.color.a != 0.0F ||
+            record1.offset != 0.0F || record3.color.g != 0.0F ||
+            record3.color.b != 0.0F || record3.color.a != 0.0F ||
+            record3.offset != 0.0F) {
+            return false;
+        }
+        const float direction_length =
+            record0.color.b * record0.color.b +
+            record0.color.a * record0.color.a;
+        const float dash_count_value = record1.color.b;
+        if (std::abs(direction_length - 1.0F) > 0.001F ||
+            dash_count_value < 0.0F ||
+            dash_count_value > static_cast<float>(
+                PROGPU_NATIVE_SCENE_HATCH_PATTERN_MAX_DASHES) ||
+            std::floor(dash_count_value) != dash_count_value) {
+            return false;
+        }
+        const auto dash_count = static_cast<std::uint32_t>(dash_count_value);
+        float period = 0.0F;
+        bool draws = false;
+        for (std::uint32_t dash = 0U; dash < dash_count; ++dash) {
+            const float value = hatch_dash(record2, record3, dash);
+            period += std::abs(value);
+            draws = draws || value >= 0.0F;
+        }
+        for (std::uint32_t dash = dash_count;
+             dash < PROGPU_NATIVE_SCENE_HATCH_PATTERN_MAX_DASHES;
+             ++dash) {
+            if (hatch_dash(record2, record3, dash) != 0.0F) {
+                return false;
+            }
+        }
+        const float tolerance = std::max(1.0F, period) * 0.00001F;
+        if ((dash_count == 0U && record1.color.g != 0.0F) ||
+            (dash_count != 0U && (!draws || period <= 0.0F ||
+                std::abs(period - record1.color.g) > tolerance))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool valid_brush_input(
     const progpu_native_scene_brush& brush,
     std::span<const progpu_native_scene_gradient_stop> stops) noexcept {
-    const std::uint32_t spread = brush.spread_method & 0x7fffffffU;
-    const bool outside = (brush.spread_method & 0x80000000U) != 0U;
-    if (brush.type > PROGPU_NATIVE_SCENE_BRUSH_PERLIN_NOISE ||
+    const std::uint32_t spread = brush.spread_method &
+        PROGPU_NATIVE_SCENE_GRADIENT_SPREAD_MASK;
+    const bool pad_outside_colors = (brush.spread_method &
+        PROGPU_NATIVE_SCENE_GRADIENT_PAD_OUTSIDE_COLORS) != 0U;
+    const bool conical_outside_color = (brush.spread_method &
+        PROGPU_NATIVE_SCENE_GRADIENT_CONICAL_OUTSIDE_COLOR) != 0U;
+    if (brush.type > PROGPU_NATIVE_SCENE_BRUSH_PATH_GRADIENT ||
         !std::isfinite(brush.opacity) || brush.opacity < 0.0F ||
         brush.opacity > 1.0F || !finite_point(brush.start_point) ||
         !finite_point(brush.end_point) || !finite_point(brush.center) ||
         !std::isfinite(brush.radius) || !std::isfinite(brush.radius_y) ||
-        spread > PROGPU_NATIVE_SCENE_GRADIENT_DECAL ||
+        (brush.type != PROGPU_NATIVE_SCENE_BRUSH_HATCH_PATTERN_SET &&
+            spread > PROGPU_NATIVE_SCENE_GRADIENT_DECAL) ||
         brush.color_interpolation_mode >
             PROGPU_NATIVE_SCENE_GRADIENT_INTERPOLATE_SCRGB ||
-        (outside && brush.type !=
+        (conical_outside_color && brush.type !=
             PROGPU_NATIVE_SCENE_BRUSH_TWO_POINT_CONICAL_GRADIENT) ||
+        (pad_outside_colors &&
+            (!gradient_kind(brush.type) ||
+                spread != PROGPU_NATIVE_SCENE_GRADIENT_PAD)) ||
         brush.reserved0 != 0U || brush.reserved1 != 0U ||
         !finite_values(brush.offsets0) || !finite_values(brush.offsets1) ||
         !finite_values(brush.coordinate_transform0) ||
@@ -79,12 +172,16 @@ bool valid_brush_input(
             ? std::size_t{0U}
             : static_cast<std::size_t>(
                 PROGPU_NATIVE_SCENE_PERLIN_TABLE_RECORDS);
-        if (outside || spread > 1U ||
+        if (pad_outside_colors || conical_outside_color || spread > 1U ||
             brush.stop_count > PROGPU_NATIVE_SCENE_MAX_PERLIN_OCTAVES ||
             stops.size() != expected) {
             return false;
         }
         return std::all_of(stops.begin(), stops.end(), valid_gradient_stop);
+    }
+    if (brush.type == PROGPU_NATIVE_SCENE_BRUSH_HATCH_PATTERN_SET) {
+        return !pad_outside_colors && !conical_outside_color &&
+            valid_hatch_pattern_set(brush, stops);
     }
     if ((brush.type == PROGPU_NATIVE_SCENE_BRUSH_HATCH_PATTERN ||
             brush.type == PROGPU_NATIVE_SCENE_BRUSH_CROSS_HATCH) &&
@@ -92,6 +189,11 @@ bool valid_brush_input(
         return false;
     }
     if (!gradient_kind(brush.type)) {
+        if (brush.type == PROGPU_NATIVE_SCENE_BRUSH_TILE_PATTERN) {
+            return stops.empty() && brush.spread_method == 0U &&
+                brush.color_interpolation_mode ==
+                    PROGPU_NATIVE_SCENE_GRADIENT_INTERPOLATE_SRGB;
+        }
         return stops.empty() && brush.stop_count == 0U &&
             brush.stop_offset == 0U && brush.spread_method == 0U &&
             brush.color_interpolation_mode ==
@@ -104,6 +206,22 @@ bool valid_brush_input(
         (brush.type == PROGPU_NATIVE_SCENE_BRUSH_TWO_POINT_CONICAL_GRADIENT &&
             (brush.radius < 0.0F || brush.radius_y < 0.0F))) {
         return false;
+    }
+    if (brush.type == PROGPU_NATIVE_SCENE_BRUSH_PATH_GRADIENT) {
+        const auto boundary_count =
+            static_cast<std::uint32_t>(brush.radius);
+        const auto curve_count =
+            static_cast<std::uint32_t>(brush.radius_y);
+        if (brush.radius != static_cast<float>(boundary_count) ||
+            boundary_count < 2U ||
+            boundary_count >
+                PROGPU_NATIVE_SCENE_MAX_PATH_GRADIENT_BOUNDARY_POINTS ||
+            brush.radius_y != static_cast<float>(curve_count) ||
+            curve_count == 0U ||
+            brush.stop_count != boundary_count * 2U + curve_count ||
+            (brush.colors[1].r != 0.0F && brush.colors[1].r != 1.0F)) {
+            return false;
+        }
     }
     float previous = -std::numeric_limits<float>::infinity();
     for (const auto& stop : stops) {
@@ -151,10 +269,10 @@ bool semantic_scene_builder::add_solid_brush(
                 return implementation_->fail(
                     scene_build_error::capacity_exceeded);
             }
-            implementation_->resources.reserve(
-                implementation_->resources.size() + 1U);
-            implementation_->brushes.reserve(
-                implementation_->brushes.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->resources, 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->brushes, 1U);
             implementation::resource_entry resource{};
             resource.record.struct_size = sizeof(resource.record);
             resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_BRUSH_TABLE;
@@ -166,8 +284,8 @@ bool semantic_scene_builder::add_solid_brush(
                 static_cast<std::uint32_t>(implementation_->resources.size());
             implementation_->resources.push_back(std::move(resource));
         } else {
-            implementation_->brushes.reserve(
-                implementation_->brushes.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->brushes, 1U);
         }
         progpu_native_scene_brush brush{};
         brush.type = PROGPU_NATIVE_SCENE_BRUSH_SOLID;
@@ -209,13 +327,13 @@ bool semantic_scene_builder::add_brush(
                 return implementation_->fail(
                     scene_build_error::capacity_exceeded);
             }
-            implementation_->resources.reserve(
-                implementation_->resources.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->resources, 1U);
         }
-        implementation_->brushes.reserve(
-            implementation_->brushes.size() + 1U);
-        implementation_->gradient_stops.reserve(
-            implementation_->gradient_stops.size() + gradient_stops.size());
+        scene_builder_detail::reserve_append(
+            implementation_->brushes, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->gradient_stops, gradient_stops.size());
         if (create_resource) {
             implementation::resource_entry resource{};
             resource.record.struct_size = sizeof(resource.record);
@@ -235,7 +353,7 @@ bool semantic_scene_builder::add_brush(
             implementation_->gradient_stops.insert(
                 implementation_->gradient_stops.end(),
                 gradient_stops.begin(), gradient_stops.end());
-        } else {
+        } else if (brush.type != PROGPU_NATIVE_SCENE_BRUSH_TILE_PATTERN) {
             brush.stop_offset = 0U;
         }
         brush_index = static_cast<std::uint32_t>(

@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 struct semantic_analytic_page {
@@ -65,7 +66,20 @@ struct semantic_glyph_page {
     std::vector<semantic_glyph_draw> draws;
 };
 
+struct semantic_picture_backing {
+    WGPUTexture texture = nullptr;
+    WGPUTextureView view = nullptr;
+    progpu_native_scene_picture_image descriptor{};
+    std::uint64_t engine_flags = 0U;
+    std::vector<std::byte> scene;
+    ~semantic_picture_backing();
+    std::uint64_t byte_cost() const noexcept {
+        return static_cast<std::uint64_t>(descriptor.width) * descriptor.height * 4U + scene.size();
+    }
+};
+
 struct semantic_image_draw {
+    std::shared_ptr<semantic_picture_backing> picture_backing;
     WGPUTexture texture = nullptr;
     WGPUTextureView view = nullptr;
     WGPUBindGroup texture_bind_group = nullptr;
@@ -121,6 +135,7 @@ struct alignas(16) camera_record {
     progpu_native_matrix_4x4 view{};
     float camera_position[4]{};
     float viewport[4]{};
+    float viewport_rect[4]{};
 };
 
 struct alignas(16) line_record {
@@ -152,13 +167,31 @@ struct alignas(16) mesh_record {
     progpu_native_float_4 material_ambient{};
     float opacity = 0.0F;
     std::uint32_t shading_mode = 0U;
+    std::uint32_t material_image_resource_index = 0U;
+    std::uint32_t material_factors = 0U;
+    std::uint32_t light_offset = 0U;
+    std::uint32_t light_count = 0U;
     std::uint32_t reserved0 = 0U;
     std::uint32_t reserved1 = 0U;
 };
 
-static_assert(sizeof(camera_record) == 160U);
+struct alignas(16) edge_record {
+    std::array<float, 4U> start{};
+    std::array<float, 4U> end{};
+    std::array<float, 4U> first_normal{};
+    std::array<float, 4U> second_normal{};
+    std::uint32_t mesh_index = 0U;
+    std::uint32_t topology = 0U;
+    std::uint32_t reserved0 = 0U;
+    std::uint32_t reserved1 = 0U;
+};
+
+static_assert(sizeof(camera_record) == 176U);
 static_assert(sizeof(line_record) == 128U);
-static_assert(sizeof(mesh_record) == 256U);
+static_assert(sizeof(mesh_record) == 272U);
+static_assert(sizeof(progpu_native_scene_mesh_3d) == 264U);
+static_assert(sizeof(edge_record) == 80U);
+static_assert(sizeof(progpu_native_scene_light_3d) == 80U);
 static_assert(sizeof(progpu_native_scene_mesh_3d_vertex) == 48U);
 
 } // namespace progpu::native::three_d
@@ -175,7 +208,12 @@ struct semantic_3d_page {
     WGPUBuffer mesh_buffer = nullptr;
     WGPUBuffer vertex_buffer = nullptr;
     WGPUBuffer index_buffer = nullptr;
+    WGPUBuffer edge_buffer = nullptr;
+    WGPUBuffer light_buffer = nullptr;
+    WGPUBuffer material_buffer = nullptr;
+    WGPUBuffer material_gradient_stop_buffer = nullptr;
     WGPUBindGroup bind_group = nullptr;
+    std::vector<WGPUBindGroup> material_bind_groups;
     std::uint64_t scene_hash = 0U;
     float dpi_scale = 0.0F;
     std::uint32_t target_width = 0U;
@@ -183,7 +221,12 @@ struct semantic_3d_page {
     bool cache_valid = false;
     std::vector<semantic_3d_draw> draws;
     std::vector<std::uint32_t> mesh_topologies;
+    std::vector<std::uint32_t> mesh_flags;
+    std::vector<std::uint32_t> mesh_face_flags;
     std::vector<std::uint32_t> mesh_index_counts;
+    std::vector<std::uint32_t> mesh_edge_offsets;
+    std::vector<std::uint32_t> mesh_edge_counts;
+    std::vector<std::uint32_t> mesh_edge_vertex_counts;
 };
 
 enum class semantic_replay_kind : std::uint8_t {
@@ -241,9 +284,16 @@ struct semantic_render_bundle_span {
     std::uint32_t mask_source_x = 0U;
     std::uint32_t mask_source_y = 0U;
     std::uint64_t effect_cache_operation_id = 0U;
+    std::uint64_t cache_identity = 0U;
+    std::uint64_t cache_content_revision = 0U;
+    bool uses_depth = false;
     bool backdrop = false;
     bool can_skip_content_on_effect_cache = false;
+    bool cache_content = false;
     bool mask_uses_alpha_channel = false;
+    bool has_composite_scissor = false;
+    bool composite_drawable = true;
+    bool composite_nearest = false;
 };
 
 struct semantic_layer_slot {
@@ -254,6 +304,7 @@ struct semantic_layer_slot {
     std::uint32_t depth_width = 0U;
     std::uint32_t depth_height = 0U;
     WGPUBindGroup bind_group = nullptr;
+    WGPUBindGroup nearest_bind_group = nullptr;
     WGPUBuffer uniform_buffer = nullptr;
     WGPUBindGroup analytic_uniform_bind_group = nullptr;
     WGPUBindGroup text_uniform_bind_group = nullptr;

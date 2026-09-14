@@ -1,0 +1,14 @@
+{
+  "version": "18.1.3.1",
+  "authorCertificateSha256": "EE0BC55E2BFE148F74B71230F9823FEDCFC1F428916C876AF2D51B62F82FA176",
+  "runtimes": {
+    "win-x64": {
+      "packageSha256": "0b8d198cf418f1a365fc839bf49fcb36451b794297215b90d3438984adc25efe",
+      "librarySha256": "808e5bb629569961b8930baa3971a7cfe9c8eb13b73ddeba8090d2d28ba52aed"
+    },
+    "win-arm64": {
+      "packageSha256": "8dfaaf5ef7533f4e6900244d0c80f79d72e7f291b68e93fc0aee0b70ad2848a4",
+      "librarySha256": "d5d4a2a484e0e3d0c4a730167d67bd37f32ec06a71d26983c01ac8bc6dc1212a"
+    }
+  }
+}

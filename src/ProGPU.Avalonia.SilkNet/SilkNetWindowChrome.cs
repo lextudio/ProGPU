@@ -2,6 +2,14 @@ using System;
 using System.Collections.Generic;
 using Avalonia.Controls;
 #if !AVALONIA11
+using Avalonia.Controls.Chrome;
+using Avalonia.Input;
+#endif
+using Avalonia.Platform;
+#if !AVALONIA11
+using Avalonia.VisualTree;
+#endif
+#if !AVALONIA11
 using Avalonia.Controls.Platform;
 #endif
 using ProGPU.Backend;
@@ -15,6 +23,25 @@ internal readonly record struct SilkNetTransparencyChoice(
 
 internal static class SilkNetWindowChrome
 {
+#if AVALONIA11
+    internal static NativeWindowChromeHints MapChromeHints(
+        ExtendClientAreaChromeHints hints) =>
+        (NativeWindowChromeHints)(int)hints;
+#endif
+
+#if !AVALONIA11
+    internal static NativeWindowTheme MapFrameTheme(
+        PlatformThemeVariant? requested,
+        PlatformThemeVariant platformDefault)
+    {
+        PlatformThemeVariant resolved =
+            requested ?? platformDefault;
+        return resolved == PlatformThemeVariant.Dark
+            ? NativeWindowTheme.Dark
+            : NativeWindowTheme.Light;
+    }
+#endif
+
     internal static SilkNetTransparencyChoice SelectTransparency(
         IReadOnlyList<WindowTransparencyLevel> requested,
         NativeWindowCapabilities capabilities)
@@ -104,17 +131,67 @@ internal static class SilkNetWindowChrome
                 "Unsupported resize edge.")
         };
 
+#if !AVALONIA11
+    internal static bool TryMapResizeRole(
+        WindowDecorationsElementRole role,
+        out NativeResizeEdge edge)
+    {
+        edge = role switch
+        {
+            WindowDecorationsElementRole.ResizeN => NativeResizeEdge.Top,
+            WindowDecorationsElementRole.ResizeS => NativeResizeEdge.Bottom,
+            WindowDecorationsElementRole.ResizeE => NativeResizeEdge.Right,
+            WindowDecorationsElementRole.ResizeW => NativeResizeEdge.Left,
+            WindowDecorationsElementRole.ResizeNE => NativeResizeEdge.TopRight,
+            WindowDecorationsElementRole.ResizeNW => NativeResizeEdge.TopLeft,
+            WindowDecorationsElementRole.ResizeSE => NativeResizeEdge.BottomRight,
+            WindowDecorationsElementRole.ResizeSW => NativeResizeEdge.BottomLeft,
+            _ => default
+        };
+        return role is
+            WindowDecorationsElementRole.ResizeN or
+            WindowDecorationsElementRole.ResizeS or
+            WindowDecorationsElementRole.ResizeE or
+            WindowDecorationsElementRole.ResizeW or
+            WindowDecorationsElementRole.ResizeNE or
+            WindowDecorationsElementRole.ResizeNW or
+            WindowDecorationsElementRole.ResizeSE or
+            WindowDecorationsElementRole.ResizeSW;
+    }
+
+    internal static WindowDecorationsElementRole? ResolveChromeRole(
+        IInputRoot inputRoot,
+        Point point)
+    {
+        ArgumentNullException.ThrowIfNull(inputRoot);
+        Visual? current = inputRoot.FocusRoot.InputHitTest(
+            point,
+            enabledElementsOnly: false) as Visual;
+        for (; current is not null; current = current.GetVisualParent())
+        {
+            WindowDecorationsElementRole role =
+                WindowDecorationProperties.GetElementRole(current);
+            if (role != WindowDecorationsElementRole.None)
+                return role;
+        }
+
+        return null;
+    }
+#endif
+
     internal static NativeWindowSize ToMinimumSize(
-        Size size) =>
+        Size size,
+        double desktopScaling = 1d) =>
         new(
-            NormalizeMinimum(size.Width),
-            NormalizeMinimum(size.Height));
+            NormalizeMinimum(size.Width, desktopScaling),
+            NormalizeMinimum(size.Height, desktopScaling));
 
     internal static NativeWindowSize ToMaximumSize(
-        Size size) =>
+        Size size,
+        double desktopScaling = 1d) =>
         new(
-            NormalizeMaximum(size.Width),
-            NormalizeMaximum(size.Height));
+            NormalizeMaximum(size.Width, desktopScaling),
+            NormalizeMaximum(size.Height, desktopScaling));
 
 #if !AVALONIA11
     internal static PlatformAllowedWindowActions
@@ -166,23 +243,33 @@ internal static class SilkNetWindowChrome
     }
 #endif
 
-    private static int NormalizeMinimum(double value)
+    private static int NormalizeMinimum(
+        double value,
+        double desktopScaling)
     {
         if (!double.IsFinite(value) || value <= 0)
             return 0;
+        double scale =
+            DisplayScaleResolver.NormalizeDisplayScale(
+                desktopScaling);
         return checked(
             (int)Math.Min(
                 int.MaxValue,
-                Math.Ceiling(value)));
+                Math.Ceiling(value * scale)));
     }
 
-    private static int NormalizeMaximum(double value)
+    private static int NormalizeMaximum(
+        double value,
+        double desktopScaling)
     {
         if (!double.IsFinite(value) || value <= 0)
             return int.MaxValue;
+        double scale =
+            DisplayScaleResolver.NormalizeDisplayScale(
+                desktopScaling);
         return checked(
             (int)Math.Min(
                 int.MaxValue,
-                Math.Floor(value)));
+                Math.Floor(value * scale)));
     }
 }

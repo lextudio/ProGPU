@@ -28,14 +28,16 @@ public unsafe sealed class BrowserGpuContext : IDisposable
             throw new PlatformNotSupportedException("The current browser does not expose a usable navigator.gpu device.");
 
         var api = new BrowserWebGpuApi();
-        var context = new WgpuContext();
+        var context = new WgpuContext { ComputeLimits = capabilities.ComputeLimits };
         context.InitializeExternal(
             api,
             BrowserWebGpuApi.DeviceHandle,
             BrowserWebGpuApi.QueueHandle,
             BrowserWebGpuApi.SurfaceHandle,
             ParseTextureFormat(capabilities.CanvasFormat),
-            supportsReadOnlyAndReadWriteStorageTextures: capabilities.ActiveProfile == BrowserGpuProfile.Full);
+            supportsReadOnlyAndReadWriteStorageTextures:
+                capabilities.ActiveProfile == BrowserGpuProfile.Full,
+            maxBufferSize: capabilities.MaxBufferSize);
         return new BrowserGpuContext(api, context);
     }
 

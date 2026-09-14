@@ -86,7 +86,8 @@ public static partial class GpuPictureNativeSceneCompiler
         bool HasColorMatrix,
         NativeSceneImageEffect Effect,
         bool HasEffect,
-        NativeSceneImagePatch[] Patches);
+        NativeSceneImagePatch[] Patches,
+        List<NativeSceneImagePatch>? GeneratedPatches);
 
     private readonly record struct AffineColorTransform(
         Vector4 Red,
@@ -814,7 +815,8 @@ public static partial class GpuPictureNativeSceneCompiler
                 {
                     NativeScenePathBooleanNode source = nodeBooleanNodes[index];
                     booleanNodes[booleanNodeIndex + index] =
-                        source.Kind == NativePathBooleanNodeKind.Leaf
+                        source.Kind is NativePathBooleanNodeKind.Leaf or
+                            NativePathBooleanNodeKind.WindingLeaf
                             ? new NativeScenePathBooleanNode(
                                 checked(source.SegmentOffset +
                                     (ulong)segmentIndex),
@@ -1183,15 +1185,6 @@ public static partial class GpuPictureNativeSceneCompiler
             return false;
         }
 
-        if (batches.Count == 0)
-        {
-            failure = new(
-                NativePictureCompileError.InvalidGeometry,
-                -1,
-                default);
-            return false;
-        }
-
         try
         {
             int nativeCommandCount = checked(operations.Count +
@@ -1226,7 +1219,7 @@ public static partial class GpuPictureNativeSceneCompiler
                     Unsafe.SizeOf<NativeSceneImageSamplingOptions>() +
                     Unsafe.SizeOf<NativeSceneImagePatchBatch>() + 8) +
                 externalImages.Sum(static image =>
-                    image.Patches.Length *
+                    (image.GeneratedPatches?.Count ?? image.Patches.Length) *
                         Unsafe.SizeOf<NativeSceneImagePatch>()) +
                 materials.BrushCount * Unsafe.SizeOf<NativeSceneBrush>() +
                 materials.GradientStopCount *
@@ -2059,6 +2052,23 @@ public static partial class GpuPictureNativeSceneCompiler
         error = NativePictureCompileError.None;
         switch (command.Type)
         {
+            case RenderCommandType.DrawRect
+                when command.Brush is GpuTextureBrush textureBrush:
+                return TryAppendTextureBrushRectangle(
+                    picture,
+                    command,
+                    textureBrush,
+                    transform,
+                    analytics,
+                    analyticBrushIndices,
+                    geometry,
+                    geometryBrushIndices,
+                    externalImages,
+                    batches,
+                    operations,
+                    materials,
+                    options,
+                    out error);
             case RenderCommandType.DrawRect:
                 return TryAppendAnalyticPrimitive(
                     command,
@@ -2075,6 +2085,9 @@ public static partial class GpuPictureNativeSceneCompiler
                     materials,
                     out error);
             case RenderCommandType.DrawTexture:
+            case RenderCommandType.DrawExtension
+                when command.ExtensionId ==
+                    CompositorBuiltInExtensions.ImageEffect:
                 return TryAppendExternalImage(
                     picture,
                     command,
@@ -2250,6 +2263,16 @@ public static partial class GpuPictureNativeSceneCompiler
                     operations,
                     materials,
                     out error);
+            case RenderCommandType.DrawDeviceDotGrid:
+                return TryAppendDeviceDotGrid(
+                    command,
+                    transform,
+                    geometry,
+                    geometryBrushIndices,
+                    batches,
+                    operations,
+                    materials,
+                    out error);
             case RenderCommandType.DrawPath:
                 return TryAppendPath(
                     command,
@@ -2282,6 +2305,7 @@ public static partial class GpuPictureNativeSceneCompiler
                     out error);
             case RenderCommandType.DrawPointBatch:
                 return TryAppendPointBatch(
+                    picture,
                     command,
                     transform,
                     pointBatches,
@@ -3054,7 +3078,64 @@ public static partial class GpuPictureNativeSceneCompiler
         return true;
     }
 
+    private static bool TryAppendDeviceDotGrid(
+        in RenderCommand command,
+        Matrix3x2 transform,
+        List<NativeGeometryPrimitive> primitives,
+        List<uint> brushIndices,
+        List<Batch> batches,
+        List<Operation> operations,
+        NativeBrushTableBuilder materials,
+        out NativePictureCompileError error)
+    {
+        error = NativePictureCompileError.None;
+        bool isLineGrid = command.RadiusY > 0f;
+        if (command.Brush is null ||
+            !IsFiniteRect(command.Rect) || command.Rect.IsEmpty ||
+            !float.IsFinite(command.Position2.X) || command.Position2.X <= 0f ||
+            !float.IsFinite(command.Position2.Y) || command.Position2.Y <= 0f ||
+            !float.IsFinite(command.RadiusX) || command.RadiusX <= 0f ||
+            !float.IsFinite(command.RadiusY) || command.RadiusY < 0f ||
+            (isLineGrid && (command.RadiusY > 100f ||
+                command.RadiusY != MathF.Round(command.RadiusY))))
+        {
+            error = NativePictureCompileError.InvalidGeometry;
+            return false;
+        }
+        if (!materials.TryRegister(command.Brush, out uint brushIndex, out error))
+        {
+            return false;
+        }
+
+        int start = primitives.Count;
+        primitives.Add(new(
+            NativeGeometryPrimitiveKind.DotGrid,
+            new Vector2(command.Rect.X, command.Rect.Y),
+            new Vector2(command.Rect.Width, command.Rect.Height),
+            Vector4.One,
+            transform,
+            p2: isLineGrid
+                ? new Vector2(1f, command.RadiusY)
+                : Vector2.Zero,
+            p3: command.Position2,
+            strokeThickness: command.RadiusX,
+            flags: command.IsEdgeAliased
+                ? NativeGeometryPrimitiveFlags.EdgeAliased
+                : NativeGeometryPrimitiveFlags.None));
+        brushIndices.Add(brushIndex);
+        AppendBatch(
+            batches,
+            operations,
+            BatchKind.Geometry,
+            start,
+            start,
+            1,
+            TransformBounds(command.Rect, transform));
+        return true;
+    }
+
     private static bool TryAppendPointBatch(
+        GpuPicture picture,
         in RenderCommand command,
         Matrix3x2 transform,
         List<NativeScenePointBatch> nativeBatches,
@@ -3066,8 +3147,15 @@ public static partial class GpuPictureNativeSceneCompiler
         out NativePictureCompileError error)
     {
         error = NativePictureCompileError.None;
-        if (command.Brush is null ||
-            command.PolylinePoints is not { Length: > 0 } sourcePoints ||
+        ReadOnlySpan<Vector2> sourcePoints =
+            command.PolylinePoints is { Length: > 0 } inlinePoints
+                ? inlinePoints
+                : command.PointBufferCount > 0
+                    ? picture.GetPoints(
+                        command.PointBufferOffset,
+                        command.PointBufferCount)
+                    : ReadOnlySpan<Vector2>.Empty;
+        if (command.Brush is null || sourcePoints.IsEmpty ||
             !float.IsFinite(command.RadiusX))
         {
             error = NativePictureCompileError.InvalidGeometry;
@@ -3596,6 +3684,30 @@ public static partial class GpuPictureNativeSceneCompiler
             error = NativePictureCompileError.UnsupportedStroke;
             return false;
         }
+        var dashCache = !RenderCommandGeometryCache.IsLinearDashCandidate(command.Pen) ? null :
+            command.GeometryCache is { } existing && ReferenceEquals(existing.StrokePath, path)
+                ? existing : RenderCommandGeometryCache.ForStrokePath(path);
+        if (dashCache?.SupportsLinearDashCoverage(command.Pen) == true)
+        {
+            if (!command.IsPenThicknessLocal || !dashCache.TryGetLinearDashCoverage(command.Pen,
+                    command.Pen.Thickness, out var coverage))
+            {
+                error = NativePictureCompileError.UnsupportedStroke;
+                return false;
+            }
+            var prepared = command;
+            prepared.Path = coverage.Path;
+            prepared.Pen = coverage.Pen;
+            prepared.Brush = coverage.Pen == null ? command.Pen.Brush : null;
+            prepared.GeometryCache = coverage.GeometryCache;
+            // A valid dash phase can hide the entire source contour.
+            if (coverage.Path.Figures.Count == 0) return true;
+            if (coverage.Pen == null)
+                return TryAppendPathFill(prepared, transform, nativePaths, nativeSegments, nativeBooleanNodes,
+                    pathBrushIndices, batches, operations, materials, out error);
+            return TryAppendGeneralPathStroke(prepared, coverage.Path, transform, nativeGeometry,
+                geometryBrushIndices, batches, operations, materials, out error);
+        }
         return TryAppendGeneralPathStroke(
             command,
             path,
@@ -3657,6 +3769,7 @@ public static partial class GpuPictureNativeSceneCompiler
                 undashedPen =
                     Compositor.CreateUndashedPen(pen, localThickness);
             }
+            if (dashedPath.Figures.Count == 0) return true;
             RenderCommand dashedCommand = command;
             dashedCommand.Brush = null;
             dashedCommand.Path = dashedPath;
@@ -4051,6 +4164,12 @@ public static partial class GpuPictureNativeSceneCompiler
             case QuadraticBezierSegment quadratic:
                 endPoint = quadratic.Point;
                 return true;
+            case RationalQuadraticBezierSegment rationalQuadratic:
+                endPoint = rationalQuadratic.Point;
+                return true;
+            case RationalCubicBezierSegment rationalCubic:
+                endPoint = rationalCubic.Point;
+                return true;
             case CubicBezierSegment cubic:
                 endPoint = cubic.Point;
                 return true;
@@ -4084,6 +4203,28 @@ public static partial class GpuPictureNativeSceneCompiler
                         out direction,
                         quadratic.Point - quadratic.ControlPoint,
                         quadratic.Point - start);
+            case RationalQuadraticBezierSegment rationalQuadratic:
+                return atStart
+                    ? TrySelectNativeDirection(
+                        out direction,
+                        rationalQuadratic.ControlPoint - start,
+                        rationalQuadratic.Point - start)
+                    : TrySelectNativeDirection(
+                        out direction,
+                        rationalQuadratic.Point - rationalQuadratic.ControlPoint,
+                        rationalQuadratic.Point - start);
+            case RationalCubicBezierSegment rationalCubic:
+                return atStart
+                    ? TrySelectNativeDirection(
+                        out direction,
+                        rationalCubic.ControlPoint1 - start,
+                        rationalCubic.ControlPoint2 - start,
+                        rationalCubic.Point - start)
+                    : TrySelectNativeDirection(
+                        out direction,
+                        rationalCubic.Point - rationalCubic.ControlPoint2,
+                        rationalCubic.Point - rationalCubic.ControlPoint1,
+                        rationalCubic.Point - start);
             case CubicBezierSegment cubic:
                 return atStart
                     ? TrySelectNativeDirection(
@@ -4302,7 +4443,9 @@ public static partial class GpuPictureNativeSceneCompiler
         for (int index = 0; index < booleanNodes.Length; index++)
         {
             NativeScenePathBooleanNode node = booleanNodes[index];
-            nativeBooleanNodes!.Add(node.Kind == NativePathBooleanNodeKind.Leaf
+            nativeBooleanNodes!.Add(node.Kind is
+                    NativePathBooleanNodeKind.Leaf or
+                    NativePathBooleanNodeKind.WindingLeaf
                 ? new NativeScenePathBooleanNode(
                     checked(resourceSegmentOffset + node.SegmentOffset),
                     node.SegmentCount,
@@ -4312,7 +4455,7 @@ public static partial class GpuPictureNativeSceneCompiler
                     node.Kind)
                 : node);
         }
-        uint sampleGrid = command.PathSampleGrid >=
+        uint sampleGrid = command.IsEdgeAliased ? 1U : command.PathSampleGrid >=
             PathAtlas.HighPrecisionCoverageSampleGrid
             ? PathAtlas.HighPrecisionCoverageSampleGrid
             : PathAtlas.StandardCoverageSampleGrid;
@@ -4349,6 +4492,64 @@ public static partial class GpuPictureNativeSceneCompiler
         return true;
     }
 
+    private static bool TryAppendTextureBrushRectangle(
+        GpuPicture picture,
+        in RenderCommand command,
+        GpuTextureBrush brush,
+        Matrix3x2 transform,
+        List<NativeAnalyticPrimitive> analytics,
+        List<uint> analyticBrushIndices,
+        List<NativeGeometryPrimitive> geometry,
+        List<uint> geometryBrushIndices,
+        List<ExternalImageDraw> externalImages,
+        List<Batch> batches,
+        List<Operation> operations,
+        NativeBrushTableBuilder materials,
+        NativePictureCompileOptions options,
+        out NativePictureCompileError error)
+    {
+        if (!brush.TryCreateTextureCommand(
+                command.Rect,
+                out RenderCommand textureCommand))
+        {
+            error = NativePictureCompileError.UnsupportedCommand;
+            return false;
+        }
+        if (!TryAppendExternalImage(
+                picture,
+                textureCommand,
+                transform,
+                options.DpiScale,
+                externalImages,
+                batches,
+                operations,
+                out error))
+        {
+            return false;
+        }
+        if (command.Pen is null)
+        {
+            return true;
+        }
+
+        RenderCommand stroke = command;
+        stroke.Brush = null;
+        return TryAppendAnalyticPrimitive(
+            stroke,
+            NativeAnalyticPrimitiveKind.Rectangle,
+            command.Rect,
+            0f,
+            transform,
+            analytics,
+            analyticBrushIndices,
+            geometry,
+            geometryBrushIndices,
+            batches,
+            operations,
+            materials,
+            out error);
+    }
+
     private static bool TryAppendExternalImage(
         GpuPicture picture,
         in RenderCommand command,
@@ -4372,6 +4573,70 @@ public static partial class GpuPictureNativeSceneCompiler
         {
             error = NativePictureCompileError.UnsupportedCommand;
             return false;
+        }
+
+        Matrix3x2 destinationTransform = transform;
+        NativeImageRect destinationRect = new(
+            command.Rect.X,
+            command.Rect.Y,
+            command.Rect.Width,
+            command.Rect.Height);
+        if (command.HasTextureDestinationQuad)
+        {
+            Vector2 topLeft = command.TextureDestination0;
+            Vector2 topRight = command.TextureDestination1;
+            Vector2 bottomRight = command.TextureDestination2;
+            Vector2 bottomLeft = command.TextureDestination3;
+            Vector4 weights = command.TextureDestinationProjectiveWeights;
+            float largestWeight = MathF.Max(
+                MathF.Max(weights.X, weights.Y),
+                MathF.Max(weights.Z, weights.W));
+            float smallestWeight = MathF.Min(
+                MathF.Min(weights.X, weights.Y),
+                MathF.Min(weights.Z, weights.W));
+            Vector2 predictedBottomRight = topRight + bottomLeft - topLeft;
+            float coordinateScale = MathF.Max(
+                1f,
+                MathF.Max(
+                    MathF.Max(topLeft.Length(), topRight.Length()),
+                    MathF.Max(bottomRight.Length(), bottomLeft.Length())));
+            bool isAffine =
+                !hasPatches &&
+                IsFinite(topLeft) &&
+                IsFinite(topRight) &&
+                IsFinite(bottomRight) &&
+                IsFinite(bottomLeft) &&
+                IsFinite(weights) &&
+                smallestWeight > 0f &&
+                largestWeight - smallestWeight <= largestWeight * 1e-5f &&
+                Vector2.Distance(predictedBottomRight, bottomRight) <=
+                    coordinateScale * 1e-5f;
+            if (!isAffine)
+            {
+                // The native scene image command currently carries an affine
+                // Matrix3x2 only. Fail closed for projective quads so native
+                // replay never substitutes an axis-aligned bounds draw.
+                error = NativePictureCompileError.UnsupportedCommand;
+                return false;
+            }
+
+            Vector2 horizontal = topRight - topLeft;
+            Vector2 vertical = bottomLeft - topLeft;
+            if (MathF.Abs(horizontal.X * vertical.Y -
+                    horizontal.Y * vertical.X) <= 1e-6f)
+            {
+                error = NativePictureCompileError.InvalidGeometry;
+                return false;
+            }
+
+            destinationRect = new NativeImageRect(0f, 0f, 1f, 1f);
+            destinationTransform = new Matrix3x2(
+                horizontal.X,
+                horizontal.Y,
+                vertical.X,
+                vertical.Y,
+                topLeft.X,
+                topLeft.Y) * transform;
         }
 
         NativeImageSampling sampling;
@@ -4417,9 +4682,19 @@ public static partial class GpuPictureNativeSceneCompiler
         {
             source = new Rect(0f, 0f, texture.Width, texture.Height);
         }
-        if (!IsFiniteRect(source) || source.X < 0f || source.Y < 0f ||
-            source.Width <= 0f || source.Height <= 0f ||
-            source.Right > texture.Width || source.Bottom > texture.Height)
+        bool extendedSource = command.AllowExtendedTextureSourceRect;
+        if (!IsFiniteRect(source) || source.Width <= 0f || source.Height <= 0f ||
+            !extendedSource &&
+                (source.X < 0f || source.Y < 0f ||
+                    source.Right > texture.Width ||
+                    source.Bottom > texture.Height) ||
+            (uint)command.TextureAddressModeU >
+                (uint)TextureAddressMode.MirrorRepeat ||
+            (uint)command.TextureAddressModeV >
+                (uint)TextureAddressMode.MirrorRepeat ||
+            !extendedSource &&
+                (command.TextureAddressModeU != TextureAddressMode.Clamp ||
+                    command.TextureAddressModeV != TextureAddressMode.Clamp))
         {
             error = NativePictureCompileError.InvalidGeometry;
             return false;
@@ -4509,6 +4784,16 @@ public static partial class GpuPictureNativeSceneCompiler
         {
             flags |= NativeSceneImageFlags.SourcePremultiplied;
         }
+        if (extendedSource)
+        {
+            flags |= NativeSceneImageFlags.ExtendedSourceRect;
+            flags |= EncodeNativeAddressMode(
+                command.TextureAddressModeU,
+                isVertical: false);
+            flags |= EncodeNativeAddressMode(
+                command.TextureAddressModeV,
+                isVertical: true);
+        }
         NativeSceneImagePatch[] patches = [];
         NativeImageRect bounds;
         if (hasPatches)
@@ -4564,11 +4849,21 @@ public static partial class GpuPictureNativeSceneCompiler
         }
         else
         {
-            bounds = TransformBounds(command.Rect, transform);
+            bounds = command.HasTextureDestinationQuad
+                ? TransformBounds(new Rect(0f, 0f, 1f, 1f), destinationTransform)
+                : TransformBounds(command.Rect, transform);
         }
         if (command.SnapTextureToPixels)
         {
             bounds = Inflate(bounds, 0.5f / targetDpiScale);
+        }
+        float opacity = command.HasTextureOpacity
+            ? command.TextureOpacity
+            : 1f;
+        if (!float.IsFinite(opacity) || opacity is < 0f or > 1f)
+        {
+            error = NativePictureCompileError.InvalidGeometry;
+            return false;
         }
         var draw = new NativeSceneImageDraw(
             texture.Width,
@@ -4580,19 +4875,16 @@ public static partial class GpuPictureNativeSceneCompiler
                 source.Y,
                 source.Width,
                 source.Height),
-            new NativeImageRect(
-                hasPatches ? 0f : command.Rect.X,
-                hasPatches ? 0f : command.Rect.Y,
-                hasPatches ? 1f : command.Rect.Width,
-                hasPatches ? 1f : command.Rect.Height),
-            transform,
-            1f,
+            hasPatches
+                ? new NativeImageRect(0f, 0f, 1f, 1f)
+                : destinationRect,
+            destinationTransform,
+            opacity,
             flags,
             sampling == NativeImageSampling.LinearMipmap
                 ? (byte)Math.Clamp((int)command.TextureMaxAnisotropy, 1, 16)
                 : (byte)1);
-        int drawIndex = externalImages.Count;
-        externalImages.Add(new(
+        var externalImage = new ExternalImageDraw(
             texture,
             chromaTexture,
             maskTexture,
@@ -4603,7 +4895,21 @@ public static partial class GpuPictureNativeSceneCompiler
             hasColorMatrix,
             nativeEffect,
             hasEffect,
-            patches));
+            patches,
+            GeneratedPatches: null);
+        if (TryMergeExternalImageDraw(
+                externalImage,
+                bounds,
+                externalImages,
+                batches,
+                operations))
+        {
+            error = NativePictureCompileError.None;
+            return true;
+        }
+
+        int drawIndex = externalImages.Count;
+        externalImages.Add(externalImage);
         batches.Add(new Batch
         {
             Kind = BatchKind.Image,
@@ -4616,6 +4922,116 @@ public static partial class GpuPictureNativeSceneCompiler
         return true;
     }
 
+    private static NativeSceneImageFlags EncodeNativeAddressMode(
+        TextureAddressMode mode,
+        bool isVertical) => (mode, isVertical) switch
+        {
+            (TextureAddressMode.Clamp, _) => NativeSceneImageFlags.None,
+            (TextureAddressMode.Repeat, false) =>
+                NativeSceneImageFlags.AddressURepeat,
+            (TextureAddressMode.MirrorRepeat, false) =>
+                NativeSceneImageFlags.AddressUMirrorRepeat,
+            (TextureAddressMode.Repeat, true) =>
+                NativeSceneImageFlags.AddressVRepeat,
+            (TextureAddressMode.MirrorRepeat, true) =>
+                NativeSceneImageFlags.AddressVMirrorRepeat,
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+
+    private static bool TryMergeExternalImageDraw(
+        in ExternalImageDraw current,
+        NativeImageRect currentBounds,
+        List<ExternalImageDraw> externalImages,
+        List<Batch> batches,
+        List<Operation> operations)
+    {
+        if (current.Patches.Length != 0 ||
+            current.HasColorMatrix || current.HasEffect ||
+            batches.Count == 0 || operations.Count == 0 ||
+            operations[^1].Kind != OperationKind.Draw ||
+            operations[^1].BatchIndex != batches.Count - 1 ||
+            batches[^1].Kind != BatchKind.Image)
+        {
+            return false;
+        }
+
+        Batch previousBatch = batches[^1];
+        ExternalImageDraw previous = externalImages[previousBatch.Start];
+        if ((previous.GeneratedPatches is null && previous.Patches.Length != 0) ||
+            previous.HasColorMatrix || previous.HasEffect ||
+            !ReferenceEquals(previous.Texture, current.Texture) ||
+            !ReferenceEquals(previous.ChromaTexture, current.ChromaTexture) ||
+            !ReferenceEquals(previous.MaskTexture, current.MaskTexture) ||
+            previous.HasSamplingOptions != current.HasSamplingOptions ||
+            previous.HasSamplingOptions &&
+                !previous.SamplingOptions.Equals(current.SamplingOptions) ||
+            !CanShareImagePatchBatch(previous.Draw, current.Draw))
+        {
+            return false;
+        }
+
+        List<NativeSceneImagePatch> patches;
+        if (previous.GeneratedPatches is { } generatedPatches)
+        {
+            if (generatedPatches.Count >= 65_536)
+            {
+                return false;
+            }
+            generatedPatches.Add(CreateTexturePatch(current.Draw));
+            patches = generatedPatches;
+        }
+        else
+        {
+            patches = new List<NativeSceneImagePatch>(16)
+            {
+                CreateTexturePatch(previous.Draw),
+                CreateTexturePatch(current.Draw)
+            };
+        }
+
+        NativeSceneImageDraw source = previous.Draw;
+        var batchedDraw = new NativeSceneImageDraw(
+            source.ImageWidth,
+            source.ImageHeight,
+            source.RowBytes,
+            source.Sampling,
+            source.SourceRect,
+            source.DestinationRect,
+            Matrix3x2.Identity,
+            source.Opacity,
+            source.Flags | NativeSceneImageFlags.PatchBatch,
+            checked((byte)source.MaxAnisotropy));
+        externalImages[previousBatch.Start] = previous with
+        {
+            Draw = batchedDraw,
+            Patches = [],
+            GeneratedPatches = patches
+        };
+        previousBatch.Bounds = Union(previousBatch.Bounds, currentBounds);
+        batches[^1] = previousBatch;
+        return true;
+    }
+
+    private static bool CanShareImagePatchBatch(
+        in NativeSceneImageDraw left,
+        in NativeSceneImageDraw right) =>
+        left.ImageWidth == right.ImageWidth &&
+        left.ImageHeight == right.ImageHeight &&
+        left.RowBytes == right.RowBytes &&
+        left.Sampling == right.Sampling &&
+        left.Opacity == right.Opacity &&
+        left.MaxAnisotropy == right.MaxAnisotropy &&
+        (left.Flags & ~NativeSceneImageFlags.PatchBatch) ==
+            (right.Flags & ~NativeSceneImageFlags.PatchBatch);
+
+    private static NativeSceneImagePatch CreateTexturePatch(
+        in NativeSceneImageDraw draw) =>
+        new(
+            NativeSceneImagePatchKind.Texture,
+            draw.SourceRect,
+            draw.DestinationRect,
+            draw.Transform);
+
     private static bool TryDrawExternalImage(
         ref NativeSceneStreamBuilder builder,
         ulong commandId,
@@ -4624,7 +5040,11 @@ public static partial class GpuPictureNativeSceneCompiler
         in ExternalImageDraw image)
     {
         NativeSceneImageDraw draw = image.Draw;
-        if (image.Patches.Length > 0)
+        ReadOnlySpan<NativeSceneImagePatch> patches =
+            image.GeneratedPatches is { } generatedPatches
+                ? CollectionsMarshal.AsSpan(generatedPatches)
+                : image.Patches;
+        if (!patches.IsEmpty)
         {
             NativeSceneImageSamplingOptions? sampling =
                 image.HasSamplingOptions ? image.SamplingOptions : null;
@@ -4637,7 +5057,7 @@ public static partial class GpuPictureNativeSceneCompiler
                 resourceIndex,
                 bounds,
                 in draw,
-                image.Patches,
+                patches,
                 sampling,
                 colorMatrix,
                 effect);

@@ -75,6 +75,90 @@ public sealed class WindowsDpiAwarenessTests
     }
 
     [Fact]
+    public void AvaloniaSilkWindowingPreservesWindowsInteractiveContracts()
+    {
+        string window = File.ReadAllText(
+            FindRepoFile(
+                "src",
+                "ProGPU.Avalonia.SilkNet",
+                "SilkNetDesktopWindow.cs"));
+        string win32 = File.ReadAllText(
+            FindRepoFile(
+                "src",
+                "ProGPU.Backend",
+                "Win32NativeWindowPlatform.cs"));
+
+        Assert.Contains(
+            "ResolveLogicalClientSize(",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "result.X / scaling",
+            window,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "point.X / scaling",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "IsInteractiveMoveResize == true",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "BeginNativeMoveDrag()",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PixelPoint? requestedPosition = _desiredPosition;",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Position = requestedPosition is { } initialPosition",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "if (requestedPosition is { } desired)",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_desiredPosition = new PixelPoint(",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_window?.IsInitialized == true",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "OnRender(0d);",
+            window,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "WmEnterSizeMove",
+            win32,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "EnsureWindowProcedure(true);",
+            win32,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PostMessage(",
+            win32,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "WmSysCommand",
+            win32,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ScMove | HtCaption",
+            win32,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PackScreenPoint(screenPointer)",
+            win32,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FeatureRenderSurfacesUseResolvedWindowDpiScale()
     {
         string shaderToy = File.ReadAllText(FindRepoFile("src", "ProGPU.Samples", "Controls", "ShaderToyControl.cs"));

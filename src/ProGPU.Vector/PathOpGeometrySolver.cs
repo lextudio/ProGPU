@@ -152,6 +152,7 @@ namespace ProGPU.Vector
         {
             pathA = ResolveDeferredOperand(pathA);
             pathB = ResolveDeferredOperand(pathB);
+            ThrowIfRationalSegments(pathA, pathB);
             if (TryCreateImmediateResult(pathA, pathB, op, out var result))
             {
                 return result;
@@ -177,6 +178,7 @@ namespace ProGPU.Vector
             {
                 pathA = ResolveDeferredOperand(pathA);
                 pathB = ResolveDeferredOperand(pathB);
+                ThrowIfRationalSegments(pathA, pathB);
                 if (TryCreateImmediateResult(pathA, pathB, op, out var result))
                 {
                     return Task.FromResult(result);
@@ -221,6 +223,52 @@ namespace ProGPU.Vector
             }
 
             return path;
+        }
+
+        public static PathGeometry CreateDeferred(
+            PathGeometry pathA,
+            PathGeometry pathB,
+            PathBooleanOperation operation,
+            PathGeometry? reusableResult = null)
+        {
+            if (operation < PathBooleanOperation.Difference ||
+                operation > PathBooleanOperation.ReverseDifference)
+            {
+                throw new ArgumentOutOfRangeException(nameof(operation));
+            }
+
+            return CreateDeferred(pathA, pathB, (int)operation, reusableResult);
+        }
+
+        private static void ThrowIfRationalSegments(
+            PathGeometry pathA,
+            PathGeometry pathB)
+        {
+            if (ContainsRationalSegment(pathA) ||
+                ContainsRationalSegment(pathB))
+            {
+                throw new NotSupportedException(
+                    "Path boolean reconstruction does not yet support rational segments.");
+            }
+        }
+
+        private static bool ContainsRationalSegment(PathGeometry path)
+        {
+            var figures = path.Figures;
+            for (int figureIndex = 0; figureIndex < figures.Count; figureIndex++)
+            {
+                var segments = figures[figureIndex].Segments;
+                for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
+                {
+                    if (segments[segmentIndex] is RationalQuadraticBezierSegment or
+                        RationalCubicBezierSegment)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         internal static PathGeometry CreateDeferred(
@@ -1152,7 +1200,7 @@ namespace ProGPU.Vector
                 MinY = minY,
                 MaxX = maxX,
                 MaxY = maxY,
-                FillRule = (uint)path.FillRule
+                FillRule = GpuPathFillRuleEncoding.Encode(path.FillRule)
             };
 
             return (records, CopySegments(segments));

@@ -29,7 +29,12 @@ public static unsafe class GpuTextureSurfacePresenter
                 throw new ObjectDisposedException(nameof(WgpuContext));
             }
 
-            context.ReconfigureIfNeeded(source.Width, source.Height);
+            if (!context.TryReconfigureIfNeeded(
+                    source.Width,
+                    source.Height))
+            {
+                return;
+            }
             var surfaceTexture = new SurfaceTexture();
             TextureView* targetView = null;
             context.Wgpu.SurfaceGetCurrentTexture((Surface*)surfaceHandle, &surfaceTexture);
@@ -37,6 +42,12 @@ public static unsafe class GpuTextureSurfacePresenter
             {
                 if (surfaceTexture.Status != SurfaceGetCurrentTextureStatus.Success)
                 {
+                    if (surfaceTexture.Texture != null)
+                    {
+                        context.Wgpu.TextureRelease(surfaceTexture.Texture);
+                        surfaceTexture.Texture = null;
+                    }
+                    _ = context.HandleSurfaceAcquisitionFailure(surfaceTexture.Status);
                     return;
                 }
 

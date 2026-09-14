@@ -9,6 +9,17 @@ using ProGPU.Vector;
 namespace ProGPU.Scene;
 
 /// <summary>
+/// Publishes already recorded source geometry whose input visibility is independent
+/// of visual opacity. The context is borrowed synchronously; producers must keep
+/// commands/resources stable during capture and invalidate the visual on changes.
+/// This contract does not authorize replacing geometry with visual bounds.
+/// </summary>
+public interface ISourceGeometryHitTestCommands
+{
+    DrawingContext SourceHitTestCommands { get; }
+}
+
+/// <summary>
 /// Marks a visual whose <see cref="Visual.OnRender"/> implementation already owns
 /// an immutable-until-invalidated command cache. The compositor must not retain a
 /// second copy of that command stream.
@@ -362,6 +373,12 @@ public class Visual
         }
     }
 
+    // Required cached sources must not become direct vector replay when the
+    // optional visual-layer optimization is disabled by the host.
+    internal virtual bool RequiresLayerCache => false;
+    internal virtual bool? LayerCacheClearTypePolicy => null;
+    internal virtual void PrepareLayerCache() { }
+
     /// <summary>
     /// Gets or sets the raster-resolution multiplier for a cached layer.
     /// A non-positive value suppresses layer rendering.
@@ -471,6 +488,12 @@ public class Visual
     }
 
     // Composition layer texture view
+    internal bool LayerTextureSuppressesClearType
+    {
+        get => _coldState?.LayerTextureSuppressesClearType ?? false;
+        set => GetOrCreateColdState().LayerTextureSuppressesClearType = value;
+    }
+
     public GpuTexture? LayerTexture
     {
         get => _coldState?.LayerTexture;
@@ -1005,6 +1028,7 @@ public class Visual
         public bool CacheAsLayer;
         public float LayerCacheRenderScale = 1f;
         public bool LayerCacheSnapsToDevicePixels;
+        public bool LayerTextureSuppressesClearType;
         public GpuTexture? LayerTexture;
     }
 
@@ -1229,6 +1253,13 @@ public class DrawingVisual : Visual
 
 public abstract class EffectBase
 {
+    /// <summary>
+    /// Whether this effect preserves source geometry coordinates for input.
+    /// This does not make its expanded raster bounds hittable or bypass clips.
+    /// Custom effects must explicitly implement their input contract.
+    /// </summary>
+    public virtual bool PreservesSourceHitGeometry => false;
+
     private readonly object _ownersLock = new();
     private readonly List<WeakReference<Visual>> _owners = new();
     private long _changeVersion;
@@ -1338,6 +1369,82 @@ public abstract class EffectBase
     }
 }
 
+/// <summary>
+/// Applies an affine 4x5 color transform to a visual after its subtree has
+/// been rendered into an isolated premultiplied surface.
+/// </summary>
+public sealed class ColorMatrixEffect : EffectBase
+{
+    private ImageEffectColorMatrix _colorMatrix;
+
+    public ColorMatrixEffect(ImageEffectColorMatrix colorMatrix)
+    {
+        _colorMatrix = colorMatrix;
+    }
+
+    public ImageEffectColorMatrix ColorMatrix
+    {
+        get => _colorMatrix;
+        set
+        {
+            if (_colorMatrix.Red != value.Red ||
+                _colorMatrix.Green != value.Green ||
+                _colorMatrix.Blue != value.Blue ||
+                _colorMatrix.Alpha != value.Alpha ||
+                _colorMatrix.Offset != value.Offset)
+            {
+                _colorMatrix = value;
+                Invalidate();
+            }
+        }
+    }
+
+    internal override int GetRenderCacheKey()
+    {
+        var hash = new HashCode();
+        hash.Add(GetType());
+        hash.Add(ChangeVersion);
+        hash.Add(ColorMatrix.Red);
+        hash.Add(ColorMatrix.Green);
+        hash.Add(ColorMatrix.Blue);
+        hash.Add(ColorMatrix.Alpha);
+        hash.Add(ColorMatrix.Offset);
+        return hash.ToHashCode();
+    }
+}
+
+/// <summary>
+/// Composites an isolated visual subtree onto its destination with one blend
+/// operation after the subtree has been rendered to a premultiplied surface.
+/// </summary>
+public sealed class BlendModeEffect : EffectBase
+{
+    private GpuBlendMode _blendMode;
+
+    public BlendModeEffect(GpuBlendMode blendMode)
+    {
+        _blendMode = blendMode;
+    }
+
+    public GpuBlendMode BlendMode
+    {
+        get => _blendMode;
+        set
+        {
+            if (_blendMode != value)
+            {
+                _blendMode = value;
+                Invalidate();
+            }
+        }
+    }
+
+    internal override int GetRenderCacheKey()
+    {
+        return HashCode.Combine(GetType(), ChangeVersion, BlendMode);
+    }
+}
+
 public sealed class WpfShaderEffect : EffectBase
 {
     private float _padding;
@@ -1425,9 +1532,20 @@ public sealed class WpfShaderEffect : EffectBase
     }
 }
 
+/// <summary>
+/// Selects the separable GPU kernel used by <see cref="BlurEffect"/>.
+/// </summary>
+public enum BlurKernelType
+{
+    Gaussian = 0,
+    Box = 1
+}
+
 public class BlurEffect : EffectBase
 {
+    public override bool PreservesSourceHitGeometry => true;
     private float _blurRadius;
+    private BlurKernelType _kernelType;
 
     public float BlurRadius
     {
@@ -1442,6 +1560,27 @@ public class BlurEffect : EffectBase
         }
     }
 
+    /// <summary>
+    /// Gets or sets the GPU blur kernel. Gaussian remains the default.
+    /// </summary>
+    public BlurKernelType KernelType
+    {
+        get => _kernelType;
+        set
+        {
+            if (value is not BlurKernelType.Gaussian and
+                not BlurKernelType.Box)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            if (_kernelType != value)
+            {
+                _kernelType = value;
+                Invalidate();
+            }
+        }
+    }
+
     public BlurEffect(float blurRadius = 5f)
     {
         BlurRadius = blurRadius;
@@ -1450,19 +1589,57 @@ public class BlurEffect : EffectBase
 
 public class DropShadowEffect : EffectBase
 {
-    private float _blurRadius;
+    public override bool PreservesSourceHitGeometry => true;
+    private float _blurRadiusX;
+    private float _blurRadiusY;
     private Vector2 _offset;
     private Vector4 _color;
+    private bool _drawSource = true;
     private Visual? _opacityMaskVisual;
 
     public float BlurRadius
     {
-        get => _blurRadius;
+        get => MathF.Max(_blurRadiusX, _blurRadiusY);
         set
         {
-            if (_blurRadius != value)
+            if (_blurRadiusX != value || _blurRadiusY != value)
             {
-                _blurRadius = value;
+                _blurRadiusX = value;
+                _blurRadiusY = value;
+                Invalidate();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the horizontal Gaussian standard deviation. Setting
+    /// <see cref="BlurRadius"/> assigns both axes for scalar compatibility.
+    /// </summary>
+    public float BlurRadiusX
+    {
+        get => _blurRadiusX;
+        set
+        {
+            if (_blurRadiusX != value)
+            {
+                _blurRadiusX = value;
+                Invalidate();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the vertical Gaussian standard deviation. Setting
+    /// <see cref="BlurRadius"/> assigns both axes for scalar compatibility.
+    /// </summary>
+    public float BlurRadiusY
+    {
+        get => _blurRadiusY;
+        set
+        {
+            if (_blurRadiusY != value)
+            {
+                _blurRadiusY = value;
                 Invalidate();
             }
         }
@@ -1495,6 +1672,24 @@ public class DropShadowEffect : EffectBase
     }
 
     /// <summary>
+    /// Gets or sets whether the uneffected source is composited above the
+    /// generated shadow. The default preserves conventional drop-shadow
+    /// behavior; shadow-only filter contracts can disable it.
+    /// </summary>
+    public bool DrawSource
+    {
+        get => _drawSource;
+        set
+        {
+            if (_drawSource != value)
+            {
+                _drawSource = value;
+                Invalidate();
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets or sets an optional retained visual whose alpha replaces the
     /// shadow source alpha. The original effect owner remains the color
     /// source composited above the generated shadow.
@@ -1515,6 +1710,18 @@ public class DropShadowEffect : EffectBase
     public DropShadowEffect(float blurRadius = 5f, Vector2 offset = default, Vector4 color = default)
     {
         BlurRadius = blurRadius;
+        Offset = offset;
+        Color = color == default ? new Vector4(0f, 0f, 0f, 0.5f) : color;
+    }
+
+    public DropShadowEffect(
+        float blurRadiusX,
+        float blurRadiusY,
+        Vector2 offset = default,
+        Vector4 color = default)
+    {
+        _blurRadiusX = blurRadiusX;
+        _blurRadiusY = blurRadiusY;
         Offset = offset;
         Color = color == default ? new Vector4(0f, 0f, 0f, 0.5f) : color;
     }

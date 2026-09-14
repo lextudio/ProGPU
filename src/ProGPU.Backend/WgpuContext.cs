@@ -29,8 +29,12 @@ public enum WgpuBackendKind
 
 public unsafe class WgpuContext : IDisposable
 {
-    private const int QueuePollSubmissionInterval = 2;
-    private const int MaxDeferredQueueSubmissions = 8;
+    public const ulong DefaultMaxBufferSize = 256UL * 1024UL * 1024UL;
+    // Device polling can materialize internal Metal signal/transition command
+    // buffers even when the renderer has no callbacks to service. Keep progress
+    // bounded without injecting that work into every retained frame.
+    private const int QueuePollSubmissionInterval = 8;
+    private const int DefaultMaximumDeferredQueueSubmissions = 64;
     private SharedDeviceLifetime? _sharedDeviceLifetime;
     private IWebGpuExternalDeviceLifetime? _externalDeviceLifetime;
     private WgpuDeviceResourceDomain? _deviceResourceDomain;
@@ -46,10 +50,49 @@ public unsafe class WgpuContext : IDisposable
     public uint MaxSampledTexturesPerShaderStage { get; private set; } = 16;
     public uint MaxSamplersPerShaderStage { get; private set; } = 16;
     public uint MaxBindGroups { get; private set; } = 4;
+    public ulong MaxBufferSize { get; private set; } = DefaultMaxBufferSize;
+    private WgpuComputeLimits _computeLimits;
+    /// <summary>Borrowed hosts supply the actual device snapshot at construction; owned devices query it directly.</summary>
+    public WgpuComputeLimits ComputeLimits { get => _computeLimits; init => _computeLimits = value; }
+    private GpuHitTestExecutionPreference _hitTestExecutionPreference = GpuHitTestExecutionPolicy.ReadEnvironmentPreference();
+    public GpuHitTestExecutionPreference HitTestExecutionPreference { get => _hitTestExecutionPreference; init => _hitTestExecutionPreference = value; }
+    public GpuHitTestExecutionPreference HitTestExecutionPath => GpuHitTestExecutionPolicy.Resolve(
+        _hitTestExecutionPreference, AdapterBackendType, SelectedDx12ShaderCompiler);
     public bool SupportsReadOnlyAndReadWriteStorageTextures { get; private set; }
     public bool SupportsTextureFormatsTier1 { get; private set; }
     public BackendType AdapterBackendType { get; private set; } = BackendType.Undefined;
     public string AdapterName { get; private set; } = string.Empty;
+    /// <summary>Explicitly requires a WebGPU fallback adapter; false preserves high-performance selection.</summary>
+    public bool ForceFallbackAdapter { get; init; }
+    /// <summary>Immutable before native instance creation; automatic retains the backend default.</summary>
+    public WgpuDx12CompilerOptions Dx12CompilerOptions { get; init; } = WgpuDx12CompilerOptions.FromEnvironment();
+    /// <summary>The compiler of the initialized owned D3D12 device; null for uninitialized or external devices.</summary>
+    public WgpuDx12ShaderCompiler? SelectedDx12ShaderCompiler { get; private set; }
+    private WgpuDx12CompilerPaths? _dx12CompilerPaths;
+    /// <summary>The explicit DXC library path, when that compiler was admitted.</summary>
+    public string? Dx12CompilerLibraryPath => _dx12CompilerPaths?.Compiler;
+    /// <summary>Configure before device creation; retained vertices keep the resolved path.</summary>
+    public GpuImageSamplingPreference ImageSamplingPreference { get; init; } =
+        GpuImageSamplingPolicy.ReadEnvironmentPreference();
+    public GpuImageSamplingPath ImageSamplingPath => GpuImageSamplingPolicy.Resolve(
+        ImageSamplingPreference, AdapterBackendType, AdapterName);
+    /// <summary>
+    /// Gets or sets the requested compute execution policy. Set this before
+    /// constructing workload-owned GPU resources.
+    /// </summary>
+    public GpuComputeExecutionPreference ComputeExecutionPreference { get; set; } =
+        GpuComputeExecutionPolicy.ReadEnvironmentPreference();
+    /// <summary>Gets the resolved glyph coverage implementation.</summary>
+    public GpuComputeExecutionPath GlyphRasterizationPath =>
+        GpuComputeExecutionPolicy.ResolveGlyphRasterization(
+            ComputeExecutionPreference,
+            AdapterBackendType,
+            AdapterName);
+    /// <summary>
+    /// Gets whether glyph coverage must avoid the adapter's compute shader.
+    /// </summary>
+    public bool RequiresGlyphComputeFallback =>
+        GlyphRasterizationPath != GpuComputeExecutionPath.NativeCompute;
     public WgpuAdapterSelectionDiagnostics AdapterSelectionDiagnostics { get; private set; } =
         WgpuAdapterSelectionDiagnostics.Unknown;
     public IProGpuExternalTextureImporter?
@@ -79,6 +122,7 @@ public unsafe class WgpuContext : IDisposable
     private static long s_deviceLossGeneration;
     private readonly long _deviceLossGeneration =
         Volatile.Read(ref s_deviceLossGeneration);
+    private WgpuDeviceLossState _deviceLossState = new();
 
     public static void RaiseWebGpuError(ErrorType type, string message)
     {
@@ -104,27 +148,51 @@ public unsafe class WgpuContext : IDisposable
     }
 
     /// <summary>
+    /// Marks this context's exact WebGPU device domain as terminally lost.
+    /// Every surface context sharing the device observes the same state, while
+    /// independent devices remain usable.
+    /// </summary>
+    public void ReportDeviceLost(
+        DeviceLostReason reason,
+        string message)
+    {
+        if (reason == DeviceLostReason.Destroyed ||
+            !_deviceLossState.TryMarkLost(reason, message))
+        {
+            return;
+        }
+
+        OnWebGpuDeviceLost?.Invoke(reason, message);
+    }
+
+    /// <summary>
     /// Gets whether a device-loss notification occurred after this context
     /// was created. The value is lock-free and safe to query from Avalonia's
     /// UI and render threads.
     /// </summary>
     public bool IsDeviceLost =>
+        _deviceLossState.IsLost ||
         _deviceLossGeneration !=
-        Volatile.Read(ref s_deviceLossGeneration);
+            Volatile.Read(ref s_deviceLossGeneration);
 
     private PfnErrorCallback _errorCallback;
     private nint _devicePollAddress;
     private nint _generateReportAddress;
 
+    private static readonly object s_silkNativeRenderLock = new();
+
     /// <summary>
-    /// Serializes command recording, queue submission, and device polling for
-    /// every presentation context that shares this native WebGPU device.
+    /// Serializes command recording, queue submission, resource destruction,
+    /// and device polling within the active WebGPU synchronization domain.
     /// </summary>
     /// <remarks>
-    /// Kept as a field for binary compatibility. Shared-device initialization
-    /// replaces it with the owner's lock before the child becomes observable.
+    /// Current wgpu-native instances share an internal process-wide resource
+    /// lock graph, so independently created Silk-native devices use one lock.
+    /// Browser and externally owned native devices receive independent locks;
+    /// shared-device initialization replaces the field with the owner's lock.
+    /// The field remains public for binary compatibility.
     /// </remarks>
-    public object RenderLock = new();
+    public object RenderLock = s_silkNativeRenderLock;
     public readonly object DisposalLock = new();
     public readonly List<IntPtr> PendingBuffers = new();
     public readonly List<IntPtr> PendingTextures = new();
@@ -142,6 +210,54 @@ public unsafe class WgpuContext : IDisposable
     private long _queueSubmissionCount;
     private long _drainedQueueSubmissionCount;
     private long _polledQueueSubmissionCount;
+    private long _textureContentVersion;
+    private int _maximumDeferredQueueSubmissions =
+        DefaultMaximumDeferredQueueSubmissions;
+
+    /// <summary>
+    /// Gets or sets the maximum number of queue submissions that may remain
+    /// deferred before resource cleanup forces a blocking device drain.
+    /// </summary>
+    /// <remarks>
+    /// Completed work is retired by non-blocking device polling. This bound is
+    /// a safety valve for hosts that can submit work faster than the GPU can
+    /// retire it; hosts with an explicit frame-latency policy may select a
+    /// larger bounded window to avoid unnecessary CPU/GPU serialization.
+    /// </remarks>
+    public int MaximumDeferredQueueSubmissions
+    {
+        get => Volatile.Read(
+            ref _maximumDeferredQueueSubmissions);
+        set
+        {
+            if (value < 1)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    "The deferred queue submission bound must be positive.");
+            }
+
+            Volatile.Write(
+                ref _maximumDeferredQueueSubmissions,
+                value);
+        }
+    }
+
+    /// <summary>
+    /// Gets a context-wide version that advances whenever an owned texture's
+    /// content or native view identity changes.
+    /// </summary>
+    /// <remarks>
+    /// Retained hosts can capture this value after rendering and require an
+    /// exact match before reusing an already populated output target. Changes
+    /// to unrelated textures may conservatively invalidate that reuse.
+    /// </remarks>
+    public long TextureContentVersion =>
+        Volatile.Read(ref _textureContentVersion);
+
+    internal void NotifyTextureContentChanged() =>
+        Interlocked.Increment(ref _textureContentVersion);
 
     public void Submit(
         nuint commandCount,
@@ -157,8 +273,17 @@ public unsafe class WgpuContext : IDisposable
             throw new ArgumentNullException(nameof(commandBuffers));
         }
 
-        Api.QueueSubmit(Queue, commandCount, commandBuffers);
-        Interlocked.Increment(ref _queueSubmissionCount);
+        lock (RenderLock)
+        {
+            ObjectDisposedException.ThrowIf(_isDisposed, this);
+            if (IsDeviceLost)
+            {
+                throw new WgpuDeviceLostException(
+                    "Cannot submit commands to a lost WebGPU device.");
+            }
+            Api.QueueSubmit(Queue, commandCount, commandBuffers);
+            Interlocked.Increment(ref _queueSubmissionCount);
+        }
     }
 
     public void QueueBufferDisposal(IntPtr ptr)
@@ -366,7 +491,8 @@ public unsafe class WgpuContext : IDisposable
                 var deferredQueueSubmissions =
                     submittedQueueWork - drainedQueueWork;
                 if (externalTextureOwners is not null ||
-                    deferredQueueSubmissions >= MaxDeferredQueueSubmissions)
+                    deferredQueueSubmissions >=
+                    MaximumDeferredQueueSubmissions)
                 {
                     WaitIdle();
                     Volatile.Write(
@@ -658,7 +784,7 @@ public unsafe class WgpuContext : IDisposable
                 for (var i = 0; i < _activeContexts.Count; i++)
                 {
                     var active = _activeContexts[i];
-                    if (active.IsInitialized &&
+                    if (!active.IsDisposed &&
                         (IntPtr)active.Surface == surfaceHandle)
                     {
                         context = active;
@@ -754,6 +880,24 @@ public unsafe class WgpuContext : IDisposable
         uint framebufferWidth,
         uint framebufferHeight)
     {
+        lock (RenderLock)
+        {
+            InitializeNativeCore(
+                window,
+                metalLayer,
+                androidNativeWindow,
+                framebufferWidth,
+                framebufferHeight);
+        }
+    }
+
+    private void InitializeNativeCore(
+        IWindow? window,
+        void* metalLayer,
+        void* androidNativeWindow,
+        uint framebufferWidth,
+        uint framebufferHeight)
+    {
         string logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ProGPU_test_run.log");
         void SafeLog(string msg)
         {
@@ -768,18 +912,38 @@ public unsafe class WgpuContext : IDisposable
         }
 
         SafeLog($"[WGPUCONTEXT] Initialize started, window exists={window != null}\n");
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.ValidateOwnership(OperatingSystem.IsWindows());
         _window = window;
         Wgpu = CreateNativeWebGpuApi();
-        Api = new SilkWebGpuApi(Wgpu);
-        
+        Api = new SilkWebGpuApi(Wgpu, RenderLock);
+
+        WgpuDx12CompilerPaths? compilerPaths = null;
+        if (Dx12CompilerOptions.Preference == WgpuDx12ShaderCompiler.Dxc)
+        {
+            // Resolve the same process-retained library used by all Silk/native commands.
+            // Identify its actual loaded path, not a candidate filename that the OS may redirect.
+            _ = ResolveDesktopWebGpuSymbol("wgpuCreateInstance");
+            compilerPaths = WgpuDx12CompilerArtifact.Validate(
+                WgpuDx12CompilerArtifact.GetLoadedLibraryPath(s_desktopWebGpuLibrary),
+                Dx12CompilerOptions.LibraryDirectory,
+                RuntimeInformation.ProcessArchitecture);
+        }
+        byte[]? compilerPath = compilerPaths?.CompilerUtf8;
+        byte[]? validatorPath = compilerPaths?.ValidatorUtf8;
+
         // 1. Create WebGPU Instance (isolated per context)
         SafeLog("[WGPUCONTEXT] Creating WebGPU Instance\n");
-        var instanceExtras = CreateNativeInstanceExtras();
-        var instanceDesc = new InstanceDescriptor
+        fixed (byte* dxcPath = compilerPath)
+        fixed (byte* dxilPath = validatorPath)
         {
-            NextInChain = instanceExtras.Chain.SType == 0 ? null : &instanceExtras.Chain
-        };
-        Instance = Wgpu.CreateInstance(&instanceDesc);
+            var instanceExtras = CreateNativeInstanceExtras(Dx12CompilerOptions.Preference, dxcPath, dxilPath);
+            var instanceDesc = new InstanceDescriptor
+            {
+                NextInChain = instanceExtras.Chain.SType == 0 ? null : &instanceExtras.Chain
+            };
+            Instance = Wgpu.CreateInstance(&instanceDesc);
+        }
         if (Instance == null)
         {
             throw new InvalidOperationException("Failed to create WebGPU Instance.");
@@ -841,6 +1005,7 @@ public unsafe class WgpuContext : IDisposable
         var requestAdapterOptions = new RequestAdapterOptions
         {
             CompatibleSurface = Surface,
+            ForceFallbackAdapter = ForceFallbackAdapter,
             PowerPreference = PowerPreference.HighPerformance
         };
 
@@ -858,7 +1023,7 @@ public unsafe class WgpuContext : IDisposable
         {
             adapterStateHandle.Free();
         }
-        
+
         SafeLog($"[WGPUCONTEXT] RequestAdapter finished, adapter={adapterState.Result:X}\n");
         if (adapterState.Result == 0)
         {
@@ -878,7 +1043,9 @@ public unsafe class WgpuContext : IDisposable
             adapterProperties.VendorID,
             adapterProperties.DeviceID,
             Surface != null,
-            Surface != null
+            ForceFallbackAdapter
+                ? (Surface != null ? WgpuAdapterSelectionReason.RequiredFallbackSurfaceCompatible : WgpuAdapterSelectionReason.RequiredFallback)
+                : Surface != null
                 ? WgpuAdapterSelectionReason.HighPerformanceSurfaceCompatible
                 : WgpuAdapterSelectionReason.HighPerformance));
         string adapterDiagnostic =
@@ -891,6 +1058,11 @@ public unsafe class WgpuContext : IDisposable
             $"reason={AdapterSelectionDiagnostics.SelectionReason}";
         SafeLog(adapterDiagnostic + "\n");
         ProGpuBackendDiagnostics.WriteLine(adapterDiagnostic);
+        if (Dx12CompilerOptions.Preference != WgpuDx12ShaderCompiler.Automatic && AdapterBackendType != BackendType.D3D12)
+        {
+            ReleaseAdapterInitializationResources();
+            throw new NotSupportedException("The explicitly selected D3D12 compiler did not produce a D3D12 adapter.");
+        }
         if (OperatingSystem.IsAndroid() && AdapterBackendType != BackendType.Vulkan)
         {
             ReleaseAdapterInitializationResources();
@@ -909,6 +1081,7 @@ public unsafe class WgpuContext : IDisposable
         using var deviceSignal = new ManualResetEventSlim(false);
         var deviceState = new DeviceRequestState(deviceSignal);
         var deviceStateHandle = GCHandle.Alloc(deviceState);
+        var deviceLossStateHandle = GCHandle.Alloc(_deviceLossState);
 
         var adapterLimits = new SupportedLimits();
         Wgpu.AdapterGetLimits(Adapter, &adapterLimits);
@@ -926,7 +1099,9 @@ public unsafe class WgpuContext : IDisposable
             RequiredLimits = &requiredLimits,
             RequiredFeatureCount = requiredFeatureCount,
             RequiredFeatures = requiredFeatureCount == 0 ? null : requiredFeatures,
-            DeviceLostCallback = new PfnDeviceLostCallback(&OnDeviceLost)
+            DeviceLostCallback = new PfnDeviceLostCallback(&OnDeviceLost),
+            DeviceLostUserdata =
+                (void*)GCHandle.ToIntPtr(deviceLossStateHandle)
         };
 
         try
@@ -939,26 +1114,37 @@ public unsafe class WgpuContext : IDisposable
                 (void*)GCHandle.ToIntPtr(deviceStateHandle));
             deviceSignal.Wait();
         }
+        catch
+        {
+            deviceLossStateHandle.Free();
+            throw;
+        }
         finally
         {
             deviceStateHandle.Free();
+            SilkMarshal.Free((nint)deviceDesc.Label);
         }
-
-        // Free labeled string
-        SilkMarshal.Free((nint)deviceDesc.Label);
 
         SafeLog($"[WGPUCONTEXT] RequestDevice finished, device={deviceState.Result:X}\n");
         if (deviceState.Result == 0)
         {
+            deviceLossStateHandle.Free();
             throw new InvalidOperationException($"Failed to obtain WebGPU Device. {deviceState.Error}");
         }
         Device = (Device*)deviceState.Result;
 
         var deviceLimits = new SupportedLimits();
         Wgpu.DeviceGetLimits(Device, &deviceLimits);
+        _computeLimits = new(deviceLimits.Limits.MaxStorageBufferBindingSize,
+            deviceLimits.Limits.MaxStorageBuffersPerShaderStage, deviceLimits.Limits.MaxComputeInvocationsPerWorkgroup,
+            deviceLimits.Limits.MaxComputeWorkgroupSizeX, deviceLimits.Limits.MaxComputeWorkgroupsPerDimension);
         MaxSampledTexturesPerShaderStage = Math.Max(16, deviceLimits.Limits.MaxSampledTexturesPerShaderStage);
         MaxSamplersPerShaderStage = Math.Max(16, deviceLimits.Limits.MaxSamplersPerShaderStage);
         MaxBindGroups = Math.Max(4, deviceLimits.Limits.MaxBindGroups);
+        if (deviceLimits.Limits.MaxBufferSize != 0)
+        {
+            MaxBufferSize = deviceLimits.Limits.MaxBufferSize;
+        }
         SupportsReadOnlyAndReadWriteStorageTextures = IsReadWriteStorageTextureSupportEnabled();
 
         // 5. Retrieve Default Queue
@@ -971,11 +1157,32 @@ public unsafe class WgpuContext : IDisposable
             Adapter,
             Device,
             Queue,
-            _deviceResourceDomain);
+            _deviceResourceDomain,
+            GCHandle.ToIntPtr(deviceLossStateHandle));
 
         // 6. Hook up validation error callback
         _errorCallback = new PfnErrorCallback(&OnUncapturedError);
-        Wgpu.DeviceSetUncapturedErrorCallback(Device, _errorCallback, null);
+        Wgpu.DeviceSetUncapturedErrorCallback(
+            Device,
+            _errorCallback,
+            (void*)GCHandle.ToIntPtr(deviceLossStateHandle));
+
+        // Qualify the freshly created queue before expensive retained-pipeline
+        // construction. Some Windows virtual/RDP adapters accept device
+        // creation and surface configuration, then report the terminal loss
+        // only on the first resource write. Catching that state here avoids a
+        // minutes-long driver stall followed by a native submit abort.
+        ProbeNativeDevice();
+        if (AdapterBackendType == BackendType.D3D12)
+        {
+            SelectedDx12ShaderCompiler = Dx12CompilerOptions.Preference == WgpuDx12ShaderCompiler.Dxc
+                ? WgpuDx12ShaderCompiler.Dxc : WgpuDx12ShaderCompiler.Fxc;
+            _dx12CompilerPaths = compilerPaths;
+            ProGpuBackendDiagnostics.WriteLine(
+                $"[D3D12] Shader compiler={SelectedDx12ShaderCompiler}, requested={Dx12CompilerOptions.Preference}, library='{Dx12CompilerLibraryPath ?? "backend default"}'.");
+            ProGpuBackendDiagnostics.WriteLine(
+                $"[D3D12] Hit queries={HitTestExecutionPath}, requested={HitTestExecutionPreference}.");
+        }
 
         // 7. Configure Surface if window exists
         if (Surface != null)
@@ -996,6 +1203,40 @@ public unsafe class WgpuContext : IDisposable
         }
 
         Current = this;
+    }
+
+    private void ProbeNativeDevice()
+    {
+        var descriptor = new BufferDescriptor
+        {
+            Size = sizeof(uint),
+            Usage = BufferUsage.CopyDst | BufferUsage.Storage
+        };
+        Silk.NET.WebGPU.Buffer* buffer =
+            Api.DeviceCreateBuffer(Device, &descriptor);
+        if (buffer == null)
+        {
+            ReportDeviceLost(
+                DeviceLostReason.Unknown,
+                "WebGPU could not create the device qualification buffer.");
+            return;
+        }
+
+        try
+        {
+            uint value = 0;
+            Api.QueueWriteBuffer(
+                Queue,
+                buffer,
+                0,
+                &value,
+                sizeof(uint));
+            PollDevice(wait: false);
+        }
+        finally
+        {
+            Api.BufferRelease(buffer);
+        }
     }
 
     /// <summary>
@@ -1080,17 +1321,19 @@ public unsafe class WgpuContext : IDisposable
     private void ReleasePresentationSurfaceCore(bool waitForDevice)
     {
         if (Surface == null) return;
-        if (waitForDevice && Device != null) WaitIdle();
+        if (waitForDevice && Device != null && !IsDeviceLost) WaitIdle();
         // Externally owned browser surfaces are opaque command-stream handles and
         // have no native WebGPU instance to unconfigure. Exact-ABI native backends
         // own their configuration and must tear it down through the same ABI.
         if (Api is IWebGpuExternalSurfaceApi externalSurface &&
-            _isSurfaceConfigured)
+            _isSurfaceConfigured &&
+            !IsDeviceLost)
         {
             externalSurface.UnconfigureExternalSurface(Surface);
         }
         else if (BackendKind == WgpuBackendKind.SilkNative &&
-                 _isSurfaceConfigured)
+                 _isSurfaceConfigured &&
+                 !IsDeviceLost)
         {
             Wgpu.SurfaceUnconfigure(Surface);
         }
@@ -1100,19 +1343,31 @@ public unsafe class WgpuContext : IDisposable
         _hasSurfaceConfigurationCapabilities = false;
     }
 
-    private static NativeInstanceExtras CreateNativeInstanceExtras()
+    private static NativeInstanceExtras CreateNativeInstanceExtras(
+        WgpuDx12ShaderCompiler compiler, byte* dxcPath, byte* dxilPath)
     {
-        uint backends = OperatingSystem.IsAndroid()
-            ? NativeInstanceExtras.VulkanBackend
-            : OperatingSystem.IsIOS()
-                ? NativeInstanceExtras.MetalBackend
-                : 0u;
+        uint backends = OperatingSystem.IsWindows()
+            ? NativeInstanceExtras.D3D12Backend
+            : OperatingSystem.IsAndroid()
+                ? NativeInstanceExtras.VulkanBackend
+                : OperatingSystem.IsIOS()
+                    ? NativeInstanceExtras.MetalBackend
+                    : 0u;
         return backends == 0u
             ? default
             : new NativeInstanceExtras
             {
                 Chain = new ChainedStruct { SType = (SType)NativeInstanceExtras.STypeValue },
-                Backends = backends
+                Backends = backends,
+                Dx12ShaderCompiler = compiler switch
+                {
+                    WgpuDx12ShaderCompiler.Automatic => 0,
+                    WgpuDx12ShaderCompiler.Fxc => 1,
+                    WgpuDx12ShaderCompiler.Dxc => 2,
+                    _ => throw new ArgumentOutOfRangeException(nameof(compiler))
+                },
+                DxcPath = dxcPath,
+                DxilPath = dxilPath
             };
     }
 
@@ -1125,6 +1380,7 @@ public unsafe class WgpuContext : IDisposable
         public const uint STypeValue = 0x00030006;
         public const uint VulkanBackend = 1u << 0;
         public const uint MetalBackend = 1u << 2;
+        public const uint D3D12Backend = 1u << 3;
 
         public ChainedStruct Chain;
         public uint Backends;
@@ -1159,7 +1415,54 @@ public unsafe class WgpuContext : IDisposable
             return new WebGPU(new LamdaNativeContext(ResolveAndroidWebGpuSymbol));
         }
 
-        return WebGPU.GetApi();
+        return new WebGPU(new LamdaNativeContext(ResolveDesktopWebGpuSymbol));
+    }
+
+    private static readonly object s_desktopWebGpuLibraryLock = new();
+    private static nint s_desktopWebGpuLibrary;
+
+    private static nint ResolveDesktopWebGpuSymbol(string symbol)
+    {
+        if (s_desktopWebGpuLibrary == 0)
+        {
+            lock (s_desktopWebGpuLibraryLock)
+            {
+                if (s_desktopWebGpuLibrary == 0)
+                {
+                    s_desktopWebGpuLibrary = LoadDesktopWebGpuLibrary();
+                }
+            }
+        }
+
+        return NativeLibrary.TryGetExport(s_desktopWebGpuLibrary, symbol, out nint address)
+            ? address
+            : 0;
+    }
+
+    private static nint LoadDesktopWebGpuLibrary()
+    {
+        string libraryName = OperatingSystem.IsWindows()
+            ? "wgpu_native.dll"
+            : OperatingSystem.IsMacOS()
+                ? "libwgpu_native.dylib"
+                : "libwgpu_native.so";
+        string baseDirectory = AppContext.BaseDirectory;
+        string runtimeAsset = Path.Combine(
+            baseDirectory,
+            "runtimes",
+            RuntimeInformation.RuntimeIdentifier,
+            "native",
+            libraryName);
+
+        if (NativeLibrary.TryLoad(runtimeAsset, out nint library)
+            || NativeLibrary.TryLoad(Path.Combine(baseDirectory, libraryName), out library)
+            || NativeLibrary.TryLoad(libraryName, out library))
+        {
+            return library;
+        }
+
+        throw new DllNotFoundException(
+            $"Unable to load {libraryName}. The packaged runtime asset was expected at '{runtimeAsset}'.");
     }
 
     private static readonly object s_androidWebGpuLibraryLock = new();
@@ -1244,7 +1547,33 @@ public unsafe class WgpuContext : IDisposable
         string errorMessage = ReadNativeMessage(message);
         Console.WriteLine($"[WebGPU Error] Type: {type}, Message: {errorMessage}");
         OnWebGpuError?.Invoke(type, errorMessage);
+        if (_ != null &&
+            IsTerminalDeviceFailure(type, errorMessage) &&
+            GCHandle.FromIntPtr((nint)_).Target is
+                WgpuDeviceLossState lossState &&
+            lossState.TryMarkLost(
+                DeviceLostReason.Unknown,
+                errorMessage))
+        {
+            OnWebGpuDeviceLost?.Invoke(
+                DeviceLostReason.Unknown,
+                errorMessage);
+        }
     }
+
+    private static bool IsTerminalDeviceFailure(
+        ErrorType type,
+        string message) =>
+        type is ErrorType.Internal or ErrorType.Unknown ||
+        message.Contains(
+            "device is lost",
+            StringComparison.OrdinalIgnoreCase) ||
+        message.Contains(
+            "device lost",
+            StringComparison.OrdinalIgnoreCase) ||
+        message.Contains(
+            "Creation of a resource failed for a reason other than running out of memory",
+            StringComparison.OrdinalIgnoreCase);
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void OnDeviceLost(DeviceLostReason reason, byte* message, void* _)
@@ -1256,7 +1585,13 @@ public unsafe class WgpuContext : IDisposable
 
         string errorMessage = ReadNativeMessage(message);
         Console.Error.WriteLine($"[WebGPU Device Lost] Reason: {reason}, Message: {errorMessage}");
-        RaiseWebGpuDeviceLost(reason, errorMessage);
+        if (_ != null &&
+            GCHandle.FromIntPtr((nint)_).Target is
+                WgpuDeviceLossState lossState &&
+            lossState.TryMarkLost(reason, errorMessage))
+        {
+            OnWebGpuDeviceLost?.Invoke(reason, errorMessage);
+        }
     }
 
     private static string ReadNativeMessage(byte* message) =>
@@ -1296,9 +1631,13 @@ public unsafe class WgpuContext : IDisposable
         uint maxSampledTexturesPerShaderStage = 16,
         uint maxSamplersPerShaderStage = 16,
         uint maxBindGroups = 4,
-        bool supportsReadOnlyAndReadWriteStorageTextures = false)
+        bool supportsReadOnlyAndReadWriteStorageTextures = false,
+        ulong maxBufferSize = DefaultMaxBufferSize)
     {
         ArgumentNullException.ThrowIfNull(api);
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.ValidateOwnership(false);
+        if (ForceFallbackAdapter) throw new NotSupportedException("A borrowed device cannot satisfy a new adapter-selection request.");
         if (Api != null || Device != null || _isDisposed)
             throw new InvalidOperationException("The WebGPU context is already initialized or disposed.");
         if (device == null || queue == null || surface == null)
@@ -1306,6 +1645,7 @@ public unsafe class WgpuContext : IDisposable
 
         Api = api;
         BackendKind = WgpuBackendKind.BrowserWebGpu;
+        RenderLock = new object();
         Device = device;
         Queue = queue;
         Surface = surface;
@@ -1313,6 +1653,7 @@ public unsafe class WgpuContext : IDisposable
         MaxSampledTexturesPerShaderStage = Math.Max(16, maxSampledTexturesPerShaderStage);
         MaxSamplersPerShaderStage = Math.Max(16, maxSamplersPerShaderStage);
         MaxBindGroups = Math.Max(4, maxBindGroups);
+        MaxBufferSize = NormalizeMaxBufferSize(maxBufferSize);
         SupportsReadOnlyAndReadWriteStorageTextures = supportsReadOnlyAndReadWriteStorageTextures;
         _deviceResourceDomain = new WgpuDeviceResourceDomain(Api, Device);
         _isSurfaceConfigured = true;
@@ -1363,10 +1704,14 @@ public unsafe class WgpuContext : IDisposable
         AdapterType adapterType = AdapterType.Unknown,
         string? adapterDriverDescription = null,
         uint adapterVendorId = 0,
-        uint adapterDeviceId = 0)
+        uint adapterDeviceId = 0,
+        ulong maxBufferSize = DefaultMaxBufferSize)
     {
         ArgumentNullException.ThrowIfNull(api);
         ArgumentNullException.ThrowIfNull(lifetime);
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.ValidateOwnership(false);
+        if (ForceFallbackAdapter) throw new NotSupportedException("A borrowed device cannot satisfy a new adapter-selection request.");
         if (Api != null || Device != null || _isDisposed)
         {
             throw new InvalidOperationException(
@@ -1380,6 +1725,7 @@ public unsafe class WgpuContext : IDisposable
 
         Api = api;
         BackendKind = WgpuBackendKind.DawnNative;
+        RenderLock = new object();
         Device = device;
         Queue = queue;
         SwapChainFormat = preferredRenderTargetFormat;
@@ -1388,6 +1734,7 @@ public unsafe class WgpuContext : IDisposable
         MaxSamplersPerShaderStage =
             Math.Max(16, maxSamplersPerShaderStage);
         MaxBindGroups = Math.Max(4, maxBindGroups);
+        MaxBufferSize = NormalizeMaxBufferSize(maxBufferSize);
         SupportsReadOnlyAndReadWriteStorageTextures =
             supportsReadOnlyAndReadWriteStorageTextures;
         SupportsTextureFormatsTier1 =
@@ -1460,11 +1807,29 @@ public unsafe class WgpuContext : IDisposable
     {
         ArgumentNullException.ThrowIfNull(window);
         ArgumentNullException.ThrowIfNull(deviceOwner);
+        ArgumentNullException.ThrowIfNull(Dx12CompilerOptions);
+        Dx12CompilerOptions.Validate();
+        if (ForceFallbackAdapter && deviceOwner.AdapterSelectionDiagnostics.SelectionReason is not
+            (WgpuAdapterSelectionReason.RequiredFallback or WgpuAdapterSelectionReason.RequiredFallbackSurfaceCompatible))
+            throw new NotSupportedException("A shared surface cannot replace its owner's adapter with a fallback adapter.");
+        if (Dx12CompilerOptions.Preference != WgpuDx12ShaderCompiler.Automatic &&
+            Dx12CompilerOptions.Preference != deviceOwner.SelectedDx12ShaderCompiler)
+            throw new NotSupportedException("A shared surface cannot change its owner's D3D12 compiler.");
+        if (Dx12CompilerOptions.LibraryDirectory != null && !string.Equals(
+            Path.GetFullPath(Dx12CompilerOptions.LibraryDirectory).TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetDirectoryName(deviceOwner.Dx12CompilerLibraryPath)?.TrimEnd(Path.DirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("A shared surface cannot replace its owner's DXC libraries.");
         if (_window != null || Instance != null || Surface != null || Device != null)
         {
             throw new InvalidOperationException("The WebGPU context is already initialized.");
         }
 
+        if (deviceOwner.IsDeviceLost)
+        {
+            throw new WgpuDeviceLostException(
+                "Cannot create a shared surface on a lost WebGPU device; resolve its replacement owner first.");
+        }
         if (deviceOwner._isDisposed ||
             deviceOwner.Instance == null ||
             deviceOwner.Adapter == null ||
@@ -1485,6 +1850,8 @@ public unsafe class WgpuContext : IDisposable
         _window = window;
         Wgpu = deviceOwner.Wgpu;
         Api = deviceOwner.Api;
+        SelectedDx12ShaderCompiler = deviceOwner.SelectedDx12ShaderCompiler;
+        _dx12CompilerPaths = deviceOwner._dx12CompilerPaths;
         Instance = deviceOwner.Instance;
         Adapter = deviceOwner.Adapter;
         Device = deviceOwner.Device;
@@ -1492,11 +1859,15 @@ public unsafe class WgpuContext : IDisposable
         MaxSampledTexturesPerShaderStage = deviceOwner.MaxSampledTexturesPerShaderStage;
         MaxSamplersPerShaderStage = deviceOwner.MaxSamplersPerShaderStage;
         MaxBindGroups = deviceOwner.MaxBindGroups;
+        MaxBufferSize = deviceOwner.MaxBufferSize;
+        _computeLimits = deviceOwner.ComputeLimits;
+        _hitTestExecutionPreference = deviceOwner.HitTestExecutionPreference;
         SupportsReadOnlyAndReadWriteStorageTextures = deviceOwner.SupportsReadOnlyAndReadWriteStorageTextures;
         SupportsTextureFormatsTier1 =
             deviceOwner.SupportsTextureFormatsTier1;
         SetAdapterSelectionDiagnostics(deviceOwner.AdapterSelectionDiagnostics);
         _deviceResourceDomain = deviceOwner._deviceResourceDomain;
+        _deviceLossState = deviceOwner._deviceLossState;
         _sharedDeviceLifetime = sharedDeviceLifetime;
         RenderLock = deviceOwner.RenderLock;
 
@@ -1537,6 +1908,14 @@ public unsafe class WgpuContext : IDisposable
         AdapterSelectionDiagnostics = diagnostics;
         AdapterBackendType = diagnostics.BackendType;
         AdapterName = diagnostics.Name;
+        ProGpuBackendDiagnostics.WriteLine(
+            $"[Image] Base-level sampling path={ImageSamplingPath}, " +
+            $"preference={ImageSamplingPreference}, adapter='{AdapterName}', " +
+            $"backend={AdapterBackendType}.");
+        ProGpuBackendDiagnostics.WriteLine(
+            $"[Compute] Glyph rasterization path={GlyphRasterizationPath}, " +
+            $"preference={ComputeExecutionPreference}, adapter='{AdapterName}', " +
+            $"backend={AdapterBackendType}.");
     }
 
     /// <summary>
@@ -1585,15 +1964,26 @@ public unsafe class WgpuContext : IDisposable
 
     public bool TryConfigureSwapChain(uint width, uint height, bool refreshCapabilities = false)
     {
+        if (IsDeviceLost)
+        {
+            _isSurfaceConfigured = false;
+            return false;
+        }
+
         if (Surface != null &&
             Api is IWebGpuExternalSurfaceApi externalSurface)
         {
             uint configuredWidth = Math.Max(1u, width);
             uint configuredHeight = Math.Max(1u, height);
+            _isSurfaceConfigured = false;
             externalSurface.ConfigureExternalSurface(
                 Surface,
                 configuredWidth,
                 configuredHeight);
+            if (IsDeviceLost)
+            {
+                return false;
+            }
             _lastWidth = configuredWidth;
             _lastHeight = configuredHeight;
             _isSurfaceConfigured = true;
@@ -1690,7 +2080,12 @@ public unsafe class WgpuContext : IDisposable
             Height = height > 0 ? height : 1
         };
 
+        _isSurfaceConfigured = false;
         Wgpu.SurfaceConfigure(Surface, &config);
+        if (IsDeviceLost)
+        {
+            return false;
+        }
         SwapChainFormat = swapChainFormat;
         _lastWidth = config.Width;
         _lastHeight = config.Height;
@@ -1700,6 +2095,46 @@ public unsafe class WgpuContext : IDisposable
         SurfaceConfigurationTimeMs += elapsedMilliseconds;
         MaximumSurfaceConfigurationTimeMs = Math.Max(MaximumSurfaceConfigurationTimeMs, elapsedMilliseconds);
         return true;
+    }
+
+    /// <summary>
+    /// Invalidates presentation state after a recoverable surface acquisition
+    /// failure so the next attempt refreshes capabilities and configuration.
+    /// </summary>
+    public void InvalidateSurfaceConfiguration()
+    {
+        _isSurfaceConfigured = false;
+        _hasSurfaceConfigurationCapabilities = false;
+    }
+
+    /// <summary>
+    /// Applies the shared recovery policy after an unsuccessful surface acquisition.
+    /// The caller must release any returned texture before calling this method.
+    /// Returns true when the host should schedule another frame, or false for a
+    /// terminally lost device. Out-of-memory and invalid statuses fail explicitly.
+    /// No acquisition, configuration, device recreation or scheduling is performed.
+    /// </summary>
+    public bool HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus status)
+    {
+        switch (status)
+        {
+            case SurfaceGetCurrentTextureStatus.Timeout:
+                return !IsDeviceLost;
+            case SurfaceGetCurrentTextureStatus.Outdated:
+            case SurfaceGetCurrentTextureStatus.Lost:
+                InvalidateSurfaceConfiguration();
+                return !IsDeviceLost;
+            case SurfaceGetCurrentTextureStatus.DeviceLost:
+                ReportDeviceLost(DeviceLostReason.Unknown,
+                    "The presentation surface reported device loss.");
+                return false;
+            case SurfaceGetCurrentTextureStatus.OutOfMemory:
+                throw new OutOfMemoryException(
+                    "The WebGPU presentation surface ran out of memory.");
+            default:
+                throw new ArgumentOutOfRangeException(nameof(status), status,
+                    "Expected a known unsuccessful surface acquisition status.");
+        }
     }
 
     public static bool CanConfigureSurface(
@@ -1824,6 +2259,9 @@ public unsafe class WgpuContext : IDisposable
             && maxSamplersPerShaderStage >= requiredTextureAndSamplerCount;
     }
 
+    private static ulong NormalizeMaxBufferSize(ulong maxBufferSize) =>
+        maxBufferSize == 0 ? DefaultMaxBufferSize : maxBufferSize;
+
     private static RequiredLimits CreateRequiredLimits(SupportedLimits adapterLimits)
     {
         var requiredLimits = new RequiredLimits
@@ -1864,7 +2302,9 @@ public unsafe class WgpuContext : IDisposable
 
     public bool TryReconfigureIfNeeded(uint width, uint height)
     {
-        if (width != _lastWidth || height != _lastHeight)
+        if (!_isSurfaceConfigured ||
+            width != _lastWidth ||
+            height != _lastHeight)
         {
             return TryConfigureSwapChain(width, height);
         }
@@ -1893,19 +2333,55 @@ public unsafe class WgpuContext : IDisposable
                         uint,
                         void*,
                         uint>)_devicePollAddress;
-                _ = poll(
-                    Device,
-                    wait ? 1u : 0u,
-                    null);
+                _ = PollNativeQueueCompletion(Device, poll, wait);
+                if (wait)
+                {
+                    MarkSubmittedWorkDrained();
+                }
             }
             else if (BackendKind ==
                          WgpuBackendKind.DawnNative &&
                      Device != null &&
                      !_isDisposed)
             {
-                _externalDeviceLifetime?.Poll(wait);
+                IWebGpuExternalDeviceLifetime? lifetime =
+                    _externalDeviceLifetime;
+                if (lifetime is not null)
+                {
+                    lifetime.Poll(wait);
+                    if (wait)
+                    {
+                        MarkSubmittedWorkDrained();
+                    }
+                }
             }
         }
+    }
+
+    // The pinned wgpu-native blocking poll can report completion after an
+    // internal timeout without observing the GPU fence. Keep WaitIdle's drain
+    // contract by polling actual progress, never by trusting elapsed time.
+    internal static bool PollNativeQueueCompletion(Device* device,
+        delegate* unmanaged[Cdecl]<Device*, uint, void*, uint> poll, bool wait)
+    {
+        while (poll(device, 0, null) == 0)
+        {
+            if (!wait) return false;
+            Thread.Sleep(1);
+        }
+        return true;
+    }
+
+    private void MarkSubmittedWorkDrained()
+    {
+        long submittedQueueWork =
+            Volatile.Read(ref _queueSubmissionCount);
+        Volatile.Write(
+            ref _drainedQueueSubmissionCount,
+            submittedQueueWork);
+        Volatile.Write(
+            ref _polledQueueSubmissionCount,
+            submittedQueueWork);
     }
 
     public bool TryCaptureNativeResourceSnapshot(out WgpuNativeResourceSnapshot snapshot)
@@ -1950,6 +2426,10 @@ public unsafe class WgpuContext : IDisposable
                 _ => default
             };
 
+            ulong metalBytes = 0;
+            bool hasMetalAllocatedBytes =
+                AdapterBackendType == BackendType.Metal &&
+                MacMetalMemory.TryGetCurrentAllocatedBytes(out metalBytes);
             snapshot = new WgpuNativeResourceSnapshot(
                 WgpuRegistrySnapshot.FromNative(hub.CommandBuffers),
                 WgpuRegistrySnapshot.FromNative(hub.Buffers),
@@ -1960,9 +2440,10 @@ public unsafe class WgpuContext : IDisposable
                 WgpuRegistrySnapshot.FromNative(hub.ShaderModules),
                 WgpuRegistrySnapshot.FromNative(hub.RenderPipelines),
                 WgpuRegistrySnapshot.FromNative(hub.ComputePipelines),
-                MacMetalMemory.TryGetCurrentAllocatedBytes(out ulong metalBytes)
-                    ? metalBytes
-                    : 0);
+                hasMetalAllocatedBytes ? metalBytes : 0)
+            {
+                MetalAllocatedBytesAvailable = hasMetalAllocatedBytes,
+            };
             return true;
         }
     }
@@ -2063,6 +2544,8 @@ public unsafe class WgpuContext : IDisposable
 
     private void ClearSharedDeviceReferences()
     {
+        SelectedDx12ShaderCompiler = null;
+        _dx12CompilerPaths = null;
         Queue = null;
         Device = null;
         Adapter = null;
@@ -2079,6 +2562,7 @@ public unsafe class WgpuContext : IDisposable
         private Device* _device;
         private Queue* _queue;
         private WgpuDeviceResourceDomain? _deviceResourceDomain;
+        private nint _deviceLossStateHandle;
         private int _referenceCount = 1;
 
         public SharedDeviceLifetime(
@@ -2087,7 +2571,8 @@ public unsafe class WgpuContext : IDisposable
             WgpuAdapter* adapter,
             Device* device,
             Queue* queue,
-            WgpuDeviceResourceDomain deviceResourceDomain)
+            WgpuDeviceResourceDomain deviceResourceDomain,
+            nint deviceLossStateHandle)
         {
             _wgpu = wgpu;
             _instance = instance;
@@ -2095,6 +2580,7 @@ public unsafe class WgpuContext : IDisposable
             _device = device;
             _queue = queue;
             _deviceResourceDomain = deviceResourceDomain;
+            _deviceLossStateHandle = deviceLossStateHandle;
         }
 
         public SharedDeviceLifetime Acquire()
@@ -2115,6 +2601,7 @@ public unsafe class WgpuContext : IDisposable
             Device* device;
             Queue* queue;
             WgpuDeviceResourceDomain? deviceResourceDomain;
+            nint deviceLossStateHandle;
             lock (_sync)
             {
                 if (_referenceCount == 0 || --_referenceCount != 0)
@@ -2128,12 +2615,14 @@ public unsafe class WgpuContext : IDisposable
                 device = _device;
                 queue = _queue;
                 deviceResourceDomain = _deviceResourceDomain;
+                deviceLossStateHandle = _deviceLossStateHandle;
                 _wgpu = null;
                 _instance = null;
                 _adapter = null;
                 _device = null;
                 _queue = null;
                 _deviceResourceDomain = null;
+                _deviceLossStateHandle = 0;
             }
 
             if (wgpu == null)
@@ -2159,7 +2648,24 @@ public unsafe class WgpuContext : IDisposable
             {
                 wgpu.InstanceRelease(instance);
             }
+            if (deviceLossStateHandle != 0)
+            {
+                GCHandle.FromIntPtr(deviceLossStateHandle).Free();
+            }
         }
+    }
+
+    private sealed class WgpuDeviceLossState
+    {
+        private int _isLost;
+
+        public bool IsLost => Volatile.Read(ref _isLost) != 0;
+
+        public bool TryMarkLost(
+            DeviceLostReason reason,
+            string message) =>
+            reason != DeviceLostReason.Destroyed &&
+            Interlocked.Exchange(ref _isLost, 1) == 0;
     }
 
     ~WgpuContext()

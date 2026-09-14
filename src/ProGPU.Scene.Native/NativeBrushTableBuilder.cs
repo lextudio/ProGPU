@@ -110,6 +110,39 @@ internal sealed class NativeBrushTableBuilder
                     radialInterpolation,
                     radialTransform);
                 break;
+            case PathGradientBrush pathGradient:
+                if (!IsFinite(pathGradient.Center) ||
+                    !IsFinite(pathGradient.CenterColor) ||
+                    !IsFinite(pathGradient.FocusScales) ||
+                    !TryGetAffine(pathGradient.CoordinateTransform, out Matrix3x2 pathTransform) ||
+                    !TryAppendPathGradientRecords(
+                        pathGradient,
+                        out uint pathRecordOffset,
+                        out ReadOnlySpan<NativeSceneGradientStop> pathRecords) ||
+                    !TryMapGradientOptions(
+                        pathGradient.SpreadMethod,
+                        pathGradient.ColorInterpolationMode,
+                        out NativeSceneGradientSpread pathSpread,
+                        out NativeSceneGradientInterpolation pathInterpolation))
+                {
+                    return Fail(out index, out error);
+                }
+                native = NativeSceneBrush.PathGradient(
+                    pathGradient.Center,
+                    pathGradient.CenterColor,
+                    pathGradient.FocusScales,
+                    checked((uint)pathGradient.BoundaryPoints.Length),
+                    checked((uint)(pathGradient.UsesPresetColors
+                        ? pathGradient.PresetStops.Length
+                        : pathGradient.BlendStops.Length)),
+                    pathGradient.UsesPresetColors,
+                    pathRecordOffset,
+                    pathRecords,
+                    brush.Opacity,
+                    pathSpread,
+                    pathInterpolation,
+                    pathTransform);
+                break;
             case TwoPointConicalGradientBrush conical:
                 if (!IsFinite(conical.StartCenter) ||
                     !IsFinite(conical.EndCenter) ||
@@ -211,7 +244,10 @@ internal sealed class NativeBrushTableBuilder
                 if (!float.IsFinite(hatch.Angle) ||
                     !float.IsFinite(hatch.Spacing) || hatch.Spacing <= 0f ||
                     !float.IsFinite(hatch.Thickness) || hatch.Thickness < 0f ||
-                    !IsFinite(hatch.Color))
+                    !IsFinite(hatch.Color) ||
+                    !TryGetAffine(
+                        hatch.CoordinateTransform,
+                        out Matrix3x2 hatchTransform))
                 {
                     return Fail(out index, out error);
                 }
@@ -221,7 +257,8 @@ internal sealed class NativeBrushTableBuilder
                     hatch.Thickness,
                     hatch.Color,
                     crossHatch: false,
-                    opacity: brush.Opacity);
+                    opacity: brush.Opacity,
+                    coordinateTransform: hatchTransform);
                 break;
             case CrossHatchBrush crossHatch:
                 if (!float.IsFinite(crossHatch.Angle) ||
@@ -229,7 +266,10 @@ internal sealed class NativeBrushTableBuilder
                     crossHatch.Spacing <= 0f ||
                     !float.IsFinite(crossHatch.Thickness) ||
                     crossHatch.Thickness < 0f ||
-                    !IsFinite(crossHatch.Color))
+                    !IsFinite(crossHatch.Color) ||
+                    !TryGetAffine(
+                        crossHatch.CoordinateTransform,
+                        out Matrix3x2 crossHatchTransform))
                 {
                     return Fail(out index, out error);
                 }
@@ -239,7 +279,40 @@ internal sealed class NativeBrushTableBuilder
                     crossHatch.Thickness,
                     crossHatch.Color,
                     crossHatch: true,
-                    opacity: brush.Opacity);
+                    opacity: brush.Opacity,
+                    coordinateTransform: crossHatchTransform);
+                break;
+            case HatchPatternSetBrush hatchSet:
+                if (!float.IsFinite(hatchSet.Thickness) || hatchSet.Thickness < 0f ||
+                    !IsFinite(hatchSet.Color) ||
+                    !TryGetAffine(hatchSet.CoordinateTransform, out Matrix3x2 hatchSetTransform) ||
+                    !TryAppendHatchPatternSet(
+                        hatchSet,
+                        out uint hatchRecordOffset,
+                        out uint hatchRecordCount))
+                {
+                    return Fail(out index, out error);
+                }
+                native = NativeSceneBrush.HatchPatternSet(
+                    hatchRecordOffset,
+                    hatchRecordCount,
+                    checked((uint)hatchSet.Families.Length),
+                    hatchSet.Thickness,
+                    hatchSet.Color,
+                    brush.Opacity,
+                    hatchSetTransform);
+                break;
+            case TilePatternBrush tilePattern:
+                if (!IsFinite(tilePattern.ForegroundColor) ||
+                    !IsFinite(tilePattern.BackgroundColor))
+                {
+                    return Fail(out index, out error);
+                }
+                native = NativeSceneBrush.TilePattern(
+                    tilePattern.Pattern,
+                    tilePattern.ForegroundColor,
+                    tilePattern.BackgroundColor,
+                    brush.Opacity);
                 break;
             default:
                 return Fail(out index, out error);
@@ -282,16 +355,19 @@ internal sealed class NativeBrushTableBuilder
             NativeSceneBrushKind.LinearGradient or
             NativeSceneBrushKind.RadialGradient or
             NativeSceneBrushKind.TwoPointConicalGradient or
-            NativeSceneBrushKind.SweepGradient => native.StopCount,
+            NativeSceneBrushKind.SweepGradient or
+            NativeSceneBrushKind.PathGradient => native.StopCount,
             NativeSceneBrushKind.PerlinNoise
                 when native.StopCount != 0U &&
                     native.Interpolation ==
                         NativeSceneGradientInterpolation.ScRgb =>
                 NativeSceneBrush.PerlinTableRecordCount,
+            NativeSceneBrushKind.HatchPatternSet => native.StopCount,
             _ => 0U
         };
-        if (native.StopOffset > (uint)_gradientStops.Count ||
-            storedStopCount > (uint)_gradientStops.Count - native.StopOffset)
+        if (native.Kind != NativeSceneBrushKind.TilePattern &&
+            (native.StopOffset > (uint)_gradientStops.Count ||
+             storedStopCount > (uint)_gradientStops.Count - native.StopOffset))
         {
             error = NativePictureCompileError.UnsupportedBrush;
             native = default;
@@ -341,6 +417,122 @@ internal sealed class NativeBrushTableBuilder
         }
         offset = checked((uint)start);
         appended = CollectionsMarshal.AsSpan(_gradientStops).Slice(start, source.Length);
+        return true;
+    }
+
+    private bool TryAppendPathGradientRecords(
+        PathGradientBrush brush,
+        out uint offset,
+        out ReadOnlySpan<NativeSceneGradientStop> appended)
+    {
+        offset = 0U;
+        appended = default;
+        ReadOnlySpan<Vector2> points = brush.BoundaryPoints.Span;
+        ReadOnlySpan<Vector4> colors = brush.SurroundColors.Span;
+        ReadOnlySpan<PathGradientBlendStop> blendStops = brush.BlendStops.Span;
+        ReadOnlySpan<GradientStop> presetStops = brush.PresetStops.Span;
+        int curveCount = brush.UsesPresetColors ? presetStops.Length : blendStops.Length;
+        if (points.Length is < 2 or > PathGradientBrush.MaximumBoundaryPoints ||
+            colors.Length != points.Length || curveCount == 0)
+        {
+            return false;
+        }
+
+        int start = _gradientStops.Count;
+        for (int index = 0; index < points.Length; index++)
+        {
+            if (!IsFinite(points[index]) || !IsFinite(colors[index]))
+            {
+                RollBack();
+                return false;
+            }
+            _gradientStops.Add(new(
+                new Vector4(points[index].X, points[index].Y, 0f, 0f),
+                0f));
+            _gradientStops.Add(new(colors[index], 0f));
+        }
+
+        float previous = float.NegativeInfinity;
+        if (brush.UsesPresetColors)
+        {
+            foreach (GradientStop stop in presetStops)
+            {
+                if (!IsFinite(stop.Color) || !IsValidCurveOffset(stop.Offset, previous))
+                {
+                    RollBack();
+                    return false;
+                }
+                _gradientStops.Add(new(stop.Color, stop.Offset));
+                previous = stop.Offset;
+            }
+        }
+        else
+        {
+            foreach (PathGradientBlendStop stop in blendStops)
+            {
+                if (!float.IsFinite(stop.Factor) || stop.Factor is < 0f or > 1f ||
+                    !IsValidCurveOffset(stop.Offset, previous))
+                {
+                    RollBack();
+                    return false;
+                }
+                _gradientStops.Add(new(new Vector4(stop.Factor, 0f, 0f, 0f), stop.Offset));
+                previous = stop.Offset;
+            }
+        }
+
+        offset = checked((uint)start);
+        appended = CollectionsMarshal.AsSpan(_gradientStops)
+            .Slice(start, points.Length * 2 + curveCount);
+        return true;
+
+        bool IsValidCurveOffset(float value, float prior) =>
+            float.IsFinite(value) && value is >= 0f and <= 1f && value >= prior;
+
+        void RollBack()
+        {
+            if (_gradientStops.Count > start)
+            {
+                _gradientStops.RemoveRange(start, _gradientStops.Count - start);
+            }
+        }
+    }
+
+    private bool TryAppendHatchPatternSet(
+        HatchPatternSetBrush brush,
+        out uint offset,
+        out uint count)
+    {
+        const int recordsPerFamily = 4;
+        offset = checked((uint)_gradientStops.Count);
+        count = 0U;
+        ReadOnlySpan<HatchPatternLineFamily> families = brush.Families.Span;
+        ReadOnlySpan<float> dashes = brush.Dashes.Span;
+        int recordCount = checked(families.Length * recordsPerFamily);
+        if (recordCount > 65_536 - _gradientStops.Count)
+            return false;
+
+        Span<float> packed = stackalloc float[HatchPatternSetBrush.MaximumDashCount];
+        for (int familyIndex = 0; familyIndex < families.Length; familyIndex++)
+        {
+            packed.Clear();
+            HatchPatternLineFamily family = families[familyIndex];
+            for (int dashIndex = 0; dashIndex < family.DashCount; dashIndex++)
+                packed[dashIndex] = dashes[family.DashOffset + dashIndex];
+            _gradientStops.Add(new(
+                new Vector4(family.BasePoint.X, family.BasePoint.Y,
+                    family.Direction.X, family.Direction.Y),
+                family.Spacing));
+            _gradientStops.Add(new(
+                new Vector4(family.TangentShift, family.DashPeriod,
+                    family.DashCount, 0f),
+                0f));
+            _gradientStops.Add(new(
+                new Vector4(packed[0], packed[1], packed[2], packed[3]),
+                packed[4]));
+            _gradientStops.Add(new(new Vector4(packed[5], 0f, 0f, 0f), 0f));
+        }
+        count = checked((uint)recordCount);
         return true;
     }
 

@@ -33,5 +33,7 @@ public enum WgpuAdapterSelectionReason
     HighPerformance,
     HighPerformanceSurfaceCompatible,
     ExternalBrowserHost,
-    ExternalNativeHost
+    ExternalNativeHost,
+    RequiredFallback,
+    RequiredFallbackSurfaceCompatible
 }

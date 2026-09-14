@@ -14,58 +14,111 @@ their ProGPU runtime dependencies, and attaches both lanes to the GitHub
 release. Samples, tests, diagnostics, and framework shim projects are
 intentionally not packed.
 
+Choose the area closest to your application to find the relevant packages.
+
+### Rendering core and GPU infrastructure
+
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.Backend` | WebGPU device, swapchain, Silk.NET windowing, and platform backend services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.svg)](https://www.nuget.org/packages/ProGPU.Backend/) |
+| `ProGPU.GameEngine` | Reusable bounded game rendering, scene, and procedural material infrastructure. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.GameEngine.svg)](https://www.nuget.org/packages/ProGPU.GameEngine/) |
+| `ProGPU.Backend.Dx12` | Optional pinned Windows x64/ARM64 DXC-capable WebGPU and compiler assets, with explicit RID/compiler selection. See [runtime packaging](docs/native-dx12-runtime-package.md). | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Dx12.svg)](https://www.nuget.org/packages/ProGPU.Backend.Dx12/) |
 | `ProGPU.Backend.Native` | Experimental typed .NET host and desktop x64/arm64 runtimes for the parallel C++ renderer, including isolated wgpu-native and provider-resolved Dawn binaries. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Native.svg)](https://www.nuget.org/packages/ProGPU.Backend.Native/) |
 | `ProGPU.Backend.Dawn` | Typed Dawn native presentation, shared texture memory, and cross-queue fence services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Dawn.svg)](https://www.nuget.org/packages/ProGPU.Backend.Dawn/) |
+| `ProGPU.Browser` | Batched .NET WebAssembly dispatcher and `navigator.gpu` browser host services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Browser.svg)](https://www.nuget.org/packages/ProGPU.Browser/) |
+| `ProGPU.DirectX` | Direct3D-style facade and shader-oriented API surface implemented on ProGPU/WebGPU. Direct2D/Win2D use the separate [native-interop and portable Canvas plan](docs/DIRECT2D_WIN2D_COMPATIBILITY.md). | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.DirectX.svg)](https://www.nuget.org/packages/ProGPU.DirectX/) |
+| `ProGPU.Direct2D` | Genuine Windows Direct2D/DirectWrite COM surfaces, uploaded bitmaps, brushes, geometries, stroke styles, retained text formats/layouts with range formatting and OpenType typography, and text drawing with synchronized zero-copy Dawn/WebGPU texture sharing and real Win2D projection interop. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Direct2D.svg)](https://www.nuget.org/packages/ProGPU.Direct2D/) |
+| `ProGPU.Compute` | Compute pipeline helpers for GPU-side effects, acceleration, and future hit-test indexes. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Compute.svg)](https://www.nuget.org/packages/ProGPU.Compute/) |
+| `ProGPU.Transpiler` | Shader/source transformation helpers used by generated GPU pipelines. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Transpiler.svg)](https://www.nuget.org/packages/ProGPU.Transpiler/) |
+
+### Graphics, text, and retained scenes
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
+| `ProGPU.Vector` | Vector primitives, paths, geometry, brushes, pens, and rasterization data models. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Vector.svg)](https://www.nuget.org/packages/ProGPU.Vector/) |
+| `ProGPU.Text` | Text layout, glyph metrics, and GPU-ready text rendering helpers. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Text.svg)](https://www.nuget.org/packages/ProGPU.Text/) |
+| `ProGPU.Text.Shaping` | AOT-safe OpenType shaping contracts and execution primitives. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Text.Shaping.svg)](https://www.nuget.org/packages/ProGPU.Text.Shaping/) |
+| `ProGPU.Fonts.Inter` | Official Inter font assets and typed accessors for deterministic UI typography. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Fonts.Inter.svg)](https://www.nuget.org/packages/ProGPU.Fonts.Inter/) |
+| `ProGPU.Fonts.Noto` | Official Noto fallback assets and typed accessors for CJK and symbol coverage. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Fonts.Noto.svg)](https://www.nuget.org/packages/ProGPU.Fonts.Noto/) |
+| `ProGPU.Scene` | Scene graph, compositor commands, retained visuals, effects, and presentation primitives. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Scene.svg)](https://www.nuget.org/packages/ProGPU.Scene/) |
+| `ProGPU.Scene.Native` | Typed compiler from immutable managed pictures to the retained native C++ WebGPU scene ABI. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Scene.Native.svg)](https://www.nuget.org/packages/ProGPU.Scene.Native/) |
+| `ProGPU.Dxf` | DXF import/rendering support for ProGPU vector scenes. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Dxf.svg)](https://www.nuget.org/packages/ProGPU.Dxf/) |
+| `ACadSharp.ProGPU` | Reviewed net10.0 ACadSharp fork source pinned for exact ProGPU.CAD package behavior. | [![NuGet](https://img.shields.io/nuget/vpre/ACadSharp.ProGPU.svg)](https://www.nuget.org/packages/ACadSharp.ProGPU/) |
+| `ProGPU.CAD` | ACadSharp-backed DXF/DWG sessions, immutable WCS snapshots, spatial indexing, and retained analytic CAD rendering foundations. | [Architecture](docs/PROGPU_CAD_ARCHITECTURE.md) |
+| `ProGPU.CAD.Native` | Optional native C++ scene adapter for immutable ProGPU CAD content. | [Architecture](docs/PROGPU_CAD_ARCHITECTURE.md) |
+
+### UI framework, controls, and layout
+
+Native document flow also supports [source-measured non-text block placement](docs/native-mil-document-block-objects-2026-09-10.md).
+Its shared passes now include [fixed column tracks and horizontal document rows](docs/native-mil-document-rows-2026-09-10.md);
+source table interaction, automatic widths, row spans and final platform qualification remain open.
+This additive contract keeps objects separate from shaped paragraph lines; source
+control lifetime/editing, inline objects, anchored blocks and tables remain separate.
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
+| `ProGPU.Layout` | Measure/arrange layout substrate shared by higher-level UI adapters. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Layout.svg)](https://www.nuget.org/packages/ProGPU.Layout/) |
+| `ProGPU.Virtualization` | Virtualization helpers for large retained visual and item surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Virtualization.svg)](https://www.nuget.org/packages/ProGPU.Virtualization/) |
+| `ProGPU.Win2D` | Portable source-compatible Win2D Canvas core rendered by the retained native C++ WebGPU engine. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Win2D.svg)](https://www.nuget.org/packages/ProGPU.Win2D/) |
+| `ProGPU.WinUI` | WinUI-shaped controls and app model implemented on ProGPU. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.svg)](https://www.nuget.org/packages/ProGPU.WinUI/) |
+| `ProGPU.WinUI.Themes.Fluent` | Source-generated unchanged WinUI Fluent theme resources and inspectable XAML content. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Themes.Fluent.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Themes.Fluent/) |
+| `ProGPU.WinUI.Charts` | Chart controls and chart rendering primitives for the WinUI-shaped layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Charts.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Charts/) |
+| `ProGPU.WinUI.Designer` | Designer/editor controls and diagnostics for ProGPU WinUI surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Designer.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Designer/) |
+
+### XAML compiler and tooling
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
+| `ProGPU.Xaml` | Framework-neutral XAML syntax, schema, diagnostics, and compiler contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.svg)](https://www.nuget.org/packages/ProGPU.Xaml/) |
+| `ProGPU.Xaml.Roslyn` | Roslyn symbol type system and structured C# emitter for the XAML compiler. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Roslyn.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Roslyn/) |
+| `ProGPU.Xaml.SourceGenerator` | Incremental XAML source generator plus transitive MSBuild integration. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.SourceGenerator.svg)](https://www.nuget.org/packages/ProGPU.Xaml.SourceGenerator/) |
+| `ProGPU.Xaml.Workspaces` | Roslyn Workspace editing, formatting, and bidirectional XAML services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Workspaces.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Workspaces/) |
+| `ProGPU.Xaml.Cli` | Standalone XAML compiler and Roslyn/MSBuild workspace command-line tool. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Cli.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Cli/) |
+
+### Framework integrations and compatibility
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
+| `ProGPU.Avalonia` | Avalonia integration and compositor backend adapter. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Avalonia.svg)](https://www.nuget.org/packages/ProGPU.Avalonia/) |
+| `ProGPU.Avalonia.Rendering` | GPU-first ProGPU/WebGPU rendering backend shipped as separate versioned packages for Avalonia 11 and 12. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Avalonia.Rendering.svg)](https://www.nuget.org/packages/ProGPU.Avalonia.Rendering/) |
+| `ProGPU.Avalonia.SilkNet` | Cross-platform windowing, input, surfaces, and WebGPU integration shipped as separate versioned packages for Avalonia 11 and 12. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Avalonia.SilkNet.svg)](https://www.nuget.org/packages/ProGPU.Avalonia.SilkNet/) |
+| `ProGPU.Uno` | Uno/WinUI integration and compositor backend adapter. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Uno.svg)](https://www.nuget.org/packages/ProGPU.Uno/) |
+| `ProGPU.SkiaSharp` | ProGPU-backed portable SkiaSharp compatibility shim used by drawing and imaging adapters. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
+| `ProGPU.BinaryCompatibility` | Opt-in official-identity SkiaSharp and Avalonia.Skia build/publish substitution for unchanged modern-.NET consumers. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.BinaryCompatibility.svg)](https://www.nuget.org/packages/ProGPU.BinaryCompatibility/) |
+| `ProGPU.System.Drawing.Common` | ProGPU-backed portable System.Drawing.Common compatibility shim for LibreWinForms and GDI-style callers. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.System.Drawing.Common.svg)](https://www.nuget.org/packages/ProGPU.System.Drawing.Common/) |
+| `LibreWPF.Interop` | LibreWPF portable interop contracts consumed by the ProGPU/Silk.NET SDK lane. | [![NuGet](https://img.shields.io/nuget/vpre/LibreWPF.Interop.svg)](https://www.nuget.org/packages/LibreWPF.Interop/) |
+
+### Media playback and editing
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
 | `ProGPU.Media` | Framework-neutral media playback, diagnostics, audio processing, effects, and provider contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Media.svg)](https://www.nuget.org/packages/ProGPU.Media/) |
 | `ProGPU.Media.Editing` | Reusable non-destructive composition, project serialization, overlays, effects, and native export coordination. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Media.Editing.svg)](https://www.nuget.org/packages/ProGPU.Media.Editing/) |
 | `ProGPU.Media.Scene` | Retained 2D/3D WebGPU media presentation and fused effect integration. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Media.Scene.svg)](https://www.nuget.org/packages/ProGPU.Media.Scene/) |
 | `ProGPU.WinRT` | Platform-neutral WinRT-shaped foundation, storage, property-set, and media value contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinRT.svg)](https://www.nuget.org/packages/ProGPU.WinRT/) |
 | `ProGPU.Windows.Media` | Native Windows Media Foundation, D3D11/DXGI, and platform-audio media provider. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Windows.Media.svg)](https://www.nuget.org/packages/ProGPU.Windows.Media/) |
 | `ProGPU.Linux.Media` | Dependency-free Linux V4L2, DMA-BUF, Vulkan Video, and PipeWire media provider. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Linux.Media.svg)](https://www.nuget.org/packages/ProGPU.Linux.Media/) |
-| `ProGPU.Text.Shaping` | AOT-safe OpenType shaping contracts and execution primitives. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Text.Shaping.svg)](https://www.nuget.org/packages/ProGPU.Text.Shaping/) |
-| `ProGPU.Browser` | Batched .NET WebAssembly dispatcher and `navigator.gpu` browser host services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Browser.svg)](https://www.nuget.org/packages/ProGPU.Browser/) |
-| `ProGPU.DirectX` | DirectX-compatible facade and shader-oriented API surface implemented on ProGPU/WebGPU. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.DirectX.svg)](https://www.nuget.org/packages/ProGPU.DirectX/) |
-| `ProGPU.Transpiler` | Shader/source transformation helpers used by generated GPU pipelines. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Transpiler.svg)](https://www.nuget.org/packages/ProGPU.Transpiler/) |
-| `ProGPU.Compute` | Compute pipeline helpers for GPU-side effects, acceleration, and future hit-test indexes. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Compute.svg)](https://www.nuget.org/packages/ProGPU.Compute/) |
-| `ProGPU.Vector` | Vector primitives, paths, geometry, brushes, pens, and rasterization data models. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Vector.svg)](https://www.nuget.org/packages/ProGPU.Vector/) |
-| `ProGPU.Text` | Text layout, glyph metrics, and GPU-ready text rendering helpers. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Text.svg)](https://www.nuget.org/packages/ProGPU.Text/) |
-| `ProGPU.Fonts.Inter` | Official Inter font assets and typed accessors for deterministic UI typography. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Fonts.Inter.svg)](https://www.nuget.org/packages/ProGPU.Fonts.Inter/) |
-| `ProGPU.Fonts.Noto` | Official Noto fallback assets and typed accessors for CJK and symbol coverage. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Fonts.Noto.svg)](https://www.nuget.org/packages/ProGPU.Fonts.Noto/) |
-| `ProGPU.Scene` | Scene graph, compositor commands, retained visuals, effects, and presentation primitives. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Scene.svg)](https://www.nuget.org/packages/ProGPU.Scene/) |
-| `ProGPU.Scene.Native` | Typed compiler from immutable managed pictures to the retained native C++ WebGPU scene ABI. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Scene.Native.svg)](https://www.nuget.org/packages/ProGPU.Scene.Native/) |
-| `ProGPU.Voxel` | Chunked voxel worlds, greedy meshing, collision, terrain generation, and grid ray casting. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Voxel.svg)](https://www.nuget.org/packages/ProGPU.Voxel/) |
-| `ProGPU.Layout` | Measure/arrange layout substrate shared by higher-level UI adapters. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Layout.svg)](https://www.nuget.org/packages/ProGPU.Layout/) |
-| `ProGPU.Virtualization` | Virtualization helpers for large retained visual and item surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Virtualization.svg)](https://www.nuget.org/packages/ProGPU.Virtualization/) |
-| `ProGPU.WinUI` | WinUI-shaped controls and app model implemented on ProGPU. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.svg)](https://www.nuget.org/packages/ProGPU.WinUI/) |
-| `ProGPU.Voxel.WinUI` | Playable WinUI voxel control with first-person input and retained ProGPU rendering. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Voxel.WinUI.svg)](https://www.nuget.org/packages/ProGPU.Voxel.WinUI/) |
-| `ProGPU.WinUI.Themes.Fluent` | Source-generated unchanged WinUI Fluent theme resources and inspectable XAML content. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Themes.Fluent.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Themes.Fluent/) |
-| `ProGPU.WinUI.Charts` | Chart controls and chart rendering primitives for the WinUI-shaped layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Charts.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Charts/) |
-| `ProGPU.WinUI.Designer` | Designer/editor controls and diagnostics for ProGPU WinUI surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Designer.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Designer/) |
-| `ProGPU.Xaml` | Framework-neutral XAML syntax, schema, diagnostics, and compiler contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.svg)](https://www.nuget.org/packages/ProGPU.Xaml/) |
-| `ProGPU.Xaml.Roslyn` | Roslyn symbol type system and structured C# emitter for the XAML compiler. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Roslyn.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Roslyn/) |
-| `ProGPU.Xaml.SourceGenerator` | Incremental XAML source generator plus transitive MSBuild integration. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.SourceGenerator.svg)](https://www.nuget.org/packages/ProGPU.Xaml.SourceGenerator/) |
-| `ProGPU.Xaml.Workspaces` | Roslyn Workspace editing, formatting, and bidirectional XAML services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Workspaces.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Workspaces/) |
-| `ProGPU.Xaml.Cli` | Standalone XAML compiler and Roslyn/MSBuild workspace command-line tool. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Cli.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Cli/) |
-| `ProGPU.Avalonia` | Avalonia integration and compositor backend adapter. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Avalonia.svg)](https://www.nuget.org/packages/ProGPU.Avalonia/) |
-| `ProGPU.Avalonia.Rendering` | GPU-first ProGPU/WebGPU rendering backend shipped as separate versioned packages for Avalonia 11 and 12. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Avalonia.Rendering.svg)](https://www.nuget.org/packages/ProGPU.Avalonia.Rendering/) |
-| `ProGPU.Avalonia.SilkNet` | Cross-platform windowing, input, surfaces, and WebGPU integration shipped as separate versioned packages for Avalonia 11 and 12. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Avalonia.SilkNet.svg)](https://www.nuget.org/packages/ProGPU.Avalonia.SilkNet/) |
-| `ProGPU.Uno` | Uno/WinUI integration and compositor backend adapter. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Uno.svg)](https://www.nuget.org/packages/ProGPU.Uno/) |
-| `ProGPU.Dxf` | DXF import/rendering support for ProGPU vector scenes. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Dxf.svg)](https://www.nuget.org/packages/ProGPU.Dxf/) |
-| `ProGPU.SkiaSharp` | ProGPU-backed portable SkiaSharp compatibility shim used by drawing and imaging adapters. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
-| `ProGPU.System.Drawing.Common` | ProGPU-backed portable System.Drawing.Common compatibility shim for LibreWinForms and GDI-style callers. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.System.Drawing.Common.svg)](https://www.nuget.org/packages/ProGPU.System.Drawing.Common/) |
-| `LibreWPF.Interop` | LibreWPF portable interop contracts consumed by the ProGPU/Silk.NET SDK lane. | [![NuGet](https://img.shields.io/nuget/vpre/LibreWPF.Interop.svg)](https://www.nuget.org/packages/LibreWPF.Interop/) |
-| `ProGPU.Android` | Native Android `SurfaceView` host using WebGPU over Vulkan. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Android.svg)](https://www.nuget.org/packages/ProGPU.Android/) |
-| `ProGPU.iOS` | Native UIKit/`CAMetalLayer` host using WebGPU over Metal. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.iOS.svg)](https://www.nuget.org/packages/ProGPU.iOS/) |
 | `ProGPU.Android.Media` | Android MediaCodec playback, AHardwareBuffer WebGPU interop, audio, composition export, and native composition thumbnails. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Android.Media.svg)](https://www.nuget.org/packages/ProGPU.Android.Media/) |
 | `ProGPU.Apple.Media` | Shared macOS/iOS AVFoundation playback, IOSurface WebGPU interop, audio, and composition export. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Apple.Media.svg)](https://www.nuget.org/packages/ProGPU.Apple.Media/) |
+
+### Native mobile hosts
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
+| `ProGPU.Android` | Native Android `SurfaceView` host using WebGPU over Vulkan. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Android.svg)](https://www.nuget.org/packages/ProGPU.Android/) |
+| `ProGPU.iOS` | Native UIKit/`CAMetalLayer` host using WebGPU over Metal. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.iOS.svg)](https://www.nuget.org/packages/ProGPU.iOS/) |
+
+### Voxel worlds and controls
+
+| Package | Purpose | NuGet |
+| --- | --- | --- |
+| `ProGPU.Voxel` | Chunked voxel worlds, greedy meshing, collision, terrain generation, and grid ray casting. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Voxel.svg)](https://www.nuget.org/packages/ProGPU.Voxel/) |
+| `ProGPU.Voxel.WinUI` | Playable WinUI voxel control with first-person input and retained ProGPU rendering. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Voxel.WinUI.svg)](https://www.nuget.org/packages/ProGPU.Voxel.WinUI/) |
 
 Local package build:
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.55 ./eng/progpu-pack.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.62 ./eng/progpu-pack.sh
 ```
 
 Pack both Avalonia integration lanes after the portable ProGPU runtime packages:
@@ -75,8 +128,17 @@ PROGPU_PACKAGE_GROUP=portable ./eng/progpu-pack.sh
 ./scripts/progpu-pack.sh
 ```
 
+See [application drawing extensions](docs/drawing-extensions.md) for registering
+custom GPU drawing from an ordinary WinUI NuGet consumer.
+
 See [`docs/progpu-packaging.md`](docs/progpu-packaging.md) for package-only
 consumer validation, version overrides, and publishing.
+
+Compute-heavy workloads follow the typed
+[`GPU-first compute fallback policy`](docs/GPU_COMPUTE_FALLBACK_POLICY.md):
+native compute remains the default where qualified, exact same-device shader
+stages precede CPU fallback, and CPU implementations use intrinsic SIMD with a
+scalar differential oracle.
 
 The mobile packages contain the managed hosts and `buildTransitive` native-link
 contracts. Until native binaries are distributed independently, applications set
@@ -115,6 +177,8 @@ publishing guidance, input/IME/inset/storage contracts, clean-room research,
 and device validation gates are in [`docs/android.md`](docs/android.md).
 
 ## Browser WebGPU sample
+
+[Suntrail](docs/samples/suntrail.md) is an original, playable eight-island platform adventure built with ProGPU.WinUI and a single instanced procedural-art shader. It has a shared game project and thin desktop, iOS, and browser hosts.
 
 The gallery is split into a shared `ProGPU.Samples` library and thin `ProGPU.Samples.Desktop`, `ProGPU.Samples.Browser`, `ProGPU.Samples.iOS`, and `ProGPU.Samples.Android` hosts. The browser host publishes with the .NET WebAssembly SDK, negotiates WebGPU capabilities, sends aligned binary command packets directly from WASM memory, and passes embedded WGSL unchanged to `GPUDevice.createShaderModule`.
 
@@ -327,7 +391,7 @@ Without these headers, `Auto` uses the ordinary OffscreenCanvas worker when avai
 Local publishing reads the API key from `NUGET_API_KEY` without storing it in the repository:
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.55 ./eng/progpu-publish.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.62 ./eng/progpu-publish.sh
 ```
 
 The release workflow validates docs, restores, builds, tests, packs `.nupkg`/`.snupkg` artifacts, and can publish to NuGet.org when `NUGET_API_KEY` is configured. See [docs/release.md](docs/release.md).
@@ -377,8 +441,8 @@ two NuGet package IDs and are distinguished by their package versions:
 
 | Avalonia | Rendering package | Silk.NET package |
 | --- | --- | --- |
-| 12.0.5 | `ProGPU.Avalonia.Rendering` `12.0.5-preview.55` | `ProGPU.Avalonia.SilkNet` `12.0.5-preview.55` |
-| 11.3.18 | `ProGPU.Avalonia.Rendering` `11.3.18-preview.55` | `ProGPU.Avalonia.SilkNet` `11.3.18-preview.55` |
+| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.62` | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.62` |
+| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.62` | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.62` |
 
 The Avalonia 12 artifacts are built from
 `src/ProGPU.Avalonia.Rendering` and `src/ProGPU.Avalonia.SilkNet`. The Avalonia
@@ -390,12 +454,12 @@ projects, which source-link the shared implementation and define
 Install the Avalonia 12 packages with:
 
 ```bash
-dotnet add package ProGPU.Avalonia.Rendering --version 12.0.5-preview.55
-dotnet add package ProGPU.Avalonia.SilkNet --version 12.0.5-preview.55
+dotnet add package ProGPU.Avalonia.Rendering --version 12.1.1-preview.62
+dotnet add package ProGPU.Avalonia.SilkNet --version 12.1.1-preview.62
 ```
 
-For Avalonia 11, use the same package IDs with `11.3.18-preview.55` and pin all
-Avalonia packages to `11.3.18`. Configure the application with
+For Avalonia 11, use the same package IDs with `11.3.20-preview.62` and pin all
+Avalonia packages to `11.3.20`. Configure the application with
 `UseSilkNet().UseProGpu()` before starting the desktop lifetime. Complete
 startup, API-lease, local packaging, and package-only validation instructions
 are in [`docs/progpu-packaging.md`](docs/progpu-packaging.md).
@@ -409,6 +473,18 @@ The [API parity report](docs/SKIASHARP_API_PARITY.md) records the exact metadata
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.SkiaSharp` | ProGPU-backed SkiaSharp API compatibility layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.SkiaSharp.svg)](https://www.nuget.org/packages/ProGPU.SkiaSharp/) |
+| `ProGPU.BinaryCompatibility` | Opt-in binary identity profile for precompiled SkiaSharp/Avalonia.Skia consumers. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.BinaryCompatibility.svg)](https://www.nuget.org/packages/ProGPU.BinaryCompatibility/) |
+
+`ProGPU.SkiaSharp` carries the official SkiaSharp 4.151 ceiling identity. On
+modern .NET this accepts bounded strong-name requests from released stable
+SkiaSharp 2.x, 3.x, and 4.x packages through 4.151.1. For an unchanged library
+that also references released Avalonia.Skia 11.x or 12.x through 12.1.1, add
+`ProGPU.BinaryCompatibility` and set
+`<ProGpuBinaryCompatibility>true</ProGpuBinaryCompatibility>`. The package
+replaces the two final runtime/publish assets without rewriting the dependent
+assembly. This covers assembly identity and implemented shared APIs, not every
+API removed across historical SkiaSharp majors. See the
+[binary compatibility design and limits](docs/PROGPU_BINARY_ASSEMBLY_COMPATIBILITY.md).
 
 ### [Svg.Skia](https://github.com/wieslawsoltes/Svg.Skia)
 
@@ -1239,6 +1315,13 @@ The ProGPU solution is partitioned into modular, highly specialized C# projects.
 | **`ProGPU.WinUI`** | `ProGPU.WinUI.dll` | Interactive controls, CPU input/hit testing, frame-phase instrumentation, and command-cached rich documents. | `Window`, `WindowFrameMetrics`, `RichTextBlock`, `ScrollViewer`, `SplitView` |
 | **`ProGPU.Virtualization`** | `ProGPU.Virtualization.dll` | Dynamic scrolling viewport orchestration and UI virtualization controllers. | `VirtualizingPanel`, `ViewportInfo` |
 | **`ProGPU.Samples`** | `ProGPU.Samples.dll` | Showcase bootstrap, bounded UI scheduling, animation drivers, diagnostics, and repeatable stress/performance workloads. | `MainWindowController`, `SamplePerformanceBenchmark`, `LolsPage`, `UIThread` |
+
+`ProGPU.Vector` includes its WinRT-shaped `IGeometrySource2D` compatibility
+contract by default. A host that already supplies an incompatible
+`Windows.Graphics` projection can build the core vector/scene stack with
+`-p:ProGPUUseWinRTContracts=false`. In that mode `PathGeometry` retains the same
+vector and renderer behavior but does not implement the optional projection
+marker, and `ProGPU.Vector` does not reference `ProGPU.WinRT`.
 
 ---
 

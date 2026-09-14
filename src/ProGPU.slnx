@@ -2,6 +2,7 @@
   <Project Path="SkiaSharp/SkiaSharp.csproj" />
   <Project Path="ProGPU.Transpiler/ProGPU.Transpiler.csproj" />
   <Project Path="ProGPU.Backend/ProGPU.Backend.csproj" />
+  <Project Path="ProGPU.Backend.Tests/ProGPU.Backend.Tests.csproj" />
   <Project Path="ProGPU.Backend.Native/ProGPU.Backend.Native.csproj" />
   <Project Path="ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj" />
   <Project Path="ProGPU.Media/ProGPU.Media.csproj" />
@@ -15,6 +16,8 @@
   <Project Path="ProGPU.Browser/ProGPU.Browser.csproj" />
   <Project Path="ProGPU.Android/ProGPU.Android.csproj" />
   <Project Path="ProGPU.DirectX/ProGPU.DirectX.csproj" />
+  <Project Path="ProGPU.Direct2D/ProGPU.Direct2D.csproj" />
+  <Project Path="ProGPU.Win2D/ProGPU.Win2D.csproj" />
   <Project Path="ProGPU.Vector/ProGPU.Vector.csproj" />
   <Project Path="ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj" />
   <Project Path="ProGPU.Text/ProGPU.Text.csproj" />
@@ -28,6 +31,8 @@
   <Project Path="ProGPU.Voxel.Tests/ProGPU.Voxel.Tests.csproj" />
   <Project Path="ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj" />
   <Project Path="System.Drawing.Common/System.Drawing.Common.csproj" />
+  <Project Path="System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj" />
+  <Project Path="System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj" />
   <Project Path="PresentationCore/PresentationCore.csproj" />
   <Project Path="ProGPU.Layout/ProGPU.Layout.csproj" />
   <Project Path="ProGPU.Virtualization/ProGPU.Virtualization.csproj" />
@@ -39,9 +44,15 @@
   <Project Path="ProGPU.Avalonia.Rendering/ProGPU.Avalonia.Rendering.csproj" />
   <Project Path="ProGPU.Avalonia.SilkNet/ProGPU.Avalonia.SilkNet.csproj" />
   <Project Path="ProGPU.Avalonia.SkiaSourceCompatibility/ProGPU.Avalonia.SkiaSourceCompatibility.csproj" />
+  <Project Path="ProGPU.Avalonia.Skia.BinaryCompatibility/ProGPU.Avalonia.Skia.BinaryCompatibility.csproj" />
+  <Project Path="ProGPU.Avalonia.Skia.BinaryCompatibility.V11/ProGPU.Avalonia.Skia.BinaryCompatibility.V11.csproj" />
+  <Project Path="ProGPU.BinaryCompatibility/ProGPU.BinaryCompatibility.csproj" />
+  <Project Path="../tests/ProGPU.BinaryCompatibility.Tests/ProGPU.BinaryCompatibility.Tests.csproj" />
+  <Project Path="../tests/ProGPU.Win2D.Tests/ProGPU.Win2D.Tests.csproj" />
   <Folder Name="/Avalonia 11/">
     <Project Path="ProGPU.Avalonia.Rendering.V11/ProGPU.Avalonia.Rendering.V11.csproj" />
     <Project Path="ProGPU.Avalonia.SilkNet.V11/ProGPU.Avalonia.SilkNet.V11.csproj" />
+    <Project Path="../tests/ProGPU.Avalonia.SilkNet.ContractTests.V11/ProGPU.Avalonia.SilkNet.ContractTests.V11.csproj" />
   </Folder>
   <Project Path="ProGPU.Uno/ProGPU.Uno.csproj" />
   <Project Path="ProGPU.Samples/ProGPU.Samples.csproj" />
@@ -54,8 +65,18 @@
   <Project Path="ProGPU.Samples.Avalonia/ProGPU.Samples.Avalonia.csproj" />
   <Project Path="ProGPU.Samples.Uno/ProGPU.Samples.Uno/ProGPU.Samples.Uno.csproj" />
   <Project Path="ProGPU.Dxf/ProGPU.Dxf.csproj" />
+  <Project Path="ProGPU.CAD/ProGPU.CAD.csproj" />
+  <Project Path="ProGPU.CAD.Native/ProGPU.CAD.Native.csproj" />
+  <Project Path="ProGPU.CAD.Benchmarks/ProGPU.CAD.Benchmarks.csproj" />
+  <Project Path="ProGPU.CAD.Sample/ProGPU.CAD.Sample.csproj" />
+  <Project Path="ProGPU.CAD.Sample.Browser/ProGPU.CAD.Sample.Browser.csproj" />
+  <Project Path="ProGPU.CAD.Sample.Desktop/ProGPU.CAD.Sample.Desktop.csproj" />
+  <Project Path="ProGPU.CAD.Tests/ProGPU.CAD.Tests.csproj" />
   <Project Path="ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj" />
   <Project Path="ProGPU.Tests/ProGPU.Tests.csproj" />
+  <Folder Name="/Rendering/">
+    <Project Path="ProGPU.GameEngine/ProGPU.GameEngine.csproj" />
+  </Folder>
   <Project Path="../tests/ProGPU.Avalonia.ContractTests/ProGPU.Avalonia.ContractTests.csproj" />
   <Project Path="../tests/ProGPU.Avalonia.HeadlessPixelTests/ProGPU.Avalonia.HeadlessPixelTests.csproj" />
   <Project Path="../tests/ProGPU.Avalonia.SilkNet.ContractTests/ProGPU.Avalonia.SilkNet.ContractTests.csproj" />
@@ -69,4 +90,8 @@
   <Project Path="../tools/HarfBuzzParity/HarfBuzzParity.csproj" />
   <Project Path="../tools/ProGPU.Voxel.Benchmarks/ProGPU.Voxel.Benchmarks.csproj" />
   <Project Path="../tools/ProGPU.Xaml.Cli/ProGPU.Xaml.Cli.csproj" />
+  <Project Path="ProGPU.Samples.Suntrail/ProGPU.Samples.Suntrail.csproj" />
+  <Project Path="ProGPU.Samples.Suntrail.Desktop/ProGPU.Samples.Suntrail.Desktop.csproj" />
+  <Project Path="ProGPU.Samples.Suntrail.Browser/ProGPU.Samples.Suntrail.Browser.csproj" />
+  <Project Path="ProGPU.Samples.Suntrail.Tests/ProGPU.Samples.Suntrail.Tests.csproj" />
 </Solution>

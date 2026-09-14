@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ProGPU.Backend;
+using ProGPU.Text;
 using ProGPU.Vector;
 
 namespace ProGPU.Scene;
@@ -24,6 +25,7 @@ public unsafe partial class Compositor
     private int _incrementalScenePageCompilations;
     private int _incrementalScenePageReusedArrays;
     private long _incrementalScenePageBytes;
+    private int _activeIncrementalScenePageDrawCallStart = -1;
     private string? _incrementalScenePageRejectReason;
     private string? _incrementalScenePageMissReason;
 
@@ -32,6 +34,7 @@ public unsafe partial class Compositor
         int VectorIndexStart,
         int TextVertexStart,
         int TextStyleStart,
+        int GlyphResidencyStart,
         int TextureVertexStart,
         int TextureIndexStart,
         int DrawCallStart,
@@ -59,7 +62,9 @@ public unsafe partial class Compositor
         float DpiScale,
         ulong GlyphAtlasGeneration,
         ulong PathAtlasGeneration,
-        bool SolidRoundedSpecialization);
+        bool SolidRoundedSpecialization,
+        bool SuppressClearType,
+        Matrix4x4 Projection);
 
     private readonly record struct IncrementalScenePageLookup(
         Visual Visual,
@@ -79,6 +84,7 @@ public unsafe partial class Compositor
         internal required IncrementalScenePageDrawCall[] DrawCalls { get; init; }
         internal required GpuBrush[] Brushes { get; init; }
         internal required GpuTextStyle[] TextStyles { get; init; }
+        internal required GlyphAtlas.ResidencySet GlyphResidency { get; init; }
         internal required int LegacyTextVertexCount { get; init; }
         internal required int SolidRoundedPrimitiveCount { get; init; }
         internal required long ByteSize { get; init; }
@@ -107,6 +113,8 @@ public unsafe partial class Compositor
             BlendMode = drawCall.BlendMode;
             TextureSamplingMode = drawCall.TextureSamplingMode;
             TextureMaxAnisotropy = drawCall.TextureMaxAnisotropy;
+            TextureAddressModeU = drawCall.TextureAddressModeU;
+            TextureAddressModeV = drawCall.TextureAddressModeV;
             TextureAlphaMode = drawCall.TextureAlphaMode;
         }
 
@@ -120,6 +128,8 @@ public unsafe partial class Compositor
         internal GpuBlendMode BlendMode { get; }
         internal TextureSamplingMode TextureSamplingMode { get; }
         internal byte TextureMaxAnisotropy { get; }
+        internal TextureAddressMode TextureAddressModeU { get; }
+        internal TextureAddressMode TextureAddressModeV { get; }
         internal GpuTextureAlphaMode TextureAlphaMode { get; }
 
         internal CompositorDrawCall Expand(uint indexBase)
@@ -136,6 +146,8 @@ public unsafe partial class Compositor
                 BlendMode = BlendMode,
                 TextureSamplingMode = TextureSamplingMode,
                 TextureMaxAnisotropy = TextureMaxAnisotropy,
+                TextureAddressModeU = TextureAddressModeU,
+                TextureAddressModeV = TextureAddressModeV,
                 TextureAlphaMode = TextureAlphaMode
             };
         }
@@ -143,12 +155,14 @@ public unsafe partial class Compositor
 
     private void ResetIncrementalScenePageFrameMetrics()
     {
+        ResetRetainedCompositionPictureFrameMetrics();
         _incrementalScenePageHits = 0;
         _incrementalScenePageMisses = 0;
         _incrementalScenePageCompilations = 0;
         _incrementalScenePageReusedArrays = 0;
         _incrementalScenePageRejectReason = null;
         _incrementalScenePageMissReason = null;
+        _activeIncrementalScenePageDrawCallStart = -1;
         ResetIncrementalSceneUploadFrameMetrics();
     }
 
@@ -174,7 +188,9 @@ public unsafe partial class Compositor
             _atlas.Generation,
             _pathAtlas.Generation,
             _previousSolidRoundedPrimitiveCount >=
-                SolidRoundedSpecializationThreshold);
+                SolidRoundedSpecializationThreshold,
+            _suppressCachedClearType,
+            _currentProjection);
     }
 
     private bool CanUseIncrementalScenePage(Visual node)
@@ -266,6 +282,14 @@ public unsafe partial class Compositor
 
             _incrementalScenePageMissReason ??=
                 DescribeIncrementalScenePageMiss(node, key);
+            _incrementalScenePageMisses++;
+            return false;
+        }
+
+        if (!_atlas.TryMarkRetainedGlyphReplay(page.GlyphResidency))
+        {
+            RemoveIncrementalScenePages(node);
+            _incrementalScenePageMissReason ??= "Glyph atlas residency changed";
             _incrementalScenePageMisses++;
             return false;
         }
@@ -396,7 +420,8 @@ public unsafe partial class Compositor
                 ? commands[index]
                 : ownedRenderCommandCache.GetRenderCommand(index);
             if (command.UseGpuTransforms ||
-                !IsIncrementalScenePageCommandSupported(command.Type))
+                !RenderCommand.IsIncrementalScenePageCommandSupported(
+                    command.Type))
             {
                 _incrementalScenePageRejectReason ??=
                     command.UseGpuTransforms
@@ -415,6 +440,7 @@ public unsafe partial class Compositor
             _vectorIndicesList.Count,
             _textVerticesList.Count,
             _activeTextStyles.Count,
+            _atlas.BatchUsageCount,
             _textureVerticesList.Count,
             _textureIndicesList.Count,
             _drawCalls.Count,
@@ -426,36 +452,8 @@ public unsafe partial class Compositor
             _activeClipRect,
             _activeOpacity,
             _activeBlendMode);
+        _activeIncrementalScenePageDrawCallStart = boundary.DrawCallStart;
         return true;
-    }
-
-    private static bool IsIncrementalScenePageCommandSupported(
-        RenderCommandType type)
-    {
-        return type is
-            RenderCommandType.DrawRect or
-            RenderCommandType.DrawPath or
-            RenderCommandType.DrawText or
-            RenderCommandType.DrawTexture or
-            RenderCommandType.DrawPicture or
-            RenderCommandType.PushClip or
-            RenderCommandType.PopClip or
-            RenderCommandType.PushOpacity or
-            RenderCommandType.PopOpacity or
-            RenderCommandType.PushBlendMode or
-            RenderCommandType.PopBlendMode or
-            RenderCommandType.DrawLine or
-            RenderCommandType.DrawEllipse or
-            RenderCommandType.DrawCircle or
-            RenderCommandType.DrawRoundedRect or
-            RenderCommandType.DrawBezier or
-            RenderCommandType.DrawCubicBezier or
-            RenderCommandType.DrawPolyline or
-            RenderCommandType.FillTriangle or
-            RenderCommandType.FillQuad or
-            RenderCommandType.DrawGlyphRun or
-            RenderCommandType.DrawVertexMesh or
-            RenderCommandType.DrawPointBatch;
     }
 
     private void CompleteIncrementalScenePage(
@@ -464,6 +462,7 @@ public unsafe partial class Compositor
         in IncrementalScenePageBoundary boundary)
     {
         CommitPendingDrawCalls();
+        _activeIncrementalScenePageDrawCallStart = -1;
         if (_maskRenderPasses.Count != boundary.MaskRenderPassStart)
         {
             _incrementalScenePageRejectReason ??=
@@ -723,6 +722,10 @@ public unsafe partial class Compositor
             CollectionsMarshal.AsSpan(_activeTextStyles)
                 .Slice(boundary.TextStyleStart, textStyleCount),
             reusablePage?.TextStyles);
+        GlyphAtlas.ResidencySet glyphResidency =
+            _atlas.CaptureBatchResidency(
+                boundary.GlyphResidencyStart,
+                reusablePage?.GlyphResidency);
 
         for (int index = 0; index < vectorIndices.Length; index++)
         {
@@ -760,7 +763,8 @@ public unsafe partial class Compositor
             (long)drawCalls.Length *
                 Unsafe.SizeOf<IncrementalScenePageDrawCall>() +
             (long)brushes.Length * Marshal.SizeOf<GpuBrush>() +
-            (long)textStyles.Length * Marshal.SizeOf<GpuTextStyle>();
+            (long)textStyles.Length * Marshal.SizeOf<GpuTextStyle>() +
+            glyphResidency.ByteSize;
 
         return new IncrementalScenePage
         {
@@ -772,6 +776,7 @@ public unsafe partial class Compositor
             DrawCalls = drawCalls,
             Brushes = brushes,
             TextStyles = textStyles,
+            GlyphResidency = glyphResidency,
             LegacyTextVertexCount =
                 CountLegacyTextVertices(textVertices),
             SolidRoundedPrimitiveCount =
@@ -987,24 +992,41 @@ public unsafe partial class Compositor
         int vectorVertexStart = _vectorVerticesList.Count;
         _vectorVerticesList.EnsureCapacity(
             vectorVertexStart + page.VectorVertices.Length);
-        for (int index = 0; index < page.VectorVertices.Length; index++)
+        if (page.Brushes.Length == 0)
         {
-            VectorVertex vertex = page.VectorVertices[index];
-            int localBrushIndex = (int)MathF.Round(vertex.BrushIndex);
-            if ((uint)localBrushIndex < (uint)brushMap.Length)
+            // Specialized solid primitives carry their color inline and have no
+            // brush-table indices to translate. This is the common retained UI
+            // page path, so append it as one contiguous copy instead of visiting
+            // every vertex merely to prove that the empty brush map has no entry.
+            _vectorVerticesList.AddRange(page.VectorVertices);
+        }
+        else
+        {
+            for (int index = 0; index < page.VectorVertices.Length; index++)
             {
-                vertex.BrushIndex = brushMap[localBrushIndex];
+                VectorVertex vertex = page.VectorVertices[index];
+                int localBrushIndex = (int)MathF.Round(vertex.BrushIndex);
+                if ((uint)localBrushIndex < (uint)brushMap.Length)
+                {
+                    vertex.BrushIndex = brushMap[localBrushIndex];
+                }
+                _vectorVerticesList.Add(vertex);
             }
-            _vectorVerticesList.Add(vertex);
         }
 
         int vectorIndexStart = _vectorIndicesList.Count;
         _vectorIndicesList.EnsureCapacity(
             vectorIndexStart + page.VectorIndices.Length);
+        CollectionsMarshal.SetCount(
+            _vectorIndicesList,
+            vectorIndexStart + page.VectorIndices.Length);
+        Span<uint> appendedVectorIndices =
+            CollectionsMarshal.AsSpan(_vectorIndicesList)
+                .Slice(vectorIndexStart, page.VectorIndices.Length);
         for (int index = 0; index < page.VectorIndices.Length; index++)
         {
-            _vectorIndicesList.Add(
-                page.VectorIndices[index] + (uint)vectorVertexStart);
+            appendedVectorIndices[index] =
+                page.VectorIndices[index] + (uint)vectorVertexStart;
         }
 
         int textVertexStart = _textVerticesList.Count;
@@ -1028,10 +1050,16 @@ public unsafe partial class Compositor
         int textureIndexStart = _textureIndicesList.Count;
         _textureIndicesList.EnsureCapacity(
             textureIndexStart + page.TextureIndices.Length);
+        CollectionsMarshal.SetCount(
+            _textureIndicesList,
+            textureIndexStart + page.TextureIndices.Length);
+        Span<uint> appendedTextureIndices =
+            CollectionsMarshal.AsSpan(_textureIndicesList)
+                .Slice(textureIndexStart, page.TextureIndices.Length);
         for (int index = 0; index < page.TextureIndices.Length; index++)
         {
-            _textureIndicesList.Add(
-                page.TextureIndices[index] + (uint)textureVertexStart);
+            appendedTextureIndices[index] =
+                page.TextureIndices[index] + (uint)textureVertexStart;
         }
 
         for (int index = 0; index < page.DrawCalls.Length; index++)
@@ -1045,9 +1073,9 @@ public unsafe partial class Compositor
                 DrawCallType.Texture => (uint)textureIndexStart,
                 _ => 0u
             };
-            CompositorDrawCall drawCall =
-                retainedDrawCall.Expand(indexBase);
-            AppendOrMergeIncrementalDrawCall(drawCall);
+            AppendOrMergeIncrementalDrawCall(
+                retainedDrawCall,
+                indexBase);
         }
 
         _currentSolidRoundedPrimitiveCount +=
@@ -1095,11 +1123,65 @@ public unsafe partial class Compositor
         }
     }
 
+    private void AppendOrMergeIncrementalDrawCall(
+        in IncrementalScenePageDrawCall retainedDrawCall,
+        uint indexBase)
+    {
+        if (_drawCalls.Count != 0 &&
+            TryMergeIncrementalDrawCall(
+                _drawCalls.Count - 1,
+                retainedDrawCall,
+                indexBase))
+        {
+            return;
+        }
+
+        _drawCalls.Add(retainedDrawCall.Expand(indexBase));
+    }
+
+    private bool TryMergeIncrementalDrawCall(
+        int previousIndex,
+        in IncrementalScenePageDrawCall current,
+        uint indexBase)
+    {
+        ref CompositorDrawCall previous = ref
+            CollectionsMarshal.AsSpan(_drawCalls)[previousIndex];
+        uint indexStart = current.IndexStart + indexBase;
+        if (previous.Type == DrawCallType.Texture &&
+            current.Type == DrawCallType.Texture)
+        {
+            CompositorDrawCall expanded = current.Expand(indexBase);
+            return TryMergeTextureDrawCall(ref previous, expanded);
+        }
+
+        if (previous.Type != current.Type ||
+            previous.Type is not (DrawCallType.Vector or DrawCallType.Text) ||
+            previous.IndexStart + previous.IndexCount != indexStart ||
+            previous.IsSolidRect != current.IsSolidRect ||
+            previous.IsSolidRounded != current.IsSolidRounded ||
+            previous.ClipRect != current.ClipRect ||
+            previous.MaskTexture != null ||
+            previous.BlendMode != current.BlendMode)
+        {
+            return false;
+        }
+
+        previous.IndexCount += current.IndexCount;
+        return true;
+    }
+
     private bool TryMergeIncrementalDrawCall(
         int previousIndex,
         in CompositorDrawCall current)
     {
-        CompositorDrawCall previous = _drawCalls[previousIndex];
+        ref CompositorDrawCall previous = ref
+            CollectionsMarshal.AsSpan(_drawCalls)[previousIndex];
+        if (previous.Type == DrawCallType.Texture &&
+            current.Type == DrawCallType.Texture)
+        {
+            return TryMergeTextureDrawCall(ref previous, current);
+        }
+
         if (previous.Type != current.Type ||
             previous.Type is not (DrawCallType.Vector or DrawCallType.Text) ||
             previous.IndexStart + previous.IndexCount != current.IndexStart ||
@@ -1113,7 +1195,6 @@ public unsafe partial class Compositor
         }
 
         previous.IndexCount += current.IndexCount;
-        _drawCalls[previousIndex] = previous;
         return true;
     }
 

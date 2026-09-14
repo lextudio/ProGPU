@@ -590,7 +590,9 @@ function installBrowserInput() {
       (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter' || textSinkOwnsPaste)) return;
     const key = browserKeyCodes.get(event.code) || 0;
     if (key !== 0) queueInputEvent(5, 0, 0, 0, 0, key, eventModifiers(event), event.repeat ? 1 : 0);
-    if (['Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(event.code)) {
+    if (event.code === 'F5' || event.code === 'F8' || event.code === 'F9' || event.code === 'F10' ||
+      (event.code === 'KeyE' && event.ctrlKey) ||
+      ['Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(event.code)) {
       event.preventDefault();
     }
   }, true);
@@ -2838,6 +2840,14 @@ async function initializeGpu(request, canvas, executionMode, diagnostics) {
     supportsSharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
     supportsOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
     supportsBgra8UnormStorage: supportsBgraStorage,
+    maxBufferSize: state.device.limits.maxBufferSize,
+    computeLimits: {
+      maxStorageBufferBindingSize: state.device.limits.maxStorageBufferBindingSize,
+      maxStorageBuffersPerShaderStage: state.device.limits.maxStorageBuffersPerShaderStage,
+      maxComputeInvocationsPerWorkgroup: state.device.limits.maxComputeInvocationsPerWorkgroup,
+      maxComputeWorkgroupSizeX: state.device.limits.maxComputeWorkgroupSizeX,
+      maxComputeWorkgroupsPerDimension: state.device.limits.maxComputeWorkgroupsPerDimension
+    },
     features: [...state.adapter.features],
     diagnostics
   };
@@ -3843,6 +3853,14 @@ function execute(opcode, view, payload, payloadLength, absoluteBase) {
       if (payloadLength === 12) state.computePass.dispatchWorkgroups(view.getUint32(payload, true), view.getUint32(payload + 4, true), view.getUint32(payload + 8, true));
       else requireResource(view.getUint32(payload, true)).dispatchWorkgroups(view.getUint32(payload + 4, true), view.getUint32(payload + 8, true), view.getUint32(payload + 12, true));
       break;
+    case 54: {
+      if (payloadLength !== 16) throw new Error('Invalid indirect compute dispatch payload.');
+      const offset = view.getBigUint64(payload + 8, true);
+      if (offset > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Indirect compute offset is not exactly representable.');
+      requireResource(view.getUint32(payload, true)).dispatchWorkgroupsIndirect(
+        requireResource(view.getUint32(payload + 4, true)), Number(offset));
+      break;
+    }
     case 60:
       requireResource(view.getUint32(payload, true)).copyBufferToBuffer(
         requireResource(view.getUint32(payload + 4, true)), Number(view.getBigUint64(payload + 8, true)),

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -15,6 +16,7 @@ using Avalonia.Controls.Platform.Surfaces;
 using Avalonia.Platform.Surfaces;
 #endif
 using Avalonia.Rendering.Composition;
+using Avalonia.Threading;
 using ProGPU.Backend;
 using Silk.NET.Core;
 using Silk.NET.Maths;
@@ -34,6 +36,15 @@ public sealed class WindowImpl :
     IPopupImpl,
     ISilkNetLoopParticipant
 {
+    private static readonly bool s_traceWindowEvents =
+        string.Equals(
+            Environment.GetEnvironmentVariable(
+                "PROGPU_AVALONIA_TRACE_WINDOW_EVENTS"),
+            "1",
+            StringComparison.Ordinal);
+    private static readonly string? s_windowEventTracePath =
+        Environment.GetEnvironmentVariable(
+            "PROGPU_AVALONIA_TRACE_WINDOW_EVENTS_PATH");
     private readonly SilkNetWindowingPlatform _platform;
     private WindowImpl? _parent;
     private readonly bool _isPopup;
@@ -79,10 +90,16 @@ public sealed class WindowImpl :
     private bool _visible;
     private bool _paintQueued = true;
     private bool _disposedState;
+#if AVALONIA11
+    private bool _isHitTestVisible = true;
+    private ExtendClientAreaChromeHints _chromeHints =
+        ExtendClientAreaChromeHints.Default;
+#endif
     private int _closeCallback;
     private long _zOrder;
     private double _reportedScaling = 1d;
     private double? _nativeDisplayScale;
+    private SilkNetResizeReasonTracker _resizeReasons;
 
     internal WindowImpl(
         SilkNetWindowingPlatform platform,
@@ -140,14 +157,25 @@ public sealed class WindowImpl :
                left.SharesDeviceWith(right);
     }
 
-    internal long ZOrder => Volatile.Read(ref _zOrder);
-    internal bool AcceptsInput => _enabled && !_disposedState;
+    internal long ZOrder =>
+        SilkNetWindowingPlatform.ResolveZOrder(
+            Volatile.Read(ref _zOrder),
+            _topmost);
+    internal SilkNetWindowingPlatform Platform => _platform;
     internal IWindow? NativeWindow => _window;
     internal NativeWindowHandle NativeParentHandle =>
         _windowController?.Parent ??
         NativeWindowHandle.Empty;
 
-    public double DesktopScaling => RenderScaling;
+    public double DesktopScaling =>
+        SilkNetDisplayMetrics.ResolveDesktopScaling(
+            OperatingSystem.IsMacOS(),
+            RenderScaling);
+
+    internal double NativeCoordinateScaling =>
+        SilkNetDisplayMetrics.ResolveNativeCoordinateScaling(
+            OperatingSystem.IsWindows(),
+            DesktopScaling);
 
     public IPlatformHandle? Handle
     {
@@ -183,9 +211,10 @@ public sealed class WindowImpl :
             IWindow? window = _window;
             return window is null
                 ? _desiredSize
-                : new Size(
-                    Math.Max(0, window.Size.X),
-                    Math.Max(0, window.Size.Y));
+                : SilkNetDisplayMetrics.ResolveLogicalClientSize(
+                    window.Size.X,
+                    window.Size.Y,
+                    NativeCoordinateScaling);
         }
     }
 
@@ -238,7 +267,8 @@ public sealed class WindowImpl :
                 window.Size.Y,
                 window.FramebufferSize.X,
                 window.FramebufferSize.Y,
-                RenderScaling);
+                RenderScaling,
+                NativeCoordinateScaling);
         }
     }
 
@@ -271,7 +301,13 @@ public sealed class WindowImpl :
     }
 #endif
 
-    public Size? FrameSize => ClientSize;
+    public Size? FrameSize =>
+        SilkNetDisplayMetrics.ResolveFrameSize(
+            ClientSize,
+            _windowController is { IsAttached: true } controller
+                ? controller.FrameInsets
+                : null,
+            NativeCoordinateScaling);
 
     public PixelPoint Position
     {
@@ -280,12 +316,9 @@ public sealed class WindowImpl :
             IWindow? window = _window;
             if (window is null)
                 return _desiredPosition ?? default;
-            double scaling = DesktopScaling;
             return new PixelPoint(
-                checked((int)Math.Round(
-                    window.Position.X * scaling)),
-                checked((int)Math.Round(
-                    window.Position.Y * scaling)));
+                window.Position.X,
+                window.Position.Y);
         }
     }
 
@@ -322,6 +355,7 @@ public sealed class WindowImpl :
     public bool WindowStateGetterIsUsable => true;
 #endif
     public bool IsClientAreaExtendedToDecorations =>
+        _windowController?.IsClientAreaExtended ??
         _extendClientArea;
     public bool NeedsManagedDecorations =>
         _windowController?.RequiresManagedDecorations ?? false;
@@ -336,7 +370,7 @@ public sealed class WindowImpl :
         get
         {
             SilkWindowController? controller = _windowController;
-            if (!_extendClientArea ||
+            if (!IsClientAreaExtendedToDecorations ||
                 NeedsManagedDecorations ||
                 _decorations != NativeWindowDecorations.Full ||
                 WindowState == AvaloniaWindowState.FullScreen ||
@@ -345,9 +379,13 @@ public sealed class WindowImpl :
                 return default;
             }
 
+            double titleBarHeight = _titleBarHeight >= 0d
+                ? _titleBarHeight
+                : controller.ExtendedTitleBarHeight /
+                  NativeCoordinateScaling;
             return new Thickness(
                 0,
-                controller.ExtendedTitleBarHeight,
+                titleBarHeight,
                 0,
                 0);
         }
@@ -396,26 +434,28 @@ public sealed class WindowImpl :
     public Point PointToClient(PixelPoint point)
     {
         IWindow? window = _window;
-        double scaling = DesktopScaling;
         Vector2D<int> source = new(
-            checked((int)Math.Round(point.X / scaling)),
-            checked((int)Math.Round(point.Y / scaling)));
+            point.X,
+            point.Y);
         Vector2D<int> result =
             window?.PointToClient(source) ?? source;
-        return new Point(result.X, result.Y);
+        double scaling = NativeCoordinateScaling;
+        return new Point(
+            result.X / scaling,
+            result.Y / scaling);
     }
 
     public PixelPoint PointToScreen(Point point)
     {
+        double scaling = NativeCoordinateScaling;
         Vector2D<int> source = new(
-            checked((int)Math.Round(point.X)),
-            checked((int)Math.Round(point.Y)));
+            checked((int)Math.Round(point.X * scaling)),
+            checked((int)Math.Round(point.Y * scaling)));
         Vector2D<int> result =
             _window?.PointToScreen(source) ?? source;
-        double scaling = DesktopScaling;
         return new PixelPoint(
-            checked((int)Math.Round(result.X * scaling)),
-            checked((int)Math.Round(result.Y * scaling)));
+            result.X,
+            result.Y);
     }
 
     public void SetCursor(ICursorImpl? cursor)
@@ -451,11 +491,28 @@ public sealed class WindowImpl :
         }
     }
 
-    public void SetFrameThemeVariant(PlatformThemeVariant themeVariant)
+    public void SetFrameThemeVariant(
+#if AVALONIA11
+        PlatformThemeVariant themeVariant)
+#else
+        PlatformThemeVariant? themeVariant)
+#endif
     {
+#if AVALONIA11
         _theme = themeVariant == PlatformThemeVariant.Dark
             ? NativeWindowTheme.Dark
             : NativeWindowTheme.Light;
+#else
+        PlatformThemeVariant platformDefault =
+            AvaloniaLocator.Current
+                .GetService<IPlatformSettings>()?
+                .GetColorValues()
+                .ThemeVariant ??
+            PlatformThemeVariant.Light;
+        _theme = SilkNetWindowChrome.MapFrameTheme(
+            themeVariant,
+            platformDefault);
+#endif
         _windowController?.SetTheme(_theme);
     }
 
@@ -598,9 +655,11 @@ public sealed class WindowImpl :
     public void BeginMoveDrag(PointerPressedEventArgs e)
     {
         ArgumentNullException.ThrowIfNull(e);
-        if (_input is not null)
-            _windowController?.BeginMove(
-                _input.CurrentNativePointer);
+        if (_input is null || !e.Pointer.IsPrimary)
+            return;
+
+        e.Pointer.Capture(null);
+        _ = BeginNativeMoveDrag();
     }
 
     public void BeginResizeDrag(
@@ -610,9 +669,8 @@ public sealed class WindowImpl :
         ArgumentNullException.ThrowIfNull(e);
         if (_input is not null)
         {
-            _windowController?.BeginResize(
-                SilkNetWindowChrome.MapResizeEdge(edge),
-                _input.CurrentNativePointer);
+            _ = BeginNativeResizeDrag(
+                SilkNetWindowChrome.MapResizeEdge(edge));
         }
     }
 
@@ -640,15 +698,18 @@ public sealed class WindowImpl :
         _desiredSize = constrained;
         if (_window is not null)
         {
-            _window.Size = new Vector2D<int>(
-                Math.Max(
-                    1,
-                    checked((int)Math.Round(
-                        constrained.Width))),
-                Math.Max(
-                    1,
-                    checked((int)Math.Round(
-                        constrained.Height))));
+            PixelSize pixels =
+                SilkNetDisplayMetrics.ResolveNativeClientSize(
+                    constrained,
+                    NativeCoordinateScaling);
+            var nativeSize = new Vector2D<int>(
+                pixels.Width,
+                pixels.Height);
+            if (_window.Size != nativeSize)
+            {
+                _resizeReasons.Begin(nativeSize, reason);
+                _window.Size = nativeSize;
+            }
         }
     }
 
@@ -657,10 +718,9 @@ public sealed class WindowImpl :
         _desiredPosition = point;
         if (_window is null)
             return;
-        double scaling = DesktopScaling;
         _window.Position = new Vector2D<int>(
-            checked((int)Math.Round(point.X / scaling)),
-            checked((int)Math.Round(point.Y / scaling)));
+            point.X,
+            point.Y);
     }
 
     public void SetMinMaxSize(Size minSize, Size maxSize)
@@ -673,9 +733,7 @@ public sealed class WindowImpl :
             maxSize.Height > 0
                 ? maxSize.Height
                 : double.PositiveInfinity);
-        _windowController?.SetSizeConstraints(
-            SilkNetWindowChrome.ToMinimumSize(_minSize),
-            SilkNetWindowChrome.ToMaximumSize(_maxSize));
+        ApplyNativeSizeConstraints();
     }
 
     public void SetExtendClientAreaToDecorationsHint(
@@ -691,13 +749,20 @@ public sealed class WindowImpl :
             _extendClientArea,
             _titleBarHeight);
         ExtendClientAreaToDecorationsChanged?.Invoke(
-            _extendClientArea);
+            IsClientAreaExtendedToDecorations);
     }
 
 #if AVALONIA11
     public void SetExtendClientAreaChromeHints(
         ExtendClientAreaChromeHints hints)
     {
+        if (_chromeHints == hints)
+            return;
+        _chromeHints = hints;
+        _windowController?.SetChromeHints(
+            SilkNetWindowChrome.MapChromeHints(hints));
+        ExtendClientAreaToDecorationsChanged?.Invoke(
+            IsClientAreaExtendedToDecorations);
     }
 
     public void GetWindowsZOrder(
@@ -711,7 +776,12 @@ public sealed class WindowImpl :
         }
 
         for (int index = 0; index < zOrder.Length; index++)
-            zOrder[index] = index;
+        {
+            zOrder[index] =
+                windows[index].PlatformImpl is WindowImpl window
+                    ? window.ZOrder
+                    : long.MinValue;
+        }
     }
 #endif
 
@@ -728,7 +798,7 @@ public sealed class WindowImpl :
         if (_extendClientArea)
         {
             ExtendClientAreaToDecorationsChanged?.Invoke(
-                true);
+                IsClientAreaExtendedToDecorations);
         }
     }
 
@@ -737,6 +807,20 @@ public sealed class WindowImpl :
         _addShadow = enabled;
         _windowController?.SetWindowShadow(enabled);
     }
+
+#if AVALONIA11
+    public void SetHitTestVisible(bool isHitTestVisible)
+    {
+        _isHitTestVisible = isHitTestVisible;
+        IWindow? window = _window;
+        if (window is null || !window.IsInitialized)
+            return;
+
+        _platform.Monitors.SetMousePassthrough(
+            window.Handle,
+            !isHitTestVisible);
+    }
+#endif
 
     public void TakeFocus() => Activate();
 
@@ -750,6 +834,7 @@ public sealed class WindowImpl :
         _platform.EventLoop.Unregister(this);
         _input?.Dispose();
         _input = null;
+        _screens.Dispose();
         _framebufferSurface.Dispose();
 
         WgpuContext? context = _webGpuContext;
@@ -805,11 +890,23 @@ public sealed class WindowImpl :
 
     internal void EmitInput(RawInputEventArgs input)
     {
-        if (_enabled)
-            Input?.Invoke(input);
-        else
-            GotInputWhenDisabled?.Invoke();
+        ArgumentNullException.ThrowIfNull(input);
+        Input?.Invoke(input);
     }
+
+    internal bool TryAcceptInput()
+    {
+        if (_disposedState)
+            return false;
+        if (_enabled)
+            return true;
+
+        GotInputWhenDisabled?.Invoke();
+        return false;
+    }
+
+    internal bool IsProcessingPromotedTouchMouse =>
+        _windowController?.IsProcessingPromotedTouchMouse ?? false;
 
     internal NativeWindowPoint ToNativeScreenPoint(
         float clientX,
@@ -827,18 +924,68 @@ public sealed class WindowImpl :
                 (int)MathF.Round(clientY)));
     }
 
-    internal void UpdateNativeDrag(
+    internal bool UpdateNativeDrag(
         NativeWindowPoint pointer) =>
-        _windowController?.UpdateDrag(pointer);
+        _windowController?.UpdateDrag(pointer) == true;
 
     internal void EndNativeDrag() =>
         _windowController?.EndDrag();
 
-    void ISilkNetLoopParticipant.PollNativeEvents() =>
-        _window?.DoEvents();
+    internal bool BeginNativeMoveDrag()
+    {
+        if (_input is null)
+            return false;
 
-    void ISilkNetLoopParticipant.UpdateNativeWindow() =>
-        _window?.DoUpdate();
+        NativeWindowPoint pointer = _input.CurrentNativePointer;
+        return StartMoveResize(
+            () => _windowController?.BeginMove(pointer));
+    }
+
+    internal bool BeginNativeResizeDrag(NativeResizeEdge edge)
+    {
+        if (_input is null)
+            return false;
+
+        NativeWindowPoint pointer = _input.CurrentNativePointer;
+        return StartMoveResize(
+            () => _windowController?.BeginResize(edge, pointer));
+    }
+
+    private bool StartMoveResize(Func<bool?> action)
+    {
+        if (_windowController is null)
+            return false;
+        return action() == true;
+    }
+
+    internal void SetNativeTouchHandler(
+        Action<NativeTouchEvent>? handler)
+    {
+        if (_windowController is not null)
+            _windowController.TouchHandler = handler;
+    }
+
+    void ISilkNetLoopParticipant.PollNativeEvents()
+    {
+        SilkNetInputRouter? input = _input;
+        input?.PollSupplementalEvents();
+        try
+        {
+            _window?.DoEvents();
+        }
+        finally
+        {
+            input?.CompleteSupplementalEventPoll();
+        }
+    }
+
+    void ISilkNetLoopParticipant.UpdateNativeWindow()
+    {
+        IWindow? window = _window;
+        window?.DoUpdate();
+        if (window is not null)
+            _input?.ProcessNativeState(window);
+    }
 
     void ISilkNetLoopParticipant.RenderNativeWindow() =>
         _window?.DoRender();
@@ -849,6 +996,8 @@ public sealed class WindowImpl :
         if (_window is not null)
             return _window;
 
+        Size requestedLogicalSize = _desiredSize;
+        PixelPoint? requestedPosition = _desiredPosition;
         Vector2D<int> size = new(
             Math.Max(
                 1,
@@ -869,6 +1018,11 @@ public sealed class WindowImpl :
                 FramesPerSecond = 0,
                 UpdatesPerSecond = 0,
                 Size = size,
+                Position = requestedPosition is { } initialPosition
+                    ? new Vector2D<int>(
+                        initialPosition.X,
+                        initialPosition.Y)
+                    : WindowOptions.Default.Position,
                 Title = _title,
                 WindowState =
                     ToSilkState(_windowState),
@@ -877,13 +1031,6 @@ public sealed class WindowImpl :
                     _transparentRequested,
                 TopMost = _topmost
             };
-        if (_desiredPosition is { } desired)
-        {
-            options.Position = new Vector2D<int>(
-                desired.X,
-                desired.Y);
-        }
-
         IWindow window =
             Silk.NET.Windowing.Window.Create(options);
         _window = window;
@@ -898,8 +1045,17 @@ public sealed class WindowImpl :
         window.FocusChanged += OnFocusChanged;
         window.StateChanged += OnStateChanged;
         window.Closing += OnClosing;
+        _resizeReasons.Begin(
+            options.Size,
+            WindowResizeReason.Layout);
         window.Initialize();
+        _resizeReasons.Cancel();
         NotifyScalingChanged();
+        Resize(
+            requestedLogicalSize,
+            WindowResizeReason.Layout);
+        if (requestedPosition is { } desired)
+            Move(desired);
         _platform.EventLoop.Register(this);
         return window;
     }
@@ -909,11 +1065,23 @@ public sealed class WindowImpl :
         if (_window is null)
             return;
         _windowController?.Attach();
+        if (s_traceWindowEvents)
+        {
+            TraceWindowEvent(
+                $"[Avalonia.SilkNet] load handle={Handle?.Handle} " +
+                $"window={_window.Size} " +
+                $"framebuffer={_window.FramebufferSize} " +
+                $"scaling={RenderScaling}");
+        }
+#if AVALONIA11
+        if (!_isHitTestVisible)
+            SetHitTestVisible(false);
+#endif
         ApplyNativeParent();
         if (_extendClientArea)
         {
             ExtendClientAreaToDecorationsChanged?.Invoke(
-                true);
+                IsClientAreaExtendedToDecorations);
         }
         (_input ??= new SilkNetInputRouter(
             this,
@@ -958,17 +1126,35 @@ public sealed class WindowImpl :
 
     private void OnResize(Vector2D<int> size)
     {
-        _desiredSize = new Size(
-            Math.Max(0, size.X),
-            Math.Max(0, size.Y));
+        if (s_traceWindowEvents)
+        {
+            TraceWindowEvent(
+                $"[Avalonia.SilkNet] resize size={size} " +
+                $"framebuffer={_window?.FramebufferSize} " +
+                $"scaling={RenderScaling}");
+        }
+        NotifyScalingChanged();
+        _desiredSize =
+            SilkNetDisplayMetrics.ResolveLogicalClientSize(
+                size.X,
+                size.Y,
+                NativeCoordinateScaling);
         Resized?.Invoke(
             _desiredSize,
-            WindowResizeReason.User);
+            _resizeReasons.Resolve(size));
         QueuePaint();
+        if (_windowController?.IsInteractiveMoveResize == true)
+            OnRender(0d);
     }
 
     private void OnFramebufferResize(Vector2D<int> size)
     {
+        if (s_traceWindowEvents)
+        {
+            TraceWindowEvent(
+                $"[Avalonia.SilkNet] framebuffer-resize size={size} " +
+                $"window={_window?.Size} scaling={RenderScaling}");
+        }
         _ = size;
         NotifyScalingChanged();
         QueuePaint();
@@ -976,9 +1162,40 @@ public sealed class WindowImpl :
 
     private void OnMove(Vector2D<int> position)
     {
-        _ = position;
+        if (s_traceWindowEvents)
+        {
+            TraceWindowEvent(
+                $"[Avalonia.SilkNet] move position={position} " +
+                $"scaling={RenderScaling}");
+        }
+        _desiredPosition = new PixelPoint(
+            position.X,
+            position.Y);
         NotifyScalingChanged();
-        PositionChanged?.Invoke(Position);
+        PositionChanged?.Invoke(_desiredPosition.Value);
+    }
+
+    private static void TraceWindowEvent(string message)
+    {
+        string? path = s_windowEventTracePath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            Console.Error.WriteLine(message);
+            return;
+        }
+
+        try
+        {
+            File.AppendAllText(path, message + Environment.NewLine);
+        }
+        catch (IOException)
+        {
+            Console.Error.WriteLine(message);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine(message);
+        }
     }
 
     private void NotifyScalingChanged()
@@ -1004,6 +1221,7 @@ public sealed class WindowImpl :
 
         _reportedScaling = scaling;
         _screens.Invalidate();
+        ApplyNativeSizeConstraints();
         ScalingChanged?.Invoke(scaling);
     }
 
@@ -1031,7 +1249,7 @@ public sealed class WindowImpl :
         if (_extendClientArea)
         {
             ExtendClientAreaToDecorationsChanged?.Invoke(
-                true);
+                IsClientAreaExtendedToDecorations);
         }
     }
 
@@ -1061,6 +1279,8 @@ public sealed class WindowImpl :
         Silk.NET.WebGPU.DeviceLostReason reason,
         string message)
     {
+        if (_webGpuContext?.IsDeviceLost != true)
+            return;
         _paintQueued = true;
         _platform.EventLoop.Wake();
     }
@@ -1111,7 +1331,7 @@ public sealed class WindowImpl :
         if (_extendClientArea)
         {
             ExtendClientAreaToDecorationsChanged?.Invoke(
-                true);
+                IsClientAreaExtendedToDecorations);
         }
     }
 
@@ -1138,15 +1358,37 @@ public sealed class WindowImpl :
         controller.SetTopMost(_topmost);
         controller.SetEnabled(_enabled);
         controller.SetShowInTaskbar(_showInTaskbar);
-        controller.SetSizeConstraints(
-            SilkNetWindowChrome.ToMinimumSize(_minSize),
-            SilkNetWindowChrome.ToMaximumSize(_maxSize));
+        ApplyNativeSizeConstraints();
+#if AVALONIA11
+        controller.SetChromeHints(
+            SilkNetWindowChrome.MapChromeHints(
+                _chromeHints));
+#endif
         controller.SetClientAreaExtension(
             _extendClientArea,
             _titleBarHeight);
         controller.SetTheme(_theme);
         controller.SetBackdrop(_backdrop);
         controller.SetWindowShadow(_addShadow);
+    }
+
+    private void ApplyNativeSizeConstraints()
+    {
+        SilkWindowController? controller =
+            _windowController;
+        if (controller is null)
+            return;
+
+        double scaling = _window?.IsInitialized == true
+            ? NativeCoordinateScaling
+            : 1d;
+        controller.SetSizeConstraints(
+            SilkNetWindowChrome.ToMinimumSize(
+                _minSize,
+                scaling),
+            SilkNetWindowChrome.ToMaximumSize(
+                _maxSize,
+                scaling));
     }
 
     private void ApplyNativeParent()

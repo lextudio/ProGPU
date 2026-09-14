@@ -23,11 +23,27 @@ public sealed unsafe partial class DawnGpuContext :
     IProGpuExternalTextureImporter
 {
     private const string NativeLibraryName = "webgpu_dawn";
+    private const string LinuxNativeLibraryName = "webgpu_dawn.so";
     private const string IosFrameworkLibrary =
         "@rpath/webgpu_dawn.framework/webgpu_dawn";
     private static readonly object NativeLibrarySync = new();
     private static nint s_iosNativeLibrary;
     private static bool s_iosResolversInstalled;
+    private readonly object _lifetimeGate = new();
+    private int _lifetimeReferenceCount = 1;
+    private bool _ownerLifetimeReleased;
+    private bool _contextLifetimeDisposed;
+
+    static DawnGpuContext()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            InstallLinuxNativeLibraryResolver(
+                typeof(WebGPU_FFI).Assembly);
+            InstallLinuxNativeLibraryResolver(
+                typeof(DawnGpuContext).Assembly);
+        }
+    }
 
     /// <summary>
     /// Reports whether the exact WebGPUSharp/Dawn native ABI can be resolved
@@ -40,14 +56,57 @@ public sealed unsafe partial class DawnGpuContext :
             return EnsureIosNativeLibrary();
         }
 
+        string libraryName = OperatingSystem.IsLinux()
+            ? LinuxNativeLibraryName
+            : NativeLibraryName;
         if (!NativeLibrary.TryLoad(
-                NativeLibraryName,
+                libraryName,
+                typeof(DawnGpuContext).Assembly,
+                searchPath: null,
                 out nint library))
         {
             return false;
         }
         NativeLibrary.Free(library);
         return true;
+    }
+
+    private static void InstallLinuxNativeLibraryResolver(
+        System.Reflection.Assembly assembly)
+    {
+        try
+        {
+            NativeLibrary.SetDllImportResolver(
+                assembly,
+                ResolveLinuxDawnImport);
+        }
+        catch (InvalidOperationException)
+        {
+            // The host already owns this assembly's resolver. Its resolver is
+            // given the first opportunity to satisfy the Dawn import.
+        }
+    }
+
+    private static nint ResolveLinuxDawnImport(
+        string libraryName,
+        System.Reflection.Assembly assembly,
+        DllImportSearchPath? searchPath)
+    {
+        if (!string.Equals(
+                libraryName,
+                NativeLibraryName,
+                StringComparison.Ordinal))
+        {
+            return 0;
+        }
+
+        return NativeLibrary.TryLoad(
+                LinuxNativeLibraryName,
+                assembly,
+                searchPath,
+                out nint library)
+            ? library
+            : 0;
     }
 
     private static bool EnsureIosNativeLibrary()
@@ -112,11 +171,57 @@ public sealed unsafe partial class DawnGpuContext :
         internal string Message = string.Empty;
     }
 
+    private sealed class DeviceLossCallbackState
+    {
+        private readonly object _sync = new();
+        private WgpuContext? _context;
+        private bool _isLost;
+        private string _message = string.Empty;
+
+        internal void Bind(WgpuContext context)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            bool report;
+            string message;
+            lock (_sync)
+            {
+                _context = context;
+                report = _isLost;
+                message = _message;
+            }
+            if (report)
+            {
+                context.ReportDeviceLost(
+                    SW.DeviceLostReason.Unknown,
+                    message);
+            }
+        }
+
+        internal void Report(string message)
+        {
+            WgpuContext? context;
+            lock (_sync)
+            {
+                if (_isLost)
+                {
+                    return;
+                }
+                _isLost = true;
+                _message = message;
+                context = _context;
+            }
+            context?.ReportDeviceLost(
+                SW.DeviceLostReason.Unknown,
+                message);
+        }
+    }
+
     private sealed class NativeLifetime(
         InstanceHandle instance,
         AdapterHandle adapter,
         DeviceHandle device,
-        QueueHandle queue) : IWebGpuExternalDeviceLifetime
+        QueueHandle queue,
+        GCHandle deviceLossStateHandle) : IWebGpuExternalDeviceLifetime
     {
         private bool _disposed;
 
@@ -145,7 +250,24 @@ public sealed unsafe partial class DawnGpuContext :
             device.Release();
             adapter.Release();
             instance.Release();
+            if (deviceLossStateHandle.IsAllocated)
+            {
+                deviceLossStateHandle.Free();
+            }
             _disposed = true;
+        }
+    }
+
+    private sealed class ContextLifetimeLease(
+        DawnGpuContext owner) : IDisposable
+    {
+        private DawnGpuContext? _owner = owner;
+
+        public void Dispose()
+        {
+            DawnGpuContext? released =
+                Interlocked.Exchange(ref _owner, null);
+            released?.ReleaseLifetimeReference();
         }
     }
 
@@ -172,6 +294,22 @@ public sealed unsafe partial class DawnGpuContext :
     public DeviceHandle Device { get; }
     public QueueHandle Queue { get; }
     public DawnSharedTextureMemoryFeature SharedTextureMemory { get; }
+
+    internal IDisposable AcquireLifetimeLease()
+    {
+        lock (_lifetimeGate)
+        {
+            ObjectDisposedException.ThrowIf(
+                _ownerLifetimeReleased ||
+                _contextLifetimeDisposed,
+                this);
+            checked
+            {
+                _lifetimeReferenceCount++;
+            }
+            return new ContextLifetimeLease(this);
+        }
+    }
 
     /// <summary>
     /// Returns the exact native WebGPU handles owned by this context as a
@@ -242,6 +380,8 @@ public sealed unsafe partial class DawnGpuContext :
         AdapterHandle adapter = AdapterHandle.Null;
         DeviceHandle device = DeviceHandle.Null;
         QueueHandle queue = QueueHandle.Null;
+        DeviceLossCallbackState? deviceLossState = null;
+        GCHandle deviceLossStateHandle = default;
         WgpuContext? context = null;
         try
         {
@@ -281,7 +421,9 @@ public sealed unsafe partial class DawnGpuContext :
             device = RequestDevice(
                 instance,
                 adapter,
-                requiredFeatures[..featureCount]);
+                requiredFeatures[..featureCount],
+                out deviceLossState,
+                out deviceLossStateHandle);
             queue = device.GetQueue();
             if (queue == QueueHandle.Null)
             {
@@ -301,8 +443,14 @@ public sealed unsafe partial class DawnGpuContext :
                     instance,
                     adapter,
                     device,
-                    queue);
-            context = new WgpuContext();
+                    queue,
+                    deviceLossStateHandle);
+            deviceLossStateHandle = default;
+            context = new WgpuContext {
+                ComputeLimits = new(limits.MaxStorageBufferBindingSize,
+                    limits.MaxStorageBuffersPerShaderStage, limits.MaxComputeInvocationsPerWorkgroup,
+                    limits.MaxComputeWorkgroupSizeX, limits.MaxComputeWorkgroupsPerDimension)
+            };
             context.InitializeExternalNativeDevice(
                 new DawnWebGpuApi(),
                 lifetime,
@@ -314,10 +462,12 @@ public sealed unsafe partial class DawnGpuContext :
                 maxSamplersPerShaderStage:
                     limits.MaxSamplersPerShaderStage,
                 maxBindGroups: limits.MaxBindGroups,
+                maxBufferSize: limits.MaxBufferSize,
                 supportsTextureFormatsTier1:
                     supportsTextureFormatsTier1,
                 adapterBackendType: SW.BackendType.Metal,
                 adapterName: "Dawn Metal");
+            deviceLossState.Bind(context);
 
             InstanceHandle ownedInstance = instance;
             AdapterHandle ownedAdapter = adapter;
@@ -338,6 +488,10 @@ public sealed unsafe partial class DawnGpuContext :
         catch
         {
             context?.Dispose();
+            if (deviceLossStateHandle.IsAllocated)
+            {
+                deviceLossStateHandle.Free();
+            }
             if (queue != QueueHandle.Null)
             {
                 queue.Release();
@@ -361,7 +515,45 @@ public sealed unsafe partial class DawnGpuContext :
 
     public void Dispose()
     {
-        Context.Dispose();
+        bool disposeContext;
+        lock (_lifetimeGate)
+        {
+            if (_ownerLifetimeReleased)
+            {
+                return;
+            }
+            _ownerLifetimeReleased = true;
+            disposeContext = --_lifetimeReferenceCount == 0;
+            if (disposeContext)
+            {
+                _contextLifetimeDisposed = true;
+            }
+        }
+        if (disposeContext)
+        {
+            Context.Dispose();
+        }
+    }
+
+    private void ReleaseLifetimeReference()
+    {
+        bool disposeContext;
+        lock (_lifetimeGate)
+        {
+            if (_lifetimeReferenceCount <= 0)
+            {
+                return;
+            }
+            disposeContext = --_lifetimeReferenceCount == 0;
+            if (disposeContext)
+            {
+                _contextLifetimeDisposed = true;
+            }
+        }
+        if (disposeContext)
+        {
+            Context.Dispose();
+        }
     }
 
     public bool TryImportExternalTexture(
@@ -616,60 +808,82 @@ public sealed unsafe partial class DawnGpuContext :
     private static DeviceHandle RequestDevice(
         InstanceHandle instance,
         AdapterHandle adapter,
-        ReadOnlySpan<W.FeatureName> requiredFeatures)
+        ReadOnlySpan<W.FeatureName> requiredFeatures,
+        out DeviceLossCallbackState deviceLossState,
+        out GCHandle deviceLossStateHandle)
     {
         var state = new DeviceRequest();
         GCHandle stateHandle = GCHandle.Alloc(state);
-        fixed (W.FeatureName* features = requiredFeatures)
-        fixed (byte* label =
-            "ProGPU Dawn Primary Device\0"u8)
+        deviceLossState = new DeviceLossCallbackState();
+        deviceLossStateHandle = GCHandle.Alloc(deviceLossState);
+        try
         {
-            try
+            fixed (W.FeatureName* features = requiredFeatures)
+            fixed (byte* label =
+                "ProGPU Dawn Primary Device\0"u8)
             {
-                var descriptor = new DeviceDescriptorFFI
+                try
                 {
-                    Label =
-                        StringViewFFI.CreateNullTerminated(label),
-                    RequiredFeatureCount =
-                        (nuint)requiredFeatures.Length,
-                    RequiredFeatures = features,
-                    DeviceLostCallbackInfo =
-                        new DeviceLostCallbackInfoFFI
-                        {
-                            Mode =
-                                W.CallbackMode.AllowSpontaneous,
-                            Callback = &OnDeviceLost
-                        },
-                    UncapturedErrorCallbackInfo =
-                        new UncapturedErrorCallbackInfoFFI
-                        {
-                            Callback = &OnUncapturedError
-                        }
-                };
-                var callback = new RequestDeviceCallbackInfoFFI
+                    var descriptor = new DeviceDescriptorFFI
+                    {
+                        Label =
+                            StringViewFFI.CreateNullTerminated(label),
+                        RequiredFeatureCount =
+                            (nuint)requiredFeatures.Length,
+                        RequiredFeatures = features,
+                        DeviceLostCallbackInfo =
+                            new DeviceLostCallbackInfoFFI
+                            {
+                                Mode =
+                                    W.CallbackMode.AllowSpontaneous,
+                                Callback = &OnDeviceLost,
+                                Userdata1 =
+                                    (void*)GCHandle.ToIntPtr(
+                                        deviceLossStateHandle)
+                            },
+                        UncapturedErrorCallbackInfo =
+                            new UncapturedErrorCallbackInfoFFI
+                            {
+                                Callback = &OnUncapturedError,
+                                Userdata1 =
+                                    (void*)GCHandle.ToIntPtr(
+                                        deviceLossStateHandle)
+                            }
+                    };
+                    var callback = new RequestDeviceCallbackInfoFFI
+                    {
+                        Mode = W.CallbackMode.WaitAnyOnly,
+                        Callback = &CompleteDeviceRequest,
+                        Userdata1 =
+                            (void*)GCHandle.ToIntPtr(stateHandle)
+                    };
+                    W.Future future =
+                        adapter.RequestDevice(&descriptor, callback);
+                    Wait(instance, future, "request a Dawn device");
+                }
+                finally
                 {
-                    Mode = W.CallbackMode.WaitAnyOnly,
-                    Callback = &CompleteDeviceRequest,
-                    Userdata1 =
-                        (void*)GCHandle.ToIntPtr(stateHandle)
-                };
-                W.Future future =
-                    adapter.RequestDevice(&descriptor, callback);
-                Wait(instance, future, "request a Dawn device");
+                    stateHandle.Free();
+                }
             }
-            finally
-            {
-                stateHandle.Free();
-            }
-        }
 
-        if (state.Status != W.RequestDeviceStatus.Success ||
-            state.Device == DeviceHandle.Null)
-        {
-            throw new InvalidOperationException(
-                $"Dawn failed to request a device: {state.Status}. {state.Message}");
+            if (state.Status != W.RequestDeviceStatus.Success ||
+                state.Device == DeviceHandle.Null)
+            {
+                throw new InvalidOperationException(
+                    $"Dawn failed to request a device: {state.Status}. {state.Message}");
+            }
+            return state.Device;
         }
-        return state.Device;
+        catch
+        {
+            if (deviceLossStateHandle.IsAllocated)
+            {
+                deviceLossStateHandle.Free();
+            }
+            deviceLossStateHandle = default;
+            throw;
+        }
     }
 
     private static void WaitForQueue(
@@ -781,6 +995,13 @@ public sealed unsafe partial class DawnGpuContext :
         WgpuContext.RaiseWebGpuError(
             ErrorType(type),
             errorMessage);
+        if (userData1 != null &&
+            IsTerminalDeviceFailure(type, errorMessage) &&
+            GCHandle.FromIntPtr((nint)userData1).Target is
+                DeviceLossCallbackState state)
+        {
+            state.Report(errorMessage);
+        }
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -798,9 +1019,12 @@ public sealed unsafe partial class DawnGpuContext :
         string lossMessage = Message(message);
         Console.Error.WriteLine(
             $"[Dawn Device Lost] {reason}: {lossMessage}");
-        WgpuContext.RaiseWebGpuDeviceLost(
-            SW.DeviceLostReason.Unknown,
-            lossMessage);
+        if (userData1 != null &&
+            GCHandle.FromIntPtr((nint)userData1).Target is
+                DeviceLossCallbackState state)
+        {
+            state.Report(lossMessage);
+        }
     }
 
     private static string Message(StringViewFFI message) =>
@@ -818,6 +1042,20 @@ public sealed unsafe partial class DawnGpuContext :
             W.ErrorType.Unknown => SW.ErrorType.Unknown,
             _ => SW.ErrorType.Unknown
         };
+
+    private static bool IsTerminalDeviceFailure(
+        W.ErrorType type,
+        string message) =>
+        type is W.ErrorType.Internal or W.ErrorType.Unknown ||
+        message.Contains(
+            "device is lost",
+            StringComparison.OrdinalIgnoreCase) ||
+        message.Contains(
+            "device lost",
+            StringComparison.OrdinalIgnoreCase) ||
+        message.Contains(
+            "Creation of a resource failed for a reason other than running out of memory",
+            StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>

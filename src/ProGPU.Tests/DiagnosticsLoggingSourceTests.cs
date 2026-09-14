@@ -6,6 +6,54 @@ using Xunit;
 
 public class DiagnosticsLoggingSourceTests
 {
+    [Fact]
+    public void ResumableGpuQueryStackIsInvocationPrivateNotAnInoutArray()
+    {
+        string shader = ReadSource("src", "ProGPU.Vector", "Shaders", "GpuHitTesting.wgsl");
+        Assert.Contains("var<private> query_stack: array<u32, 64>;", shader, StringComparison.Ordinal);
+        Assert.DoesNotContain("var<workgroup> query_stack", shader, StringComparison.Ordinal);
+        Assert.DoesNotContain("stack: array<u32, 64>,", shader, StringComparison.Ordinal);
+        Assert.Contains("query_stack[0] = query.root_node_index;", shader, StringComparison.Ordinal);
+        Assert.Contains("query_stack[(*state).stack_count] = (*state).node.first_child + child;", shader, StringComparison.Ordinal);
+        Assert.Contains("let node_index = query_stack[(*state).stack_count];", shader, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PersistentTextureBindGroupCreationStaysOutsideCacheLock()
+    {
+        string source = ReadSource("src", "ProGPU.Scene", "Compositor.cs");
+        int helperStart = source.IndexOf(
+            "private CachedBindGroup GetOrCreatePersistentTextureBindGroup(",
+            StringComparison.Ordinal);
+        int helperEnd = source.IndexOf(
+            "private void HandleTextureDisposed(",
+            helperStart,
+            StringComparison.Ordinal);
+        Assert.True(helperStart >= 0 && helperEnd > helperStart);
+        string helper = source[helperStart..helperEnd];
+
+        int initialCacheLock = helper.IndexOf(
+            "lock (_persistentTextureBindGroups)",
+            StringComparison.Ordinal);
+        int nativeCreate = helper.IndexOf(
+            "_context.Api.DeviceCreateBindGroup(",
+            StringComparison.Ordinal);
+        int publishCacheLock = helper.IndexOf(
+            "lock (_persistentTextureBindGroups)",
+            nativeCreate,
+            StringComparison.Ordinal);
+
+        Assert.True(initialCacheLock >= 0);
+        Assert.Contains(
+            "}\n\n        var entries = stackalloc BindGroupEntry[2];",
+            helper[initialCacheLock..nativeCreate],
+            StringComparison.Ordinal);
+        Assert.True(nativeCreate > initialCacheLock);
+        Assert.True(publishCacheLock > nativeCreate);
+        Assert.Contains("redundantBindGroup = created.BindGroupPtr;", helper, StringComparison.Ordinal);
+        Assert.Contains("QueueBindGroupRelease(redundantBindGroup);", helper, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("src", "ProGPU.Backend", "WgpuContext.cs", "ProGpuBackendDiagnostics.WriteLine(", "Configuring SwapChain", "Console.WriteLine($\"[WebGPU Context] Configuring SwapChain")]
     [InlineData("src", "ProGPU.Scene", "Extensions/ShaderToyExtensionPipeline.cs", "ProGpuSceneDiagnostics.WriteLine(", "ShaderToy Render", "Console.WriteLine(")]
@@ -92,7 +140,7 @@ public class DiagnosticsLoggingSourceTests
 
         Assert.Contains("<ProGPUStrongNameKeyFile>$(MSBuildThisFileDirectory)eng/ProGPU.snk</ProGPUStrongNameKeyFile>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<VersionPrefix Condition=\"'$(VersionPrefix)' == ''\">0.1.0</VersionPrefix>", directoryBuildProps, StringComparison.Ordinal);
-        Assert.Contains("<VersionSuffix Condition=\"'$(VersionSuffix)' == ''\">preview.55</VersionSuffix>", directoryBuildProps, StringComparison.Ordinal);
+        Assert.Contains("<VersionSuffix Condition=\"'$(VersionSuffix)' == ''\">preview.62</VersionSuffix>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<Version Condition=\"'$(Version)' == ''\">$(VersionPrefix)-$(VersionSuffix)</Version>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<PackageVersion Condition=\"'$(PackageVersion)' == ''\">$(Version)</PackageVersion>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<AssemblyVersion Condition=\"'$(AssemblyVersion)' == ''\">0.1.0.0</AssemblyVersion>", directoryBuildProps, StringComparison.Ordinal);
@@ -161,6 +209,9 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("  pack-mobile:\n    name: Pack mobile packages", workflow, StringComparison.Ordinal);
         Assert.Contains("PROGPU_PACKAGE_GROUP=portable", workflow, StringComparison.Ordinal);
         Assert.Contains("PROGPU_PACKAGE_GROUP=mobile", workflow, StringComparison.Ordinal);
+        Assert.Contains("version=\"0.1.0-preview.${GITHUB_RUN_NUMBER}.ci\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("PROGPU_PACKAGE_VERSION=0.1.0-preview.${{ github.run_number }}.ci", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("0.1.0-ci.", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet workload restore src/ProGPU.Android/ProGPU.Android.csproj", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet workload restore src/ProGPU.iOS/ProGPU.iOS.csproj", workflow, StringComparison.Ordinal);
         Assert.Contains("uses: actions/upload-artifact@v7", workflow, StringComparison.Ordinal);
@@ -188,7 +239,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("export LD_LIBRARY_PATH=\"${native_root}:${native_rid_root}:${headless_native_root}:${headless_native_rid_root}:${LD_LIBRARY_PATH:-}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime linux-x64 --no-build --verbosity normal --filter \"FullyQualifiedName!~ShapingContractsTests\"", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet test src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj --configuration Release --runtime linux-x64 --no-build --verbosity normal", workflow, StringComparison.Ordinal);
-        Assert.Contains("needs: [portable, native-package-consumer, mobile]", workflow, StringComparison.Ordinal);
+        Assert.Contains("needs: [portable, native-package-consumer, native-dx12-package-consumer, mobile]", workflow, StringComparison.Ordinal);
         Assert.Contains("uses: actions/download-artifact@v8", workflow, StringComparison.Ordinal);
         Assert.Contains("PROGPU_PACKAGE_GROUP=all ./eng/progpu-verify-packages.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet nuget push \"${package}\"", workflow, StringComparison.Ordinal);
@@ -353,7 +404,10 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("HasDynamicOffset = true", source, StringComparison.Ordinal);
         Assert.Contains("GetOrCreateRingBindGroup()", source, StringComparison.Ordinal);
         Assert.Contains("GetOrCreateBatchComputePass()", source, StringComparison.Ordinal);
-        Assert.Contains("_batchCoverageCopies.Add(new PendingCoverageCopy(", source, StringComparison.Ordinal);
+        Assert.Contains("_batchCoverageCopies.Add(", source, StringComparison.Ordinal);
+        Assert.Contains("new PendingCoverageCopy(", source, StringComparison.Ordinal);
+        Assert.Contains("GetOrCreateBatchRasterPass()", source, StringComparison.Ordinal);
+        Assert.Contains("GpuComputeExecutionPath.RasterShader", source, StringComparison.Ordinal);
         Assert.DoesNotContain("QueueWriteBuffer(_context.Queue, _uniformRingBuffer.BufferPtr", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ComputePipelineGetBindGroupLayout", source, StringComparison.Ordinal);
         Assert.DoesNotContain("foreach (var buffer in _batchBuffers)", source, StringComparison.Ordinal);
@@ -519,8 +573,10 @@ public class DiagnosticsLoggingSourceTests
     {
         string source = ReadSource("src", "ProGPU.Compute", "ComputeAccelerator.cs");
 
-        Assert.Contains("_blurHorizontalParams!.WriteSingle(new GaussianBlurParams(sigmaX));", source, StringComparison.Ordinal);
-        Assert.Contains("_blurVerticalParams!.WriteSingle(new GaussianBlurParams(sigmaY));", source, StringComparison.Ordinal);
+        Assert.Contains("_blurHorizontalParams!.WriteSingle(horizontalParams);", source, StringComparison.Ordinal);
+        Assert.Contains("_blurVerticalParams!.WriteSingle(verticalParams);", source, StringComparison.Ordinal);
+        Assert.Contains("public void ApplyBoxBlur(", source, StringComparison.Ordinal);
+        Assert.Contains("GaussianBlurParams.Box(radiusX)", source, StringComparison.Ordinal);
         Assert.Contains("private CachedPassBinding _blurHorizontalBinding;", source, StringComparison.Ordinal);
         Assert.Contains("private CachedPassBinding _shadowVerticalBinding;", source, StringComparison.Ordinal);
         Assert.Contains("private BindGroup* GetOrCreatePassBinding(", source, StringComparison.Ordinal);
@@ -872,7 +928,18 @@ public class DiagnosticsLoggingSourceTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "retainedDrawCall.Expand(indexBase)",
+            "AppendOrMergeIncrementalDrawCall(\n" +
+            "                retainedDrawCall,\n" +
+            "                indexBase)",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_drawCalls.Add(retainedDrawCall.Expand(indexBase))",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ref CompositorDrawCall previous = ref\n" +
+            "            CollectionsMarshal.AsSpan(_drawCalls)[previousIndex]",
             source,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
@@ -923,7 +990,7 @@ public class DiagnosticsLoggingSourceTests
 
         Assert.Contains("using System.Buffers;", source, StringComparison.Ordinal);
         Assert.Contains("using System.Runtime.InteropServices;", source, StringComparison.Ordinal);
-        Assert.Contains("public sealed class GpuRenderCommandHitTestCacheBuilder : IDisposable", source, StringComparison.Ordinal);
+        Assert.Contains("public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable", source, StringComparison.Ordinal);
         Assert.Contains("CollectionsMarshal.AsSpan(_primitives)", source, StringComparison.Ordinal);
         Assert.Contains("CollectionsMarshal.AsSpan(_pathSegments)", source, StringComparison.Ordinal);
         Assert.Contains("uint startSegment = AppendPathSegments(segments);", source, StringComparison.Ordinal);

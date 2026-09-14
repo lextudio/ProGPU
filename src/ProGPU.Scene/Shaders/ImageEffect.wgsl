@@ -61,31 +61,25 @@ struct MaskChainUniforms {
 
 @group(3) @binding(3) var<uniform> maskChain: MaskChainUniforms;
 
-fn analytic_rounded_mask_alpha_for(
-    position: vec2<f32>,
-    sampling: MaskSamplingUniforms) -> f32 {
-    let local = vec2<f32>(
-        dot(vec3<f32>(position, 1.0), sampling.coordinate0.xyz),
-        dot(vec3<f32>(position, 1.0), sampling.coordinate1.xyz));
-    let bounds = sampling.bounds;
+fn rounded_mask_alpha_local(local: vec2<f32>, bounds: vec4<f32>, radiiX: vec4<f32>, radiiY: vec4<f32>) -> f32 {
     let edge = max(max(bounds.x - local.x, local.x - bounds.z), max(bounds.y - local.y, local.y - bounds.w));
     var center = vec2<f32>(0.0);
     var radius = vec2<f32>(0.0);
     var usesCorner = false;
-    if (local.x < bounds.x + sampling.cornerRadiiX.x && local.y < bounds.y + sampling.cornerRadiiY.x) {
-        radius = vec2<f32>(sampling.cornerRadiiX.x, sampling.cornerRadiiY.x);
+    if (local.x < bounds.x + radiiX.x && local.y < bounds.y + radiiY.x) {
+        radius = vec2<f32>(radiiX.x, radiiY.x);
         center = vec2<f32>(bounds.x + radius.x, bounds.y + radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
-    } else if (local.x > bounds.z - sampling.cornerRadiiX.y && local.y < bounds.y + sampling.cornerRadiiY.y) {
-        radius = vec2<f32>(sampling.cornerRadiiX.y, sampling.cornerRadiiY.y);
+    } else if (local.x > bounds.z - radiiX.y && local.y < bounds.y + radiiY.y) {
+        radius = vec2<f32>(radiiX.y, radiiY.y);
         center = vec2<f32>(bounds.z - radius.x, bounds.y + radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
-    } else if (local.x > bounds.z - sampling.cornerRadiiX.z && local.y > bounds.w - sampling.cornerRadiiY.z) {
-        radius = vec2<f32>(sampling.cornerRadiiX.z, sampling.cornerRadiiY.z);
+    } else if (local.x > bounds.z - radiiX.z && local.y > bounds.w - radiiY.z) {
+        radius = vec2<f32>(radiiX.z, radiiY.z);
         center = vec2<f32>(bounds.z - radius.x, bounds.w - radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
-    } else if (local.x < bounds.x + sampling.cornerRadiiX.w && local.y > bounds.w - sampling.cornerRadiiY.w) {
-        radius = vec2<f32>(sampling.cornerRadiiX.w, sampling.cornerRadiiY.w);
+    } else if (local.x < bounds.x + radiiX.w && local.y > bounds.w - radiiY.w) {
+        radius = vec2<f32>(radiiX.w, radiiY.w);
         center = vec2<f32>(bounds.x + radius.x, bounds.w - radius.y);
         usesCorner = all(radius > vec2<f32>(0.0));
     }
@@ -97,6 +91,33 @@ fn analytic_rounded_mask_alpha_for(
     return clamp(0.5 - implicit / antialiasWidth, 0.0, 1.0);
 }
 
+fn analytic_rounded_mask_alpha_for(
+    position: vec2<f32>,
+    sampling: MaskSamplingUniforms) -> f32 {
+    let local = vec2<f32>(
+        dot(vec3<f32>(position, 1.0), sampling.coordinate0.xyz),
+        dot(vec3<f32>(position, 1.0), sampling.coordinate1.xyz));
+    let outerAlpha = rounded_mask_alpha_local(local, sampling.bounds, sampling.cornerRadiiX, sampling.cornerRadiiY);
+    if (sampling.options.x < 2.5) {
+        return outerAlpha;
+    }
+    if (sampling.options.x > 3.5) {
+        let innerAlpha = rounded_mask_alpha_local(
+            local,
+            vec4<f32>(sampling.coordinate0.w, sampling.coordinate1.w, sampling.options.z, sampling.options.w),
+            vec4<f32>(0.0),
+            vec4<f32>(0.0));
+        return outerAlpha * (1.0 - innerAlpha);
+    }
+    let inset = sampling.options.z;
+    let innerAlpha = rounded_mask_alpha_local(
+        local,
+        sampling.bounds + vec4<f32>(inset, inset, -inset, -inset),
+        max(sampling.cornerRadiiX - vec4<f32>(inset), vec4<f32>(0.0)),
+        max(sampling.cornerRadiiY - vec4<f32>(inset), vec4<f32>(0.0)));
+    return outerAlpha * (1.0 - innerAlpha);
+}
+
 fn sample_mask_alpha(position: vec2<f32>) -> f32 {
     if (maskSampling.options.x < 0.5) {
         return 1.0;
@@ -106,10 +127,18 @@ fn sample_mask_alpha(position: vec2<f32>) -> f32 {
         return analytic_rounded_mask_alpha_for(targetPosition, maskSampling) *
             maskSampling.options.y;
     }
-    let uv = (targetPosition - maskSampling.coordinate0.xy) * maskSampling.coordinate1.xy;
-    let sampled = textureSample(maskTexture, maskSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0))).r;
+    var uv = (targetPosition - maskSampling.coordinate0.xy) * maskSampling.coordinate1.xy;
+    if (maskSampling.options.z > 0.5) {
+        uv = vec2<f32>(
+            dot(vec3<f32>(targetPosition, 1.0), maskSampling.coordinate0.xyz),
+            dot(vec3<f32>(targetPosition, 1.0), maskSampling.coordinate1.xyz));
+    }
+    let sample = textureSample(maskTexture, maskSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let sampled = select(sample.r, sample.a, maskSampling.options.w > 1.5);
     let inside = all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0));
-    return select(0.0, sampled, inside);
+    let textureOpacity = select(1.0, maskSampling.options.y,
+        maskSampling.options.w > 0.5);
+    return select(0.0, sampled * textureOpacity, inside);
 }
 
 fn sample_mask_chain_alpha(position: vec2<f32>) -> f32 {

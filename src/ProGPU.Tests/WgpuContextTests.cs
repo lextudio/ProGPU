@@ -8,8 +8,118 @@ using Xunit;
 
 namespace ProGPU.Tests;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class WgpuContextLossCollection
+{
+    public const string Name = nameof(WgpuContextLossCollection);
+}
+
+[Collection(WgpuContextLossCollection.Name)]
 public sealed class WgpuContextTests
 {
+    [Theory]
+    [InlineData(false, 7, false, 1)]
+    [InlineData(false, 0, true, 1)]
+    [InlineData(true, 7, true, 8)]
+    [InlineData(true, 0, true, 1)]
+    public unsafe void NativeQueueCompletionNeverUsesTimedBlockingPoll(
+        bool wait, int pendingPolls, bool expected, int expectedCalls)
+    {
+        var state = new QueuePollProbe { PendingPolls = pendingPolls };
+        bool completed = WgpuContext.PollNativeQueueCompletion(
+            (Device*)&state, &PollQueueProbe, wait);
+        Assert.Equal(expected, completed);
+        Assert.Equal(expectedCalls, state.Calls);
+        Assert.Equal(0u, state.WaitFlags);
+    }
+
+    private struct QueuePollProbe
+    {
+        public int PendingPolls;
+        public int Calls;
+        public uint WaitFlags;
+    }
+
+    [System.Runtime.InteropServices.UnmanagedCallersOnly(
+        CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    private static unsafe uint PollQueueProbe(Device* device, uint wait, void* token)
+    {
+        var state = (QueuePollProbe*)device;
+        state->WaitFlags |= wait;
+        return ++state->Calls > state->PendingPolls ? 1u : 0u;
+    }
+
+    [Theory]
+    [InlineData(SurfaceGetCurrentTextureStatus.Timeout)]
+    [InlineData(SurfaceGetCurrentTextureStatus.Outdated)]
+    [InlineData(SurfaceGetCurrentTextureStatus.Lost)]
+    public void RecoverableSurfaceAcquisitionRequestsAnotherFrame(
+        SurfaceGetCurrentTextureStatus status)
+    {
+        using var context = new WgpuContext();
+        Assert.True(context.HandleSurfaceAcquisitionFailure(status));
+        Assert.False(context.IsDeviceLost);
+    }
+
+    [Fact]
+    public void SurfaceDeviceLossIsTerminalAndDoesNotPoisonIndependentContexts()
+    {
+        using var lost = new WgpuContext();
+        using var independent = new WgpuContext();
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.DeviceLost));
+        Assert.True(lost.IsDeviceLost);
+        Assert.False(independent.IsDeviceLost);
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Timeout));
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Outdated));
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Lost));
+    }
+
+    [Fact]
+    public void SurfaceAcquisitionDoesNotSilentlyRetryMemoryOrContractFailures()
+    {
+        using var context = new WgpuContext();
+        Assert.Throws<OutOfMemoryException>(() =>
+            context.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.OutOfMemory));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            context.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Success));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            context.HandleSurfaceAcquisitionFailure((SurfaceGetCurrentTextureStatus)int.MaxValue));
+        Assert.False(context.IsDeviceLost);
+    }
+
+    [Fact]
+    public void SilkNativeContextsShareProcessWideRenderLock()
+    {
+        using var first = new WgpuContext();
+        using var second = new WgpuContext();
+
+        Assert.Same(first.RenderLock, second.RenderLock);
+    }
+
+    [Fact]
+    public unsafe void BrowserContextsKeepIndependentRenderLocks()
+    {
+        using var firstApi = new BrowserWebGpuApi();
+        using var secondApi = new BrowserWebGpuApi();
+        using var first = new WgpuContext();
+        using var second = new WgpuContext();
+
+        first.InitializeExternal(
+            firstApi,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            BrowserWebGpuApi.SurfaceHandle,
+            TextureFormat.Bgra8Unorm);
+        second.InitializeExternal(
+            secondApi,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            BrowserWebGpuApi.SurfaceHandle,
+            TextureFormat.Bgra8Unorm);
+
+        Assert.NotSame(first.RenderLock, second.RenderLock);
+    }
+
     [Fact]
     public void DeviceLossInvalidatesExistingContextsButNotReplacements()
     {
@@ -30,6 +140,63 @@ public sealed class WgpuContextTests
         Assert.True(existing.IsDeviceLost);
         Assert.False(existing.IsInitialized);
         Assert.False(new WgpuContext().IsDeviceLost);
+    }
+
+    [Fact]
+    public unsafe void ExactDeviceLossDoesNotPoisonIndependentContexts()
+    {
+        using var firstApi = new BrowserWebGpuApi();
+        using var secondApi = new BrowserWebGpuApi();
+        using var first = new WgpuContext();
+        using var second = new WgpuContext();
+        first.InitializeExternal(
+            firstApi,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            BrowserWebGpuApi.SurfaceHandle,
+            TextureFormat.Bgra8Unorm);
+        second.InitializeExternal(
+            secondApi,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            BrowserWebGpuApi.SurfaceHandle,
+            TextureFormat.Bgra8Unorm);
+
+        first.ReportDeviceLost(
+            DeviceLostReason.Unknown,
+            "synthetic exact-device loss");
+
+        Assert.True(first.IsDeviceLost);
+        Assert.False(first.IsInitialized);
+        Assert.False(second.IsDeviceLost);
+        Assert.True(second.IsInitialized);
+    }
+
+    [Fact]
+    public unsafe void LostDeviceRejectsQueueSubmissionBeforeNativeCall()
+    {
+        var submissions = 0;
+        using var api = new BrowserWebGpuApi(_ => submissions++);
+        var lifetime = new RecordingExternalDeviceLifetime();
+        using var context = new WgpuContext();
+        context.InitializeExternalNativeDevice(
+            api,
+            lifetime,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            TextureFormat.Bgra8Unorm);
+        context.ReportDeviceLost(
+            DeviceLostReason.Unknown,
+            "synthetic exact-device loss");
+        WgpuDeviceLostException exception = Assert.Throws<WgpuDeviceLostException>(
+            () =>
+            {
+                CommandBuffer* command = (CommandBuffer*)1;
+                context.Submit(1, &command);
+            });
+
+        Assert.Contains("lost WebGPU device", exception.Message);
+        Assert.Equal(0, submissions);
     }
 
     [Fact]
@@ -81,6 +248,55 @@ public sealed class WgpuContextTests
         Assert.True(lifetime.IsDisposed);
         Assert.Equal(2, lifetime.WaitingPollCount);
         Assert.False(context.IsInitialized);
+    }
+
+    [Fact]
+    public async Task QueueSubmissionWaitsForDeviceRenderLock()
+    {
+        using var submitStarting = new ManualResetEventSlim();
+        using var queueEntered = new ManualResetEventSlim();
+        using var releaseQueue = new ManualResetEventSlim();
+        using var api = new BrowserWebGpuApi(_ =>
+        {
+            queueEntered.Set();
+            Assert.True(releaseQueue.Wait(TimeSpan.FromSeconds(5)));
+        });
+        var lifetime = new RecordingExternalDeviceLifetime();
+        using var context = new WgpuContext();
+        unsafe
+        {
+            context.InitializeExternalNativeDevice(
+                api,
+                lifetime,
+                BrowserWebGpuApi.DeviceHandle,
+                BrowserWebGpuApi.QueueHandle,
+                TextureFormat.Bgra8Unorm);
+        }
+
+        Task submitTask;
+        System.Threading.Monitor.Enter(context.RenderLock);
+        try
+        {
+            submitTask = Task.Run(() =>
+            {
+                submitStarting.Set();
+                unsafe
+                {
+                    var commandBuffer = (CommandBuffer*)1;
+                    context.Submit(1, &commandBuffer);
+                }
+            });
+            Assert.True(submitStarting.Wait(TimeSpan.FromSeconds(5)));
+            Assert.False(queueEntered.Wait(TimeSpan.FromMilliseconds(250)));
+        }
+        finally
+        {
+            System.Threading.Monitor.Exit(context.RenderLock);
+            releaseQueue.Set();
+        }
+
+        await submitTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(queueEntered.IsSet);
     }
 
     [Fact]
@@ -145,7 +361,7 @@ public sealed class WgpuContextTests
             BrowserWebGpuApi.QueueHandle,
             TextureFormat.Bgra8Unorm);
 
-        for (var index = 0; index < 8; index++)
+        for (var index = 0; index < 64; index++)
         {
             using (var texture = new GpuTexture(
                        context,
@@ -159,14 +375,78 @@ public sealed class WgpuContextTests
             var commandBuffer = (CommandBuffer*)1;
             context.Submit(1, &commandBuffer);
             context.CleanupPendingResources();
-            if (index < 7)
+            if (index < 63)
             {
                 Assert.Equal(0, lifetime.WaitingPollCount);
             }
+
+            Assert.Equal(
+                index < 7 ? 0 : Math.Min(7, (index + 1) / 8),
+                lifetime.NonBlockingPollCount);
         }
 
         Assert.Equal(1, lifetime.WaitingPollCount);
-        Assert.Equal(3, lifetime.NonBlockingPollCount);
+        Assert.Equal(7, lifetime.NonBlockingPollCount);
+    }
+
+    [Fact]
+    public unsafe void DeferredQueueSubmissionBoundCanBeConfiguredByHost()
+    {
+        using var api = new BrowserWebGpuApi(_ => { });
+        var lifetime = new RecordingExternalDeviceLifetime();
+        using var context = new WgpuContext
+        {
+            MaximumDeferredQueueSubmissions = 2
+        };
+        context.InitializeExternalNativeDevice(
+            api,
+            lifetime,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            TextureFormat.Bgra8Unorm);
+
+        var commandBuffer = (CommandBuffer*)1;
+        context.Submit(1, &commandBuffer);
+        context.CleanupPendingResources();
+
+        Assert.Equal(0, lifetime.WaitingPollCount);
+
+        context.Submit(1, &commandBuffer);
+        context.CleanupPendingResources();
+
+        Assert.Equal(1, lifetime.WaitingPollCount);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => context.MaximumDeferredQueueSubmissions = 0);
+    }
+
+    [Fact]
+    public unsafe void ExplicitQueueWaitResetsDeferredSubmissionWindow()
+    {
+        using var api = new BrowserWebGpuApi(_ => { });
+        var lifetime = new RecordingExternalDeviceLifetime();
+        using var context = new WgpuContext
+        {
+            MaximumDeferredQueueSubmissions = 2
+        };
+        context.InitializeExternalNativeDevice(
+            api,
+            lifetime,
+            BrowserWebGpuApi.DeviceHandle,
+            BrowserWebGpuApi.QueueHandle,
+            TextureFormat.Bgra8Unorm);
+
+        var commandBuffer = (CommandBuffer*)1;
+        context.Submit(1, &commandBuffer);
+        context.WaitIdle();
+        context.Submit(1, &commandBuffer);
+        context.CleanupPendingResources();
+
+        Assert.Equal(1, lifetime.WaitingPollCount);
+
+        context.Submit(1, &commandBuffer);
+        context.CleanupPendingResources();
+
+        Assert.Equal(2, lifetime.WaitingPollCount);
     }
 
     [Fact]
@@ -240,6 +520,42 @@ public sealed class WgpuContextTests
 
         Assert.True(owner.IsDisposed);
         Assert.Empty(context.PendingExternalTextureOwners);
+    }
+
+    [Fact]
+    public unsafe void WrappedExternalTextureAdvancesContentVersionAfterViewCreation()
+    {
+        using var context = new WgpuContext();
+        context.Initialize(null);
+        var descriptor = new TextureDescriptor
+        {
+            Usage = TextureUsage.TextureBinding,
+            Dimension = TextureDimension.Dimension2D,
+            Size = new Extent3D
+            {
+                Width = 1,
+                Height = 1,
+                DepthOrArrayLayers = 1
+            },
+            Format = TextureFormat.Rgba8Unorm,
+            MipLevelCount = 1,
+            SampleCount = 1
+        };
+        Texture* nativeTexture = context.Api.DeviceCreateTexture(context.Device, &descriptor);
+        Assert.True(nativeTexture != null);
+        var contentVersion = context.TextureContentVersion;
+
+        using var texture = GpuTexture.WrapOwnedExternal(
+            context,
+            nativeTexture,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding);
+
+        Assert.Equal(1u, texture.Generation);
+        Assert.Equal(1u, texture.ViewGeneration);
+        Assert.Equal(contentVersion + 1, context.TextureContentVersion);
     }
 
     [Fact]
@@ -352,6 +668,22 @@ public sealed class WgpuContextTests
         Assert.True(surface.Queue == null);
         Assert.True(surface.Surface == null);
         Assert.False(owner.SharesDeviceWith(surface));
+    }
+
+    [Fact]
+    public unsafe void SharedSurfaceRejectsLostOwnerBeforeAccessingNativeWindow()
+    {
+        using var owner = new WgpuContext();
+        using var surface = new WgpuContext();
+        owner.ReportDeviceLost(DeviceLostReason.Unknown, "Shared owner recovery fixture.");
+        var window = DispatchProxy.Create<IWindow, DefaultDispatchProxy>();
+        var error = Assert.Throws<WgpuDeviceLostException>(() => surface.InitializeSharedDevice(window, owner));
+        Assert.Contains("lost WebGPU device", error.Message);
+        Assert.True(surface.Instance == null);
+        Assert.True(surface.Device == null);
+        Assert.True(surface.Queue == null);
+        Assert.True(surface.Surface == null);
+        Assert.False(surface.IsDeviceLost);
     }
 
     [Fact]

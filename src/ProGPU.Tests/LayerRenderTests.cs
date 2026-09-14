@@ -3,15 +3,59 @@ using System.Linq;
 using System.Numerics;
 using Microsoft.UI.Xaml;
 using ProGPU.Backend;
+using ProGPU.Backend.Dawn;
+using ProGPU.Fonts.Inter;
 using ProGPU.Scene;
 using ProGPU.Tests.Headless;
 using ProGPU.Vector;
+using Silk.NET.WebGPU;
 using Xunit;
 
 namespace ProGPU.Tests;
 
 public sealed class LayerRenderTests
 {
+    [Fact]
+    public unsafe void DawnReplaysCompiledRenderBundle()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        using var dawn = DawnGpuContext.CreateMetalPresentation();
+        using var compositor = new Compositor(
+            dawn.Context,
+            TextureFormat.Rgba8Unorm,
+            CompositorOptions.Default with
+            {
+                EnableGpuHitTesting = false,
+                PrimarySampleCount = 1
+            });
+        using var target = new GpuTexture(
+            dawn.Context,
+            64,
+            64,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.RenderAttachment | TextureUsage.CopySrc,
+            "Dawn retained bundle test target");
+        var visual = new SceneCacheVisual();
+        visual.Measure(new Vector2(64f, 64f));
+        visual.Arrange(new Rect(0f, 0f, 64f, 64f));
+
+        compositor.RenderScene(visual, 64, 64, target.ViewPtr);
+
+        Assert.True(compositor.Metrics.RenderBundleRecorded);
+        Assert.False(compositor.Metrics.RenderBundleCacheHit);
+
+        compositor.RenderScene(visual, 64, 64, target.ViewPtr);
+
+        Assert.True(compositor.Metrics.SceneCacheHit);
+        Assert.False(compositor.Metrics.RenderBundleRecorded);
+        Assert.True(compositor.Metrics.RenderBundleCacheHit);
+        AssertRed(ReadPixel(target.ReadPixels(), 64, 20, 20));
+    }
+
     [Fact]
     public void UnchangedSceneReusesCompiledGpuBuffers()
     {
@@ -23,10 +67,17 @@ public sealed class LayerRenderTests
         {
             window.Render();
             Assert.False(window.Compositor.Metrics.SceneCacheHit);
+            Assert.True(window.Compositor.Metrics.RenderBundleRecorded);
+            Assert.False(window.Compositor.Metrics.RenderBundleCacheHit);
+            Assert.Equal(
+                window.Compositor.Metrics.DrawCallsCount,
+                window.Compositor.Metrics.RenderBundleDrawCallCount);
 
             window.Render();
 
             Assert.True(window.Compositor.Metrics.SceneCacheHit);
+            Assert.False(window.Compositor.Metrics.RenderBundleRecorded);
+            Assert.True(window.Compositor.Metrics.RenderBundleCacheHit);
             Assert.Equal(1, visual.RenderCount);
             AssertRed(ReadPixel(window.ReadPixels(), window.Width, 20, 20));
         }
@@ -34,6 +85,27 @@ public sealed class LayerRenderTests
         {
             window.Content = null;
         }
+    }
+
+    [Fact]
+    public void CompiledRenderBundleCanBeDisabledWithoutDisablingSceneCache()
+    {
+        var options = CompositorOptions.Default with
+        {
+            EnableCompiledRenderBundles = false,
+            PrimarySampleCount = 1
+        };
+        using var window = new HeadlessWindow(64, 64, options);
+        window.Content = new SceneCacheVisual();
+
+        window.Render();
+        window.Render();
+
+        Assert.True(window.Compositor.Metrics.SceneCacheHit);
+        Assert.False(window.Compositor.Metrics.RenderBundleRecorded);
+        Assert.False(window.Compositor.Metrics.RenderBundleCacheHit);
+        Assert.Equal(0, window.Compositor.Metrics.RenderBundleDrawCallCount);
+        AssertRed(ReadPixel(window.ReadPixels(), window.Width, 20, 20));
     }
 
     [Fact]
@@ -105,6 +177,53 @@ public sealed class LayerRenderTests
             Assert.Equal(2, window.Compositor.Metrics.IncrementalScenePageCount);
             Assert.True(
                 window.Compositor.Metrics.IncrementalScenePageReusedArrays > 0);
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void IncrementalPagesMergeCompatibleRetainedTextureDraws()
+    {
+        var options = CompositorOptions.Default with
+        {
+            EnableGpuHitTesting = false,
+            PrimarySampleCount = 1
+        };
+        using var window = new HeadlessWindow(64, 32, options);
+        using var texture = new GpuTexture(
+            window.Context,
+            1,
+            1,
+            TextureFormat.Rgba8Unorm,
+            TextureUsage.TextureBinding | TextureUsage.CopyDst,
+            "Incremental texture page batch input",
+            alphaMode: GpuTextureAlphaMode.Straight);
+        texture.WritePixels<byte>([33, 211, 97, 255]);
+        var first = new OwnedTexturePageVisual(texture, new Vector2(0f, 0f));
+        var second = new OwnedTexturePageVisual(texture, new Vector2(20f, 0f));
+        window.Content = new IncrementalPageHost(first, second);
+
+        try
+        {
+            window.Render();
+            Assert.Equal(2, window.Compositor.Metrics.IncrementalScenePageCount);
+            Assert.Equal(1, window.Compositor.TextureDrawCallCount);
+
+            first.Transform = Matrix4x4.CreateTranslation(4f, 0f, 0f);
+            window.Render();
+
+            Assert.Equal(1, window.Compositor.Metrics.IncrementalScenePageHits);
+            Assert.Equal(1, window.Compositor.TextureDrawCallCount);
+            byte[] pixels = window.ReadPixels();
+            Assert.Equal(
+                new RgbaPixel(33, 211, 97, 255),
+                ReadPixel(pixels, window.Width, 8, 8));
+            Assert.Equal(
+                new RgbaPixel(33, 211, 97, 255),
+                ReadPixel(pixels, window.Width, 28, 8));
         }
         finally
         {
@@ -384,6 +503,214 @@ public sealed class LayerRenderTests
     }
 
     [Fact]
+    public void IncrementalTextPageReplayRetainsGlyphsDuringLaterAtlasChurn()
+    {
+        var options = CompositorOptions.Default with
+        {
+            EnableCompiledSceneCache = false,
+            EnableGpuHitTesting = false,
+            PrimarySampleCount = 1,
+            GlyphAtlasSize = 96,
+            InitialGlyphAtlasSize = 96
+        };
+        using var window = new HeadlessWindow(512, 256, options);
+        var retainedLabel = new OwnedTextPageVisual(
+            "A",
+            new Vector2(8f, 48f));
+        var atlasChurn = new OwnedTextPageVisual(
+            "BCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()",
+            new Vector2(64f, 48f),
+            lineLength: 12);
+        var host = new IncrementalPageHost(retainedLabel, atlasChurn)
+        {
+            Width = 512f,
+            Height = 256f,
+            GeometryClip = PrimitivePathGeometry.CreateRectangle(
+                0f,
+                0f,
+                512f,
+                256f)
+        };
+        window.Content = host;
+
+        try
+        {
+            window.Render();
+            byte[] firstLabel = CopyPixelRegion(
+                window.ReadPixels(),
+                window.Width,
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64);
+
+            atlasChurn.SetText(
+                "abcdefghijklmnopqrstuvwxyz[]{}<>?/\\|`~:;,_+-=",
+                lineLength: 12);
+            window.Render();
+
+            Assert.Equal(1, window.Compositor.Metrics.IncrementalScenePageHits);
+            Assert.True(window.Compositor.Metrics.GlyphLastBatchNewGlyphCount > 0);
+            Assert.Equal(
+                firstLabel,
+                CopyPixelRegion(
+                    window.ReadPixels(),
+                    window.Width,
+                    x: 0,
+                    y: 0,
+                    width: 64,
+                    height: 64));
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void RetainedPicturesReuseNestedImmutablePagesDuringRootMutation()
+    {
+        var options = CompositorOptions.Default with
+        {
+            EnableGpuHitTesting = false,
+            PrimarySampleCount = 1,
+            MaximumRetainedCompositionPictures = 128
+        };
+        using var window = new HeadlessWindow(64, 32, options);
+        using var visual = new RetainedPictureMutationVisual();
+        window.Content = visual;
+
+        try
+        {
+            window.Render();
+
+            visual.Advance();
+            window.Render();
+            Assert.InRange(
+                window.Compositor.Metrics
+                    .RetainedCompositionPictureCompilations,
+                29,
+                30);
+
+            visual.Advance();
+            window.Render();
+            Assert.InRange(
+                window.Compositor.Metrics.RetainedCompositionPictureHits,
+                29,
+                30);
+            Assert.Equal(
+                2,
+                window.Compositor.Metrics
+                    .RetainedCompositionPictureCompilations);
+
+            visual.Advance();
+            window.Render();
+            CompositorMetrics metrics = window.Compositor.Metrics;
+            Assert.InRange(
+                metrics.RetainedCompositionPictureHits,
+                30,
+                31);
+            Assert.Equal(0, metrics.RetainedCompositionPictureCompilations);
+            Assert.InRange(
+                metrics.RetainedCompositionPictureCount,
+                31,
+                32);
+            Assert.Equal(2, metrics.DrawCallsCount);
+
+            byte[] pixels = window.ReadPixels();
+            AssertGreen(ReadPixel(pixels, window.Width, 4, 4));
+            AssertRed(ReadPixel(pixels, window.Width, 28, 4));
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void RetainedPictureEligibilityIsPrecomputedForSupportedStream()
+    {
+        var options = CompositorOptions.Default with
+        {
+            EnableGpuHitTesting = false,
+            PrimarySampleCount = 1
+        };
+        using var window = new HeadlessWindow(64, 32, options);
+        using var visual = new RetainedPicturePlacementVisual(
+            includeEmbeddedVisual: false);
+        window.Content = visual;
+
+        try
+        {
+            Assert.True(visual.SupportsRetainedCompositionPicture);
+            window.Render();
+
+            visual.Offset = new Vector2(4f, 0f);
+            window.Render();
+
+            CompositorMetrics metrics = window.Compositor.Metrics;
+            Assert.Equal(1, metrics.RetainedCompositionPictureCompilations);
+            AssertGreen(ReadPixel(window.ReadPixels(), window.Width, 8, 8));
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void RetainedPictureEligibilityIsPrecomputedForRejectedStream()
+    {
+        var options = CompositorOptions.Default with
+        {
+            EnableGpuHitTesting = false,
+            PrimarySampleCount = 1
+        };
+        using var window = new HeadlessWindow(64, 32, options);
+        using var visual = new RetainedPicturePlacementVisual(
+            includeEmbeddedVisual: true);
+        window.Content = visual;
+
+        try
+        {
+            Assert.False(visual.SupportsRetainedCompositionPicture);
+            window.Render();
+
+            visual.Offset = new Vector2(4f, 0f);
+            window.Render();
+
+            CompositorMetrics metrics = window.Compositor.Metrics;
+            Assert.Equal(0, metrics.RetainedCompositionPictureCompilations);
+            AssertGreen(ReadPixel(window.ReadPixels(), window.Width, 8, 8));
+        }
+        finally
+        {
+            window.Content = null;
+        }
+    }
+
+    [Fact]
+    public void RetainedPictureEligibilityRejectsGpuTransformStreamAndClone()
+    {
+        using var picture = new GpuPicture(
+            [
+                new RenderCommand
+                {
+                    Type = RenderCommandType.DrawRect,
+                    UseGpuTransforms = true
+                }
+            ],
+            [],
+            [],
+            [],
+            []);
+        using GpuPicture clone = picture.Clone();
+
+        Assert.False(picture.SupportsRetainedCompositionPicture);
+        Assert.False(clone.SupportsRetainedCompositionPicture);
+    }
+
+    [Fact]
     public void EmptyOwnedCommandCacheSkipsLookupAndStillRendersChildren()
     {
         using var window = new HeadlessWindow(64, 64);
@@ -531,6 +858,8 @@ public sealed class LayerRenderTests
             window.Render();
 
             Assert.False(window.Compositor.Metrics.SceneCacheHit);
+            Assert.True(window.Compositor.Metrics.RenderBundleRecorded);
+            Assert.False(window.Compositor.Metrics.RenderBundleCacheHit);
             Assert.Equal(2, visual.RenderCount);
         }
         finally
@@ -757,12 +1086,12 @@ public sealed class LayerRenderTests
             Assert.NotNull(index);
             var ownerPrimitives = index!.Primitives.Where(primitive => primitive.Id == 991).ToArray();
             var primitive = Assert.Single(ownerPrimitives);
-            Assert.Equal(GpuHitTestPrimitiveKind.AxisAlignedBounds, primitive.Kind);
+            Assert.Equal(GpuHitTestPrimitiveKind.RectangleFill, primitive.Kind);
             Assert.Equal(new Vector2(10f, 5f), primitive.BoundsMin);
             Assert.Equal(new Vector2(90f, 55f), primitive.BoundsMax);
 
             var childPrimitive = Assert.Single(index.Primitives, primitive => primitive.Id == 993);
-            Assert.Equal(GpuHitTestPrimitiveKind.AxisAlignedBounds, childPrimitive.Kind);
+            Assert.Equal(GpuHitTestPrimitiveKind.RectangleFill, childPrimitive.Kind);
             Assert.Equal(new Vector2(20f, 15f), childPrimitive.BoundsMin);
             Assert.Equal(new Vector2(50f, 35f), childPrimitive.BoundsMax);
         }
@@ -804,6 +1133,29 @@ public sealed class LayerRenderTests
             pixels[index + 1],
             pixels[index + 2],
             pixels[index + 3]);
+    }
+
+    private static byte[] CopyPixelRegion(
+        byte[] pixels,
+        uint sourceWidth,
+        int x,
+        int y,
+        int width,
+        int height)
+    {
+        var result = new byte[checked(width * height * 4)];
+        int sourceStride = checked((int)sourceWidth * 4);
+        int destinationStride = checked(width * 4);
+        for (int row = 0; row < height; row++)
+        {
+            Array.Copy(
+                pixels,
+                checked((y + row) * sourceStride + x * 4),
+                result,
+                row * destinationStride,
+                destinationStride);
+        }
+        return result;
     }
 
     private static void AssertRed(RgbaPixel pixel)
@@ -930,6 +1282,150 @@ public sealed class LayerRenderTests
         }
     }
 
+    private sealed class RetainedPictureMutationVisual : FrameworkElement,
+        IDisposable
+    {
+        private readonly GpuPicture[] _normal = new GpuPicture[32];
+        private readonly GpuPicture[] _changed = new GpuPicture[32];
+        private GpuPicture _root;
+        private int _changedIndex;
+
+        public RetainedPictureMutationVisual()
+        {
+            Width = 64f;
+            Height = 32f;
+            for (int index = 0; index < _normal.Length; index++)
+            {
+                _normal[index] = CreateCellPicture(
+                    index,
+                    new Vector4(0f, 1f, 0f, 1f));
+                _changed[index] = CreateCellPicture(
+                    index,
+                    new Vector4(1f, 0f, 0f, 1f));
+            }
+            _root = CreateRootPicture();
+        }
+
+        public void Advance()
+        {
+            _changedIndex = (_changedIndex + 1) % _normal.Length;
+            GpuPicture previous = _root;
+            _root = CreateRootPicture();
+            Invalidate();
+            previous.Dispose();
+        }
+
+        public override void OnRender(DrawingContext context) =>
+            context.DrawPicture(_root);
+
+        public void Dispose()
+        {
+            _root.Dispose();
+            foreach (GpuPicture picture in _normal)
+            {
+                picture.Dispose();
+            }
+            foreach (GpuPicture picture in _changed)
+            {
+                picture.Dispose();
+            }
+        }
+
+        private static GpuPicture CreateCellPicture(
+            int index,
+            Vector4 color)
+        {
+            var recorder = new GpuPictureRecorder();
+            DrawingContext context = recorder.BeginRecording(
+                new Rect(0f, 0f, 64f, 32f));
+            context.DrawRectangle(
+                new SolidColorBrush(color),
+                null,
+                new Rect(index % 8 * 8f, index / 8 * 8f, 4f, 4f));
+            context.DrawRectangle(
+                new SolidColorBrush(color),
+                null,
+                new Rect(index % 8 * 8f + 4f, index / 8 * 8f, 4f, 4f));
+            context.DrawRectangle(
+                new SolidColorBrush(color),
+                null,
+                new Rect(index % 8 * 8f, index / 8 * 8f + 4f, 4f, 4f));
+            context.DrawRectangle(
+                new SolidColorBrush(color),
+                null,
+                new Rect(index % 8 * 8f + 4f, index / 8 * 8f + 4f, 4f, 4f));
+            return recorder.EndRecording();
+        }
+
+        private GpuPicture CreateRootPicture()
+        {
+            var recorder = new GpuPictureRecorder();
+            DrawingContext context = recorder.BeginRecording(
+                new Rect(0f, 0f, 64f, 32f));
+            for (int index = 0; index < _normal.Length; index++)
+            {
+                context.DrawPicture(
+                    index == _changedIndex
+                        ? _changed[index]
+                        : _normal[index]);
+            }
+            return recorder.EndRecording();
+        }
+    }
+
+    private sealed class RetainedPicturePlacementVisual : FrameworkElement,
+        IDisposable
+    {
+        private readonly GpuPicture _picture;
+        private readonly EmbeddedColorVisual? _embedded;
+
+        public RetainedPicturePlacementVisual(bool includeEmbeddedVisual)
+        {
+            Width = 64f;
+            Height = 32f;
+            var recorder = new GpuPictureRecorder();
+            DrawingContext context = recorder.BeginRecording(
+                new Rect(0f, 0f, 64f, 32f));
+            var green = new SolidColorBrush(
+                new Vector4(0f, 1f, 0f, 1f));
+            context.DrawRectangle(
+                green,
+                null,
+                new Rect(0f, 0f, 8f, 8f));
+            context.DrawRectangle(
+                green,
+                null,
+                new Rect(8f, 0f, 8f, 8f));
+            context.DrawRectangle(
+                green,
+                null,
+                new Rect(0f, 8f, 8f, 8f));
+            if (includeEmbeddedVisual)
+            {
+                _embedded = new EmbeddedColorVisual();
+                context.DrawVisual(
+                    _embedded,
+                    Matrix4x4.CreateTranslation(24f, 0f, 0f));
+            }
+            else
+            {
+                context.DrawRectangle(
+                    green,
+                    null,
+                    new Rect(8f, 8f, 8f, 8f));
+            }
+            _picture = recorder.EndRecording();
+        }
+
+        public override void OnRender(DrawingContext context) =>
+            context.DrawPicture(_picture);
+
+        public bool SupportsRetainedCompositionPicture =>
+            _picture.SupportsRetainedCompositionPicture;
+
+        public void Dispose() => _picture.Dispose();
+    }
+
     private sealed class OwnedPageVisual : FrameworkElement,
         IIncrementalRenderCommandCache
     {
@@ -947,6 +1443,72 @@ public sealed class LayerRenderTests
                 new SolidColorBrush(color),
                 null,
                 new Rect(0f, 0f, 20f, 20f));
+        }
+
+        public DrawingContext GetOrUpdateRenderCommandCache() => _commands;
+    }
+
+    private sealed class OwnedTexturePageVisual : FrameworkElement,
+        IIncrementalRenderCommandCache
+    {
+        private readonly DrawingContext _commands = new();
+
+        public OwnedTexturePageVisual(GpuTexture texture, Vector2 offset)
+        {
+            Width = 16f;
+            Height = 16f;
+            Transform = Matrix4x4.CreateTranslation(offset.X, offset.Y, 0f);
+            _commands.DrawTexture(texture, new Rect(0f, 0f, 16f, 16f));
+        }
+
+        public DrawingContext GetOrUpdateRenderCommandCache() => _commands;
+    }
+
+    private sealed class OwnedTextPageVisual : FrameworkElement,
+        IIncrementalRenderCommandCache
+    {
+        private readonly DrawingContext _commands = new();
+        private readonly float _textY;
+
+        public OwnedTextPageVisual(
+            string text,
+            Vector2 offset,
+            int lineLength = int.MaxValue)
+        {
+            Width = 448f;
+            Height = 256f;
+            _textY = offset.Y;
+            Transform = Matrix4x4.CreateTranslation(
+                offset.X,
+                0f,
+                0f);
+            RecordText(text, lineLength);
+        }
+
+        public void SetText(string text, int lineLength)
+        {
+            _commands.Clear();
+            RecordText(text, lineLength);
+            Invalidate();
+        }
+
+        private void RecordText(string text, int lineLength)
+        {
+            var brush = new SolidColorBrush(Vector4.One);
+            int start = 0;
+            int line = 0;
+            while (start < text.Length)
+            {
+                int count = Math.Min(lineLength, text.Length - start);
+                _commands.DrawText(
+                    text.Substring(start, count),
+                    InterFontFamily.Regular,
+                    36f,
+                    brush,
+                    new Vector2(0f, _textY + line * 40f));
+                start += count;
+                line++;
+            }
         }
 
         public DrawingContext GetOrUpdateRenderCommandCache() => _commands;

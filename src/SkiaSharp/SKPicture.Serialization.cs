@@ -140,7 +140,7 @@ public partial class SKPicture
 internal static class PictureArchive
 {
     private const ulong Magic = 0x314349504B534750UL;
-    private const int Version = 3;
+    private const int Version = 6;
     private const int MinimumSupportedVersion = 1;
     private const int MaxDepth = 64;
     private const int MaxCommands = 1_000_000;
@@ -163,6 +163,9 @@ internal static class PictureArchive
         ThemeResource,
         BackdropMaterial,
         SweepAngles,
+        HatchPatternSet,
+        TilePattern,
+        PathGradient,
     }
 
     private enum SegmentKind : byte
@@ -361,6 +364,8 @@ internal static class PictureArchive
         int depth,
         int version)
     {
+        if (command.SourceHitGeometry.Kind != SourceHitTestGeometryKind.None)
+            throw new NotSupportedException("Picture archives do not yet encode source-input geometry overrides.");
         if (command.Texture is not null ||
             command.StaticBuffer is not null ||
             command.SeriesCacheKey is not null ||
@@ -373,7 +378,7 @@ internal static class PictureArchive
         writer.Write((int)command.Type);
         writer.Write(command.HitTestId);
         WriteRect(writer, command.Rect);
-        WriteBrush(writer, command.Brush);
+        WriteBrush(writer, command.Brush, version);
         WritePen(writer, command.Pen, version);
         WritePath(writer, command.Path, depth, version);
         WriteString(writer, command.Text);
@@ -450,7 +455,7 @@ internal static class PictureArchive
             Type = ReadEnum<RenderCommandType>(reader),
             HitTestId = reader.ReadInt32(),
             Rect = ReadSceneRect(reader),
-            Brush = ReadBrush(reader),
+            Brush = ReadBrush(reader, version),
             Pen = ReadPen(reader, version),
             Path = ReadPath(reader, depth, version),
             Text = ReadString(reader),
@@ -521,7 +526,7 @@ internal static class PictureArchive
         return command;
     }
 
-    private static void WriteBrush(BinaryWriter writer, Brush? brush)
+    private static void WriteBrush(BinaryWriter writer, Brush? brush, int version)
     {
         var kind = brush switch
         {
@@ -535,6 +540,9 @@ internal static class PictureArchive
             PerlinNoiseBrush => BrushKind.PerlinNoise,
             HatchPatternBrush => BrushKind.Hatch,
             CrossHatchBrush => BrushKind.CrossHatch,
+            HatchPatternSetBrush when version >= 5 => BrushKind.HatchPatternSet,
+            TilePatternBrush when version >= 6 => BrushKind.TilePattern,
+            PathGradientBrush when version >= 6 => BrushKind.PathGradient,
             ThemeResourceBrush => BrushKind.ThemeResource,
             BackdropMaterialBrush => BrushKind.BackdropMaterial,
             _ => throw new NotSupportedException($"Brush type '{brush.GetType().FullName}' is not serializable."),
@@ -567,6 +575,25 @@ internal static class PictureArchive
                 writer.Write((int)radial.SpreadMethod);
                 writer.Write((int)radial.ColorInterpolationMode);
                 WriteGradientStops(writer, radial.Stops);
+                break;
+            case PathGradientBrush pathGradient:
+                WriteVector2Array(writer, pathGradient.BoundaryPoints.Span);
+                WriteVector4Array(writer, pathGradient.SurroundColors.Span);
+                WriteVector2(writer, pathGradient.Center);
+                WriteVector4(writer, pathGradient.CenterColor);
+                WriteVector2(writer, pathGradient.FocusScales);
+                WriteMatrix(writer, pathGradient.CoordinateTransform);
+                writer.Write((int)pathGradient.SpreadMethod);
+                writer.Write((int)pathGradient.ColorInterpolationMode);
+                writer.Write(pathGradient.UsesPresetColors);
+                if (pathGradient.UsesPresetColors)
+                {
+                    WriteGradientStops(writer, pathGradient.PresetStops.Span);
+                }
+                else
+                {
+                    WritePathGradientBlendStops(writer, pathGradient.BlendStops.Span);
+                }
                 break;
             case TwoPointConicalGradientBrush conical:
                 WriteVector2(writer, conical.StartCenter);
@@ -608,12 +635,44 @@ internal static class PictureArchive
                 writer.Write(hatch.Spacing);
                 writer.Write(hatch.Thickness);
                 WriteVector4(writer, hatch.Color);
+                if (version >= 4)
+                {
+                    WriteMatrix(writer, hatch.CoordinateTransform);
+                }
                 break;
             case CrossHatchBrush crossHatch:
                 writer.Write(crossHatch.Angle);
                 writer.Write(crossHatch.Spacing);
                 writer.Write(crossHatch.Thickness);
                 WriteVector4(writer, crossHatch.Color);
+                if (version >= 4)
+                {
+                    WriteMatrix(writer, crossHatch.CoordinateTransform);
+                }
+                break;
+            case HatchPatternSetBrush hatchSet:
+                writer.Write(hatchSet.Thickness);
+                WriteVector4(writer, hatchSet.Color);
+                WriteMatrix(writer, hatchSet.CoordinateTransform);
+                WriteCount(writer, hatchSet.Families.Length, MaxArrayElements, "hatch pattern families");
+                foreach (HatchPatternLineFamily family in hatchSet.Families.Span)
+                {
+                    WriteVector2(writer, family.BasePoint);
+                    WriteVector2(writer, family.Direction);
+                    writer.Write(family.TangentShift);
+                    writer.Write(family.Spacing);
+                    writer.Write(family.DashOffset);
+                    writer.Write(family.DashCount);
+                    writer.Write(family.DashPeriod);
+                }
+                WriteCount(writer, hatchSet.Dashes.Length, MaxArrayElements, "hatch pattern dashes");
+                foreach (float dash in hatchSet.Dashes.Span)
+                    writer.Write(dash);
+                break;
+            case TilePatternBrush tilePattern:
+                writer.Write(tilePattern.Pattern);
+                WriteVector4(writer, tilePattern.ForegroundColor);
+                WriteVector4(writer, tilePattern.BackgroundColor);
                 break;
             case ThemeResourceBrush theme:
                 WriteString(writer, theme.ResourceKey as string ?? throw new NotSupportedException(
@@ -637,7 +696,7 @@ internal static class PictureArchive
         }
     }
 
-    private static Brush? ReadBrush(BinaryReader reader)
+    private static Brush? ReadBrush(BinaryReader reader, int version)
     {
         var kind = (BrushKind)reader.ReadByte();
         if (kind == BrushKind.Null)
@@ -654,16 +713,14 @@ internal static class PictureArchive
             BrushKind.Sweep => ReadSweepGradient(reader),
             BrushKind.SweepAngles => ReadSweepGradient(reader, hasAngles: true),
             BrushKind.PerlinNoise => ReadPerlinNoise(reader),
-            BrushKind.Hatch => new HatchPatternBrush(
-                reader.ReadSingle(),
-                reader.ReadSingle(),
-                reader.ReadSingle(),
+            BrushKind.Hatch => ReadHatchPattern(reader, version, crossHatch: false),
+            BrushKind.CrossHatch => ReadHatchPattern(reader, version, crossHatch: true),
+            BrushKind.HatchPatternSet when version >= 5 => ReadHatchPatternSet(reader),
+            BrushKind.TilePattern when version >= 6 => new TilePatternBrush(
+                reader.ReadUInt64(),
+                ReadVector4(reader),
                 ReadVector4(reader)),
-            BrushKind.CrossHatch => new CrossHatchBrush(
-                reader.ReadSingle(),
-                reader.ReadSingle(),
-                reader.ReadSingle(),
-                ReadVector4(reader)),
+            BrushKind.PathGradient when version >= 6 => ReadPathGradient(reader),
             BrushKind.ThemeResource => new ThemeResourceBrush(
                 ReadString(reader) ?? throw new InvalidDataException("Theme resource keys cannot be null.")),
             BrushKind.BackdropMaterial => ReadBackdropMaterial(reader),
@@ -671,6 +728,53 @@ internal static class PictureArchive
         };
         brush.Opacity = opacity;
         return brush;
+    }
+
+    private static Brush ReadHatchPattern(
+        BinaryReader reader,
+        int version,
+        bool crossHatch)
+    {
+        float angle = reader.ReadSingle();
+        float spacing = reader.ReadSingle();
+        float thickness = reader.ReadSingle();
+        Vector4 color = ReadVector4(reader);
+        Matrix4x4 coordinateTransform = version >= 4
+            ? ReadMatrix(reader)
+            : Matrix4x4.Identity;
+        return crossHatch
+            ? new CrossHatchBrush(angle, spacing, thickness, color)
+                { CoordinateTransform = coordinateTransform }
+            : new HatchPatternBrush(angle, spacing, thickness, color)
+                { CoordinateTransform = coordinateTransform };
+    }
+
+    private static Brush ReadHatchPatternSet(BinaryReader reader)
+    {
+        float thickness = reader.ReadSingle();
+        Vector4 color = ReadVector4(reader);
+        Matrix4x4 transform = ReadMatrix(reader);
+        int familyCount = ReadCount(reader, MaxArrayElements, "hatch pattern families");
+        var families = new HatchPatternLineFamily[familyCount];
+        for (int i = 0; i < familyCount; i++)
+        {
+            families[i] = new HatchPatternLineFamily(
+                ReadVector2(reader),
+                ReadVector2(reader),
+                reader.ReadSingle(),
+                reader.ReadSingle(),
+                reader.ReadInt32(),
+                reader.ReadInt32(),
+                reader.ReadSingle());
+        }
+        int dashCount = ReadCount(reader, MaxArrayElements, "hatch pattern dashes");
+        var dashes = new float[dashCount];
+        for (int i = 0; i < dashCount; i++)
+            dashes[i] = reader.ReadSingle();
+        return new HatchPatternSetBrush(families, dashes, thickness, color)
+        {
+            CoordinateTransform = transform,
+        };
     }
 
     private static LinearGradientBrush ReadLinearGradient(BinaryReader reader)
@@ -703,6 +807,38 @@ internal static class PictureArchive
             SpreadMethod = spread,
             ColorInterpolationMode = colorMode,
         };
+    }
+
+    private static PathGradientBrush ReadPathGradient(BinaryReader reader)
+    {
+        Vector2[] boundary = ReadVector2Array(reader);
+        Vector4[] surround = ReadVector4Array(reader);
+        Vector2 center = ReadVector2(reader);
+        Vector4 centerColor = ReadVector4(reader);
+        Vector2 focusScales = ReadVector2(reader);
+        Matrix4x4 transform = ReadMatrix(reader);
+        GradientSpreadMethod spread = ReadEnum<GradientSpreadMethod>(reader);
+        GradientColorInterpolationMode colorMode =
+            ReadEnum<GradientColorInterpolationMode>(reader);
+        bool usesPresetColors = reader.ReadBoolean();
+        PathGradientBrush brush = usesPresetColors
+            ? new PathGradientBrush(
+                boundary,
+                surround,
+                center,
+                centerColor,
+                ReadGradientStops(reader))
+            : new PathGradientBrush(
+                boundary,
+                surround,
+                center,
+                centerColor,
+                ReadPathGradientBlendStops(reader));
+        brush.FocusScales = focusScales;
+        brush.CoordinateTransform = transform;
+        brush.SpreadMethod = spread;
+        brush.ColorInterpolationMode = colorMode;
+        return brush;
     }
 
     private static TwoPointConicalGradientBrush ReadConicalGradient(BinaryReader reader)
@@ -789,7 +925,7 @@ internal static class PictureArchive
         {
             return;
         }
-        WriteBrush(writer, pen.Brush);
+        WriteBrush(writer, pen.Brush, version);
         writer.Write(pen.Thickness);
         writer.Write((int)pen.LineJoin);
         writer.Write(pen.MiterLimit);
@@ -810,7 +946,7 @@ internal static class PictureArchive
         {
             return null;
         }
-        var brush = ReadBrush(reader) ?? throw new InvalidDataException("Pens require a brush.");
+        var brush = ReadBrush(reader, version) ?? throw new InvalidDataException("Pens require a brush.");
         var pen = new Pen(brush)
         {
             Thickness = reader.ReadSingle(),
@@ -1054,12 +1190,43 @@ internal static class PictureArchive
     private static void WriteGradientStops(BinaryWriter writer, GradientStop[] stops)
     {
         ArgumentNullException.ThrowIfNull(stops);
+        WriteGradientStops(writer, (ReadOnlySpan<GradientStop>)stops);
+    }
+
+    private static void WriteGradientStops(BinaryWriter writer, ReadOnlySpan<GradientStop> stops)
+    {
         WriteCount(writer, stops.Length, MaxArrayElements, "gradient stops");
         foreach (var stop in stops)
         {
             WriteVector4(writer, stop.Color);
             writer.Write(stop.Offset);
         }
+    }
+
+    private static void WritePathGradientBlendStops(
+        BinaryWriter writer,
+        ReadOnlySpan<PathGradientBlendStop> stops)
+    {
+        WriteCount(writer, stops.Length, MaxArrayElements, "path-gradient blend stops");
+        foreach (PathGradientBlendStop stop in stops)
+        {
+            writer.Write(stop.Factor);
+            writer.Write(stop.Offset);
+        }
+    }
+
+    private static PathGradientBlendStop[] ReadPathGradientBlendStops(
+        BinaryReader reader)
+    {
+        int count = ReadCount(reader, MaxArrayElements, "path-gradient blend stops");
+        var stops = new PathGradientBlendStop[count];
+        for (int index = 0; index < stops.Length; index++)
+        {
+            stops[index] = new PathGradientBlendStop(
+                reader.ReadSingle(),
+                reader.ReadSingle());
+        }
+        return stops;
     }
 
     private static GradientStop[] ReadGradientStops(BinaryReader reader)

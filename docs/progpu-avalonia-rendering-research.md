@@ -1291,8 +1291,10 @@ boundaries:
 - a monotonic device-loss generation invalidates every existing
   `WgpuContext`; a replacement context starts on the new generation;
 - normal `Destroyed` callbacks are ownership completion, not device loss;
-- lost contexts are excluded from active-context/surface lookup and
-  multi-window device sharing;
+- lost contexts are excluded from healthy-context selection and multi-window
+  device sharing; exact surface lookup can still identify a lost owner so the
+  transition is reported as not-ready instead of silently selecting an
+  unrelated standalone device;
 - `SkiaContext.IsLost` is updated lock-free, allowing Avalonia's renderer
   manager to dispose and recreate the backend without platform graphics;
 - the Silk.NET window creates a replacement device and surface before its
@@ -1325,6 +1327,111 @@ The macOS qualification passed: the shared IOSurface advanced its Metal
 timeline from 4 to 5, Dawn delivered the forced native loss callback with the
 diagnostic message, the existing `WgpuContext` became lost, and a newly
 created Dawn context reported initialized and healthy.
+
+### Device-domain and remote-session surface recovery
+
+The Windows RDP failure gate extends the typed recovery contract to native
+presentation creation and acquisition. Dawn may lose the D3D12 device while
+`Surface.Configure` is creating the DXGI swap chain (including remote-session
+transitions where swap-chain access is temporarily unavailable). A successful
+API return is therefore not sufficient evidence that the surface remained
+configured: the spontaneous device-loss callback is authoritative.
+
+Primary-source comparison:
+
+- the [WebGPU device contract](https://www.w3.org/TR/webgpu/#devices) makes
+  loss terminal for one device and every object created by that device, while
+  recommending creation of a new device for transient causes;
+- [Dawn's surface implementation](https://dawn.googlesource.com/dawn/+/refs/heads/main/src/dawn/native/Surface.cpp)
+  associates configuration with the current device and rejects unconfiguring
+  a surface that was never successfully configured;
+- Avalonia's
+  [`PlatformRenderInterfaceContextManager`](https://github.com/AvaloniaUI/Avalonia/blob/main/src/Avalonia.Base/Rendering/PlatformRenderInterfaceContextManager.cs)
+  discards a lost backend context, while its composition target discards a
+  render target that reports `Corrupted`; ProGPU adopts those public state
+  transitions rather than duplicating Avalonia's backend implementation;
+- [Win2D device-loss guidance](https://learn.microsoft.com/en-us/windows/apps/develop/win2d/handling-device-lost)
+  and the [Direct2D render-target contract](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-quickstart)
+  recreate device-owned resources and replay drawing after the new target is
+  available; DXGI also documents remote/session-disconnect status separately
+  from ordinary success and retry states;
+- [Skia's `GrDirectContext`](https://skia.googlesource.com/skia/+/refs/heads/main/include/gpu/GrDirectContext.h)
+  abandons device-owned buffers and textures after backend loss so later
+  destruction cannot issue unsafe backend calls;
+- WebRender's
+  [GPU process manager](https://searchfox.org/mozilla-central/source/gfx/ipc/GPUProcessManager.cpp)
+  destroys compositor sessions and notifies device-reset listeners before
+  rebuilding or falling back;
+- Vello's
+  [winit integration](https://github.com/linebender/vello/blob/main/examples/with_winit/src/lib.rs)
+  treats outdated/suboptimal and timeout surface acquisition as retryable and
+  requests another redraw. ProGPU adopts that surface/device distinction but
+  replaces Vello's terminal panic with Avalonia corruption recovery;
+- [HarfBuzz shaped buffers](https://harfbuzz.github.io/shaping-and-shape-plans.html)
+  and [Parley layouts](https://docs.rs/parley/latest/parley/struct.Layout.html)
+  are CPU glyph/layout results. They are intentionally retained across device
+  replacement; reshaping text is not part of GPU recovery.
+
+The resulting implementation is original ProGPU code. Each exact native
+callback marks one shared device-domain state in O(1) time and wakes the host;
+it no longer poisons independent WebGPU devices through the compatibility
+process-wide signal. The render thread performs recovery: lost contexts are
+excluded from lookup and sharing, all device-owned compositor/layer/bitmap
+resources report corruption or are disposed, and a new device plus surface is
+created before retained CPU commands are replayed. Surface timeout is skipped;
+outdated/lost surface state invalidates capabilities and reconfigures; explicit
+device loss rebuilds the whole domain. Teardown skips `Unconfigure` after loss,
+preventing Dawn's secondary "Surface is not configured" validation error.
+
+Two additional failure modes were found during physical VM qualification.
+First, Avalonia disposes a lost backend context before the composition target
+releases its old render target. Releasing the Dawn device immediately left the
+still-configured Vulkan/Xlib surface pointing into a destroyed device and
+crashed in Dawn's fenced deleter. Dawn contexts now use explicit O(1) lifetime
+leases: the backend releases owner intent immediately, while each presentation
+surface or Metal target keeps the native device alive until it has released
+its surface and slots. This changes teardown ownership only; steady frames add
+no crossing or allocation.
+
+Second, wgpu-native on the Windows Parallels adapter reported terminal device
+failure through an uncaptured validation error before its device-loss callback
+became observable. Continuing to `wgpuQueueSubmit` then caused a non-unwinding
+native panic with `Parent device is lost`. The exact callback userdata now
+identifies the affected device domain for both device-loss and uncaptured-error
+callbacks. Internal/unknown errors and explicit lost-device/resource-creation
+messages mark that domain terminal, and queue submission rejects it before the
+native call. A failed frame is dropped without presentation; the next frame
+uses Avalonia's ordinary context replacement. A four-byte storage-buffer
+qualification write at device initialization catches adapters that accept
+device creation but fail their first device-owned resource, before expensive
+retained pipeline creation. The qualification is O(1), allocation-free on the
+managed heap after callback setup, and occurs once per new device rather than
+per frame. This is consistent with wgpu's documented
+[DX12 compiler and backend selection](https://github.com/gfx-rs/wgpu#environment-variables)
+contract; it does not change shader source, shader complexity, or retained
+replay semantics.
+
+Normal frames add one lock-free loss-state read and no allocation, upload,
+P/Invoke, or additional managed/native crossing. Recovery is bounded by one
+device/surface recreation and the existing O(C + G) retained-scene replay for
+C commands and G glyphs. The managed and native renderer applicability audit
+found no shader, scene-format, or C ABI change: both compositor
+implementations consume the same lost `WgpuContext` boundary and rebuild their
+device resources; the Dawn native-presentation adapter additionally owns the
+surface-state classification and safe teardown described above.
+
+Physical qualification used the same source-built Border ControlCatalog at
+1024x800 logical size: macOS and Windows rendered at 2048x1600 physical size,
+while the Linux VM's 1x Silk.NET surface rendered at 1024x800 and its 2x native
+X11 surface at 2048x1600. macOS Silk.NET/Metal recovered in one frame and
+native Dawn/Metal in two; Linux Parallels and Windows Parallels recovered in
+one frame for both the Silk.NET and native Dawn lanes. The
+Windows run additionally reproduced the real uncaptured-error/parent-loss path
+without the former native abort. Every final screenshot retained the circular
+image clip, border geometry, text, and 2x layout dimensions. The isolated
+native Dawn diagnostic callback also recreated successfully on macOS. CI now
+runs deterministic forced-loss smoke lanes for both source Silk.NET and native
+Dawn presentation on macOS, Windows, and Linux.
 
 ## Typed multi-window disposal-order validation
 
@@ -3496,3 +3603,104 @@ strict linked iOS Release build and an iPhone 17 Pro simulator launch
 completed without Dawn validation errors. This establishes the managed/native
 ABI and simulator startup path; a physical-device IOSurface/MTLSharedEvent
 run and matched Instruments evidence remain required.
+
+## Retained glyph-atlas residency during incremental replay (2026-08-26)
+
+ControlCatalog geometry-clip integration exposed a retained-resource defect,
+not a clipping algorithm defect. An incremental scene page stored text
+vertices containing glyph-atlas UVs, but replaying that page did not mark the
+referenced glyph entries as used in the current atlas batch. Later page
+compilation could therefore select one of those entries as an LRU victim,
+reuse its rectangle, and then submit the earlier retained vertices with stale
+UVs. The visible result looked like arbitrary clipped or substituted text.
+
+The clean-room design was informed by these primary sources:
+
+- Skia's
+  [`GrTextBlob` vertex regenerator](https://skia.googlesource.com/skia/+/43cbd7229f83ef265b52270a1264a36d06c4f1ed/src/gpu/text/GrTextBlob.cpp)
+  compares retained subrun atlas generations and bulk-updates use tokens even
+  when texture coordinates do not need regeneration. Its
+  [`GrDrawOpAtlas`](https://skia.googlesource.com/skia/+/34c67453a5d032b2f5416564a8c80aa5dca05c9f/src/gpu/GrDrawOpAtlas.h)
+  explicitly requires clients to set a last-use token to prevent eviction.
+  SkParagraph separately caches reusable shaped paragraph results in
+  [`ParagraphCache`](https://skia.googlesource.com/skia/+/5d8f55bfa851a55fa7e111b9a4f1fd063509eca5/modules/skparagraph/src/ParagraphCache.cpp).
+- DirectWrite/Direct2D retain glyph positions in reusable text layouts while
+  drawing device-specific glyph runs, as documented in
+  [Text Rendering with Direct2D and DirectWrite](https://learn.microsoft.com/en-us/windows/win32/direct2d/direct2d-and-directwrite).
+  Direct2D's
+  [resource domains](https://learn.microsoft.com/en-us/windows/win32/direct2d/resources-and-resource-domains)
+  require device-dependent resources to be recreated when their render target
+  is lost. This supports keeping CPU shaping/layout identity independent from
+  validation of GPU atlas residency.
+- WebRender's
+  [`gpu_cache` contract](https://searchfox.org/firefox-main/source/gfx/wr/webrender/src/gpu_cache.rs)
+  requires every resource needed by a frame to be requested before its address
+  is consumed, and its
+  [profiler](https://github.com/servo/webrender/blob/main/webrender/src/profiler.rs)
+  separately measures glyph resolution, texture-cache updates, pressure, and
+  eviction. The relevant concept is current-frame demand, not preserving a UV
+  merely because a display item remains retained.
+- Vello's resource design requires the atlas to contain every resource needed
+  by the encoded viewport and protects pending draw resources from eviction;
+  glyphs follow the same rule in its
+  [image-resource design](https://github.com/linebender/vello/issues/176).
+  Its [glyph-caching roadmap](https://github.com/linebender/vello/blob/main/doc/roadmap_2023.md)
+  keeps glyph-run identity in the scene and resolves cached atlas resources
+  before submission.
+- HarfBuzz's
+  [`hb_shape`](https://github.com/harfbuzz/harfbuzz/blob/main/src/hb-shape.cc)
+  turns a Unicode buffer into glyph IDs and positions, while its documented
+  [shape-plan cache](https://github.com/harfbuzz/harfbuzz/blob/main/docs/usermanual-opentype-features.xml)
+  caches shaping decisions. It does not own raster-atlas residency. ProGPU's
+  shaped glyph runs therefore remain reusable CPU results.
+
+Adopted: a retained page carries an opaque set of the exact `GlyphKey` values
+used to produce its atlas-backed vertices. Replay first verifies that every
+key still maps to a non-fallback resident entry and then marks all entries as
+used for the current batch before any later page can allocate. If any entry is
+missing, the page/picture is discarded and compiled again; stale UVs are never
+submitted. The same capture and replay contract is used by incremental scene
+pages and retained composition pictures.
+
+Adapted: ProGPU keeps fine-grained key residency rather than invalidating every
+retained text page after any atlas eviction. This preserves unaffected pages
+while providing the same safety as Skia's generation/use-token combination.
+The existing key already includes font identity, glyph index, raster size, and
+subpixel phase, so DPI/subpixel quality and font fallback semantics are not
+weakened. Color bitmap entries participate when they use atlas storage; vector
+CFF/color fallbacks retain their existing path-resource contracts.
+
+Rejected: permanently pinning every glyph referenced by any retained page,
+clearing the atlas on every page hit, trusting coordinates without identity,
+or reshaping text during replay. Those choices respectively create unbounded
+residency, destroy reuse, permit recycled rectangles, or conflate reusable CPU
+layout with GPU resource validation.
+
+Capture is `O(G)` time for `G` glyph uses since the page boundary and `O(U)`
+retained storage for `U` distinct keys. Replay is two `O(U)` passes: the first
+is transactional validation and the second updates LRU state. Stable replay
+performs no rasterization, upload, or managed allocation after the batch-use
+journal reaches capacity. Startup remains lazy, visibility culling and worker
+preparation are unchanged, GPU draw batching is unchanged, and existing atlas
+generation/device-loss invalidation remains authoritative. No shader, C ABI,
+or native resource layout changed.
+
+Two focused regressions use a deliberately 96-pixel atlas. One verifies that
+a replayed entry cannot be selected during later LRU churn; the other renders
+an incremental label, mutates a sibling page until the atlas evicts entries,
+and requires the retained label pixels to remain byte-identical. Both pass in
+Release. Linux native-Dawn ControlCatalog runs then completed Border, Canvas,
+ScrollViewer, TextBlock, Viewbox, and AdornerLayer with 1024x800 logical,
+2048x1600 physical output, no retained-scene full synchronization during the
+fixture mutations, and visually correct screenshots. Windows native
+Dawn/D3D12 completed Canvas and the text-heavy TextBox at the same 2x physical
+resolution. macOS native Dawn/Metal completed the same five representative
+pages plus AdornerLayer at 1024x800 logical and 2048x1600 physical output; all
+typed clip, drawing-option, and adorner synchronization gates passed, and the
+TextBlock, Canvas, and moved-adorner screenshots were visually correct.
+
+The managed/native applicability audit found no equivalent defect in the C++
+renderer. Its immutable native scene owns a complete positioned-glyph atlas
+and grows/replaces that scene resource as a unit; it has neither the managed
+LRU slot reuse nor Avalonia incremental-page replay that formed this bug. The
+native renderer therefore requires no one-sided approximation or wire change.

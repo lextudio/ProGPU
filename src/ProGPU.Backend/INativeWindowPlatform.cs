@@ -12,10 +12,16 @@ internal interface INativeWindowPlatform : IDisposable
     double DefaultTitleBarHeight { get; }
     bool SupportsManagedMove { get; }
     bool SupportsManagedResize { get; }
+    bool SupportsSystemChromeExtension { get; }
+    bool IsInteractiveMoveResize { get; }
+    bool IsProcessingPromotedTouchMouse { get; }
+    Action<NativeTouchEvent>? TouchHandler { get; set; }
 
     bool ApplyChrome(in NativeWindowState state);
     bool SetTopMost(bool value);
     bool SetEnabled(bool value);
+    bool SetOpacity(double value);
+    bool SetZOrder(NativeWindowZOrder value);
     bool SetShowInTaskbar(bool value);
     bool SetParent(NativeWindowHandle parent);
     bool SetSizeConstraints(NativeWindowSize minimum, NativeWindowSize maximum);
