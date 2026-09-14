@@ -24753,7 +24753,12 @@ int main() {
                         const auto outline = read_value<progpu_native_scene_glyph_outline>(scene,
                             base + resource.payload_offset + glyph.outline_index * sizeof(progpu_native_scene_glyph_outline));
                         PROGPU_REQUIRE(std::abs(outline.raster_scale * metrics.units_per_em - item.raster) < 0.0001F);
-                        PROGPU_REQUIRE(std::abs(glyph.atlas_to_logical_scale * item.raster - item.em) < 0.0001F);
+                        // Text.wgsl divides atlas pixels by frame DPI before
+                        // applying this ratio. The resulting logical quad
+                        // must match the source em size at every target DPI.
+                        PROGPU_REQUIRE(std::abs(
+                            glyph.atlas_to_logical_scale * item.raster /
+                                static_cast<float>(item.dpi) - item.em) < 0.0001F);
                         PROGPU_REQUIRE(std::abs(glyph.position.x - item.x) < 0.0001F);
                         PROGPU_REQUIRE(std::abs(glyph.position.y - item.y) < 0.0001F);
                         PROGPU_REQUIRE(glyph.outline_index % 4U == item.phase);
