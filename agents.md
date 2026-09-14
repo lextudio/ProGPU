@@ -1,5 +1,12 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+The resumable GPU query iterator keeps its 64-entry stack invocation-private,
+not in an inout aggregate or workgroup memory. Each entrypoint initializes one
+traversal; no invocation interleaves two traversals. Preserve node/local-reference/
+LIFO order and actual counters. FXC can force dynamic inout-array writes to
+unroll; successful compilation does not prove system-WARP readback completion.
+Keep the independent full-result differential and default/runtime gates separate.
+
 Use purpose-based final names for APIs, applications, tests, scripts and artifacts,
 not delivery-stage labels. LibreWPF acceptance references use ShowcaseApp and
 SciChartApp; shared fixtures use the corresponding Showcase identifiers. Renaming

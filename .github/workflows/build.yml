@@ -734,16 +734,19 @@ jobs:
           path: artifacts/packages-native/Release
 
       - name: Run ordered-query native package consumer
-        if: runner.os != 'Windows'
         shell: bash
         env:
           PROGPU_HIT_TEST_EXECUTION: ordered-stages
         run: |
           version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          consumer_args=()
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            consumer_args=(--software-adapter)
+          fi
           dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
             --configuration Release \
             -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}"
+            -p:ProGpuNativePackageVersion="${version}" -- "${consumer_args[@]}"
 
       - name: Restore and run package consumer
         shell: bash

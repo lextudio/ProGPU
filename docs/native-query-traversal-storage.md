@@ -44,15 +44,32 @@ The managed and C++ providers both consume the one canonical WGSL file.
 - The rebuilt full native consumer passes on Metal with automatic single-pass
   queries and on system ARM64 WARP with explicit DXC/ordered stages. Both retain
   38 resources/11 draws/174080 coverage and original owner/generation, 16 repeated
-waits, participation and region-first checks. DXC stdout SHA-256:
+  waits, participation and region-first checks. DXC stdout SHA-256:
   `3151874456b24e93b293c9b723887fafd21769d187315c471a731ee1f3d6f94f`.
 
 The stock Silk ARM64 dependency with automatic FXC/single-pass now completes its
 first point readback and all 16 repeated waits, but exits `0xC0000005` after the
 first bounds submission. The submission call took 55.8 seconds; no bounds readback
 was published. This is a terminal runtime failure, not a passing default lane or
-a reason to increase a timeout. The independent FXC ordered-stage comparison
-remains separate from the passing DXC consumer.
+a reason to increase a timeout.
+
+The stock FXC **ordered-stage** consumer passes the complete same native fixture
+on system WARP, including bounds and ellipse queries. Stdout SHA-256:
+`b649245074fa771e98f4587bb3c80ca61fae8bb0344e13a38027da5ea1ed565e`.
+No DXC selection or compiler-runtime replacement was used for this comparison.
+Build CI now also runs its complete ordered-query package step on Windows x64
+and ARM64 with system software adapters, retaining the separate default and
+NativeAOT steps and their original deadlines. This adds qualification coverage;
+it does not waive the failing single-pass default or qualify a default switch.
+
+The independent stock-FXC Windows GPU contract passes both dense (120 full
+records/100 public queries) and multi-level sparse (168/140) fixtures against
+the original external reference buffers. No CPU geometry is used in dispatch.
+Their stdout SHA-256 values are respectively
+`6c050825fd0e9a4eccbaa33201d4cebe8f80ffae246b6f7f0fbad62e5da671e6`
+and `d48cb31aa7dcb3afce13f86a0105df9c0d0e8015820d081d66c3207279174659`.
+The existing 54 source checks and workflow lint still pass after adding Windows
+coverage; final-head hosted execution is not inferred from these local results.
 
 Windows diagnostic renderer hashes:
 
