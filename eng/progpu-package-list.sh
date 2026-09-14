@@ -4,6 +4,7 @@
 # separately on macOS, then both groups are verified together before publishing.
 progpu_portable_package_ids=(
   ProGPU.Backend
+  ProGPU.GameEngine
   ProGPU.Backend.Native
   ProGPU.Backend.Dx12
   ProGPU.Backend.Dawn
@@ -53,6 +54,7 @@ progpu_portable_package_ids=(
 
 progpu_portable_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
+  src/ProGPU.GameEngine/ProGPU.GameEngine.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
   src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
@@ -102,6 +104,7 @@ progpu_portable_package_projects=(
 
 progpu_portable_package_purposes=(
   "WebGPU device, swapchain, Silk.NET windowing, and platform backend services."
+  "Reusable bounded game rendering, scene, and procedural material infrastructure."
   "Experimental typed .NET host plus validated x64/arm64 desktop runtimes for the ProGPU C++ WebGPU renderer."
   "Optional pinned Windows x64/arm64 DXC-capable WebGPU and shader compiler runtime assets."
   "Exact-ABI Dawn shared texture memory and cross-queue fence extensions."
@@ -316,6 +319,11 @@ progpu_nonshipping_projects=(
   src/ProGPU.Samples.Desktop/ProGPU.Samples.Desktop.csproj
   src/ProGPU.Samples.Uno/ProGPU.Samples.Uno/ProGPU.Samples.Uno.csproj
   src/ProGPU.Samples.iOS/ProGPU.Samples.iOS.csproj
+  src/ProGPU.Samples.Suntrail.Browser/ProGPU.Samples.Suntrail.Browser.csproj
+  src/ProGPU.Samples.Suntrail.Desktop/ProGPU.Samples.Suntrail.Desktop.csproj
+  src/ProGPU.Samples.Suntrail.iOS/ProGPU.Samples.Suntrail.iOS.csproj
+  src/ProGPU.Samples.Suntrail/ProGPU.Samples.Suntrail.csproj
+  src/ProGPU.Samples.Suntrail.Tests/ProGPU.Samples.Suntrail.Tests.csproj
   src/ProGPU.Samples/ProGPU.Samples.csproj
   src/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj
   src/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj
@@ -346,6 +354,11 @@ progpu_nonshipping_reasons=(
   "Desktop sample application."
   "Uno sample application."
   "iOS sample application."
+  "Suntrail browser sample application."
+  "Suntrail desktop sample application."
+  "Suntrail iOS sample application."
+  "Shared Suntrail sample application."
+  "Suntrail test project."
   "Shared sample gallery."
   "System.Drawing performance benchmark project."
   "System.Drawing API and behavior test project."
