@@ -15500,9 +15500,12 @@ struct channel::implementation {
                         composite.flags = PROGPU_NATIVE_SCENE_STATE_CLIP_RECT;
                         composite.clip_rect = clipped.clip_rect;
                     }
+                    // The key below owns normalized source pixels, not paint
+                    // placement. Sequential uses of that exact page may share;
+                    // composite opacity/mapping remain per-consumer state.
                     layer.flags = PROGPU_NATIVE_SCENE_LAYER_BOUNDS |
                         PROGPU_NATIVE_SCENE_LAYER_CACHE_CONTENT | PROGPU_NATIVE_SCENE_LAYER_CACHE_LOCAL_SPACE |
-                        PROGPU_NATIVE_SCENE_LAYER_CACHE_TILE;
+                        PROGPU_NATIVE_SCENE_LAYER_CACHE_TILE | PROGPU_NATIVE_SCENE_LAYER_CACHE_SHARED;
                     if (state.image_sampling == PROGPU_NATIVE_IMAGE_SAMPLING_NEAREST)
                         layer.flags |= PROGPU_NATIVE_SCENE_LAYER_CACHE_NEAREST;
                     else if (state.image_sampling == PROGPU_NATIVE_IMAGE_SAMPLING_FANT)

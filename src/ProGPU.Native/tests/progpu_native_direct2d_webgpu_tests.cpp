@@ -1376,6 +1376,56 @@ void verify_mil_image_brushes(const gpu_context& gpu, progpu_native_engine* engi
         "skewed viewport lost its source mapping");
 }
 
+void verify_mil_shared_tile_pages(const gpu_context& gpu, progpu_native_engine* engine)
+{
+    using namespace progpu::native::tests;
+    std::uint64_t identity = 9850U;
+    for (const auto source : {mil_brush_fixture_source::bitmap, mil_brush_fixture_source::drawing_image,
+        mil_brush_fixture_source::drawing, mil_brush_fixture_source::visual}) {
+        for (std::uint32_t tile_mode = 1U; tile_mode <= 4U; ++tile_mode) {
+            for (const bool repeated : {false, true}) {
+                mil_image_brush_fixture_options options{};
+                options.source = source;
+                options.tile_mode = tile_mode;
+                options.viewport = {0, 0, 0.25, 0.25};
+                options.opacity = 0.5;
+                options.repeat_paint = repeated;
+                std::vector<std::byte> stream;
+                require(build_mil_image_brush_fixture(stream, options, ++identity), "shared tile fixture failed");
+                progpu_native_scene_header header{};
+                std::memcpy(&header, stream.data(), sizeof(header));
+                const auto pixels = render_scene(gpu, engine, nullptr, repeated ? 2U : 1U,
+                    header.command_count, 0U, stream, identity);
+                progpu_native_layer_metrics metrics{};
+                metrics.struct_size = sizeof(metrics);
+                require(progpu_native_engine_get_layer_metrics(engine, &metrics) == PROGPU_NATIVE_STATUS_SUCCESS &&
+                    metrics.content_pass_count == 1U, "sequential tile consumers did not share one capture");
+                // Independent nearest-sampling oracle: 12px tiles, 2-color
+                // bitmap halves (solid red vector sources), and two 50% paints.
+                for (std::uint32_t y = 0U; y < height; ++y) {
+                    for (std::uint32_t x = 0U; x < width; ++x) {
+                        const auto offset = (y * width + x) * 4U;
+                        const bool inside = x >= 8U && x < 56U && y >= 8U && y < 56U;
+                        const std::uint32_t local_x = (x + 4U) % 12U;
+                        const bool flipped = (tile_mode == 1U || tile_mode == 3U) && ((x - 8U) / 12U) % 2U != 0U;
+                        const bool blue = source == mil_brush_fixture_source::bitmap && ((local_x >= 6U) != flipped);
+                        const int value = inside ? (repeated ? 191 : 128) : 0;
+                        require(std::abs(static_cast<int>(pixels[offset]) - (blue ? 0 : value)) <= 1 &&
+                            pixels[offset + 1U] == 0U &&
+                            std::abs(static_cast<int>(pixels[offset + 2U]) - (blue ? value : 0)) <= 1 &&
+                            pixels[offset + 3U] == 255U, "shared tile pixel oracle mismatch");
+                    }
+                }
+                const auto warm = render_scene(gpu, engine, nullptr, repeated ? 2U : 1U,
+                    header.command_count, 0U, stream, identity);
+                require(warm == pixels, "shared tile retained replay changed pixels");
+                require(progpu_native_engine_get_layer_metrics(engine, &metrics) == PROGPU_NATIVE_STATUS_SUCCESS &&
+                    metrics.content_pass_count == 0U, "warm shared tile content was rerasterized");
+            }
+        }
+    }
+}
+
 void verify_mil_bitmap_cache_brushes(const gpu_context& gpu, progpu_native_engine* engine)
 {
     using namespace progpu::native::tests;
@@ -1600,6 +1650,7 @@ int main(int argc, char** argv)
     if (software || (argc == 2 && std::strcmp(argv[1], "--mil-image-brush-only") == 0)) {
         verify_mil_image_brushes(gpu, engine);
         verify_mil_bitmap_cache_brushes(gpu, engine);
+        verify_mil_shared_tile_pages(gpu, engine);
         progpu_native_engine_destroy(engine);
         release_gpu(gpu);
         return EXIT_SUCCESS;
@@ -1617,6 +1668,7 @@ int main(int argc, char** argv)
     phase("start MIL image brushes");
     verify_mil_image_brushes(gpu, engine);
     verify_mil_bitmap_cache_brushes(gpu, engine);
+    verify_mil_shared_tile_pages(gpu, engine);
     phase("stroke transforms passed; start MIL geometry");
     std::vector<std::byte> mil_scene;
     require(progpu::native::tests::build_mil_visual_clip_fixture(mil_scene),

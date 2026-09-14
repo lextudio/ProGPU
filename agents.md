@@ -1,5 +1,10 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Repeated MIL tile captures use shared pages only through the existing exact
+normalized source key/revision. Preserve per-paint opacity, placement and address
+mapping; shared captures do not merge composites. Keep cold/warm pixel and pass
+count checks, same-frame revision/extent rejection, recursion guards and budgets.
+
 Recorded source rectangle input omits exactly singular finite affine mappings,
 matching managed image/point scopes, while retaining balanced state and following
 owners. Do not fabricate identity inverses, reject tiny invertible transforms by
