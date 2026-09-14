@@ -2054,6 +2054,58 @@ bool invalid_visual_graphs_fail_closed() {
     return true;
 }
 
+bool empty_rectangle_preserves_scopes_and_rejects_malformed_extents() {
+    std::vector<std::byte> batch;
+    append_create(batch, 1U, 39U);
+    append_create(batch, 2U, 43U);
+    append_create(batch, 3U, 47U);
+    append_create(batch, 4U, 75U);
+    append_create(batch, 5U, 39U);
+    append_command(batch, command::visual_create, 1U);
+    append_command(batch, command::visual_create, 5U);
+    append_command(batch, command::visual_set_content, 1U, 2U);
+    append_command(batch, command::visual_insert_child_at, 1U, 5U, 0U);
+    append_command(batch, command::solid_color_brush, 4U, 1.0,
+        progpu_native_color{0.2F, 0.7F, 1.0F, 1.0F}, 0U, 0U, 0U, 0U);
+    append_command(batch, command::generic_target_create, 3U,
+        std::uint64_t{0U}, std::uint64_t{0U}, 100U, 80U, 0U);
+    append_command(batch, command::target_set_root, 3U, 1U);
+    channel state;
+    PROGPU_REQUIRE(state.apply(batch) == status::success);
+    const double inf = std::numeric_limits<double>::infinity();
+    const std::array cases{
+        std::array{inf, inf, -inf, -inf},
+        std::array{0.0, inf, -inf, -inf},
+        std::array{inf, inf, 0.0, -inf},
+        std::array{0.0, 0.0, -1.0, 2.0},
+        std::array{0.0, 0.0, std::numeric_limits<double>::quiet_NaN(), 2.0},
+        std::array{0.0, 0.0, inf, 2.0}};
+    for (std::size_t i = 0U; i < cases.size(); ++i) {
+        for (const std::uint32_t brush : {0U, 4U, 99U}) {
+            std::vector<std::byte> drawing;
+            append_command(drawing, command::push_opacity, 0.5);
+            append_command(drawing, command::draw_rectangle,
+                cases[i][0], cases[i][1], cases[i][2], cases[i][3], brush, 0U);
+            append_command(drawing, command::pop);
+            append_command(drawing, command::draw_rectangle, 2.0, 3.0, 20.0, 10.0, 4U, 0U);
+            std::vector<std::byte> update;
+            append_render_data(update, 2U, drawing);
+            PROGPU_REQUIRE(state.apply(update) == status::success);
+            std::vector<std::byte> stream;
+            progpu::native::mil::scene_metrics metrics{};
+            const status result = state.build_scene(3U, 9537U, 1U, stream, &metrics);
+            if (i == 0U && brush != 99U) {
+                PROGPU_REQUIRE(result == status::success);
+                PROGPU_REQUIRE(metrics.rectangle_count == 1U);
+                PROGPU_REQUIRE(metrics.visual_count == 2U);
+            } else {
+                PROGPU_REQUIRE(result == (i == 0U ? status::invalid_handle : status::malformed_batch));
+            }
+        }
+    }
+    return true;
+}
+
 bool solid_rectangle_compiles_to_semantic_scene() {
     constexpr std::uint32_t visual_type = 39U;
     constexpr std::uint32_t render_data_type = 43U;
@@ -24824,6 +24876,7 @@ int main() {
     PROGPU_REQUIRE(canonical_hwnd_target_uses_portable_surface_state());
     PROGPU_REQUIRE(failed_batches_roll_back());
     PROGPU_REQUIRE(invalid_visual_graphs_fail_closed());
+    PROGPU_REQUIRE(empty_rectangle_preserves_scopes_and_rejects_malformed_extents());
     PROGPU_REQUIRE(solid_rectangle_compiles_to_semantic_scene());
     PROGPU_REQUIRE(animated_value_resources_drive_render_data_primitives());
     PROGPU_REQUIRE(

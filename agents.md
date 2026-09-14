@@ -1,5 +1,12 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Static MIL DrawRectangle retains the exact source Rect.Empty wire sentinel until
+the shared C++ compiler validates handles and emits no ink/geometry. Preserve
+scope balance, owners and descendants; partial infinity/NaN/negative-size inputs
+stay rejected and zero-area pen draws remain distinct. Managed source replay uses
+the same exact sentinel policy. Do not generalize this to animated rectangles,
+allocation bounds or other commands without their contracts and qualification.
+
 Width-changing text continuations shape the complete original paragraph before
 native suffix placement at a proven shaped cluster boundary. Retain full source,
 font, bidi and logical glyph identities, measured object ownership and context

@@ -18161,6 +18161,19 @@ struct channel::implementation {
                         return status::malformed_batch;
                     }
                 }
+                // Static source Rect.Empty has no ink or geometry. Keep the
+                // record and resource validation, but do not narrow its sentinel
+                // or let it affect surrounding scopes/descendant traversal.
+                const double empty_infinity = std::numeric_limits<double>::infinity();
+                if (view.kind == command::draw_rectangle &&
+                    first == empty_infinity && second == empty_infinity &&
+                    third == -empty_infinity && fourth == -empty_infinity) {
+                    if ((brush_handle != 0U && !has_brush_state(brush_handle)) ||
+                        (pen_handle != 0U && !pens.contains(pen_handle))) {
+                        return status::invalid_handle;
+                    }
+                    continue;
+                }
                 if (!finite_double_as_float(first) ||
                     !finite_double_as_float(second) ||
                     !finite_double_as_float(third) ||

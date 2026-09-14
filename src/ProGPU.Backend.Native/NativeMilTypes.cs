@@ -152,7 +152,13 @@ public readonly record struct NativeMilRect(
     double X,
     double Y,
     double Width,
-    double Height);
+    double Height)
+{
+    /// <summary>The exact WPF Rect.Empty wire sentinel, distinct from zero area.</summary>
+    public bool IsCanonicalEmpty => double.IsPositiveInfinity(X) &&
+        double.IsPositiveInfinity(Y) && double.IsNegativeInfinity(Width) &&
+        double.IsNegativeInfinity(Height);
+}
 
 /// <summary>Canonical retained WPF BitmapCache resource state.</summary>
 public readonly record struct NativeMilBitmapCache(

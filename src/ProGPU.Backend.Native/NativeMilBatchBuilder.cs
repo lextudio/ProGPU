@@ -3048,11 +3048,13 @@ public sealed class NativeMilRenderDataBuilder
         uint brushHandle,
         uint penHandle = 0)
     {
-        if (!double.IsFinite(x) || !double.IsFinite(y) ||
+        if (!new NativeMilRect(x, y, width, height).IsCanonicalEmpty &&
+            (!double.IsFinite(x) || !double.IsFinite(y) ||
             !double.IsFinite(width) || !double.IsFinite(height) ||
-            width < 0.0 || height < 0.0)
+            width < 0.0 || height < 0.0))
         {
-            throw new ArgumentOutOfRangeException(nameof(width));
+            throw new ArgumentOutOfRangeException(nameof(width),
+                $"Rectangle must have finite coordinates and nonnegative extents: ({x:R}, {y:R}, {width:R}, {height:R}).");
         }
         Span<byte> packet = NativeMilBatchEncoding.Allocate(
             _writer, NativeMilCommand.DrawRectangle, 44);
