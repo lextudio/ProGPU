@@ -3,6 +3,8 @@
 
 namespace progpu::native::execution {
 
+constexpr std::uint32_t native_max_path_atlas_size = 8192U;
+
 progpu_native_status render_paths(
     progpu_native_engine* engine,
     const progpu_native_path_frame* frame,
@@ -326,7 +328,7 @@ progpu_native_status render_paths(
                     const auto height =
                         static_cast<std::uint32_t>(raster_height);
                     while (width + 4U > required_atlas_size &&
-                           required_atlas_size < native_max_atlas_size) {
+                           required_atlas_size < native_max_path_atlas_size) {
                         required_atlas_size *= 2U;
                     }
                     if (atlas_x + width + 2U > required_atlas_size) {
@@ -335,7 +337,7 @@ progpu_native_status render_paths(
                         row_height = 0U;
                     }
                     while (atlas_y + height + 2U > required_atlas_size &&
-                           required_atlas_size < native_max_atlas_size) {
+                           required_atlas_size < native_max_path_atlas_size) {
                         required_atlas_size *= 2U;
                     }
                     if (atlas_y + height + 2U > required_atlas_size) {

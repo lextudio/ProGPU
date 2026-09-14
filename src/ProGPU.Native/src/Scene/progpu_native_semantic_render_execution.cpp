@@ -2357,6 +2357,21 @@ progpu_native_status render_scene(
                         path.min_y = min_y;
                         path.max_x = max_x;
                         path.max_y = max_y;
+                        // Guideline snapping may collapse an otherwise valid
+                        // filled path onto a single device-coordinate line.
+                        // Keep the snapped segments unchanged (and therefore
+                        // empty), while giving the raster tile a finite,
+                        // strictly positive descriptor extent.
+                        if (path.max_x == path.min_x) {
+                            path.max_x = std::nextafter(
+                                path.min_x,
+                                std::numeric_limits<float>::infinity());
+                        }
+                        if (path.max_y == path.min_y) {
+                            path.max_y = std::nextafter(
+                                path.min_y,
+                                std::numeric_limits<float>::infinity());
+                        }
                         path.transform = {
                             1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F};
                     }
