@@ -7,6 +7,18 @@ using Xunit;
 public class DiagnosticsLoggingSourceTests
 {
     [Fact]
+    public void ResumableGpuQueryStackIsInvocationPrivateNotAnInoutArray()
+    {
+        string shader = ReadSource("src", "ProGPU.Vector", "Shaders", "GpuHitTesting.wgsl");
+        Assert.Contains("var<private> query_stack: array<u32, 64>;", shader, StringComparison.Ordinal);
+        Assert.DoesNotContain("var<workgroup> query_stack", shader, StringComparison.Ordinal);
+        Assert.DoesNotContain("stack: array<u32, 64>,", shader, StringComparison.Ordinal);
+        Assert.Contains("query_stack[0] = query.root_node_index;", shader, StringComparison.Ordinal);
+        Assert.Contains("query_stack[(*state).stack_count] = (*state).node.first_child + child;", shader, StringComparison.Ordinal);
+        Assert.Contains("let node_index = query_stack[(*state).stack_count];", shader, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PersistentTextureBindGroupCreationStaysOutsideCacheLock()
     {
         string source = ReadSource("src", "ProGPU.Scene", "Compositor.cs");

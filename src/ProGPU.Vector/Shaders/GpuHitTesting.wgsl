@@ -2285,8 +2285,13 @@ fn retain_candidate(primitive_index: u32) {
     candidates.count = candidates.count + 1u;
 }
 
+// One traversal runs per invocation. Keep its stack invocation-private instead
+// of copying an array through the resumable iterator's inout aggregate: FXC
+// otherwise forces the dynamic stack-push loop to unroll and rejects it.
+// This is not workgroup memory; invocations never share traversal state.
+var<private> query_stack: array<u32, 64>;
+
 struct QueryTraversal {
-    stack: array<u32, 64>,
     stack_count: u32,
     node: HitTestNode,
     local_primitive: u32,
@@ -2298,7 +2303,7 @@ struct QueryTraversal {
 
 fn begin_query_traversal() -> QueryTraversal {
     var state: QueryTraversal;
-    state.stack[0] = query.root_node_index;
+    query_stack[0] = query.root_node_index;
     state.stack_count = 1u;
     state.nodes_visited = results[0].nodes_visited;
     state.candidate_count = results[0].candidate_count;
@@ -2326,7 +2331,7 @@ fn next_query_candidate(state: ptr<function, QueryTraversal>, region_query: bool
         if (!(*state).in_node) {
             if ((*state).stack_count == 0u) { return 4294967295u; }
             (*state).stack_count = (*state).stack_count - 1u;
-            let node_index = (*state).stack[(*state).stack_count];
+            let node_index = query_stack[(*state).stack_count];
             if (node_index >= query.node_count) { continue; }
             let node = nodes[node_index];
             (*state).nodes_visited = (*state).nodes_visited + 1u;
@@ -2361,7 +2366,7 @@ fn next_query_candidate(state: ptr<function, QueryTraversal>, region_query: bool
             }
 
             if ((*state).stack_count < 64u) {
-                (*state).stack[(*state).stack_count] = (*state).node.first_child + child;
+                query_stack[(*state).stack_count] = (*state).node.first_child + child;
                 (*state).stack_count = (*state).stack_count + 1u;
             }
 
