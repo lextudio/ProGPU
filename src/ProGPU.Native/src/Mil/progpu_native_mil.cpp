@@ -11313,6 +11313,9 @@ struct channel::implementation {
         const std::array operands{
             combined->second.geometry1_handle,
             combined->second.geometry2_handle};
+        std::array<shallow_fill_leaf, 2U> operand_trees{};
+        std::array<std::size_t, 3U> operand_nodes{original_node_size};
+        std::size_t operand_index = 0U;
         for (const std::uint32_t operand_handle : operands) {
             shallow_fill_leaf operand{};
             const status operand_status = append_boolean_geometry(
@@ -11330,6 +11333,8 @@ struct channel::implementation {
                 tree.segment_offset = original_segment_size;
                 return operand_status;
             }
+            operand_trees[operand_index] = operand;
+            operand_nodes[++operand_index] = nodes.size();
             if (!operand.has_bounds) {
                 continue;
             }
@@ -11366,6 +11371,41 @@ struct channel::implementation {
             tree = {};
             tree.segment_offset = original_segment_size;
             return status::invalid_graph;
+        }
+        // Exact set identities over affirmative empty operands. Keep the actual
+        // surviving program/curves/fill rule, never its bounds as geometry. Both
+        // operands have already been resolved, so invalid handles still fail.
+        if (!operand_trees[0].has_bounds || !operand_trees[1].has_bounds) {
+            const auto selected = combined->second.combine_mode == 1U ||
+                (combined->second.combine_mode == 3U && !operand_trees[0].has_bounds)
+                ? 2U : operand_trees[0].has_bounds ? 0U : operand_trees[1].has_bounds ? 1U : 2U;
+            if (selected == 2U) {
+                segments.resize(original_segment_size);
+                nodes.resize(original_node_size);
+                tree = {};
+                tree.segment_offset = original_segment_size;
+                progpu_native_scene_path_boolean_node empty{};
+                empty.kind = PROGPU_NATIVE_PATH_BOOLEAN_EMPTY;
+                nodes.push_back(empty);
+            } else {
+                tree = operand_trees[selected];
+                const auto delta = tree.segment_offset - original_segment_size;
+                const auto count = operand_nodes[selected + 1U] - operand_nodes[selected];
+                // Contiguous ownership compaction uses intrinsic memmove. The
+                // bounded node fixup follows program dependencies, not pixel work.
+                if (tree.segment_count != 0U) std::memmove(segments.data() + original_segment_size,
+                    segments.data() + tree.segment_offset, tree.segment_count * sizeof(segments[0]));
+                std::memmove(nodes.data() + original_node_size, nodes.data() + operand_nodes[selected],
+                    count * sizeof(nodes[0]));
+                segments.resize(original_segment_size + tree.segment_count);
+                nodes.resize(original_node_size + count);
+                for (std::size_t i = original_node_size; i < nodes.size(); ++i)
+                    if (nodes[i].kind == PROGPU_NATIVE_PATH_BOOLEAN_LEAF ||
+                        nodes[i].kind == PROGPU_NATIVE_PATH_BOOLEAN_WINDING_LEAF)
+                        nodes[i].segment_offset -= delta;
+                tree.segment_offset = original_segment_size;
+            }
+            return status::success;
         }
         nodes.push_back(operation);
         tree.segment_count = segments.size() - original_segment_size;
@@ -11462,6 +11502,13 @@ struct channel::implementation {
             state.clip_rect = {};
             state.has_clip = true;
             return status::success;
+        }
+        // A reduced CombinedGeometry may now be one original fill leaf, just
+        // like a simple group. Preserve its fill rule when dropping the program.
+        if (clip_boolean_nodes.size() == boolean_node_offset + 1U &&
+            clip_boolean_nodes.back().kind == PROGPU_NATIVE_PATH_BOOLEAN_LEAF) {
+            fill_rule = clip_boolean_nodes.back().fill_rule;
+            clip_boolean_nodes.resize(boolean_node_offset);
         }
         const std::size_t boolean_node_count =
             clip_boolean_nodes.size() - boolean_node_offset;

@@ -2106,6 +2106,79 @@ bool empty_rectangle_preserves_scopes_and_rejects_malformed_extents() {
     return true;
 }
 
+bool empty_combined_clips_preserve_original_fill_and_scope() {
+    // Paired with EmptyCombinedClipTests: empty operands are actual empty sets,
+    // not unknown bounds. Exercise both operand orders and nested programs.
+    for (std::uint32_t mode = 0U; mode < 4U; ++mode)
+    for (std::uint32_t empty_side = 0U; empty_side < 3U; ++empty_side)
+    for (std::uint32_t fill = 0U; fill < 2U; ++fill)
+    for (const bool nested : {false, true}) {
+        channel state;
+        std::vector<std::byte> batch, drawing;
+        append_create(batch, 1U, 39U); append_create(batch, 2U, 43U);
+        append_create(batch, 3U, 47U); append_create(batch, 4U, 75U);
+        append_create(batch, 5U, 73U); append_create(batch, 6U, 72U);
+        append_create(batch, 7U, 72U); append_create(batch, 8U, 66U);
+        append_command(batch, command::visual_create, 1U);
+        append_command(batch, command::visual_set_content, 1U, 2U);
+        append_command(batch, command::solid_color_brush, 4U, 1.0,
+            progpu_native_color{1, 0, 0, 1}, 0U, 0U, 0U, 0U);
+        append_path_geometry(batch, 5U, 0U, fill, make_rectangle_path_figures(10, 20, 30, 40));
+        append_command(batch, command::matrix_transform, 8U, 2.0, 0.0, 0.0, 3.0, 5.0, 7.0, 0U);
+        append_command(batch, command::combined_geometry, 6U, nested ? 0U : 8U,
+            mode, empty_side == 0U || empty_side == 2U ? 0U : 5U,
+            empty_side == 1U || empty_side == 2U ? 0U : 5U);
+        // Empty on the left of the outer union forces postfix-node compaction.
+        append_command(batch, command::combined_geometry, 7U, 8U, 0U, 0U, 6U);
+        append_command(drawing, command::push_clip, nested ? 7U : 6U, 0U);
+        append_command(drawing, command::draw_rectangle, 0.0, 0.0, 200.0, 200.0, 4U, 0U);
+        append_command(drawing, command::pop);
+        append_command(drawing, command::draw_rectangle, 150.0, 150.0, 10.0, 10.0, 4U, 0U);
+        append_render_data(batch, 2U, drawing);
+        append_command(batch, command::generic_target_create, 3U,
+            std::uint64_t{0}, std::uint64_t{0}, 200U, 200U, 0U);
+        append_command(batch, command::target_set_root, 3U, 1U);
+        PROGPU_REQUIRE(state.apply(batch) == status::success);
+        scene_build_request request{};
+        request.flags = scene_build_request_flags::hit_test_index;
+        request.target_handle = 3U; request.scene_id = 9849U;
+        request.generation = request.request_serial = 1U;
+        request.dpi_scale_x = request.dpi_scale_y = 1;
+        std::span<const std::byte> compiled;
+        PROGPU_REQUIRE(state.build_scene(request, compiled) == status::success);
+        const std::vector<std::byte> stream(compiled.begin(), compiled.end());
+        const bool survives = empty_side != 2U && (mode == 0U || mode == 2U || (mode == 3U && empty_side == 1U));
+        const auto header = read_value<progpu_native_scene_header>(stream, 0U);
+        bool found_hits = false, found_mask = false;
+        for (std::uint32_t i = 0U; i < header.resource_count; ++i) {
+            const auto resource = read_value<progpu_native_scene_resource>(stream,
+                header.resource_offset + i * sizeof(progpu_native_scene_resource));
+            if (resource.kind == PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK) {
+                const auto mask = read_value<progpu_native_scene_layer_vector_mask>(stream, resource.payload_offset);
+                PROGPU_REQUIRE(survives && mask.path_count == 1U && mask.segment_count == 4U && mask.boolean_node_count == 0U);
+                const auto path = read_value<progpu_native_scene_clip_path>(stream, resource.auxiliary_offset);
+                PROGPU_REQUIRE(path.fill_rule == (fill == 0U ? PROGPU_NATIVE_FILL_RULE_EVEN_ODD : PROGPU_NATIVE_FILL_RULE_NON_ZERO));
+                found_mask = true;
+            }
+            if (resource.kind != PROGPU_NATIVE_SCENE_RESOURCE_HIT_TEST_INDEX) continue;
+            const auto page = read_value<progpu_native_scene_hit_test_index>(stream, resource.payload_offset);
+            PROGPU_REQUIRE(page.primitive_count == (survives ? 2U : 1U));
+            const auto start = resource.auxiliary_offset + page.primitive_offset;
+            const auto sibling = read_value<progpu_native_hit_test_primitive>(stream,
+                start + (page.primitive_count - 1U) * sizeof(progpu_native_hit_test_primitive));
+            PROGPU_REQUIRE(sibling.clip_segment_count == 0U && sibling.bounds_min.x == 150 && sibling.bounds_min.y == 150);
+            if (survives) {
+                const auto hit = read_value<progpu_native_hit_test_primitive>(stream, start);
+                PROGPU_REQUIRE(hit.clip_segment_count == 4U && hit.clip_fill_rule == fill);
+                PROGPU_REQUIRE(hit.bounds_min.x == 25 && hit.bounds_min.y == 67 && hit.bounds_max.x == 65 && hit.bounds_max.y == 127);
+            }
+            found_hits = true;
+        }
+        PROGPU_REQUIRE(found_hits && found_mask == survives);
+    }
+    return true;
+}
+
 bool solid_rectangle_compiles_to_semantic_scene() {
     constexpr std::uint32_t visual_type = 39U;
     constexpr std::uint32_t render_data_type = 43U;
@@ -24910,6 +24983,7 @@ int main() {
     PROGPU_REQUIRE(failed_batches_roll_back());
     PROGPU_REQUIRE(invalid_visual_graphs_fail_closed());
     PROGPU_REQUIRE(empty_rectangle_preserves_scopes_and_rejects_malformed_extents());
+    PROGPU_REQUIRE(empty_combined_clips_preserve_original_fill_and_scope());
     PROGPU_REQUIRE(solid_rectangle_compiles_to_semantic_scene());
     PROGPU_REQUIRE(animated_value_resources_drive_render_data_primitives());
     PROGPU_REQUIRE(

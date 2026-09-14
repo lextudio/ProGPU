@@ -1,5 +1,11 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native MIL combined geometry resolves both operands before simplifying exact
+empty-set identities. Retain surviving segments, subtree offsets, fill rule and
+composed transforms; a missing/failed operand is not empty. One surviving clip
+leaf may drop its redundant program, never its source shape. Real Boolean
+topology and complete native input/application gates remain required.
+
 Repeated MIL tile captures use shared pages only through the existing exact
 normalized source key/revision. Preserve per-paint opacity, placement and address
 mapping; shared captures do not merge composites. Keep cold/warm pixel and pass
