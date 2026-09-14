@@ -1,5 +1,12 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native package CI groups must preserve every original independent JIT/NativeAOT
+case on each RID, along with ordered/default core and separate DX12 gates. Keep
+the selector coverage verifier, fail-closed jobs and exact successful-Build staging.
+Splitting cold Windows processes does not qualify a canceled producer Build or
+permit longer deadlines, weaker assertions or renderer fallback. See
+docs/native-package-consumer-groups.md.
+
 Native GPU memory snapshots enumerate live engine-owned handles, including retained
 submission resources, with alias deduplication and actual descriptor sizes. Keep
 borrowed views and opaque-format byte counts explicit; logical storage is not

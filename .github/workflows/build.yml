@@ -689,7 +689,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Full DX12 NativeAOT consumer failed.' }
 
   native-package-consumer:
-    name: Native package consumer (${{ matrix.rid }})
+    name: ${{ matrix.name }}
     needs: native-package
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -699,16 +699,54 @@ jobs:
         include:
           - os: ubuntu-latest
             rid: linux-x64
+            suite: all
+            name: Native package consumer (linux-x64)
           - os: ubuntu-24.04-arm
             rid: linux-arm64
+            suite: all
+            name: Native package consumer (linux-arm64)
           - os: macos-15-intel
             rid: osx-x64
+            suite: all
+            name: Native package consumer (osx-x64)
           - os: macos-26
             rid: osx-arm64
+            suite: all
+            name: Native package consumer (osx-arm64)
           - os: windows-latest
             rid: win-x64
+            suite: core
+            name: Native package consumer (win-x64)
           - os: windows-11-arm
             rid: win-arm64
+            suite: core
+            name: Native package consumer (win-arm64)
+          # Serial cold Windows consumers exceed the job bound even when all
+          # assertions pass. Keep all JIT/AOT processes, split independent cases.
+          - os: windows-latest
+            rid: win-x64
+            suite: drawings
+            name: Native package drawings (win-x64)
+          - os: windows-latest
+            rid: win-x64
+            suite: visuals
+            name: Native package visuals (win-x64)
+          - os: windows-latest
+            rid: win-x64
+            suite: guidelines
+            name: Native package guidelines (win-x64)
+          - os: windows-11-arm
+            rid: win-arm64
+            suite: drawings
+            name: Native package drawings (win-arm64)
+          - os: windows-11-arm
+            rid: win-arm64
+            suite: visuals
+            name: Native package visuals (win-arm64)
+          - os: windows-11-arm
+            rid: win-arm64
+            suite: guidelines
+            name: Native package guidelines (win-arm64)
 
     steps:
       - name: Checkout
@@ -734,6 +772,7 @@ jobs:
           path: artifacts/packages-native/Release
 
       - name: Run ordered-query native package consumer
+        if: matrix.suite == 'all' || matrix.suite == 'core'
         shell: bash
         env:
           PROGPU_HIT_TEST_EXECUTION: ordered-stages
@@ -751,68 +790,38 @@ jobs:
       - name: Restore and run package consumer
         shell: bash
         run: |
+          # macOS Bash 3 treats an empty argument array as unset under nounset.
+          set -eo pipefail
           version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
-          broad_scene_args=()
-          if [[ "${{ matrix.rid }}" == "win-x64" ]]; then
-            # Microsoft Basic Render Driver can spend more than a minute in
-            # the broad retained seed and then lose/blank the software device.
-            # Keep full dual-export compilation here; the bounded retained
-            # scenes below retain JIT GPU execution coverage on this RID.
-            broad_scene_args=(--mil-only)
-          fi
+          ./eng/progpu-verify-native-package-scenarios.sh
+          scenarios="$(./eng/progpu-native-package-scenarios.sh '${{ matrix.suite }}')"
           dotnet restore tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
             -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
             -p:ProGpuNativePackageVersion="${version}"
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+          dotnet build tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
             --configuration Release --no-restore \
             -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            "${broad_scene_args[@]}"
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-drawing-group-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-glyph-run-drawing-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-text-render-options-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-visual-clip-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-visual-opacity-mask-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-visual-effect-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-visual-guideline-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-restore \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-drawing-image-only
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
-            --configuration Release --no-build \
-            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
-            -p:ProGpuNativePackageVersion="${version}" -- \
-            --mil-guideline-only
+            -p:ProGpuNativePackageVersion="${version}"
+          if [[ '${{ matrix.suite }}' == all || '${{ matrix.suite }}' == core ]]; then
+            broad_scene_args=()
+            if [[ '${{ matrix.rid }}' == win-x64 ]]; then
+              # Preserve existing broad-scene admission; the ordered core run
+              # above still renders the full seed on the Windows software adapter.
+              broad_scene_args=(--mil-only)
+            fi
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+              --configuration Release --no-build \
+              -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+              -p:ProGpuNativePackageVersion="${version}" -- "${broad_scene_args[@]}"
+          fi
+          while IFS= read -r scenario; do
+            [[ -n "${scenario}" ]] || continue
+            echo "Independent JIT package scene: ${scenario}"
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+              --configuration Release --no-build \
+              -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+              -p:ProGpuNativePackageVersion="${version}" -- "${scenario}"
+          done <<< "${scenarios}"
 
       - name: Diagnose Windows path stages after consumer failure
         if: failure() && runner.os == 'Windows'
@@ -851,16 +860,15 @@ jobs:
             executable="${executable}.exe"
           fi
           test -x "${executable}"
-          "${executable}" "${broad_scene_args[@]}"
-          "${executable}" --mil-drawing-group-only
-          "${executable}" --mil-glyph-run-drawing-only
-          "${executable}" --mil-text-render-options-only
-          "${executable}" --mil-visual-clip-only
-          "${executable}" --mil-visual-opacity-mask-only
-          "${executable}" --mil-visual-effect-only
-          "${executable}" --mil-visual-guideline-only
-          "${executable}" --mil-drawing-image-only
-          "${executable}" --mil-guideline-only
+          scenarios="$(./eng/progpu-native-package-scenarios.sh '${{ matrix.suite }}')"
+          if [[ '${{ matrix.suite }}' == all || '${{ matrix.suite }}' == core ]]; then
+            "${executable}" "${broad_scene_args[@]}"
+          fi
+          while IFS= read -r scenario; do
+            [[ -n "${scenario}" ]] || continue
+            echo "Independent NativeAOT package scene: ${scenario}"
+            "${executable}" "${scenario}"
+          done <<< "${scenarios}"
 
   avalonia-compositor-contract:
     name: Avalonia retained compositor contract
