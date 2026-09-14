@@ -7318,6 +7318,62 @@ void native_font_provider_cache_is_borrowed_and_generation_safe() {
         priority_context.reads == 9U);
 }
 
+void native_text_layout_preserves_whitespace_breaks_after_unsafe_shaping() {
+    // A contextual positioning lookup may mark the next glyph unsafe while
+    // Unicode still permits a break at the preceding whitespace cluster.
+    const std::array<shaping_glyph, 8U> glyphs{
+        shaping_glyph{1U, 'a', 0, shaping_glyph_flags::none, 10},
+        shaping_glyph{1U, 'a', 1, shaping_glyph_flags::none, 10},
+        shaping_glyph{2U, ' ', 2, shaping_glyph_flags::none, 10},
+        shaping_glyph{3U, 'b', 3, shaping_glyph_flags::unsafe_to_break, 10},
+        shaping_glyph{3U, 'b', 4, shaping_glyph_flags::none, 10},
+        shaping_glyph{2U, ' ', 5, shaping_glyph_flags::none, 10},
+        shaping_glyph{4U, 'c', 6, shaping_glyph_flags::unsafe_to_break, 10},
+        shaping_glyph{4U, 'c', 7, shaping_glyph_flags::none, 10}};
+    const std::array<text_line_break_kind, 8U> breaks{
+        text_line_break_kind::prohibited,
+        text_line_break_kind::prohibited,
+        text_line_break_kind::opportunity,
+        text_line_break_kind::prohibited,
+        text_line_break_kind::prohibited,
+        text_line_break_kind::opportunity,
+        text_line_break_kind::prohibited,
+        text_line_break_kind::mandatory};
+    const text_layout_options options{1.0F, 45.0F, 12.0F};
+    text_layout_requirements requirements{};
+    font_error error = font_error::none;
+    require(try_get_text_layout_requirements(glyphs, breaks, options, requirements, &error));
+    require(requirements.line_capacity == 3U);
+    std::array<positioned_text_glyph, 8U> positioned{};
+    std::array<positioned_text_line, 3U> lines{};
+    std::uint32_t glyph_count = 0U;
+    std::uint32_t line_count = 0U;
+    require(try_layout_shaped_text(glyphs, breaks, options, positioned, lines,
+        glyph_count, line_count, &error));
+    require(glyph_count == 8U && line_count == 3U);
+    require(lines[0U].input_start == 0 && lines[0U].input_end == 3 &&
+        lines[1U].input_start == 3 && lines[1U].input_end == 6 &&
+        lines[2U].input_start == 6 && lines[2U].input_end == 8);
+
+    // An otherwise-advertised break before an unsafe non-space glyph must
+    // still be rejected; only the whitespace opportunity has this exception.
+    const std::array<shaping_glyph, 3U> non_space{
+        shaping_glyph{1U, 'a', 0, shaping_glyph_flags::none, 10},
+        shaping_glyph{2U, 'b', 1, shaping_glyph_flags::unsafe_to_break, 10},
+        shaping_glyph{3U, 'c', 2, shaping_glyph_flags::none, 10}};
+    const std::array<text_line_break_kind, 3U> non_space_breaks{
+        text_line_break_kind::opportunity,
+        text_line_break_kind::prohibited,
+        text_line_break_kind::mandatory};
+    auto narrow = options;
+    narrow.maximum_width = 15.0F;
+    std::array<positioned_text_glyph, 3U> non_space_positioned{};
+    std::array<positioned_text_line, 3U> non_space_lines{};
+    require(try_layout_shaped_text(non_space, non_space_breaks, narrow,
+        non_space_positioned, non_space_lines, glyph_count, line_count, &error));
+    require(line_count == 2U && non_space_lines[0U].input_end == 2);
+}
+
 void native_positioned_text_layout_wraps_without_allocation() {
     const std::array<shaping_glyph, 4U> glyphs{
         shaping_glyph{1U, 0U, 0, shaping_glyph_flags::none, 10},
@@ -12863,7 +12919,8 @@ static void intrinsic_widths_use_legal_clusters_and_exclude_trailing_space() {
     require(try_get_tabbed_text_layout_requirements(glyphs, breaks, {}, options, {0, 0, true}, emergency));
     require(whole.line_capacity == 2 && emergency.line_capacity > whole.line_capacity);
     glyphs[3].flags = shaping_glyph_flags::unsafe_to_break;
-    require(run() && widths.minimum == 21 && widths.maximum == 21);
+    // The contextual flag does not erase a Unicode break after whitespace.
+    require(run() && widths.minimum == 11 && widths.maximum == 21);
     glyphs[3].flags = shaping_glyph_flags::none;
     constexpr std::array<float, 6> scales{2, 2, 1, 1, 1, 1};
     require(run(scales) && widths.minimum == 16 && widths.maximum == 29);
@@ -13683,6 +13740,7 @@ int main() {
     native_font_fallback_preserves_graphemes_and_missing_state();
     native_font_fallback_family_preferences_match_managed_policy();
     native_font_provider_cache_is_borrowed_and_generation_safe();
+    native_text_layout_preserves_whitespace_breaks_after_unsafe_shaping();
     native_positioned_text_layout_wraps_without_allocation();
     native_text_visual_order_matches_managed_cluster_policy();
     native_logical_text_layout_reorders_bidi_per_line();
