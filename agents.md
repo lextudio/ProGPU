@@ -51,6 +51,11 @@ fresh verified payload staging and pre-NuGet completeness checks. Never edit
 the package cache/system DLLs, discard caller-owned same-name assets, distribute
 WARP or infer qualified defaults from package presence. Both renderer modes
 use the same loaded dependency; retain separate full-package/NativeAOT gates.
+Pin build-time libclang independently of the shipped compiler runtime. Ambient
+Clang 22 can turn the locked generator's concrete C records into opaque types;
+do not patch generated bindings, upstream headers or the native ABI to hide it.
+Verify the signed tool package and actual host DLL hash, retain its license and
+record generator provenance without distributing libclang as a runtime asset.
 
 Rectangle-edge query batching keeps independent four-lane crossing/collinearity
 masks until the final any reduction. Preserve original inclusive tests and both

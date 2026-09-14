@@ -50,7 +50,9 @@ rejects WARP before NuGet generation, not after writing a package.
 Build CI creates the two payloads alongside existing native builds, includes the
 optional package in the native artifact, and adds full Windows x64/ARM64 system-
 WARP JIT and NativeAOT consumer jobs using actual packages. Existing default gates
-remain unchanged. Release workflow/default selection are not yet switched.
+remain unchanged. The shipping manifest, portable pack and release workflow also
+include this package; NuGet publication requires both added Windows JIT/NativeAOT
+release consumers. Runtime automatic selection remains unchanged.
 
 ## Evidence — 2026-09-14
 
@@ -76,3 +78,31 @@ remain unchanged. Release workflow/default selection are not yet switched.
 
 Artifacts: LibreWPF `artifacts/dx12-package.toCGR2`. No VM configuration/system
 files were changed. Broader Direct2D/COM/Win2D expansion remains deferred.
+
+## Release inventory and hosted compiler repair
+
+At `dec74b5b`, documentation CI correctly rejected the unclassified new project.
+The shipping manifest now includes it, with the audit count increased by exactly
+one to 81. Portable and release packing receive both compiler-runtime artifacts;
+asset-only packing produces no empty symbols. The package verifier checks both
+RID file inventories, original notices and absence of WARP/placeholder assemblies.
+Release publication additionally requires full Windows DX12 JIT/NativeAOT jobs.
+
+The x64 compiler-runtime job at that head passed. ARM64 failed with 247 missing-
+field errors in generated bindings, before any runtime test. Its hosted image
+ships [LLVM 22.1.8](https://github.com/actions/runner-images/blob/win11-arm64/20260906.161/images/windows/Windows11-Arm64-Readme.md).
+That symptom matches the documented [bindgen Clang-22 typedef regression](https://github.com/rust-lang/rust-bindgen/issues/3275),
+not a change to ProGPU's C ABI. The build now selects ClangSharp's signed
+`libclang.runtime.win-x64` / `libclang.runtime.win-arm64` 18.1.3.1 packages,
+matching the previously successful VM generator. The NuGet metadata identifies
+LLVM 18.1.3 and Apache-2.0 WITH LLVM-exception; no foreign implementation is copied
+into ProGPU code.
+
+`eng/wgpu-dxc/libclang-package.json` pins package hashes, DLL hashes and the
+ClangSharp author certificate. Both actual packages pass signature verification
+and fresh allowlisted staging locally. The dependency builder checks the build
+host's DLL hash and records its version/hash/host RID; it no longer admits ambient
+libclang. This tool is build-only and never included in the DX12 runtime package.
+The existing six input tests and both workflow lint checks pass. Full local docs
+verification still requires the absent ACadSharp submodule; the new hosted run
+must prove complete docs, package graph and ARM64 build/runtime qualification.

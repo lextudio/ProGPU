@@ -67,6 +67,7 @@ for index in "${!selected_package_ids[@]}"; do
     -p:PackageVersion="${package_version}"
   )
   if [[ "${package_id}" == "ProGPU.Xaml.SourceGenerator" ||
+        "${package_id}" == "ProGPU.Backend.Dx12" ||
         "${package_id}" == "ProGPU.BinaryCompatibility" ]]; then
     pack_arguments+=(-p:IncludeSymbols=false)
   else

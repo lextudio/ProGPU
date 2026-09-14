@@ -16,12 +16,17 @@ $VisualStudio = (& $VsWhere -latest -products * -requires $Component -property i
 if (-not $VisualStudio) { throw 'Matching Visual Studio build tools are required.' }
 Import-Module (Join-Path $VisualStudio 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstallPath $VisualStudio -SkipAutomaticLocation -DevCmdArguments "-arch=$Architecture -host_arch=$Architecture" | Out-Null
-if (-not $env:LIBCLANG_PATH) {
-    $Candidates = @((Join-Path $env:ProgramFiles 'LLVM/bin'),
-        (Join-Path $VisualStudio "VC/Tools/Llvm/$Architecture/bin"), (Join-Path $VisualStudio 'VC/Tools/Llvm/bin'))
-    $env:LIBCLANG_PATH = $Candidates | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'libclang.dll') } | Select-Object -First 1
+$LibclangPin = Get-Content -Raw (Join-Path $PSScriptRoot 'wgpu-dxc/libclang-package.json') | ConvertFrom-Json
+$Download = Join-Path $Root "artifacts/progpu-dx12/download/$Rid"
+[IO.Directory]::CreateDirectory($Download) | Out-Null
+$LibclangId = "libclang.runtime.$Rid"
+$LibclangArchive = Join-Path $Download "$LibclangId.$($LibclangPin.version).nupkg"
+if (-not (Test-Path -LiteralPath $LibclangArchive)) {
+    Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/$LibclangId/$($LibclangPin.version)/$LibclangId.$($LibclangPin.version).nupkg" -OutFile $LibclangArchive
 }
-if (-not $env:LIBCLANG_PATH) { throw 'Build-time libclang was not found.' }
+$Libclang = Join-Path $Root "artifacts/progpu-dx12/libclang/$Rid"
+& (Join-Path $PSScriptRoot 'stage-wgpu-libclang.ps1') -Rid $Rid -PackagePath $LibclangArchive -OutputDirectory $Libclang
+$env:LIBCLANG_PATH = $Libclang
 $Inputs = Get-Content -Raw (Join-Path $PSScriptRoot 'wgpu-dxc/build-inputs.json') | ConvertFrom-Json
 $Toolchain = "$($Inputs.rustVersion)-$Triple"
 & rustup toolchain install $Toolchain --profile minimal --target $Triple
@@ -33,8 +38,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Pinned Rust compiler was not found.' }
 $Dependency = Join-Path $Root "artifacts/progpu-dx12/dependency/$Rid"
 & (Join-Path $PSScriptRoot 'build-wgpu-native-windows.ps1') -Rid $Rid -ArtifactDirectory $Dependency -CargoExecutable $Cargo -RustcExecutable $Rustc
 $Pin = Get-Content -Raw (Join-Path $PSScriptRoot 'wgpu-dxc/compiler-package.json') | ConvertFrom-Json
-$Download = Join-Path $Root "artifacts/progpu-dx12/download/$Rid"
-[IO.Directory]::CreateDirectory($Download) | Out-Null
 $Archive = Join-Path $Download "Microsoft.Direct3D.DXC.$($Pin.version).nupkg"
 if (-not (Test-Path -LiteralPath $Archive)) { Invoke-WebRequest -Uri $Pin.url -OutFile $Archive }
 $Compiler = Join-Path $Root "artifacts/progpu-dx12/compiler/$Rid"

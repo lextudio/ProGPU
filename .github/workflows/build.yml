@@ -1393,7 +1393,7 @@ jobs:
     name: Pack portable packages
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: native-cpp
+    needs: [native-cpp, dx12-runtime]
 
     steps:
       - name: Checkout
@@ -1412,6 +1412,13 @@ jobs:
         with:
           pattern: progpu-native-runtime-*
           path: artifacts/progpu-native/package
+          merge-multiple: true
+
+      - name: Download Windows compiler runtimes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-dx12-runtime-*
+          path: artifacts/progpu-dx12/package
           merge-multiple: true
 
       - name: Pack shipping packages

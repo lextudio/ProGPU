@@ -5,6 +5,7 @@
 progpu_portable_package_ids=(
   ProGPU.Backend
   ProGPU.Backend.Native
+  ProGPU.Backend.Dx12
   ProGPU.Backend.Dawn
   ProGPU.Media
   ProGPU.Media.Editing
@@ -53,6 +54,7 @@ progpu_portable_package_ids=(
 progpu_portable_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
+  src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
   src/ProGPU.Media/ProGPU.Media.csproj
   src/ProGPU.Media.Editing/ProGPU.Media.Editing.csproj
@@ -101,6 +103,7 @@ progpu_portable_package_projects=(
 progpu_portable_package_purposes=(
   "WebGPU device, swapchain, Silk.NET windowing, and platform backend services."
   "Experimental typed .NET host plus validated x64/arm64 desktop runtimes for the ProGPU C++ WebGPU renderer."
+  "Optional pinned Windows x64/arm64 DXC-capable WebGPU and shader compiler runtime assets."
   "Exact-ABI Dawn shared texture memory and cross-queue fence extensions."
   "Framework-neutral media playback, diagnostics, audio processing, effects, and provider contracts."
   "Reusable non-destructive composition, project serialization, overlays, effects, and native export coordination."

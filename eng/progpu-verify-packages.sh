@@ -119,6 +119,12 @@ for package_id in "${selected_package_ids[@]}"; do
         exit 1
       fi
     done
+  elif [[ "${package_id}" == "ProGPU.Backend.Dx12" ]]; then
+    if [[ -f "${symbols}" ]]; then
+      echo "Native-assets-only package must not produce an empty symbol package: ${symbols}" >&2
+      exit 1
+    fi
+    "${repo_root}/eng/progpu-verify-dx12-package.sh" "${package}"
   elif [[ ! -f "${symbols}" ]]; then
     echo "Expected symbol package was not produced: ${symbols}" >&2
     exit 1

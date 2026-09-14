@@ -67,6 +67,16 @@ Get-Command cl.exe, link.exe, git.exe -CommandType Application -ErrorAction Stop
 if (-not $env:LIBCLANG_PATH -or -not (Test-Path -LiteralPath (Join-Path $env:LIBCLANG_PATH 'libclang.dll'))) {
     throw 'LIBCLANG_PATH must identify the installed build-time libclang.dll.'
 }
+$LibclangPin = Get-Content -Raw -LiteralPath (Join-Path $InputRoot 'libclang-package.json') | ConvertFrom-Json
+$HostRid = switch ([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) {
+    'Arm64' { 'win-arm64' }
+    'X64' { 'win-x64' }
+    default { throw 'Unsupported Windows build host architecture.' }
+}
+$LibclangHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $env:LIBCLANG_PATH 'libclang.dll')).Hash.ToLowerInvariant()
+if ($LibclangHash -cne $LibclangPin.runtimes.$HostRid.librarySha256) {
+    throw 'Use the pinned build-time libclang; ambient newer Clang can generate incompatible bindings.'
+}
 New-Item -ItemType Directory -Force -Path $BuildDirectory | Out-Null
 if (-not (Test-Path -LiteralPath $Source)) {
     Invoke-Checked 'git.exe' @('clone', '--filter=blob:none', '--no-checkout', $Pin.repository, $Source)
@@ -153,6 +163,9 @@ $Manifest = [ordered]@{
     lockSha256 = $Inputs.lockSha256
     rustc = $RustVersion
     cargo = $CargoVersion
+    libclangVersion = $LibclangPin.version
+    libclangHostRid = $HostRid
+    libclangSha256 = $LibclangHash
     librarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Dll).Hash.ToLowerInvariant()
     qualification = 'build-only'
 }
