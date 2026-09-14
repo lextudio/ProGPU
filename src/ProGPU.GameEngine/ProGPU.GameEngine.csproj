@@ -4,9 +4,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Description>Reusable bounded game rendering and procedural material infrastructure for ProGPU.</Description>
+    <Description>Reusable bounded game rendering, procedural materials and kinematic contact infrastructure for ProGPU.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="StbImageSharp" />
     <ProjectReference Include="../ProGPU.Backend/ProGPU.Backend.csproj" />
   </ItemGroup>
 </Project>

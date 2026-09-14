@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using ProGPU.GameEngine.Assets;
+using System.Xml;
 using System.Globalization;
 using System.IO.Compression;
 using System.Numerics;
@@ -16,6 +18,7 @@ public static partial class LevelFiles
     /// O(B + C + S + T + W + N) temporary storage, bounded to 65536 total cells, 4096 tilesets/definitions
     /// and 256 output objects. Decompression reads exactly 4*C bytes plus one overflow probe.
     /// Row runs extend only matching rectangles; no scanning all earlier rows or per-frame parsing.
+    /// External TSX/TSJ definitions are decoded once per unique package path per map; their total bytes are package-bounded.
     /// Rendering keeps the existing procedural art; referenced tileset images are never loaded.
     /// </summary>
     private sealed class TiledTiles
@@ -23,11 +26,15 @@ public static partial class LevelFiles
         private const int MaximumCells = 65_536, MaximumDefinitions = 4_096;
         private readonly JsonElement _json;
         private readonly XElement? _xml;
+        private readonly string _fileName;
+        private readonly AssetBundle? _resources;
+        private readonly Dictionary<string, TileDefinition[]> _external = new(StringComparer.Ordinal);
+        private readonly record struct TileDefinition(uint Id, LevelObject Object);
         private Dictionary<uint, LevelObject>? _definitions;
         private int _remainingCells = MaximumCells;
         private int _tileWidth, _tileHeight;
-        public TiledTiles(JsonElement root) => _json = root;
-        public TiledTiles(XElement root) => _xml = root;
+        public TiledTiles(JsonElement root, string fileName, AssetBundle? resources) { _json = root; _fileName = fileName; _resources = resources; }
+        public TiledTiles(XElement root, string fileName, AssetBundle? resources) { _xml = root; _fileName = fileName; _resources = resources; }
 
         private void Initialize()
         {
@@ -39,11 +46,11 @@ public static partial class LevelFiles
             _definitions = [];
             var ranges = new SortedSet<uint>();
             var owners = new Dictionary<uint, uint>();
-            void Define(uint first, uint local, string kind, float travel, float phase, float vertical)
+            void Define(uint first, TileDefinition definition)
             {
                 if (_definitions.Count == MaximumDefinitions) throw new FormatException("A map supports at most 4096 gameplay tile definitions.");
-                uint gid = checked(first + local);
-                if (gid > 0x0fff_ffff || !_definitions.TryAdd(gid, new(ParseKind(kind), default, travel, phase, vertical)))
+                uint gid = checked(first + definition.Id);
+                if (gid > 0x0fff_ffff || !_definitions.TryAdd(gid, definition.Object))
                     throw new FormatException("Tileset IDs overlap or exceed the supported range.");
                 owners.Add(gid, first);
             }
@@ -58,29 +65,15 @@ public static partial class LevelFiles
                     foreach (var set in sets.EnumerateArray())
                     {
                         uint first = set.GetProperty("firstgid").GetUInt32(); Range(first);
-                        if (set.TryGetProperty("source", out _)) continue;
-                        if (!set.TryGetProperty("tiles", out var definitions)) continue;
-                        foreach (var tile in definitions.EnumerateArray())
-                        {
-                            string kind = Text(tile, "type", Text(tile, "class"));
-                            if (kind.Length == 0) continue;
-                            if (tile.TryGetProperty("objectgroup", out _)) throw new FormatException("Tile collision object groups are not supported; use a whole-cell gameplay class.");
-                            Define(first, tile.GetProperty("id").GetUInt32(), kind, PropertyNumber(tile, "travel"), PropertyNumber(tile, "phase"), PropertyNumber(tile, "verticalTravel"));
-                        }
+                        var definitions = set.TryGetProperty("source", out var source) ? External(source.GetString() ?? "") : JsonDefinitions(set);
+                        foreach (var tile in definitions) Define(first, tile);
                     }
             }
             else foreach (var set in _xml.Elements("tileset"))
             {
                 uint first = Unsigned(Attribute(set, "firstgid")); Range(first);
-                if (set.Attribute("source") is not null) continue;
-                foreach (var tile in set.Elements("tile"))
-                {
-                    string kind = Attribute(tile, "type", Attribute(tile, "class"));
-                    if (kind.Length == 0) continue;
-                    if (tile.Element("objectgroup") is not null) throw new FormatException("Tile collision object groups are not supported; use a whole-cell gameplay class.");
-                    Define(first, Unsigned(Attribute(tile, "id")), kind, ParseNumber(XmlProperty(tile, "travel", "0")),
-                        ParseNumber(XmlProperty(tile, "phase", "0")), ParseNumber(XmlProperty(tile, "verticalTravel", "0")));
-                }
+                var definitions = set.Attribute("source") is { } source ? External(source.Value) : XmlDefinitions(set);
+                foreach (var tile in definitions) Define(first, tile);
             }
             uint[] starts = ranges.ToArray();
             foreach (var pair in owners)
@@ -89,6 +82,65 @@ public static partial class LevelFiles
                 if (index + 1 < starts.Length && pair.Key >= starts[index + 1])
                     throw new FormatException("A local tile ID extends into the next tileset's GID range.");
             }
+        }
+
+        private TileDefinition[] External(string reference)
+        {
+            if (_resources is null) throw new FormatException($"Tileset '{reference}' is external. Open a ZIP containing the map and its tilesets.");
+            string path = AssetBundle.ResolvePath(_fileName, reference);
+            if (_external.TryGetValue(path, out var cached)) return cached;
+            var bytes = _resources.Get(path);
+            if (bytes.Length > LevelDocument.MaximumBytes) throw new FormatException("Tileset definition files must be at most 1 MiB.");
+            TileDefinition[] definitions;
+            if (Path.GetExtension(path).Equals(".tsx", StringComparison.OrdinalIgnoreCase))
+            {
+                using var stream = new MemoryStream(bytes.ToArray(), false);
+                using var reader = XmlReader.Create(stream, new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+                    MaxCharactersInDocument = LevelDocument.MaximumBytes, IgnoreComments = true });
+                var root = XDocument.Load(reader).Root;
+                if (root is null || root.Name != "tileset" || root.Attribute("source") is not null || root.Attribute("firstgid") is not null)
+                    throw new FormatException("External TSX files need a tileset root without source or firstgid.");
+                definitions = XmlDefinitions(root);
+            }
+            else if (Path.GetExtension(path).ToLowerInvariant() is ".tsj" or ".json")
+            {
+                using var json = JsonDocument.Parse(bytes, new() { MaxDepth = 32 }); var root = json.RootElement;
+                if (Text(root, "type", "tileset") != "tileset" || root.TryGetProperty("source", out _) || root.TryGetProperty("firstgid", out _))
+                    throw new FormatException("External JSON tilesets cannot contain source or firstgid.");
+                definitions = JsonDefinitions(root);
+            }
+            else throw new FormatException("External tilesets must use .tsx, .tsj or .json.");
+            _external.Add(path, definitions); return definitions;
+        }
+
+        private static TileDefinition[] JsonDefinitions(JsonElement set)
+        {
+            var result = new List<TileDefinition>();
+            if (set.TryGetProperty("tiles", out var tiles))
+                foreach (var tile in tiles.EnumerateArray())
+                {
+                    string kind = Text(tile, "type", Text(tile, "class"));
+                    if (kind.Length == 0) continue;
+                    if (result.Count == MaximumDefinitions) throw new FormatException("Too many tileset gameplay definitions.");
+                    if (tile.TryGetProperty("objectgroup", out _)) throw new FormatException("Tile collision object groups are not supported; use a whole-cell gameplay class.");
+                    result.Add(new(tile.GetProperty("id").GetUInt32(), new(ParseKind(kind), default,
+                        PropertyNumber(tile, "travel"), PropertyNumber(tile, "phase"), PropertyNumber(tile, "verticalTravel"))));
+                }
+            return result.ToArray();
+        }
+        private static TileDefinition[] XmlDefinitions(XElement set)
+        {
+            var result = new List<TileDefinition>();
+            foreach (var tile in set.Elements("tile"))
+            {
+                string kind = Attribute(tile, "type", Attribute(tile, "class"));
+                if (kind.Length == 0) continue;
+                if (result.Count == MaximumDefinitions) throw new FormatException("Too many tileset gameplay definitions.");
+                if (tile.Element("objectgroup") is not null) throw new FormatException("Tile collision object groups are not supported; use a whole-cell gameplay class.");
+                result.Add(new(Unsigned(Attribute(tile, "id")), new(ParseKind(kind), default, ParseNumber(XmlProperty(tile, "travel", "0")),
+                    ParseNumber(XmlProperty(tile, "phase", "0")), ParseNumber(XmlProperty(tile, "verticalTravel", "0")))));
+            }
+            return result.ToArray();
         }
 
         private int Count(int width, int height)
@@ -187,7 +239,7 @@ public static partial class LevelFiles
             uint gid = encoded & 0x0fff_ffff;
             if (gid == 0) return null;
             if (!_definitions!.TryGetValue(gid, out var tile))
-                throw new FormatException($"Tile GID {gid} has no embedded gameplay class. Embed external tilesets and assign Suntrail classes to used tiles.");
+                throw new FormatException($"Tile GID {gid} has no gameplay class. Include referenced tilesets in a ZIP and assign Suntrail classes to used tiles.");
             // Whole-cell static solids are axis-aligned and symmetric under tile flips.
             // Directional actors/markers retain explicit transform diagnostics until their artwork importer exists.
             if ((encoded & 0xe000_0000) != 0 && !Mergeable(tile))
@@ -217,7 +269,7 @@ public static partial class LevelFiles
                             LevelObjectKind.Coin or LevelObjectKind.Relic => new Box(x + _tileWidth / 2f, y + _tileHeight / 2f, 0, 0),
                             LevelObjectKind.Spawn => new Box(x + (_tileWidth - GameSession.PlayerWidth) / 2, y + _tileHeight - GameSession.PlayerHeight, 0, 0),
                             LevelObjectKind.Exit or LevelObjectKind.Checkpoint => new Box(x + _tileWidth / 2f, y + _tileHeight, 0, 0),
-                            LevelObjectKind.Enemy => new Box(x + (_tileWidth - 42) / 2f, y + _tileHeight - 34, 42, 34),
+                            LevelObjectKind.Enemy or LevelObjectKind.Hopper or LevelObjectKind.Hoverer => new Box(x + (_tileWidth - 42) / 2f, y + _tileHeight - 34, 42, 34),
                             _ => new Box(x, y, _tileWidth, _tileHeight)
                         };
                         Add(output, tile with { Bounds = bounds }); column++; continue;

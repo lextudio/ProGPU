@@ -25,8 +25,9 @@ public sealed unsafe partial class ProceduralPipeline : ICompositorExtension, ID
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct FrameUniforms { public Matrix4x4 Transform; public Vector4 Scene, Clip, Light0, Light1, Light2;
-        public Vector4 Occlusion, Ground0, Ground1, Ground2, Ground3, Ground4, Ground5, Ground6, Ground7;
+        public Vector4 Occlusion, Ground0, Ground1, Ground2, Ground3, Ground4, Ground5, Ground6, Ground7, Camera;
     }
+    private const uint FrameUniformBytes = 304;
     private WgpuContext? _context;
     private RenderPipelineCache? _cache;
     private GpuBuffer? _instances, _uniforms;
@@ -106,25 +107,9 @@ public sealed unsafe partial class ProceduralPipeline : ICompositorExtension, ID
     {
         if (dc.DataParam is not ProceduralBatch batch || batch.Count == 0) return;
         EnsureResources(compositor);
+        if (_worldReady) { RenderWorldResolve(compositor, (RenderPassEncoder*)renderPassEncoder, isOffscreen); return; }
+        UpdateFrameData(batch);
         var api = compositor.Context.Api;
-        if (!ReferenceEquals(_lastBatch, batch) || _lastGeneration != batch.Generation || _lastUsedPages != _pagesPrepared)
-        {
-            if (!_pagesPrepared)
-            {
-                _instances!.Write(batch.Sprites);
-                UploadedBytes += batch.Count * 48;
-            }
-            _lastBatch = batch; _lastGeneration = batch.Generation; _lastUsedPages = _pagesPrepared; _uniformsDirty = true;
-        }
-        if (_uniformsDirty)
-        {
-            _uniforms!.WriteSingle(new FrameUniforms { Transform = _transform, Scene = batch.Scene, Clip = _clip, Light0 = batch.Light0, Light1 = batch.Light1, Light2 = batch.Light2,
-                Occlusion = new(batch.OccluderCount, batch.IsDungeon ? 1 : 0, _earlyCoverage ? 1 : 0, 0),
-                Ground0 = batch.Occluders[0], Ground1 = batch.Occluders[1], Ground2 = batch.Occluders[2], Ground3 = batch.Occluders[3],
-                Ground4 = batch.Occluders[4], Ground5 = batch.Occluders[5], Ground6 = batch.Occluders[6], Ground7 = batch.Occluders[7]
-            });
-            UploadedBytes += 288; _uniformsDirty = false;
-        }
         var pass = (RenderPassEncoder*)renderPassEncoder;
         api.RenderPassEncoderSetBindGroup(pass, 0, _group, 0, null);
         if (_pagesPrepared) { RenderMaterialPages(compositor, pass, isOffscreen, batch); return; }
@@ -147,6 +132,29 @@ public sealed unsafe partial class ProceduralPipeline : ICompositorExtension, ID
             api.RenderPassEncoderSetPipeline(pass, GetPipeline(compositor, isOffscreen, EnableWorldShaders ? 6 + (int)batch.Scene.Y * 6 + variant : variant));
             api.RenderPassEncoderDraw(pass, 6, (uint)(end - first), 0, (uint)first);
             Draws++; first = end;
+        }
+    }
+
+    private void UpdateFrameData(ProceduralBatch batch)
+    {
+        if (!ReferenceEquals(_lastBatch, batch) || _lastGeneration != batch.Generation || _lastUsedPages != _pagesPrepared)
+        {
+            if (!_pagesPrepared)
+            {
+                _instances!.Write(batch.Sprites);
+                UploadedBytes += batch.Count * 48;
+            }
+            _lastBatch = batch; _lastGeneration = batch.Generation; _lastUsedPages = _pagesPrepared; _uniformsDirty = true;
+        }
+        if (_uniformsDirty)
+        {
+            _uniforms!.WriteSingle(new FrameUniforms { Transform = _transform, Scene = batch.Scene, Clip = _clip, Light0 = batch.Light0, Light1 = batch.Light1, Light2 = batch.Light2,
+                Occlusion = new(batch.OccluderCount, batch.IsDungeon ? 1 : 0, _earlyCoverage ? 1 : 0, 0),
+                Ground0 = batch.Occluders[0], Ground1 = batch.Occluders[1], Ground2 = batch.Occluders[2], Ground3 = batch.Occluders[3],
+                Ground4 = batch.Occluders[4], Ground5 = batch.Occluders[5], Ground6 = batch.Occluders[6], Ground7 = batch.Occluders[7],
+                Camera = new(batch.Camera.Position, batch.Camera.Scale, 0)
+            });
+            UploadedBytes += FrameUniformBytes; _uniformsDirty = false;
         }
     }
 
@@ -181,21 +189,22 @@ public sealed unsafe partial class ProceduralPipeline : ICompositorExtension, ID
         _cache = new RenderPipelineCache(_context);
         var api = _context.Api;
         _instances = new(_context, ProceduralBatch.Capacity * 48, BufferUsage.Vertex | BufferUsage.CopyDst, "Suntrail bounded sprite instances");
-        _uniforms = new(_context, 288, BufferUsage.Uniform | BufferUsage.CopyDst, "Suntrail frame");
-        var entry = new BindGroupLayoutEntry { Binding = 0, Visibility = ShaderStage.Vertex | ShaderStage.Fragment, Buffer = new() { Type = BufferBindingType.Uniform, MinBindingSize = 288 } };
+        _uniforms = new(_context, FrameUniformBytes, BufferUsage.Uniform | BufferUsage.CopyDst, "Suntrail frame");
+        var entry = new BindGroupLayoutEntry { Binding = 0, Visibility = ShaderStage.Vertex | ShaderStage.Fragment, Buffer = new() { Type = BufferBindingType.Uniform, MinBindingSize = FrameUniformBytes } };
         var description = new BindGroupLayoutDescriptor { EntryCount = 1, Entries = &entry };
         _layout = api.DeviceCreateBindGroupLayout(_context.Device, &description);
         var layouts = stackalloc BindGroupLayout*[1];
         layouts[0] = _layout;
         var pipelineDescription = new PipelineLayoutDescriptor { BindGroupLayoutCount = 1, BindGroupLayouts = layouts };
         _pipelineLayout = api.DeviceCreatePipelineLayout(_context.Device, &pipelineDescription);
-        var binding = new BindGroupEntry { Binding = 0, Buffer = _uniforms.BufferPtr, Size = 288 };
+        var binding = new BindGroupEntry { Binding = 0, Buffer = _uniforms.BufferPtr, Size = FrameUniformBytes };
         var groupDescription = new BindGroupDescriptor { Layout = _layout, EntryCount = 1, Entries = &binding };
         _group = api.DeviceCreateBindGroup(_context.Device, &groupDescription);
     }
 
     public void Dispose()
     {
+        DisposeWorldPass();
         DisposeMaterials();
         DisposeSkyCache();
         if (_context is { IsDisposed: false } context)

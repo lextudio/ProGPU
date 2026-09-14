@@ -34,28 +34,55 @@ public sealed class GameSession
     private double _accumulator;
     private float _coyote, _jumpBuffer;
     private int _standingPlatform = -1, _particleCursor;
+    private bool _springLaunch;
     private bool _jumpQueued;
     private bool _interactQueued;
     private Level? _overworld, _dungeon;
-    private Vector2 _pipeReturn;
+    private LevelDocument? _customDocument;
+    private Level[]? _customRooms;
+    private int[]? _roomCheckpoints;
+    private readonly Dictionary<int, ((int Room, int Pipe) A, (int Room, int Pipe) B)> _routes = [];
+    public int RoomIndex { get; private set; }
+    private Level? _respawnLevel;
     private Vector2 _respawn = new(140, 552);
     private uint _random = 0x53554e31;
     public Box PlayerBounds => new(Position.X, Position.Y, PlayerWidth, PlayerHeight);
 
     public void StartLevel(int index)
     {
+        _customDocument = null; _customRooms = null; _roomCheckpoints = null; _routes.Clear(); RoomIndex = 0;
         Start(new(index), new(index, true));
     }
 
-    public void StartDocument(LevelDocument document) => Start(document.CreateLevel(), null);
+    public void StartDocument(LevelDocument document)
+    {
+        document.ValidateConnections();
+        var rooms = new Level[document.RoomCount];
+        var endpoints = new Dictionary<int, (int Room, int Pipe)>();
+        var routes = new Dictionary<int, ((int Room, int Pipe), (int Room, int Pipe))>();
+        for (int room = 0; room < rooms.Length; room++)
+        {
+            rooms[room] = document.GetRoom(room).CreateLevel();
+            for (int pipe = 0; pipe < rooms[room].PipeLinks.Length; pipe++)
+            {
+                int link = rooms[room].PipeLinks[pipe];
+                if (endpoints.TryGetValue(link, out var first)) routes.Add(link, (first, (room, pipe)));
+                else endpoints.Add(link, (room, pipe));
+            }
+        }
+        _customDocument = document; _customRooms = rooms; RoomIndex = 0;
+        _roomCheckpoints = new int[rooms.Length]; Array.Fill(_roomCheckpoints, -1);
+        _routes.Clear(); foreach (var route in routes) _routes.Add(route.Key, route.Value);
+        Start(rooms[0], null);
+    }
 
     private void Start(Level level, Level? dungeon)
     {
         Level = level; Position = PreviousPosition = _respawn = Level.Spawn;
-        _overworld = Level; _dungeon = dungeon; _interactQueued = false;
+        _overworld = Level; _respawnLevel = Level; _dungeon = dungeon; _interactQueued = false;
         Velocity = Vector2.Zero; Hearts = 3; Coins = Relics = 0; Time = 0; Tick = 0;
         CheckpointIndex = -1; CameraX = CameraY = 0; Invulnerability = 0;
-        Grounded = false; _standingPlatform = -1; _accumulator = 0; _coyote = _jumpBuffer = 0; _jumpQueued = false;
+        Grounded = false; _standingPlatform = -1; _springLaunch = false; _accumulator = 0; _coyote = _jumpBuffer = 0; _jumpQueued = false;
         Array.Clear(Particles); _random = 0x53554e31u + (uint)Level.Index;
         Mode = GameMode.Playing; Revision++;
     }
@@ -77,15 +104,20 @@ public sealed class GameSession
             case GameMode.Fallen: Respawn(); break;
             case GameMode.LevelComplete: StartLevel(Level.Index + 1); break;
             case GameMode.Complete:
-                if (Level.Document is { } document) StartDocument(document); else StartLevel(0);
+                if (_customDocument is { } document) StartDocument(document); else StartLevel(0);
                 break;
         }
     }
     public void Respawn()
     {
-        if (Level.IsDungeon && _overworld is not null) Level = _overworld;
-        Position = PreviousPosition = _respawn; Velocity = Vector2.Zero; Hearts = 3;
-        Invulnerability = 1.5f; Grounded = false; _standingPlatform = -1;
+        if (_customRooms is not null && _respawnLevel is not null)
+        {
+            Level = _respawnLevel; RoomIndex = Array.IndexOf(_customRooms, Level);
+            CheckpointIndex = _roomCheckpoints![RoomIndex];
+        }
+        else if (Level.IsDungeon && _overworld is not null) Level = _overworld;
+        Position = PreviousPosition = _respawn; Velocity = Vector2.Zero; Hearts = 3; Level.ResetSupports();
+        Invulnerability = 1.5f; Grounded = false; _standingPlatform = -1; _springLaunch = false;
         _jumpBuffer = _coyote = 0; _jumpQueued = _interactQueued = false; _accumulator = 0;
         CameraX = Math.Clamp(Position.X - ViewWidth * .32f, 0, Math.Max(0, Level.Width - ViewWidth));
         Mode = GameMode.Playing; Revision++;
@@ -116,7 +148,7 @@ public sealed class GameSession
         Invulnerability = Math.Max(0, Invulnerability - dt);
         _jumpBuffer = input.JumpPressed ? .13f : Math.Max(0, _jumpBuffer - dt);
         _coyote = Grounded ? .11f : Math.Max(0, _coyote - dt);
-        if (_standingPlatform >= 0)
+        if (_standingPlatform >= 0 && Level.IsPlatformSolid(_standingPlatform, Tick))
         {
             var platform = Level.Platforms[_standingPlatform];
             var current = platform.At(Time); var previous = platform.At(oldTime);
@@ -125,17 +157,21 @@ public sealed class GameSession
         float move = float.IsFinite(input.Move) ? Math.Clamp(input.Move, -1, 1) : 0;
         float speed = input.Run ? 390 : 300;
         float target = move * speed;
-        Velocity = new(Approach(Velocity.X, target, (Grounded ? 2300 : 1400) * dt), Velocity.Y);
+        float tangentVelocity = Grounded && _standingPlatform >= 0 && Level.IsPlatformSolid(_standingPlatform, Tick)
+            ? Level.Platforms[_standingPlatform].Contact.IntegrateTangent(Velocity.X, target, dt)
+            : Approach(Velocity.X, target, 1400 * dt);
+        Velocity = new(tangentVelocity, Velocity.Y);
         if (Math.Abs(move) > .1f) Facing = move > 0 ? 1 : -1;
         if (_jumpBuffer > 0 && _coyote > 0)
         {
-            Velocity = new(Velocity.X, -720); Grounded = false;
+            Velocity = new(Velocity.X, -720); Grounded = false; _springLaunch = false;
             _jumpBuffer = _coyote = 0; _standingPlatform = -1;
             Burst(Position + new Vector2(15, 48), 8, 0);
         }
-        if (!input.JumpHeld && Velocity.Y < -270) Velocity = new(Velocity.X, Velocity.Y + 2600 * dt);
+        if (Velocity.Y >= 0) _springLaunch = false;
+        if (!_springLaunch && !input.JumpHeld && Velocity.Y < -270) Velocity = new(Velocity.X, Velocity.Y + 2600 * dt);
         Velocity = new(Velocity.X, Math.Min(980, Velocity.Y + 1760 * dt));
-        MoveAndCollide(dt);
+        MoveAndCollide(dt, input.JumpHeld);
         for (int i = 0; i < Level.Pickups.Length; i++)
         {
             ref var coin = ref Level.Pickups[i];
@@ -147,11 +183,13 @@ public sealed class GameSession
         {
             ref var enemy = ref Level.Enemies[i];
             if (enemy.Defeated) continue;
+            float previousEnemyTop = enemy.Position.Y;
             enemy.Position.X += enemy.Speed * dt;
             if (enemy.Position.X < enemy.Left) { enemy.Position.X = enemy.Left; enemy.Speed = Math.Abs(enemy.Speed); }
             if (enemy.Position.X > enemy.Right) { enemy.Position.X = enemy.Right; enemy.Speed = -Math.Abs(enemy.Speed); }
+            if (enemy.Kind != EnemyKind.Walker) enemy.Position.Y = enemy.AnchorY + enemy.VerticalOffset(Time);
             if (!PlayerBounds.Intersects(new(enemy.Position.X, enemy.Position.Y, 42, 34))) continue;
-            if (Velocity.Y > 0 && PreviousPosition.Y + PlayerHeight <= enemy.Position.Y + 12)
+            if (Velocity.Y > 0 && PreviousPosition.Y + PlayerHeight <= previousEnemyTop + 12)
             {
                 enemy.Defeated = true; Velocity = new(Velocity.X, input.JumpHeld ? -560 : -410);
                 Burst(enemy.Position + new Vector2(20, 15), 12, 2);
@@ -172,11 +210,12 @@ public sealed class GameSession
             // authored safe floor as the respawn point, even when crossing above it.
             float checkpointHeight = Position.Y + PlayerHeight - checkpoint.Y;
             if (Math.Abs(Position.X - checkpoint.X) > 38 || checkpointHeight < -220 || checkpointHeight > 70) continue;
-            CheckpointIndex = i; _respawn = new(checkpoint.X, checkpoint.Y - PlayerHeight);
+            CheckpointIndex = i; _respawn = new(checkpoint.X, checkpoint.Y - PlayerHeight); _respawnLevel = Level;
+            if (_roomCheckpoints is not null) _roomCheckpoints[RoomIndex] = i;
             Hearts = 3; Burst(_respawn, 20, 1);
         }
         if (Position.Y > 1080) Die();
-        if (!Level.IsDungeon && PlayerBounds.Intersects(new(Level.Exit.X - 15, Level.Exit.Y - 150, 100, 150)))
+        if ((Level.Document is not null || !Level.IsDungeon) && PlayerBounds.Intersects(new(Level.Exit.X - 15, Level.Exit.Y - 150, 100, 150)))
         {
             Mode = Level.Document is not null || Level.Index == Level.Names.Length - 1 ? GameMode.Complete : GameMode.LevelComplete;
             if (Level.Document is null) UnlockedLevel = Math.Max(UnlockedLevel, Math.Min(Level.Index + 1, Level.Names.Length - 1));
@@ -193,12 +232,13 @@ public sealed class GameSession
         if (Grounded && Math.Abs(Velocity.X) > 180 && Tick % 9 == 0) Burst(Position + new Vector2(15, 47), 1, 0);
     }
 
-    private void MoveAndCollide(float dt)
+    private void MoveAndCollide(float dt, bool springBoost)
     {
         Position += new Vector2(Velocity.X * dt, 0);
-        foreach (var platform in Level.Platforms)
+        for (int i = 0; i < Level.Platforms.Length; i++)
         {
-            if (platform.Kind is PlatformKind.Ledge or PlatformKind.Moving) continue;
+            var platform = Level.Platforms[i];
+            if (platform.IsOneWay || !Level.IsPlatformSolid(i, Tick)) continue;
             var b = platform.At(Time); if (!PlayerBounds.Intersects(b)) continue;
             Position = new(Velocity.X > 0 ? b.X - PlayerWidth : b.Right, Position.Y);
             Velocity = new(0, Velocity.Y);
@@ -209,13 +249,22 @@ public sealed class GameSession
         for (int i = 0; i < Level.Platforms.Length; i++)
         {
             var platform = Level.Platforms[i]; var b = platform.At(Time);
-            if (!PlayerBounds.Intersects(b)) continue;
+            if (!Level.IsPlatformSolid(i, Tick) || !PlayerBounds.Intersects(b)) continue;
             if (Velocity.Y >= 0 && oldBottom <= b.Y + 1)
             {
                 Position = new(Position.X, b.Y - PlayerHeight); Velocity = new(Velocity.X, 0);
                 Grounded = true; _standingPlatform = i;
+                Level.TouchPlatform(i, Tick);
+                if (platform.Kind == PlatformKind.Spring)
+                {
+                    Velocity = new(Velocity.X, -platform.Contact.LaunchSpeed * (springBoost ? 1.12f : 1));
+                    Grounded = false; _standingPlatform = -1; _springLaunch = true;
+                    _jumpBuffer = _coyote = 0;
+                    Burst(Position + new Vector2(15, 48), 12, 1);
+                    break;
+                }
             }
-            else if (Velocity.Y < 0 && platform.Kind is not (PlatformKind.Ledge or PlatformKind.Moving))
+            else if (Velocity.Y < 0 && !platform.IsOneWay)
             {
                 Position = new(Position.X, b.Bottom); Velocity = new(Velocity.X, 0);
             }
@@ -233,11 +282,52 @@ public sealed class GameSession
     }
     private bool TryUsePipe()
     {
-        if (!CanUsePipe || _overworld is null || _dungeon is null) return false;
-        if (Level.IsDungeon) { Level = _overworld; Position = _pipeReturn; }
-        else { _pipeReturn = Position; Level = _dungeon; Position = Level.Spawn; }
+        if (!CanUsePipe) return false;
+        if (_customRooms is not null)
+        {
+            int pipe = -1;
+            for (int i = 0; i < Level.Pipes.Length; i++)
+            {
+                var b = Level.Pipes[i];
+                if (Position.X >= b.X && Position.X + PlayerWidth <= b.Right && Math.Abs(Position.Y + PlayerHeight - b.Y) < 2)
+                { pipe = i; break; }
+            }
+            if (pipe < 0 || !_routes.TryGetValue(Level.PipeLinks[pipe], out var route)) return false;
+            var destination = route.A == (RoomIndex, pipe) ? route.B : route.A;
+            RoomIndex = destination.Room; Level = _customRooms[RoomIndex];
+            var target = Level.Pipes[destination.Pipe];
+            Position = new(target.X + (target.Width - PlayerWidth) / 2, target.Y - PlayerHeight);
+            CheckpointIndex = _roomCheckpoints![RoomIndex];
+        }
+        else
+        {
+            if (_overworld is null || _dungeon is null) return false;
+            int source = -1;
+            for (int i = 0; i < Level.Pipes.Length; i++)
+            {
+                var b = Level.Pipes[i];
+                if (Position.X >= b.X && Position.X + PlayerWidth <= b.Right && Math.Abs(Position.Y + PlayerHeight - b.Y) < 2)
+                { source = i; break; }
+            }
+            if (source < 0) return false;
+            bool leavingVault = Level.IsDungeon;
+            var next = leavingVault ? _overworld : _dungeon;
+            if (source >= next.Pipes.Length) return false;
+            var target = next.Pipes[source];
+            Level = next; Position = new(target.X + (target.Width - PlayerWidth) / 2, target.Y - PlayerHeight);
+            if (leavingVault && Position.X > _respawn.X)
+            {
+                // Completing the vault grants a safe checkpoint at its overworld
+                // exit. The two ends are a real shortcut, rather than both returning
+                // to whichever pipe happened to be entered first.
+                _respawn = Position; _respawnLevel = Level;
+                for (int i = 0; i < Level.Checkpoints.Length; i++)
+                    if (Level.Checkpoints[i].X <= Position.X) CheckpointIndex = Math.Max(CheckpointIndex, i);
+            }
+
+        }
         PreviousPosition = Position; Velocity = Vector2.Zero; Grounded = false;
-        _standingPlatform = -1; _coyote = _jumpBuffer = 0;
+        _standingPlatform = -1; _springLaunch = false; _coyote = _jumpBuffer = 0;
         _jumpQueued = _interactQueued = false;
         CameraX = Math.Clamp(Position.X - ViewWidth * .34f, 0, Math.Max(0, Level.Width - ViewWidth));
         CameraY = Math.Clamp(Position.Y - 460, -320, 140);

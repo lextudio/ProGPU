@@ -26,10 +26,16 @@ public sealed unsafe partial class ProceduralPipeline
         in Compositor.CompositorDrawCall drawCall, out Compositor.CompositorDrawCall preparedDrawCall)
     {
         preparedDrawCall = drawCall;
+        _worldReady = false;
         _skyReady = false;
         _pagesPrepared = false;
         if (drawCall.DataParam is ProceduralBatch materialBatch) PrepareMaterialPages(compositor, materialBatch);
-        if (_pagesPrepared) return false;
+        if (_pagesPrepared)
+        {
+            if (drawCall.DataParam is ProceduralBatch scene) PrepareWorldPass(compositor, scene, isOffscreen);
+            return false;
+        }
+        ReleaseUnusedWorldPass();
         if (!EnableSkyCache || drawCall.DataParam is not ProceduralBatch batch || batch.Count == 0 ||
             _transform != Matrix4x4.Identity) return false;
         var sky = batch.Sprites[0];
@@ -58,9 +64,9 @@ public sealed unsafe partial class ProceduralPipeline
         var context = _context!; var api = context.Api;
         if (_skyUniforms is null)
         {
-            _skyUniforms = new(context, 288, BufferUsage.Uniform | BufferUsage.CopyDst, "Suntrail retained sky frame");
+            _skyUniforms = new(context, FrameUniformBytes, BufferUsage.Uniform | BufferUsage.CopyDst, "Suntrail retained sky frame");
             _skyInstance = new(context, 48, BufferUsage.Vertex | BufferUsage.CopyDst, "Suntrail retained sky quad");
-            var uniform = new BindGroupEntry { Binding = 0, Buffer = _skyUniforms.BufferPtr, Size = 288 };
+            var uniform = new BindGroupEntry { Binding = 0, Buffer = _skyUniforms.BufferPtr, Size = FrameUniformBytes };
             var group = new BindGroupDescriptor { Layout = _layout, EntryCount = 1, Entries = &uniform };
             _skyBakeGroup = api.DeviceCreateBindGroup(context.Device, &group);
             var texture = new BindGroupLayoutEntry { Binding = 0, Visibility = ShaderStage.Fragment,
@@ -89,7 +95,7 @@ public sealed unsafe partial class ProceduralPipeline
             Scene = batch.Scene, Clip = new(0, 0, batch.Size.X, batch.Size.Y),
             Occlusion = new(0, batch.IsDungeon ? 1 : 0, 0, 0) });
         _skyInstance!.WriteSingle(sky);
-        UploadedBytes += 336;
+        UploadedBytes += FrameUniformBytes + 48;
         var pipeline = CreateSkyPipeline(compositor, bake: true, isOffscreen: true, (int)batch.Scene.Y);
         var encoder = api.DeviceCreateCommandEncoder(context.Device, null);
         CommandBuffer* commands = null;

@@ -27,6 +27,7 @@ public sealed unsafe partial class ProceduralPipeline
     private readonly MaterialPageInstance[] _bakes = new MaterialPageInstance[BakeBudget];
     private readonly MaterialPageHandle[] _bakeHandles = new MaterialPageHandle[BakeBudget];
     private int _pageCount, _previousPageCount = -1;
+    private uint _pageUploadGeneration;
     private bool _pagesPrepared, _atlasInitialized;
     private GpuBuffer? _pageBuffer, _bakeBuffer, _bakeUniforms;
     private BindGroup* _materialSampleGroup, _materialBakeGroup;
@@ -41,7 +42,7 @@ public sealed unsafe partial class ProceduralPipeline
     private static bool IsStaticMaterial(Artwork kind) => kind is Artwork.Sky or Artwork.Cliff or Artwork.Tree or
         Artwork.Bush or Artwork.Crate or Artwork.Lantern or Artwork.Ledge or Artwork.Thorns or Artwork.Cloud or
         Artwork.Mountain or Artwork.Ruin or Artwork.Mushroom or Artwork.Shadow or Artwork.Fern or
-        Artwork.Crystal or Artwork.Palm or Artwork.Pine or Artwork.Spire or Artwork.Pipe;
+        Artwork.Crystal or Artwork.Palm or Artwork.Pine or Artwork.Spire or Artwork.Pipe or Artwork.Spring or Artwork.Ice;
 
     private static int MaterialPriority(Artwork kind) => kind switch
     {
@@ -56,15 +57,18 @@ public sealed unsafe partial class ProceduralPipeline
 
     private void PrepareMaterialPages(Compositor compositor, ProceduralBatch batch)
     {
-        _pagesPrepared = false;
+        _pagesPrepared = _sharedInstancesPrepared = false;
+        StaticSourceInstances = 0;
         if (!EnableMaterialPages || _transform != Matrix4x4.Identity) return;
         float dpi = MathF.Max(compositor.CurrentDpiScale, 2), scale = batch.Scene.W;
         if (!float.IsFinite(dpi) || dpi <= 0 || !float.IsFinite(scale) || scale <= 0) return;
         EnsureResources(compositor); EnsureMaterialResources();
+        if (EnableSharedInstances) PrepareSharedSources(batch);
         _materialPages!.BeginFrame(); _pageCount = 0;
         MaterialVisiblePages = MaterialFallbackPages = 0;
-        foreach (var sprite in batch.Sprites)
+        for (int sourceIndex = 0; sourceIndex < batch.Count; sourceIndex++)
         {
+            ref readonly var sprite = ref batch.Sprites[sourceIndex];
             var size = new Vector2(sprite.Bounds.Z, sprite.Bounds.W) / scale;
             var physicalSize = new Vector2(sprite.Bounds.Z, sprite.Bounds.W) * dpi;
             bool cacheable = IsStaticMaterial((Artwork)(int)sprite.Material.X) &&
@@ -72,7 +76,7 @@ public sealed unsafe partial class ProceduralPipeline
                 physicalSize.X > 0 && physicalSize.Y > 0 && physicalSize.X < 1_000_000 && physicalSize.Y < 1_000_000;
             if (!cacheable)
             {
-                AddPageInstance(new(sprite.Bounds, sprite.Color, sprite.Material, new(0, 0, 1, 1), default, new(size, 0, 0)), default);
+                AddPageInstance(new(sprite.Bounds, sprite.Color, sprite.Material, new(0, 0, 1, 1), default, new(size, 0, 0)), default, sourceIndex);
                 continue;
             }
             // Screen culling selects page ranges directly; enormous terrain segments
@@ -96,7 +100,7 @@ public sealed unsafe partial class ProceduralPipeline
                 var region = new Vector4(origin / physicalSize, extent.X / physicalSize.X, extent.Y / physicalSize.Y);
                 var atlas = resident ? _materialAtlas!.SampleRect(handle.Slot, extent) : default;
                 AddPageInstance(new(sprite.Bounds, sprite.Color, sprite.Material, region, atlas, new(size, resident ? 1 : 0, 0)),
-                    new() { Key = key, Cacheable = true, Cached = resident });
+                    new() { Key = key, Cacheable = true, Cached = resident }, sourceIndex);
                 MaterialVisiblePages++;
             }
         }
@@ -143,12 +147,16 @@ public sealed unsafe partial class ProceduralPipeline
             }
             else MaterialFallbackPages++;
         }
-        var current = _pageInstances.AsSpan(0, _pageCount);
-        if (_previousPageCount != _pageCount || !MemoryMarshal.AsBytes(current).SequenceEqual(MemoryMarshal.AsBytes(_previousPageInstances.AsSpan(0, _pageCount))))
+        if (EnableSharedInstances) UploadSharedInstances(batch);
+        else
         {
-            _pageBuffer!.Write<MaterialPageInstance>(current);
-            UploadedBytes += _pageCount * 96;
-            current.CopyTo(_previousPageInstances); _previousPageCount = _pageCount;
+            var current = _pageInstances.AsSpan(0, _pageCount);
+            if (_previousPageCount != _pageCount || !MemoryMarshal.AsBytes(current).SequenceEqual(MemoryMarshal.AsBytes(_previousPageInstances.AsSpan(0, _pageCount))))
+            {
+                _pageBuffer!.Write<MaterialPageInstance>(current);
+                UploadedBytes += _pageCount * 96;
+                current.CopyTo(_previousPageInstances); _previousPageCount = _pageCount; _pageUploadGeneration++;
+            }
         }
         _pagesPrepared = true;
     }
@@ -163,16 +171,18 @@ public sealed unsafe partial class ProceduralPipeline
         return false;
     }
 
-    private void AddPageInstance(MaterialPageInstance instance, PageRequest request)
+    private void AddPageInstance(MaterialPageInstance instance, PageRequest request, int sourceIndex)
     {
         if (_pageCount == PageInstanceCapacity) throw new InvalidOperationException("Visible material page instance capacity exceeded.");
+        if (EnableSharedInstances) _pageSourceIndices![_pageCount] = _sourceLookup![sourceIndex];
         _pageInstances[_pageCount] = instance; _pageRequests[_pageCount++] = request;
     }
 
     private void RenderMaterialPages(Compositor compositor, RenderPassEncoder* pass, bool offscreen, ProceduralBatch batch)
     {
         var api = _context!.Api;
-        api.RenderPassEncoderSetVertexBuffer(pass, 0, _pageBuffer!.BufferPtr, 0, _pageBuffer.Size);
+        if (_sharedInstancesPrepared) api.RenderPassEncoderSetBindGroup(pass, 2, _sharedStorageGroup, 0, null);
+        else api.RenderPassEncoderSetVertexBuffer(pass, 0, _pageBuffer!.BufferPtr, 0, _pageBuffer.Size);
         api.RenderPassEncoderSetBindGroup(pass, 1, _materialSampleGroup, 0, null);
         for (int first = 0; first < _pageCount;)
         {
@@ -194,6 +204,7 @@ public sealed unsafe partial class ProceduralPipeline
 
     private RenderPipeline* GetPagePipeline(Compositor compositor, bool offscreen, int variant, bool bake = false)
     {
+        if (!bake && _sharedInstancesPrepared) return GetSharedPagePipeline(compositor, offscreen, variant);
         var pipelines = offscreen ? _pageOffscreen : _pageOnscreen;
         nint existing = bake ? _materialBakePipeline : pipelines[variant];
         if (existing != 0) return (RenderPipeline*)existing;
@@ -218,10 +229,10 @@ public sealed unsafe partial class ProceduralPipeline
         if (_materialAtlas is not null) return;
         var context = _context!; var api = context.Api;
         _materialAtlas = new(context, MaterialAtlasExtent); _materialPages = new(_materialAtlas.Capacity);
-        _pageBuffer = new(context, PageInstanceCapacity * 96, BufferUsage.Vertex | BufferUsage.CopyDst, "Suntrail visible material instances");
+        _pageBuffer = new(context, PageInstanceCapacity * 96, BufferUsage.Vertex | BufferUsage.Storage | BufferUsage.CopyDst, "Suntrail visible material instances");
         _bakeBuffer = new(context, BakeBudget * 96, BufferUsage.Vertex | BufferUsage.CopyDst, "Suntrail bounded material compiler jobs");
-        _bakeUniforms = new(context, 288, BufferUsage.Uniform | BufferUsage.CopyDst, "Suntrail material compiler frame");
-        var uniform = new BindGroupEntry { Binding = 0, Buffer = _bakeUniforms.BufferPtr, Size = 288 };
+        _bakeUniforms = new(context, FrameUniformBytes, BufferUsage.Uniform | BufferUsage.CopyDst, "Suntrail material compiler frame");
+        var uniform = new BindGroupEntry { Binding = 0, Buffer = _bakeUniforms.BufferPtr, Size = FrameUniformBytes };
         var bakeGroup = new BindGroupDescriptor { Layout = _layout, EntryCount = 1, Entries = &uniform };
         _materialBakeGroup = api.DeviceCreateBindGroup(context.Device, &bakeGroup);
         var entries = stackalloc BindGroupLayoutEntry[2];
@@ -248,7 +259,7 @@ public sealed unsafe partial class ProceduralPipeline
         _bakeUniforms!.WriteSingle(new FrameUniforms { Transform = Matrix4x4.Identity, Scene = batch.Scene,
             Clip = new(0, 0, _materialAtlas!.Texture.Width, _materialAtlas.Texture.Height), Occlusion = new(0, batch.IsDungeon ? 1 : 0, 1, 1) });
         _bakeBuffer!.Write<MaterialPageInstance>(_bakes.AsSpan(0, count));
-        UploadedBytes += 288 + count * 96;
+        UploadedBytes += FrameUniformBytes + count * 96;
         var pipeline = GetPagePipeline(compositor, true, 0, bake: true);
         var encoder = api.DeviceCreateCommandEncoder(context.Device, null);
         CommandBuffer* commands = null;
@@ -275,6 +286,7 @@ public sealed unsafe partial class ProceduralPipeline
 
     private void DisposeMaterials()
     {
+        DisposeSharedInstances();
         if (_context is { IsDisposed: false } context)
         {
             if (_materialSampleGroup != null) context.QueueBindGroupDisposal((nint)_materialSampleGroup);

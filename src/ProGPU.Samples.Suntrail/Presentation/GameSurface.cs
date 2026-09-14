@@ -19,6 +19,8 @@ public sealed class GameSurface : FrameworkElement
     private float _atmosphere;
     private uint _revision = uint.MaxValue;
     private Vector2 _builtSize;
+    private Level? _builtLevel;
+    private uint _builtGeometryGeneration;
 
     protected override Vector2 MeasureOverride(Vector2 availableSize) => new(float.IsFinite(availableSize.X) ? availableSize.X : 1280, float.IsFinite(availableSize.Y) ? availableSize.Y : 800);
     protected override void OnUpdateAnimations(float elapsedSeconds)
@@ -35,10 +37,10 @@ public sealed class GameSurface : FrameworkElement
         Input = Input with { JumpPressed = false, InteractPressed = false };
         bool animate = Session.Mode is GameMode.Playing or GameMode.Title;
         if (animate) _atmosphere += Math.Clamp(gameElapsed, 0, .1f);
-        if (animate || _revision != Session.Revision || _builtSize != Size)
+        if (animate || _revision != Session.Revision || _builtSize != Size || !ReferenceEquals(_builtLevel, Session.Level) || _builtGeometryGeneration != Session.Level.GeometryGeneration)
         {
             Batch.Build(Session, Size, _atmosphere);
-            _revision = Session.Revision; _builtSize = Size;
+            _revision = Session.Revision; _builtSize = Size; _builtLevel = Session.Level; _builtGeometryGeneration = Session.Level.GeometryGeneration;
             Invalidate();
         }
         Updated?.Invoke();

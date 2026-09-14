@@ -1,4 +1,5 @@
 using System.Globalization;
+using ProGPU.GameEngine.Assets;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
@@ -6,15 +7,16 @@ using System.Xml.Linq;
 namespace ProGPU.Samples.Suntrail.Game;
 
 /// <summary>
-/// Original readers of the documented Tiled map contracts, plus Suntrail v1.
+/// Original readers of the documented Tiled map contracts, plus Suntrail v1/v2.
 /// Bounded import parsing; tile decoding/coalescing costs are documented in LevelFiles.Tiles.cs.
 /// Files are capped at 1 MiB and compiled levels at 256 objects; no reflection,
-/// file references, code execution, or parsing during simulation/rendering.
+/// ambient file access, code execution, or parsing during simulation/rendering.
+/// External references resolve only against an explicitly supplied immutable asset bundle.
 /// Unsupported geometry fails transactionally instead of changing collision rules.
 /// </summary>
 public static partial class LevelFiles
 {
-    private static readonly string[] Kinds = ["ground", "ledge", "moving", "crate", "pipe", "stone", "coin", "relic", "enemy", "hazard", "checkpoint", "spawn", "exit", "saw", "flame", "crusher"];
+    private static readonly string[] Kinds = ["ground", "ledge", "moving", "crate", "pipe", "stone", "coin", "relic", "enemy", "hazard", "checkpoint", "spawn", "exit", "saw", "flame", "crusher", "spring", "conveyor", "ice", "crumble", "hopper", "hoverer"];
     public static string KindName(LevelObjectKind kind) => Kinds[(int)kind];
     private static LevelObjectKind ParseKind(string text)
     {
@@ -22,44 +24,72 @@ public static partial class LevelFiles
         return index >= 0 ? (LevelObjectKind)index : throw new FormatException($"Unsupported object class '{text}'. Assign a Suntrail gameplay class before importing.");
     }
 
-    public static LevelDocument Read(ReadOnlyMemory<byte> bytes, string fileName)
+    public static int MaximumInputBytes(string fileName) => Path.GetExtension(fileName).Equals(".zip", StringComparison.OrdinalIgnoreCase)
+        ? AssetBundle.MaximumArchiveBytes : LevelDocument.MaximumBytes;
+
+    public static LevelDocument Read(ReadOnlyMemory<byte> bytes, string fileName, AssetBundle? resources = null) =>
+        ReadCore(bytes, fileName, resources, true);
+
+    private static LevelDocument ReadCore(ReadOnlyMemory<byte> bytes, string fileName, AssetBundle? resources, bool validateConnections)
     {
-        if (bytes.Length > LevelDocument.MaximumBytes) throw new FormatException("Level files must be at most 1 MiB.");
+        if (bytes.Length > MaximumInputBytes(fileName)) throw new FormatException("Maps must be at most 1 MiB and ZIP packages at most 16 MiB.");
         string extension = Path.GetExtension(fileName).ToLowerInvariant();
         try
         {
-            return extension switch
+            var document = extension switch
             {
-                ".json" or ".suntrail" => ReadJson(bytes, Path.GetFileNameWithoutExtension(fileName)),
-                ".tmx" => ReadTmx(bytes, Path.GetFileNameWithoutExtension(fileName)),
+                ".json" or ".tmj" or ".suntrail" => ReadJson(bytes, fileName, resources),
+                ".tmx" => ReadTmx(bytes, fileName, resources),
+                ".zip" when resources is null => ReadPackage(AssetBundle.FromZip(bytes)),
+                ".zip" => throw new FormatException("Nested ZIP packages are not supported."),
                 ".nes" => throw new FormatException("NES cartridge level decoding is not available yet. This loader currently accepts Suntrail and Tiled maps."),
                 ".lvl" or ".lvlx" => throw new FormatException("SMBX level decoding is not available yet. This loader currently accepts Suntrail and Tiled maps."),
-                _ => throw new FormatException("Choose a Suntrail .suntrail, Tiled .json or .tmx map.")
+                _ => throw new FormatException("Choose a Suntrail .suntrail, Tiled .json/.tmj/.tmx map, or ZIP package.")
             };
+            if (validateConnections) document.ValidateConnections();
+            return document;
         }
         catch (Exception e) when (e is JsonException or XmlException or InvalidOperationException or OverflowException or KeyNotFoundException or IOException)
         { throw new FormatException("The level file is malformed: " + e.Message, e); }
     }
 
-    private static LevelDocument ReadJson(ReadOnlyMemory<byte> bytes, string fallbackName)
+    private static LevelDocument ReadJson(ReadOnlyMemory<byte> bytes, string fileName, AssetBundle? resources)
     {
         using var json = JsonDocument.Parse(bytes, new() { MaxDepth = 32 });
         var root = json.RootElement;
         var items = new List<LevelObject>();
-        bool native = Text(root, "format") == "suntrail";
-        if (native)
+        if (Text(root, "format") == "suntrail") return ReadNative(root);
+        if (Text(root, "type") != "map" || Text(root, "orientation") != "orthogonal" || Flag(root, "infinite"))
+            throw new FormatException("Only finite orthogonal Tiled maps are supported.");
+        ReadLayers(root.GetProperty("layers"), default, items, 0, new TiledTiles(root, fileName, resources));
+        return new(PropertyText(root, "suntrail.name", Path.GetFileNameWithoutExtension(fileName)),
+            Integer(PropertyNumber(root, "suntrail.biome")), items.ToArray(), PropertyFlag(root, "suntrail.dungeon"));
+    }
+
+    private static LevelDocument ReadNative(JsonElement root)
+    {
+        int version = Integer(Number(root, "version"));
+        if (version is not (1 or 2)) throw new FormatException("Unsupported Suntrail document version.");
+        var rooms = new List<LevelDocument>();
+        if (root.TryGetProperty("rooms", out var children))
         {
-            if (Number(root, "version") != 1) throw new FormatException("Unsupported Suntrail document version.");
-            foreach (var item in root.GetProperty("objects").EnumerateArray()) ReadObject(item, default, true, items);
+            if (version != 2) throw new FormatException("Connected rooms require Suntrail version 2.");
+            foreach (var room in children.EnumerateArray())
+            {
+                if (rooms.Count == LevelDocument.MaximumRooms - 1) throw new FormatException("A trail supports at most eight rooms.");
+                if (room.TryGetProperty("rooms", out _)) throw new FormatException("Rooms cannot contain nested trails.");
+                rooms.Add(ReadNativeRoom(room, []));
+            }
         }
-        else
-        {
-            if (Text(root, "type") != "map" || Text(root, "orientation") != "orthogonal" || Flag(root, "infinite"))
-                throw new FormatException("Only finite orthogonal Tiled maps are supported.");
-            ReadLayers(root.GetProperty("layers"), default, items, 0, new TiledTiles(root));
-        }
-        return new(native ? Text(root, "name") : PropertyText(root, "suntrail.name", fallbackName),
-            Integer(native ? Number(root, "biome") : PropertyNumber(root, "suntrail.biome")), items.ToArray());
+        var result = ReadNativeRoom(root, rooms.ToArray());
+        return result;
+    }
+
+    private static LevelDocument ReadNativeRoom(JsonElement room, LevelDocument[] children)
+    {
+        var items = new List<LevelObject>();
+        foreach (var item in room.GetProperty("objects").EnumerateArray()) ReadObject(item, default, true, items);
+        return new(Text(room, "name"), Integer(Number(room, "biome")), items.ToArray(), Flag(room, "dungeon"), children);
     }
 
     private static void ReadLayers(JsonElement layers, System.Numerics.Vector2 offset, List<LevelObject> items, int depth, TiledTiles tiles)
@@ -87,10 +117,11 @@ public static partial class LevelFiles
             Number(item, "width"), Number(item, "height")),
             native ? Number(item, "travel") : PropertyNumber(item, "travel"),
             native ? Number(item, "phase") : PropertyNumber(item, "phase"),
-            native ? Number(item, "verticalTravel") : PropertyNumber(item, "verticalTravel")));
+            native ? Number(item, "verticalTravel") : PropertyNumber(item, "verticalTravel"),
+            native ? Integer(Number(item, "pipeLink")) : Integer(PropertyNumber(item, "suntrail.pipeLink"))));
     }
 
-    private static LevelDocument ReadTmx(ReadOnlyMemory<byte> bytes, string fallbackName)
+    private static LevelDocument ReadTmx(ReadOnlyMemory<byte> bytes, string fileName, AssetBundle? resources)
     {
         using var stream = new MemoryStream(bytes.ToArray(), false);
         using var reader = XmlReader.Create(stream, new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
@@ -99,8 +130,8 @@ public static partial class LevelFiles
         if (root.Name != "map" || Attribute(root, "orientation") != "orthogonal" || Attribute(root, "infinite", "0") != "0")
             throw new FormatException("Only finite orthogonal Tiled maps are supported.");
         var items = new List<LevelObject>();
-        ReadXmlLayers(root, default, items, 0, new TiledTiles(root));
-        return new(XmlProperty(root, "suntrail.name", fallbackName), Integer(ParseNumber(XmlProperty(root, "suntrail.biome", "0"))), items.ToArray());
+        ReadXmlLayers(root, default, items, 0, new TiledTiles(root, fileName, resources));
+        return new(XmlProperty(root, "suntrail.name", Path.GetFileNameWithoutExtension(fileName)), Integer(ParseNumber(XmlProperty(root, "suntrail.biome", "0"))), items.ToArray(), XmlPropertyFlag(root, "suntrail.dungeon"));
     }
 
     private static void ReadXmlLayers(XElement parent, System.Numerics.Vector2 offset, List<LevelObject> items, int depth, TiledTiles tiles)
@@ -120,7 +151,7 @@ public static partial class LevelFiles
                     throw new FormatException("TMX objects must be unrotated rectangles or points without templates or tile images.");
                 Add(items, new(ParseKind(Attribute(item, "type", Attribute(item, "class"))),
                     new(XmlNumber(item, "x") + position.X, XmlNumber(item, "y") + position.Y, XmlNumber(item, "width"), XmlNumber(item, "height")),
-                    ParseNumber(XmlProperty(item, "travel", "0")), ParseNumber(XmlProperty(item, "phase", "0")), ParseNumber(XmlProperty(item, "verticalTravel", "0"))));
+                    ParseNumber(XmlProperty(item, "travel", "0")), ParseNumber(XmlProperty(item, "phase", "0")), ParseNumber(XmlProperty(item, "verticalTravel", "0")), Integer(ParseNumber(XmlProperty(item, "suntrail.pipeLink", "0")))));
             }
         }
     }
@@ -140,6 +171,9 @@ public static partial class LevelFiles
             foreach (var p in properties.EnumerateArray()) if (Text(p, "name") == key) return p.GetProperty("value");
         return default;
     }
+    private static bool PropertyFlag(JsonElement e, string key) { var p = Property(e, key); return p.ValueKind != JsonValueKind.Undefined && p.GetBoolean(); }
+    private static bool XmlPropertyFlag(XElement e, string key) => XmlProperty(e, key, "false") switch
+    { "true" or "1" => true, "false" or "0" => false, _ => throw new FormatException($"Property '{key}' must be a boolean.") };
     private static float PropertyNumber(JsonElement e, string key) { var p = Property(e, key); return p.ValueKind == JsonValueKind.Undefined ? 0 : p.GetSingle(); }
     private static string PropertyText(JsonElement e, string key, string fallback) { var p = Property(e, key); return p.ValueKind == JsonValueKind.Undefined ? fallback : p.GetString() ?? fallback; }
     private static string Attribute(XElement e, string key, string fallback = "") => (string?)e.Attribute(key) ?? fallback;
@@ -150,21 +184,36 @@ public static partial class LevelFiles
 
     public static byte[] Write(LevelDocument document)
     {
+        document.ValidateConnections();
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream, new() { Indented = true }))
-        {
-            writer.WriteStartObject(); writer.WriteString("format", "suntrail"); writer.WriteNumber("version", 1);
-            writer.WriteString("name", document.Name); writer.WriteNumber("biome", document.Biome); writer.WriteStartArray("objects");
-            foreach (var item in document.Objects)
-            {
-                writer.WriteStartObject(); writer.WriteString("kind", KindName(item.Kind));
-                writer.WriteNumber("x", item.Bounds.X); writer.WriteNumber("y", item.Bounds.Y);
-                writer.WriteNumber("width", item.Bounds.Width); writer.WriteNumber("height", item.Bounds.Height);
-                writer.WriteNumber("travel", item.Travel); writer.WriteNumber("phase", item.Phase); writer.WriteNumber("verticalTravel", item.VerticalTravel);
-                writer.WriteEndObject();
-            }
-            writer.WriteEndArray(); writer.WriteEndObject();
-        }
+            WriteRoom(writer, document, true);
+        if (stream.Length > LevelDocument.MaximumBytes) throw new FormatException("Level files must be at most 1 MiB.");
         return stream.ToArray();
+    }
+
+    private static void WriteRoom(Utf8JsonWriter writer, LevelDocument document, bool root)
+    {
+        writer.WriteStartObject();
+        if (root) { writer.WriteString("format", "suntrail"); writer.WriteNumber("version", 2); }
+        writer.WriteString("name", document.Name); writer.WriteNumber("biome", document.Biome);
+        writer.WriteBoolean("dungeon", document.IsDungeon); writer.WriteStartArray("objects");
+        foreach (var item in document.Objects)
+        {
+            writer.WriteStartObject(); writer.WriteString("kind", KindName(item.Kind));
+            writer.WriteNumber("x", item.Bounds.X); writer.WriteNumber("y", item.Bounds.Y);
+            writer.WriteNumber("width", item.Bounds.Width); writer.WriteNumber("height", item.Bounds.Height);
+            writer.WriteNumber("travel", item.Travel); writer.WriteNumber("phase", item.Phase); writer.WriteNumber("verticalTravel", item.VerticalTravel);
+            if (item.PipeLink != 0) writer.WriteNumber("pipeLink", item.PipeLink);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
+        if (root && document.RoomCount > 1)
+        {
+            writer.WriteStartArray("rooms");
+            for (int i = 1; i < document.RoomCount; i++) WriteRoom(writer, document.GetRoom(i), false);
+            writer.WriteEndArray();
+        }
+        writer.WriteEndObject();
     }
 }

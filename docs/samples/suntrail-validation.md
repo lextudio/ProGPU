@@ -1,5 +1,33 @@
 # Suntrail validation
 
+## Current merge slice (2026-09-14)
+
+After merging current main, the Suntrail Release suite passed all 445 tests,
+including two added spatial hierarchy checks. The package manifest check and
+24 ShaderResourceTests passed.
+Desktop Release built; Browser Release AOT published and visually rendered the
+title/gameplay and both workshop entry points in the in-app browser. Signed
+iOS Release built with four pre-existing trim warnings, passed strict codesign
+verification, and retained 250 required WebGPU exports. The iPhone is currently
+unavailable to CoreDevice, so this exact revision has **not** been installed,
+visually tested or profiled there. The previously installed build predates the
+new editor, spatial and campaign batches.
+
+An absolute 600-frame fixed world-3 Mac workload on the current Release binary
+(Apple M3 Pro, 932×430 logical, 2796×1290 physical, MSAA 4, material pages on,
+world pass/scene instances off) recorded serialized GPU completion p50/p95/p99
+2.969/4.410/4.609 ms and CPU submission 0.290/0.633/0.778 ms, with 0 visible
+page fallback and no deaths. This is neither displayed FPS nor a matched iPhone
+before/after comparison. Sustained iOS 60 FPS, subjective art quality and broad
+Mario-format runtime compatibility remain open in [the plan](suntrail-plan.md).
+
+The current new game shader is canonical across the three Suntrail hosts. The
+optional world/depth/instance architecture remains off for ordinary play, and no
+speedup from that unshipped mode is claimed. Its focused pixel/resource tests pass,
+but phone memory and frame pacing must determine whether to enable it. No raw
+Instruments or EventPipe trace bundle is retained in the workspace; relevant prior
+exports and summaries remain under `artifacts/suntrail/performance/`.
+
 Validation date: 2026-09-05. This is a new sample with no predecessor benchmark;
 these are absolute measurements, not a claimed speedup. The visuals are original
 stylized procedural artwork. “AAA” is a subjective production-quality target, not

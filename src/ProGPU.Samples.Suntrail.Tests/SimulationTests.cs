@@ -134,15 +134,17 @@ public sealed class SimulationTests
     public void WorldsHaveDistinctRoutesAndDifferentMovingPlatformAxes()
     {
         var signatures = new HashSet<string>();
+        int verticalWorlds = 0;
         for (int i = 0; i < Level.Names.Length; i++)
         {
             var level = new Level(i);
             Assert.Equal(i, level.Biome);
             signatures.Add(string.Join(";", level.Platforms.Where(p => p.Kind == PlatformKind.Ground).Select(p => p.Bounds)));
             Assert.Contains(level.Platforms, p => p.Kind == PlatformKind.Moving);
-            Assert.Equal(i is 2 or 5, level.Platforms.Any(p => p.VerticalTravel != 0));
+            if (level.Platforms.Any(p => p.VerticalTravel != 0)) verticalWorlds++;
         }
         Assert.Equal(8, signatures.Count);
+        Assert.True(verticalWorlds >= 3);
         Assert.Equal(8, Level.Regions.Distinct().Count());
     }
 
@@ -151,7 +153,7 @@ public sealed class SimulationTests
     {
         var game = new GameSession(); game.StartLevel(2);
         // Move an existing original lift under the spawn; exercise real collision and carry.
-        game.Level.Platforms[0] = new(new(0, 600, 930, 24), PlatformKind.Moving, 0, 0, 24);
+        game.Level.ReplacePlatform(0, new(new(0, 600, 930, 24), PlatformKind.Moving, 0, 0, 24));
         for (int i = 0; i < 120; i++) game.Step(default);
         Assert.True(game.Grounded);
         for (int i = 0; i < 700; i++)

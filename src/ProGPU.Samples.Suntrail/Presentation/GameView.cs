@@ -30,11 +30,13 @@ public sealed class GameView : Grid
     private readonly Button[] _mapButtons = new Button[8];
     private readonly Grid _mapGrid = new();
     private bool _left, _right, _jump, _run, _mapOpen;
+    private readonly HashSet<Key> _movementKeys = new(16);
     private bool _touchLeft, _touchRight, _touchJump, _touchRun, _interact;
     private GameMode _lastMode = (GameMode)(-1);
-    private int _lastHearts = -1, _lastSecond = -1, _lastLevel = -1;
+    private Level? _lastRoom;
+    private int _lastHearts = -1, _lastSecond = -1;
     private (int Coins, int Relics, bool Custom) _lastScore = (-1, -1, false);
-    private readonly List<HoldButton> _holdButtons = new(4);
+    private readonly List<TouchHoldButton> _holdButtons = new(4);
     private Thickness _safeArea;
     public void SetSafeArea(Thickness insets) { _safeArea = insets; InvalidateMeasure(); }
     public event Action<int>? ProgressChanged;
@@ -153,9 +155,9 @@ public sealed class GameView : Grid
         b.Click += (_, _) => { action(); InputSystem.SetFocus(this); Refresh(); };
         return b;
     }
-    private HoldButton Hold(string text, Action<bool> action)
+    private TouchHoldButton Hold(string text, Action<bool> action)
     {
-        var b = new HoldButton(active => { action(active); Refresh(); }) { Content = text, Font = InterFontFamily.Bold, FontSize = 17, MinWidth = text.Length > 1 ? 90 : 60,
+        var b = new TouchHoldButton(active => { action(active); Refresh(); }) { Content = text, Font = InterFontFamily.Bold, FontSize = 17, MinWidth = text.Length > 1 ? 90 : 60,
             Height = 54, CornerRadius = new CornerRadius(12), Background = new ThemeResourceBrush("SuntrailButton"), Foreground = new ThemeResourceBrush("SuntrailCream") };
         AutomationProperties.SetName(b, text switch { "←" => "Move left", "→" => "Move right", _ => text });
         _holdButtons.Add(b);
@@ -203,10 +205,12 @@ public sealed class GameView : Grid
         if (_workshop is null)
         {
             _workshop = new LevelWorkshop(ActionButton);
+            _workshop.TouchOptionsProvider = () => TouchOptions;
+            _workshop.TouchOptionsChanged += value => { ApplyTouchOptions(value); TouchOptionsChanged?.Invoke(value); };
             _workshop.PlayRequested += document =>
             {
                 _workshopOpen = false; _workshop.Visibility = Visibility.Collapsed; Surface.Visibility = Visibility.Visible;
-                _lastLevel = -1; _lastMode = (GameMode)(-1); Surface.Session.StartDocument(document); ClearInput(); Refresh();
+                _lastRoom = null; _lastMode = (GameMode)(-1); Surface.Session.StartDocument(document); ClearInput(); Refresh();
             };
             _workshop.CloseRequested += () =>
             {
@@ -258,7 +262,7 @@ public sealed class GameView : Grid
             }
             if (s.Level.Document is null && s.Mode is GameMode.LevelComplete or GameMode.Complete) ProgressChanged?.Invoke(s.UnlockedLevel);
         }
-        if (_lastLevel != s.Level.Index + (s.Level.IsDungeon ? 8 : 0)) { _lastLevel = s.Level.Index + (s.Level.IsDungeon ? 8 : 0); _stage.Text = s.Level.Document is not null ? s.Level.Name : s.Level.IsDungeon ? "SECRET VAULT · ↓ on a pipe to return" : $"{s.Level.Index + 1:00} / {Level.Names[s.Level.Index]}"; }
+        if (!ReferenceEquals(_lastRoom, s.Level)) { _lastRoom = s.Level; _stage.Text = s.Level.Document is not null ? s.Level.Name : s.Level.IsDungeon ? s.Level.Name + " · ↓ on a pipe to return" : $"{s.Level.Index + 1:00} / {Level.Names[s.Level.Index]}"; }
         var score = (s.Coins, s.Relics, s.Level.Document is not null);
         if (_lastScore != score)
         {
@@ -306,6 +310,7 @@ public sealed class GameView : Grid
     }
     public void ClearInput()
     {
+        _movementKeys.Clear();
         _left = _right = _jump = _run = _touchLeft = _touchRight = _touchJump = _touchRun = _interact = false;
         foreach (var button in _holdButtons) button.Reset();
         _stick?.Reset();
@@ -313,11 +318,16 @@ public sealed class GameView : Grid
     }
     public void Deactivate()
     {
+        _workshop?.Deactivate();
         ClearInput(); if (Surface.Session.Mode == GameMode.Playing) Surface.Session.TogglePause();
     }
     public override void OnKeyDown(KeyRoutedEventArgs e)
     {
-        if (_workshopOpen) { _workshop?.HandleKey(e.Key); e.Handled = true; return; }
+        if (_workshopOpen)
+        {
+            if (Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement() is TextBox) { base.OnKeyDown(e); return; }
+            _workshop?.HandleKey(e.Key); e.Handled = true; return;
+        }
         // A settings/map overlay owns keyboard focus until it is dismissed.
         // Space/Enter must not secretly resume the simulation behind the panel.
         if ((_settingsOpen || _mapOpen) && e.Key is not (Key.Escape or Key.P))
@@ -326,14 +336,16 @@ public sealed class GameView : Grid
         }
         switch(e.Key)
         {
-            case Key.Left: case Key.A: _left = true; break;
-            case Key.Right: case Key.D: _right = true; break;
+            case Key.Left: case Key.A: _movementKeys.Add(e.Key); _left = true; break;
+            case Key.Right: case Key.D: _movementKeys.Add(e.Key); _right = true; break;
             case Key.Space: case Key.Up: case Key.W:
                 if (Surface.Session.Mode != GameMode.Playing) { Surface.Session.Continue(); break; }
+                _movementKeys.Add(e.Key);
                 if (!_jump) Surface.Input = Surface.Input with { JumpPressed = true }; _jump = true; break;
             case Key.Down: case Key.S:
+                _movementKeys.Add(e.Key);
                 if (!_interact) Surface.Input = Surface.Input with { InteractPressed = true }; _interact = true; break;
-            case Key.ShiftLeft: case Key.ShiftRight: _run = true; break;
+            case Key.ShiftLeft: case Key.ShiftRight: _movementKeys.Add(e.Key); _run = true; break;
             case Key.Escape: case Key.P: if (_settingsOpen) ToggleSettings(); else if (_mapOpen) ToggleMap(); else Surface.Session.TogglePause(); ClearInput(); break;
             case Key.Enter: Surface.Session.Continue(); ClearInput(); break;
             case Key.R: Surface.Session.Respawn(); ClearInput(); break;
@@ -343,42 +355,23 @@ public sealed class GameView : Grid
     }
     public override void OnKeyUp(KeyRoutedEventArgs e)
     {
+        if (_workshopOpen) { _workshop?.HandleKeyUp(e.Key); e.Handled = true; return; }
         switch(e.Key)
         {
-            case Key.Left: case Key.A: _left = false; break;
-            case Key.Right: case Key.D: _right = false; break;
-            case Key.Space: case Key.Up: case Key.W: _jump = false; break;
-            case Key.Down: case Key.S: _interact = false; break;
-            case Key.ShiftLeft: case Key.ShiftRight: _run = false; break;
+            case Key.Left: case Key.A: case Key.Right: case Key.D:
+            case Key.Space: case Key.Up: case Key.W: case Key.Down: case Key.S:
+            case Key.ShiftLeft: case Key.ShiftRight:
+                _movementKeys.Remove(e.Key);
+                _left = _movementKeys.Contains(Key.Left) || _movementKeys.Contains(Key.A);
+                _right = _movementKeys.Contains(Key.Right) || _movementKeys.Contains(Key.D);
+                _jump = _movementKeys.Contains(Key.Space) || _movementKeys.Contains(Key.Up) || _movementKeys.Contains(Key.W);
+                _interact = _movementKeys.Contains(Key.Down) || _movementKeys.Contains(Key.S);
+                _run = _movementKeys.Contains(Key.ShiftLeft) || _movementKeys.Contains(Key.ShiftRight);
+                break;
             default: base.OnKeyUp(e); return;
         }
         e.Handled = true; Refresh();
     }
     public override void OnPointerPressed(PointerRoutedEventArgs e) { InputSystem.SetFocus(this); base.OnPointerPressed(e); }
 
-    private sealed class HoldButton(Action<bool> changed) : Button
-    {
-        private uint? _pointer;
-        public override void OnPointerPressed(PointerRoutedEventArgs e)
-        {
-            if (_pointer.HasValue) return;
-            _pointer = e.Pointer.PointerId; CapturePointer(e.Pointer); Opacity = 1; changed(true); App.TouchFeedback?.Invoke(); e.Handled = true;
-        }
-        public override void OnPointerReleased(PointerRoutedEventArgs e) => Release(e);
-        public override void OnPointerCanceled(PointerRoutedEventArgs e) => Release(e);
-        public override void OnPointerCaptureLost(PointerRoutedEventArgs e)
-        {
-            if (_pointer != e.Pointer.PointerId) return;
-            _pointer = null; Opacity = .72f; changed(false); e.Handled = true;
-        }
-        public void Reset()
-        {
-            _pointer = null; ReleasePointerCaptures(); Opacity = .72f; changed(false);
-        }
-        private void Release(PointerRoutedEventArgs e)
-        {
-            if (_pointer != e.Pointer.PointerId) return;
-            _pointer = null; ReleasePointerCapture(e.Pointer); Opacity = .72f; changed(false); e.Handled = true;
-        }
-    }
 }

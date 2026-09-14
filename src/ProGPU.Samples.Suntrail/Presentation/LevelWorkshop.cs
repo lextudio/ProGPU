@@ -13,17 +13,22 @@ namespace ProGPU.Samples.Suntrail.Presentation;
 /// <summary>Shared WinUI authoring UI; native and browser file operations use host storage services.</summary>
 public sealed class LevelWorkshop : Grid
 {
-    public LevelEditor Editor { get; } = new(LevelDocument.CreateStarter());
+    public LevelEditor Editor { get; } = new(LevelDocument.CreateLinkedStarter());
     private readonly WorkshopBoard _board;
-    private readonly TextBlock _status, _world;
+    private readonly TextBlock _status, _world, _room;
+    private (int Room, int Object, int Revision)? _pipeStart;
     private readonly Button _undo, _redo;
     private readonly List<Button> _fileButtons = [];
     private bool _busy;
+    private SmbxWorkshop? _smbx;
     public event Action<LevelDocument>? PlayRequested;
     public event Action? CloseRequested;
+    public Func<int>? TouchOptionsProvider { get; set; }
+    public event Action<int>? TouchOptionsChanged;
 
     public LevelWorkshop(Func<string, Action, bool, Button> actionButton)
     {
+        _status = Label("Drag a tool onto the map, or select a tool and tap to place. Drag objects to move them. Grid: 16 units.", 13);
         Background = new ThemeResourceBrush("SuntrailInk");
         RowDefinitions.Add(GridLength.Auto); RowDefinitions.Add(new GridLength(1, GridUnitType.Star)); RowDefinitions.Add(GridLength.Auto);
         var header = new StackPanel { Spacing = 8, Margin = new Thickness(16, 12, 16, 8) };
@@ -41,17 +46,50 @@ public sealed class LevelWorkshop : Grid
         _undo = Action("Undo", Editor.Undo); _redo = Action("Redo", Editor.Redo);
         Action("Delete", Editor.DeleteSelected);
         Action("− Width", () => Editor.ResizeSelected(-32)); Action("+ Width", () => Editor.ResizeSelected(32));
+        Action("Reverse belt", Editor.ReverseConveyor);
         Action("World →", () => Editor.SetBiome((Editor.Biome + 1) % 8));
         _fileButtons.Add(Action("Open…", () => _ = OpenAsync()));
         _fileButtons.Add(Action("Save…", () => _ = SaveAsync()));
+        title.AddChild(actionButton("SMBX workshop…", () =>
+        {
+            _board?.Cancel();
+            if (_smbx is null)
+            {
+                _smbx = new SmbxWorkshop(actionButton);
+                _smbx.TouchOptionsProvider = () => TouchOptionsProvider?.Invoke() ?? 12;
+                _smbx.TouchOptionsChanged += value => TouchOptionsChanged?.Invoke(value);
+                // Keep the editor in a bounded row. The current Grid measures a
+                // row-spanning child through its Auto header with infinite height.
+                Grid.SetRow(_smbx, 1); AddChild(_smbx);
+                _smbx.CloseRequested += () => _smbx.Visibility = Visibility.Collapsed;
+            }
+            _smbx.Visibility = Visibility.Visible;
+        }, false));
         header.AddChild(new ScrollViewer { Content = actions, Height = 56, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        var rooms = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        void RoomAction(string text, Action callback)
+        {
+            var button = actionButton(text, () =>
+            {
+                _board?.Cancel();
+                try { callback(); } catch (FormatException e) { _status.Text = e.Message; }
+            }, false);
+            button.Padding = new Thickness(12, 8, 12, 8); button.MinHeight = 40; rooms.AddChild(button);
+        }
+        _room = Label("", 14); rooms.AddChild(_room);
+        RoomAction("Room ←", () => Editor.SwitchRoom((Editor.RoomIndex + Editor.RoomCount - 1) % Editor.RoomCount));
+        RoomAction("Room →", () => Editor.SwitchRoom((Editor.RoomIndex + 1) % Editor.RoomCount));
+        RoomAction("+ Room", Editor.AddRoom); RoomAction("Delete room", Editor.DeleteRoom);
+        RoomAction("Surface / dungeon", Editor.ToggleDungeon);
+        RoomAction("Connect pipe", ConnectPipe); RoomAction("Unlink pipe", Editor.DisconnectSelectedPipe);
+        header.AddChild(new ScrollViewer { Content = rooms, Height = 54, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
         AddChild(header);
 
         var workspace = new Grid(); workspace.ColumnDefinitions.Add(new GridLength(128)); workspace.ColumnDefinitions.Add(new GridLength(1, GridUnitType.Star)); Grid.SetRow(workspace, 1);
         var palette = new StackPanel { Spacing = 5, Margin = new Thickness(12, 0, 8, 0) };
         var select = actionButton("Select / drag", () => _board!.Tool = null, false); select.Padding = new Thickness(8); select.MinHeight = 40; palette.AddChild(select);
         _board = new(Editor);
-        for (int i = 0; i <= (int)LevelObjectKind.Crusher; i++)
+        for (int i = 0; i <= (int)LevelObjectKind.Hoverer; i++)
         {
             var kind = (LevelObjectKind)i;
             var button = new PaletteButton(_board, kind) { Content = LevelFiles.KindName(kind), Font = InterFontFamily.Regular, FontSize = 14,
@@ -62,7 +100,6 @@ public sealed class LevelWorkshop : Grid
         workspace.AddChild(new ScrollViewer { Content = palette, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         var map = new ScrollViewer { Content = _board, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetColumn(map, 1); workspace.AddChild(map); AddChild(workspace);
-        _status = Label("Drag a tool onto the map, or select a tool and tap to place. Drag objects to move them. Grid: 16 units.", 13);
         _status.Margin = new Thickness(16, 10, 16, 12); Grid.SetRow(_status, 2); AddChild(_status);
         _board.Notice += message => _status.Text = message;
         Editor.Changed += Refresh;
@@ -75,6 +112,23 @@ public sealed class LevelWorkshop : Grid
     {
         _undo.IsEnabled = Editor.CanUndo; _redo.IsEnabled = Editor.CanRedo;
         _world.Text = Level.Regions[Editor.Biome];
+        _room.Text = $"Room {Editor.RoomIndex + 1}/{Editor.RoomCount} · {(Editor.IsDungeon ? "Dungeon" : "Surface")}";
+        if (_pipeStart is { } start && start.Revision != Editor.Revision) _pipeStart = null;
+    }
+    private void ConnectPipe()
+    {
+        if (Editor.Selected < 0 || Editor.Objects[Editor.Selected].Kind != LevelObjectKind.Pipe)
+            throw new FormatException("Select a pipe on the map first.");
+        if (_pipeStart is not { } start)
+        {
+            _pipeStart = (Editor.RoomIndex, Editor.Selected, Editor.Revision);
+            _status.Text = "Choose the other pipe, in this room or another, then press Connect pipe again.";
+        }
+        else
+        {
+            Editor.ConnectPipes(start.Room, start.Object); _pipeStart = null;
+            _status.Text = "Pipes connected. During play, stand on either pipe and press ↓ or the touch pipe button.";
+        }
     }
     private void Play()
     {
@@ -95,13 +149,13 @@ public sealed class LevelWorkshop : Grid
         var dispatcher = DispatcherQueue.GetForCurrentThread();
         try
         {
-            var picker = new FileOpenPicker(); picker.FileTypeFilter.Add(".suntrail"); picker.FileTypeFilter.Add(".json"); picker.FileTypeFilter.Add(".tmx");
+            var picker = new FileOpenPicker(); picker.FileTypeFilter.Add(".suntrail"); picker.FileTypeFilter.Add(".json"); picker.FileTypeFilter.Add(".tmx"); picker.FileTypeFilter.Add(".tmj"); picker.FileTypeFilter.Add(".zip");
             var file = await picker.PickSingleFileAsync();
             if (file is null) return;
             // All current hosts expose picked data as a local/virtual path. Check
             // the length before allocating the parse buffer, then cap a racing read.
             using var input = File.OpenRead(file.Path);
-            if (input.Length > LevelDocument.MaximumBytes) throw new FormatException("Level files must be at most 1 MiB.");
+            if (input.Length > LevelFiles.MaximumInputBytes(file.Name)) throw new FormatException("Maps must be at most 1 MiB and ZIP packages at most 16 MiB.");
             var bytes = new byte[(int)input.Length]; await input.ReadExactlyAsync(bytes);
             var document = LevelFiles.Read(bytes, file.Name);
             Post(dispatcher, () => { Editor.Load(document); _status.Text = $"Opened {file.Name}. Save creates a Suntrail copy; the imported file is unchanged."; });
@@ -131,11 +185,25 @@ public sealed class LevelWorkshop : Grid
     }
     public void HandleKey(Silk.NET.Input.Key key)
     {
+        if (_smbx is { Visibility: Visibility.Visible }) { _smbx.HandleKey(key); return; }
         switch (key)
         {
             case Silk.NET.Input.Key.Delete: case Silk.NET.Input.Key.Backspace: Editor.DeleteSelected(); break;
             case Silk.NET.Input.Key.Escape: _board.Cancel(); _board.Tool = null; break;
         }
+    }
+
+    public void HandleKeyUp(Silk.NET.Input.Key key)
+    { if (_smbx is { Visibility: Visibility.Visible }) _smbx.HandleKeyUp(key); }
+    public void Deactivate() => _smbx?.Deactivate();
+
+    protected override void ArrangeOverride(ProGPU.Scene.Rect arrangeRect)
+    {
+        base.ArrangeOverride(arrangeRect);
+        // The source editor is a full-workspace overlay. Measure it through the
+        // finite content row, then arrange it over the entire workshop viewport.
+        if (_smbx is { Visibility: Visibility.Visible } source)
+            source.Arrange(arrangeRect);
     }
 
     private sealed class PaletteButton(WorkshopBoard board, LevelObjectKind kind) : Button
@@ -193,7 +261,7 @@ public sealed class LevelWorkshop : Grid
                     shape.BorderThickness = new Thickness(i == _editor.Selected ? 3 : 1);
                     shape.Opacity = i == _editor.Selected ? 1 : item.Kind == LevelObjectKind.Ground ? .30f : .65f;
                     if (b.Width >= 60 && b.Height >= 32)
-                        shape.Child = new TextBlock { Text = LevelFiles.KindName(item.Kind), Font = InterFontFamily.Regular, FontSize = 11, Margin = new Thickness(4),
+                        shape.Child = new TextBlock { Text = item.PipeLink == 0 ? LevelFiles.KindName(item.Kind) : $"Pipe ↔ {item.PipeLink}", Font = InterFontFamily.Regular, FontSize = 11, Margin = new Thickness(4),
                             Foreground = new ThemeResourceBrush("SuntrailInk"), IsHitTestVisible = false };
                     else shape.Child = null;
                     _displayed[i] = item;

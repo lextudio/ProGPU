@@ -11,14 +11,24 @@ public static class RoutePilot
         if (!game.Grounded)
         {
             bool safeLanding = false;
-            foreach (var p in game.Level.Platforms)
+            for (int platformIndex = 0; platformIndex < game.Level.Platforms.Length; platformIndex++)
             {
-                if (p.Kind != PlatformKind.Ground) continue;
-                var b = p.Bounds;
+                var p = game.Level.Platforms[platformIndex];
+                if (!game.Level.IsPlatformSolid(platformIndex, game.Tick)) continue;
+                var b = p.At(game.Time);
                 float discriminant = game.Velocity.Y * game.Velocity.Y + 3520 * (b.Y - foot);
                 if (discriminant < 0) continue;
                 float t = (-game.Velocity.Y + System.MathF.Sqrt(discriminant)) / 1760;
                 if (t <= 0 || t > 2) continue;
+                // Moving support positions and timed collapse are observable level
+                // state. Predict them without moving the player or touching support
+                // state; the pilot still supplies only ordinary input commands.
+                b = p.At(game.Time + t);
+                discriminant = game.Velocity.Y * game.Velocity.Y + 3520 * (b.Y - foot);
+                if (discriminant < 0) continue;
+                t = (-game.Velocity.Y + System.MathF.Sqrt(discriminant)) / 1760;
+                if (t <= 0 || t > 2 || !game.Level.IsPlatformSolid(platformIndex, game.Tick + (long)(t / GameSession.StepSeconds))) continue;
+                b = p.At(game.Time + t);
                 float ramp = System.Math.Max(0, 300 - game.Velocity.X) / 1400;
                 float accelerated = System.Math.Min(t, ramp);
                 float distance = game.Velocity.X * accelerated + 700 * accelerated * accelerated + 300 * System.Math.Max(0, t - ramp);
@@ -32,11 +42,12 @@ public static class RoutePilot
         if (game.Grounded)
         {
             bool floorAhead = false;
-            foreach (var p in game.Level.Platforms)
+            for (int i = 0; i < game.Level.Platforms.Length; i++)
             {
-                var b = p.At(game.Time);
+                if (!game.Level.IsPlatformSolid(i, game.Tick)) continue;
+                var p = game.Level.Platforms[i]; var b = p.At(game.Time);
                 if (front + 42 >= b.X && front + 42 < b.Right && System.Math.Abs(b.Y - foot) < 5) floorAhead = true;
-                if (p.Kind is PlatformKind.Crate or PlatformKind.Pipe or PlatformKind.Stone && b.X > front && b.X < front + 95 && foot > b.Y) jump = true;
+                if (p.Kind is PlatformKind.Crate or PlatformKind.Pipe or PlatformKind.Stone or PlatformKind.Spring or PlatformKind.Conveyor or PlatformKind.Ice && b.X >= front - 8 && b.X < front + 95 && foot > b.Y) jump = true;
             }
             jump |= !floorAhead;
             foreach (var e in game.Level.Enemies)

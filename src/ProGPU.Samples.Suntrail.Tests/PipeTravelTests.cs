@@ -13,7 +13,7 @@ public sealed class PipeTravelTests
         var game = new GameSession(); game.StartLevel(world);
         var outside = game.Level;
         ReachPipe(game, outside.Pipes[0]);
-        var returnPosition = game.Position;
+        var entrancePosition = game.Position;
         game.Step(new(0, false, false, false, true));
         Assert.True(game.Level.IsDungeon);
         var vault = game.Level;
@@ -25,15 +25,18 @@ public sealed class PipeTravelTests
         Assert.True(game.Coins > 0);
         int coins = game.Coins;
         game.Step(new(0, false, false, false, true));
-        Assert.Same(outside, game.Level); Assert.Equal(returnPosition, game.Position);
+        Assert.Same(outside, game.Level);
+        Assert.Equal(outside.Pipes[^1].X + (outside.Pipes[^1].Width - GameSession.PlayerWidth) / 2, game.Position.X);
+        Assert.True(game.Position.X > entrancePosition.X);
         Assert.Equal(coins, game.Coins); Assert.Equal(0, game.Deaths);
         // The same vault instance retains collected items across visits.
         ReachPipe(game, outside.Pipes[0]);
         game.Step(new(0, false, false, false, true));
         Assert.Same(vault, game.Level);
         Assert.Contains(vault.Pickups, pickup => pickup.Collected);
+        int revisitedCoins = game.Coins;
         game.Respawn();
-        Assert.Same(outside, game.Level); Assert.Equal(coins, game.Coins);
+        Assert.Same(outside, game.Level); Assert.Equal(revisitedCoins, game.Coins);
     }
 
     [Fact]

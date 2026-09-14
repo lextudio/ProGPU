@@ -29,6 +29,24 @@ public static class Program
             App.Started += (view, _) => view.Surface.Batch.EnableBackgroundOcclusion = false;
         if (args.Contains("--material-pages", StringComparer.Ordinal))
             App.Started += (_, window) => ((Rendering.ProceduralPipeline)window.Compositor!.GetDrawingExtension(Rendering.ProceduralDrawingContextExtensions.Definition)!).EnableMaterialPages = true;
+        if (args.Contains("--world-pass", StringComparer.Ordinal))
+            App.Started += (_, window) =>
+            {
+                var pipeline = (Rendering.ProceduralPipeline)window.Compositor!.GetDrawingExtension(Rendering.ProceduralDrawingContextExtensions.Definition)!;
+                pipeline.EnableMaterialPages = pipeline.EnableWorldPass = true;
+            };
+        if (args.Contains("--shared-instances", StringComparer.Ordinal))
+            App.Started += (_, window) =>
+            {
+                var pipeline = (Rendering.ProceduralPipeline)window.Compositor!.GetDrawingExtension(Rendering.ProceduralDrawingContextExtensions.Definition)!;
+                pipeline.EnableMaterialPages = pipeline.EnableSharedInstances = true;
+            };
+        if (args.Contains("--scene-instances", StringComparer.Ordinal))
+            App.Started += (_, window) =>
+            {
+                var pipeline = (Rendering.ProceduralPipeline)window.Compositor!.GetDrawingExtension(Rendering.ProceduralDrawingContextExtensions.Definition)!;
+                pipeline.EnableMaterialPages = pipeline.EnableSharedInstances = pipeline.EnableSceneInstances = true;
+            };
         if (args.Contains("--sky-cache", StringComparer.Ordinal))
             App.Started += (_, window) => ((Rendering.ProceduralPipeline)window.Compositor!.GetDrawingExtension(Rendering.ProceduralDrawingContextExtensions.Definition)!).EnableSkyCache = true;
         if (world > 0) App.Started += (view, _) => view.Surface.Session.StartLevel(world - 1);

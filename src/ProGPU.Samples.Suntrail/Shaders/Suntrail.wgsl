@@ -1,9 +1,9 @@
-// Algorithm: Instanced analytic 2.5D artwork with rough stone cells, layered noise, textured foliage and fur, atmospheric extinction, and directional illumination. Original Suntrail artwork.
-// Time complexity: Optional material pages compile O(B * 130^2) fragments for B<=32 misses per preparation; resident replay uses one filtered sample plus bounded live lighting per fragment. Page culling/residency uses bounded CPU storage. Original path: O(V + F) for V visible sprites and F covered fragments; six vertices per sprite, at most 36 bounded shape layers per fragment; material noise uses three fixed octaves and stone cells use a 3x3 neighborhood, with three evaluations for the reusable cliff normal field, no scene-length loops or ray marching. An optional sky-cache miss adds O(P) work for P framebuffer pixels once per key; hits replace sky noise with one O(1) texel load per visible fragment. Optional world-specialized entries fold world branches without changing the six material runs or fragment equations.
-// Space complexity: Optional material atlas is capped at 192 MiB RGBA16Float, 1444 guttered pages, 8192 96-byte instances and 32 bake records. No material texture readback. Original path: O(V) uploaded 48-byte sprite records in a fixed 2048-instance buffer; O(1) private fragment storage and a 288-byte frame uniform. Optional retained sky uses one physical-resolution RGBA32Float image capped at 96 MiB; replay performs one unfiltered 16-byte texel load per sky fragment. Other analytic entries use zero texture samples. Device-owned pipelines are lazy and bounded to six dynamic plus 48 world variants per target configuration.
+// Algorithm: Instanced analytic 2.5D artwork with rough stone cells, layered noise, textured foliage and fur, atmospheric extinction, directional illumination and contact-driven surface artwork. Original Suntrail artwork.
+// Time complexity: Optional shared instances add two bounded storage reads per vertex (one 48-byte page and one 64-byte source before GPU cache reuse), O(P + S) CPU comparison for P pages and S sources, and at most two changed-range uploads. Optional scene instances add O(1) orthographic camera/parallax projection per vertex and O(S) static/dynamic source partitioning; painter page order is unchanged. Optional world depth pass adds O(V) vertex pulling, one filtered sample per covered cached opaque/translucent fragment, bounded existing lighting only for depth survivors, and one texture load per resolved pixel; dynamic fallback retains original complexity. Optional material pages compile O(B * 130^2) fragments for B<=32 misses per preparation; resident replay uses one filtered sample plus bounded live lighting per fragment. Page culling/residency uses bounded CPU storage. Original path: O(V + F) for V visible sprites and F covered fragments; six vertices per sprite, at most 36 bounded shape layers per fragment; material noise uses three fixed octaves and stone cells use a 3x3 neighborhood, with three evaluations for the reusable cliff normal field, no scene-length loops or ray marching. An optional sky-cache miss adds O(P) work for P framebuffer pixels once per key; hits replace sky noise with one O(1) texel load per visible fragment. Optional world-specialized entries fold world branches without changing the six material runs or fragment equations.
+// Space complexity: Optional shared-instance mode adds fixed 8192x48-byte page and 2048x64-byte source GPU buffers (512 KiB), equally bounded CPU staging/shadows, and retains the original expanded buffer for mode comparisons; there is no new texture allocation. Optional world color/MSAA/depth attachments are capped at 192 MiB at native resolution and original 1x/4x MSAA; the pass reuses the existing 8192-record buffer and adds a 48-byte resolve quad, no CPU reversed copy. Optional material atlas is capped at 192 MiB RGBA16Float, 1444 guttered pages, 8192 96-byte instances and 32 bake records. No material texture readback. Original path: O(V) uploaded 48-byte sprite records in a fixed 2048-instance buffer; O(1) private fragment storage and a 304-byte frame uniform (including orthographic camera state). Optional retained sky uses one physical-resolution RGBA32Float image capped at 96 MiB; replay performs one unfiltered 16-byte texel load per sky fragment. Other analytic entries use zero texture samples. Device-owned pipelines are lazy and bounded to six dynamic plus 48 world variants per target configuration.
 // Coordinates are logical pixels, projected to physical framebuffer pixels by ProGPU.
 // Coverage uses physical-pixel derivatives; premultiplied alpha, source-over composition.
-// Fixed loops: stone neighborhood 9, tree branches 7 and canopy lobes 7, fern fronds 2 with 6 leaf pairs each, grass blades 6, petals 5, portal sparks 6, palm fronds 8, pine boughs 6, crystal prisms 3, local lights 3, conservative opaque rectangles at most 8. No ray marching or screen-space history.
+// Fixed loops: stone neighborhood 9, tree branches 7 and canopy lobes 7, fern fronds 2 with 6 leaf pairs each, grass blades 6, petals 5, portal sparks 6, spring coil turns 5, palm fronds 8, pine boughs 6, crystal prisms 3, local lights 3, conservative opaque rectangles at most 8. Beetles use three leg pairs; hoverer variants add two fixed wing ellipsoids and one vein, hopping variants one horn, with no new loops or texture reads. No ray marching or screen-space history.
 // Lighting is an art-directed ellipsoid approximation, not a physically based ray tracer.
 // Sphere, canopy and mountain coverage is evaluated before lighting. An optional
 // exact-zero early return skips transparent lanes while retaining the same fwidth
@@ -14,7 +14,7 @@
 // The compatibility loader removes only this diagnostic control for legacy Naga.
 diagnostic(off, derivative_uniformity);
 
-struct Frame { transform: mat4x4<f32>, scene: vec4<f32>, clip: vec4<f32>, lights: array<vec4<f32>,3>, occlusion: vec4<f32>, ground: array<vec4<f32>,8> };
+struct Frame { transform: mat4x4<f32>, scene: vec4<f32>, clip: vec4<f32>, lights: array<vec4<f32>,3>, occlusion: vec4<f32>, ground: array<vec4<f32>,8>, camera: vec4<f32> };
 @group(0) @binding(0) var<uniform> frame: Frame;
 struct Sprite {
     @location(0) bounds: vec4<f32>,
@@ -387,16 +387,30 @@ fn courier(p0: vec2<f32>, facing: f32, stride: f32) -> vec4<f32> {
     c=over(c,fur_surface(p,vec2(.73,.62-step),vec2(.055,.085),fur));
     return c;
 }
-fn beetle(p0: vec2<f32>, facing: f32) -> vec4<f32> {
+fn beetle(p0: vec2<f32>, facing: f32, behavior: f32) -> vec4<f32> {
     var p=p0;if(facing<0.){p.x=1.-p.x;}
     var c=vec4(0.);
+    // Fixed-cost original variants: translucent wing lobes on hoverers and a
+    // small horn on hopping beetles. All layers use premultiplied source-over.
+    if(behavior>1.5) {
+        let flap=.08+abs(sin(frame.scene.x*31.))*.15;
+        c=over(c,sphere(p,vec2(.26,.28),vec2(.23,flap),vec3(.64,.87,.84),.6)*.58);
+        c=over(c,sphere(p,vec2(.60,.22),vec2(.23,flap),vec3(.72,.90,.81),.6)*.58);
+        c=over(c,paint(vec3(.38,.58,.49),stroke(p,vec2(.20,.20),vec2(.45,.43),.006))*.6);
+    }
+    if(behavior>.5 && behavior<1.5) {
+        c=over(c,paint(vec3(.31,.32,.22),stroke(p,vec2(.73,.48),vec2(.79,.22),.023)));
+    }
     for(var i=0;i<3;i++) {
         let x=.25+f32(i)*.18;
         let walk=sin(frame.scene.x*13.+f32(i)*1.8)*.028;
         c=over(c,paint(vec3(.10,.085,.065),stroke(p,vec2(x,.57),vec2(x-.07,.88+walk),.018)));
         c=over(c,paint(vec3(.14,.12,.08),stroke(p,vec2(x+.02,.60),vec2(x+.13,.87-walk),.020)));
     }
-    let shell=vec3(.30,.115,.065)*( .93+noise(p*72.)*.12);
+    var shell_color=vec3(.30,.115,.065);
+    if(behavior>.5 && behavior<1.5){shell_color=mix(vec3(.24,.34,.12),vec3(.28,.45,.52),step(4.5,frame.scene.y));}
+    if(behavior>1.5){shell_color=vec3(.15,.30,.28);}
+    let shell=shell_color*( .93+noise(p*72.)*.12);
     c=over(c,sphere(p,vec2(.44,.50),vec2(.35,.31),shell,.24));
     c=over(c,paint(vec3(.115,.095,.05),stroke(p,vec2(.46,.21),vec2(.48,.73),.006)));
     c=over(c,sphere(p,vec2(.72,.62),vec2(.16,.17),vec3(.115,.13,.085),.11));
@@ -615,6 +629,55 @@ fn pipe_art(p: vec2<f32>) -> vec4<f32> {
     return c;
 }
 
+// Original interactive surface artwork. O(1) private storage and shape work;
+// spring has exactly five coil turns, other surfaces have no loops. Conveyor
+// displacement follows world units/second; collapse warning is simulation-owned.
+fn spring_surface(p: vec2<f32>) -> vec4<f32> {
+    var c=vec4(0.);
+    for(var turn=0;turn<5;turn++) {
+        let y=.28+f32(turn)*.105;
+        let coil=abs(length((p-vec2(.5,y))/vec2(.29,.077))-1.)*.077-.012;
+        let steel=mix(vec3(.14,.19,.21),vec3(.70,.78,.78),smoothstep(.12,.65,p.x));
+        c=over(c,paint(steel,coil));
+    }
+    let grain=detail(p*vec2(14.,5.));
+    c=over(c,paint(vec3(.24,.19,.09)*(1.+grain*.6),rounded(p,vec2(.5,.88),vec2(.43,.075),.025)));
+    let cap=mix(vec3(.64,.28,.06),vec3(1.,.70,.18),1.-p.y);
+    c=over(c,paint(cap,rounded(p,vec2(.5,.15),vec2(.46,.10),.04)));
+    c=over(c,paint(vec3(1.,.87,.47),rounded(p,vec2(.5,.085),vec2(.37,.013),.01)));
+    return c;
+}
+fn conveyor_surface(p: vec2<f32>, size: vec2<f32>, speed: f32) -> vec4<f32> {
+    let q=p*size;
+    let edge=rounded(q,size*.5,size*.5-vec2(2.),min(8.,size.y*.24));
+    let tread=fract((q.x-frame.scene.x*speed)/22.);
+    let groove=smoothstep(.02,.09,tread)*(1.-smoothstep(.72,.86,tread));
+    var col=mix(vec3(.055,.085,.095),vec3(.24,.30,.29),groove);
+    col+=vec3(.28,.24,.13)*exp(-pow((p.y-.19)/.08,2.));
+    col=mix(col,vec3(.40,.29,.12),smoothstep(.70,.84,p.y));
+    return paint(col,edge);
+}
+fn ice_surface(p: vec2<f32>, size: vec2<f32>) -> vec4<f32> {
+    let q=p*size;
+    let grain=detail(q*.06);
+    let veins=abs(sin(q.x*.041+sin(q.y*.08)*1.8));
+    var col=mix(vec3(.11,.34,.51),vec3(.46,.76,.83),grain);
+    col+=vec3(.23,.31,.29)*(1.-smoothstep(.015,.045,veins));
+    col=mix(col,vec3(.88,.97,1.),exp(-pow((p.y-.15)/.055,2.))*.8);
+    return paint(col,rounded(q,size*.5,size*.5-vec2(1.),4.));
+}
+fn crumble_surface(p: vec2<f32>, size: vec2<f32>, warning: f32) -> vec4<f32> {
+    let q=p*size;
+    let grain=detail(q*.085);
+    let seam=abs(fract(q.x/43.+sin(q.y*.17)*.14)-.5)*43.;
+    let fissure=1.-smoothstep(.4+warning*1.8,1.7+warning*2.4,seam);
+    var col=mix(vec3(.30,.23,.18),vec3(.62,.52,.37),grain);
+    col=mix(col,vec3(.075,.065,.06),fissure);
+    col=mix(col,vec3(.92,.54,.19),warning*.22);
+    col+=vec3(.17,.15,.11)*exp(-pow((p.y-.16)/.08,2.));
+    return paint(col,rounded(q,size*.5,size*.5-vec2(1.),3.));
+}
+
 // Original bounded clockwork hazards. Phase comes from the simulation, so visual
 // flame activation/drop warnings and collision use the same deterministic clock.
 fn saw_art(p: vec2<f32>) -> vec4<f32> {
@@ -688,7 +751,7 @@ fn material_art(v: Varying, kind: u32, biome: u32) -> vec4<f32> {
         case 5u: {c=wooden_crate(p);}
         case 6u: {c=coin(p,v.material.y,v.material.z);}
         case 7u: {c=courier(p,v.material.y,v.material.z);}
-        case 8u: {c=beetle(p,v.material.y);}
+        case 8u: {c=beetle(p,v.material.y,v.material.z);}
         case 9u: {c=lantern(p,v.material.y);}
         case 10u: {c=portal(p);}
         case 11u: {c=ledge(p,v.size);}
@@ -719,6 +782,10 @@ fn material_art(v: Varying, kind: u32, biome: u32) -> vec4<f32> {
         case 30u: {c=saw_art(p);}
         case 31u: {c=flame_jet(p,v.material.y,v.material.z);}
         case 32u: {c=crusher_art(p,v.material.y);}
+        case 33u: {c=spring_surface(p);}
+        case 34u: {c=conveyor_surface(p,v.size,v.material.y);}
+        case 35u: {c=ice_surface(p,v.size);}
+        case 36u: {c=crumble_surface(p,v.size,v.material.y);}
         default: {}
     }
     return c;
@@ -863,4 +930,94 @@ fn page_vertex(sprite: PageSprite, vertex: u32, bake: bool) -> Varying {
     let kind=u32(v.material.x+.5);
     if(hidden_backdrop(v,kind)){return vec4(0.);}
     return finish_material(v,kind,textureSampleLevel(retained_sky,material_sampler,v.atlas_uv,0.));
+}
+
+
+// Optional game-owned depth pass. The storage record matches MaterialPageInstance
+// (six vec4 fields, 96 bytes). Exactly 8192 records are bound; CPU draw arguments
+// restrict reads to the populated prefix. Reversed vertex pulling avoids a second
+// CPU instance stream. Depth is unique per page and strictly follows painter order.
+struct WorldPageRecord {
+    bounds: vec4<f32>, color: vec4<f32>, material: vec4<f32>,
+    source_rect: vec4<f32>, atlas_rect: vec4<f32>, source_size: vec4<f32>,
+};
+@group(2) @binding(0) var<storage,read> world_pages: array<WorldPageRecord>;
+// Optional factored instance stream. CPU bounds every source index to the populated
+// prefix of 2048 sources, every draw to 8192 page references; reserved uints are zero.
+// Six vertices read one 48-byte page plus one shared 64-byte source each (before GPU
+// cache reuse). The same page_vertex arithmetic and material fragment entries follow.
+struct SharedPageRecord { source_rect: vec4<f32>, atlas_rect: vec4<f32>, reference: vec4<u32>, };
+struct SharedSourceRecord { bounds: vec4<f32>, color: vec4<f32>, material: vec4<f32>, source_size: vec4<f32>, };
+@group(2) @binding(1) var<storage,read> shared_pages: array<SharedPageRecord>;
+@group(2) @binding(2) var<storage,read> shared_sources: array<SharedSourceRecord>;
+fn shared_page(index: u32) -> PageSprite {
+    let page=shared_pages[index];
+    let source=shared_sources[page.reference.x];
+    var bounds=source.bounds;
+    // Source size Z/W hold camera factors; negative Z denotes logical screen
+    // coordinates. World units remain unchanged during camera-only movement.
+    if(source.source_size.z>=0.) {
+        bounds=vec4((bounds.xy-frame.camera.xy*source.source_size.zw)*frame.camera.z,bounds.zw*frame.camera.z);
+    }
+    return PageSprite(bounds,source.color,source.material,page.source_rect,page.atlas_rect,
+        vec4(source.source_size.xy,f32(page.reference.y),0.));
+}
+@vertex fn vs_shared_page(@builtin(vertex_index) vertex: u32,
+    @builtin(instance_index) index: u32) -> Varying {
+    return page_vertex(shared_page(index),vertex,false);
+}
+fn world_depth(index: u32) -> f32 { return 1.-f32(index+1u)/8193.; }
+@vertex fn vs_world_shared_page(@builtin(vertex_index) vertex: u32,
+    @builtin(instance_index) index: u32) -> Varying {
+    var v=page_vertex(shared_page(index),vertex,false);
+    v.position.z=world_depth(index);
+    return v;
+}
+@vertex fn vs_world_shared_opaque(@builtin(vertex_index) vertex: u32,
+    @builtin(instance_index) reversed_index: u32) -> Varying {
+    let index=8191u-reversed_index;
+    let sprite=shared_page(index);
+    var v=page_vertex(sprite,vertex,false);
+    v.position.z=world_depth(index);
+    if(sprite.source_size.z<.5 || sprite.color.a!=1.) {v.position=vec4(2.,2.,0.,1.);}
+    return v;
+}
+@vertex fn vs_world_page(sprite: PageSprite, @builtin(vertex_index) vertex: u32,
+    @builtin(instance_index) index: u32) -> Varying {
+    var v=page_vertex(sprite,vertex,false);
+    v.position.z=world_depth(index);
+    return v;
+}
+@vertex fn vs_world_opaque(@builtin(vertex_index) vertex: u32,
+    @builtin(instance_index) reversed_index: u32) -> Varying {
+    let index=8191u-reversed_index;
+    let record=world_pages[index];
+    let sprite=PageSprite(record.bounds,record.color,record.material,record.source_rect,record.atlas_rect,record.source_size);
+    var v=page_vertex(sprite,vertex,false);
+    v.position.z=world_depth(index);
+    // Only cached fully opaque-tint instances can contribute opaque depth.
+    // Missing pages and dynamic materials retain their complete live color pass.
+    if(record.source_size.z<.5 || record.color.a!=1.) {v.position=vec4(2.,2.,0.,1.);}
+    return v;
+}
+@fragment fn fs_world_opaque(v: Varying) -> @location(0) vec4<f32> {
+    let kind=u32(v.material.x+.5);
+    if(hidden_backdrop(v,kind)){discard;}
+    let appearance=textureSampleLevel(retained_sky,material_sampler,v.atlas_uv,0.);
+    // Exact alpha-one classification only: no thresholded foliage or altered AA.
+    if(appearance.a*v.color.a!=1.){discard;}
+    return finish_material(v,kind,appearance);
+}
+@fragment fn fs_world_translucent(v: Varying) -> @location(0) vec4<f32> {
+    let kind=u32(v.material.x+.5);
+    if(hidden_backdrop(v,kind)){discard;}
+    let appearance=textureSampleLevel(retained_sky,material_sampler,v.atlas_uv,0.);
+    let alpha=appearance.a*v.color.a;
+    if((alpha==1. && v.color.a==1.) || alpha==0.){discard;}
+    return finish_material(v,kind,appearance);
+}
+@fragment fn fs_world_resolve(v: Varying) -> @location(0) vec4<f32> {
+    let size=textureDimensions(retained_sky);
+    let texel=clamp(vec2<i32>(v.uv*vec2<f32>(size)),vec2(0),vec2<i32>(size)-vec2(1));
+    return textureLoad(retained_sky,texel,0);
 }

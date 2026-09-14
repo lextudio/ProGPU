@@ -1723,11 +1723,13 @@ public unsafe partial class Compositor : IDisposable
         ? Math.Max(1u, _explicitRenderTargetHeight.Value)
         : CurrentCanvasPixelHeightUInt;
     public float CurrentDpiScale => _currentDpiScale;
-    internal Matrix4x4 CurrentProjection => _currentProjection;
+    /// <summary>Current logical-coordinate projection during extension compile/prepare/render callbacks, including offscreen targets.</summary>
+    public Matrix4x4 CurrentProjection => _currentProjection;
     internal System.Runtime.CompilerServices.ConditionalWeakTable<object, GpuSeriesBuffer> DynamicGpuBufferCache => _dynamicGpuBufferCache;
     internal List<CompositorDrawCall> DrawCalls => _drawCalls;
     internal Rect? ActiveClipRect => _activeClipRect;
-    internal float ActiveOpacity => _activeOpacity;
+    /// <summary>Accumulated source opacity during an extension's Compile callback. Capture with its retained draw data.</summary>
+    public float ActiveOpacity => _activeOpacity;
     internal uint PendingVectorStart { get => _pendingVectorStart; set => _pendingVectorStart = value; }
     internal uint PendingTextStart { get => _pendingTextStart; set => _pendingTextStart = value; }
     internal BindGroup* VectorUniformBindGroup => _vectorUniformBindGroup;
