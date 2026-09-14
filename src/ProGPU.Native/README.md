@@ -692,8 +692,10 @@ caller-supplied break decisions, preserving the managed ProGPU separation
 between reusable shaping, Unicode paragraph analysis, and viewport-dependent
 wrapping. It performs one bounded requirements pass and one write pass over
 caller-owned glyph and line spans. Breaks inside an equal-cluster sequence are
-ignored, and shaped `unsafe_to_break` dependencies suppress boundaries even
-across distinct clusters. When a hard wrap has no preceding safe boundary, the
+ignored. Shaped `unsafe_to_break` dependencies suppress non-whitespace
+boundaries even across distinct clusters; a legal Unicode break after a
+whitespace cluster remains available despite a contextual flag on the next
+glyph. When a hard wrap has no preceding safe boundary, the
 line advances through the dependency chain to the next safe boundary instead
 of splitting complex-script output. Mandatory and hard-wrap boundaries are
 explicit, and maximum-line clipping is reported rather than silently
