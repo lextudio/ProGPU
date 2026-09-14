@@ -965,6 +965,12 @@ and Dawn revisions recorded in `eng/progpu-native-dawn.version.json`:
 ./eng/progpu-verify-native-webscene-provider.sh
 ```
 
+The gate prestages Dawn's revision-pinned Jinja and MarkupSafe generator
+packages with checked Git fetches and validates that Python imports those
+checkouts. This prevents Dawn's dependency helper from hiding a failed clone
+behind a misleading Jinja API error; changes to the Dawn pin must keep these
+generator dependency pins in sync with Dawn's `DEPS` file.
+
 The gate builds WebScene's provider through its own published build entry
 point, creates one Metal provider/device/canvas resource domain, renders the
 ProGPU C++ frame into the acquired canvas texture, waits for its native queue
