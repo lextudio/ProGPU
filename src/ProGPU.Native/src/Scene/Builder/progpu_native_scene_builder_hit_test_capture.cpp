@@ -141,6 +141,29 @@ bool line_hit_data(progpu_native_point start, progpu_native_point end,
     return true;
 }
 
+// A four-edge topology proof, not envelope inference. Each bound corner occurs
+// exactly once, adjacent endpoints join and every edge is nonzero/axis-aligned.
+// Fixed-size dependent classification; coordinate mapping stays on SIMD above.
+bool is_rectangular_hit_clip(std::span<const progpu_native_path_segment> edges,
+    progpu_native_point minimum, progpu_native_point maximum) noexcept {
+    if (edges.size() != 4U || !(minimum.x < maximum.x && minimum.y < maximum.y)) return false;
+    std::uint32_t corners = 0U;
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        const auto& edge = edges[i];
+        const auto& next = edges[(i + 1U) % 4U];
+        if (edge.kind != PROGPU_NATIVE_PATH_SEGMENT_LINE ||
+            edge.p1.x != next.p0.x || edge.p1.y != next.p0.y ||
+            ((edge.p0.x == edge.p1.x) == (edge.p0.y == edge.p1.y)) ||
+            (edge.p0.x != minimum.x && edge.p0.x != maximum.x) ||
+            (edge.p0.y != minimum.y && edge.p0.y != maximum.y)) return false;
+        const std::uint32_t corner = (edge.p0.x == maximum.x ? 1U : 0U) |
+            (edge.p0.y == maximum.y ? 2U : 0U);
+        if ((corners & (1U << corner)) != 0U) return false;
+        corners |= 1U << corner;
+    }
+    return corners == 15U;
+}
+
 // Four independent half-plane limits. This is source clip metadata, never a
 // raster fallback; it shares the producer's NEON/SSE2 admission policy.
 progpu_native_image_rect intersect_hit_clips(progpu_native_image_rect a,
@@ -240,6 +263,7 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
         std::vector<clip_entry> clip_starts(implementation_->resources.size() + 1U);
         struct vector_clip_entry {
             bool loaded{};
+            bool rectangle{};
             std::uint32_t frame{};
             std::uint32_t start{}, count{}, rule{};
             progpu_native_point minimum{}, maximum{};
@@ -281,6 +305,9 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
                 segment.p2 = {x[2], y[2]}; segment.p3 = {x[3], y[3]};
                 segments.push_back(segment);
             }
+            cached.rectangle = is_rectangular_hit_clip(
+                std::span<const progpu_native_path_segment>(segments).subspan(cached.start, cached.count),
+                cached.minimum, cached.maximum);
             cached.loaded = true;
             cached.frame = input_frame;
             return &cached;
@@ -308,8 +335,17 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
             }
             const bool state_clip = (state.flags & PROGPU_NATIVE_SCENE_STATE_CLIP_RECT) != 0U;
             if (state_clip || layer_clip_scope != 0U) {
-                const auto clip = !state_clip ? layer_clips[layer_clip_scope] : layer_clip_scope == 0U
+                auto clip = !state_clip ? layer_clips[layer_clip_scope] : layer_clip_scope == 0U
                     ? state.clip_rect : intersect_hit_clips(state.clip_rect, layer_clips[layer_clip_scope]);
+                if (vector_clip != nullptr && vector_clip->rectangle) {
+                    // Preserve the exact intersection as one shared rectangle
+                    // range. Curved/nonrectangular paths retain their own range
+                    // and the stricter composition admission below.
+                    clip = intersect_hit_clips(clip, {vector_clip->minimum.x, vector_clip->minimum.y,
+                        vector_clip->maximum.x - vector_clip->minimum.x,
+                        vector_clip->maximum.y - vector_clip->minimum.y});
+                    vector_clip = nullptr;
+                }
                 if (clip.width <= 0.0F || clip.height <= 0.0F) return true;
                 const float right = clip.x + clip.width, bottom = clip.y + clip.height;
                 if (!std::isfinite(right) || !std::isfinite(bottom)) return false;
@@ -524,6 +560,20 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
                         layer_clip_scope = static_cast<std::uint32_t>(layer_clips.size());
                         layer_clips.push_back(clip);
                     }
+                }
+                if (input_layer.geometry_clip != PROGPU_NATIVE_SCENE_NO_INDEX) {
+                    const auto* geometry = load_vector_clip(input_layer.geometry_clip);
+                    // This is the original effect-output geometry, not effect
+                    // allocation bounds. General vector intersections stay
+                    // explicit until their complete source topology is carried.
+                    if (geometry == nullptr || !geometry->rectangle) return unsupported();
+                    progpu_native_image_rect clip{geometry->minimum.x, geometry->minimum.y,
+                        geometry->maximum.x - geometry->minimum.x,
+                        geometry->maximum.y - geometry->minimum.y};
+                    if (layer_clip_scope != 0U) clip = intersect_hit_clips(clip, layer_clips[layer_clip_scope]);
+                    if (!std::isfinite(clip.x + clip.width) || !std::isfinite(clip.y + clip.height)) return unsupported();
+                    layer_clip_scope = static_cast<std::uint32_t>(layer_clips.size());
+                    layer_clips.push_back(clip);
                 }
                 if (input_layer.changes_frame) {
                     if (input_frames.empty()) input_frames.push_back(identity_transform());

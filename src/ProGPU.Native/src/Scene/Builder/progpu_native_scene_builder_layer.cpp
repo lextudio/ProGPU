@@ -649,8 +649,7 @@ bool semantic_scene_builder::push_layer(
     if (source_effect &&
         ((source.flags & ~(PROGPU_NATIVE_SCENE_LAYER_FORCE_ISOLATION |
             PROGPU_NATIVE_SCENE_LAYER_BOUNDS | PROGPU_NATIVE_SCENE_LAYER_COMPOSITE_STATE)) != 0U ||
-         source.blend_mode != PROGPU_NATIVE_BLEND_SRC_OVER ||
-         source.mask_resource_index != PROGPU_NATIVE_SCENE_NO_INDEX)) {
+         source.blend_mode != PROGPU_NATIVE_BLEND_SRC_OVER)) {
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     progpu_native_scene_layer layer = source;
@@ -736,6 +735,10 @@ bool semantic_scene_builder::push_layer(
         implementation_->resources[layer.mask_resource_index].source_geometry_clip) {
         return implementation_->fail(scene_build_error::invalid_argument);
     }
+    if (source_effect && layer.mask_resource_index != PROGPU_NATIVE_SCENE_NO_INDEX &&
+        !implementation_->resources[layer.mask_resource_index].source_geometry_clip) {
+        return implementation_->fail(scene_build_error::invalid_argument);
+    }
     if (source_effect && layer.effect_resource_index != PROGPU_NATIVE_SCENE_NO_INDEX) {
         const auto& effects = implementation_->resources[layer.effect_resource_index].auxiliary;
         for (std::size_t offset = 0U; offset < effects.size(); offset += sizeof(progpu_native_group_effect)) {
@@ -772,7 +775,8 @@ bool semantic_scene_builder::push_layer(
             hit_layers.reserve(std::max<std::size_t>(16U, hit_layers.size() * 2U));
         }
         if (source_geometry) hit_layers.push_back({implementation_->commands.size(), source_cache,
-            source_cache ? *source_content_to_parent : identity_transform()});
+            source_cache ? *source_content_to_parent : identity_transform(),
+            source_effect ? layer.mask_resource_index : PROGPU_NATIVE_SCENE_NO_INDEX});
         implementation_->commands.push_back(std::move(command));
         implementation_->stack_kinds[implementation_->stack_depth] =
             materialized ? 3U : 2U;

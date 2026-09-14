@@ -22180,6 +22180,115 @@ int main() {
         PROGPU_REQUIRE(capture_hits(builder).empty());
     }
     {
+        // Popup source clip: a proven rectangular vector path intersected with
+        // a smaller client rectangle. Keep two draws sharing one clipped range
+        // and restore the following sibling's unmasked source geometry.
+        for (const bool effect_clip : {false, true})
+        for (std::uint32_t variant = 0U; variant < 12U; ++variant) {
+            progpu::native::semantic_scene_builder builder(10801U, variant + 1U);
+            std::array points{progpu_native_point{0, 0}, progpu_native_point{100, 0},
+                progpu_native_point{100, 100}, progpu_native_point{0, 100}};
+            if (variant == 1U) std::reverse(points.begin(), points.end());
+            if (variant == 2U) std::rotate(points.begin(), points.begin() + 1, points.end());
+            if (variant == 4U) std::swap(points[1], points[2]); // bow tie
+            if (variant == 5U) points[2] = points[1]; // repeated/zero edge
+            std::array<progpu_native_path_segment, 4U> edges{};
+            for (std::size_t i = 0U; i < edges.size(); ++i) {
+                edges[i].kind = PROGPU_NATIVE_PATH_SEGMENT_LINE;
+                edges[i].p0 = points[i]; edges[i].p1 = points[(i + 1U) % points.size()];
+            }
+            if (variant == 6U) {
+                edges[0].kind = PROGPU_NATIVE_PATH_SEGMENT_QUADRATIC;
+                edges[0].p2 = edges[0].p1; edges[0].p1 = {50, 10};
+            }
+            if (variant == 7U) edges[0].p1.x = 99; // disconnected
+            progpu_native_scene_clip_path path{};
+            path.segment_count = edges.size(); path.max_x = path.max_y = 100;
+            path.fill_rule = PROGPU_NATIVE_FILL_RULE_EVEN_ODD;
+            path.sample_grid = 8U; path.transform = builder.identity_transform();
+            if (variant == 8U) path.transform.m21 = 0.25F; // slanted, not its AABB
+            if (variant == 9U) path.transform = {-1, 0, 0, 1, 100, 0};
+            if (variant == 10U) path.transform = {0, 1, -1, 0, 100, 0};
+            std::uint32_t mask{}, state_index{};
+            PROGPU_REQUIRE(builder.add_vector_clip_mask(std::span(&path, 1U), edges, 1.0F, mask, variant != 11U));
+            auto state = builder.identity_state();
+            state.flags = PROGPU_NATIVE_SCENE_STATE_CLIP_RECT;
+            if (!effect_clip) {
+                state.flags |= PROGPU_NATIVE_SCENE_STATE_MASK;
+                state.mask_resource_index = mask;
+            }
+            state.clip_rect = variant == 3U ? progpu_native_image_rect{110, 110, 10, 10} :
+                progpu_native_image_rect{20, 20, 60, 60};
+            PROGPU_REQUIRE(builder.add_state(state, state_index));
+            PROGPU_REQUIRE(builder.set_hit_test_owner(710));
+            if (effect_clip) {
+                progpu_native_group_effect effect{};
+                effect.kind = PROGPU_NATIVE_GROUP_EFFECT_DROP_SHADOW;
+                effect.revision = 1U; effect.sigma_x = effect.sigma_y = 3;
+                effect.color_a = 0.55F; effect.offset_x = effect.offset_y = 4;
+                std::uint32_t effect_index{};
+                PROGPU_REQUIRE(builder.add_effect_chain(std::span(&effect, 1U), 1U, effect_index));
+                progpu_native_scene_layer layer{};
+                layer.flags = PROGPU_NATIVE_SCENE_LAYER_BOUNDS | PROGPU_NATIVE_SCENE_LAYER_COMPOSITE_STATE;
+                layer.bounds = {-100, -100, 400, 400}; // shadow storage is not source input
+                layer.opacity = 1; layer.blend_mode = PROGPU_NATIVE_BLEND_SRC_OVER;
+                layer.effect_resource_index = effect_index; layer.mask_resource_index = mask;
+                layer.reserved0 = state_index;
+                if (variant == 11U) {
+                    PROGPU_REQUIRE(!builder.push_layer(layer,
+                        progpu::native::scene_layer_hit_test_mode::source_identity_effect));
+                    continue; // undeclared raster masks cannot become source clips
+                }
+                PROGPU_REQUIRE(builder.push_layer(layer,
+                    progpu::native::scene_layer_hit_test_mode::source_identity_effect));
+            } else PROGPU_REQUIRE(builder.save(state_index));
+            progpu_native_analytic_primitive rectangle{};
+            rectangle.kind = PROGPU_NATIVE_PRIMITIVE_RECTANGLE;
+            rectangle.width = rectangle.height = 200;
+            rectangle.transform = builder.identity_transform();
+            const auto draw = [&] { return builder.draw_analytic(std::span(&rectangle, 1U), {}, {0, 0, 200, 200}); };
+            PROGPU_REQUIRE(draw()); PROGPU_REQUIRE(draw());
+            if (effect_clip) PROGPU_REQUIRE(builder.pop_layer());
+            else PROGPU_REQUIRE(builder.restore());
+            PROGPU_REQUIRE(builder.set_hit_test_owner(711)); PROGPU_REQUIRE(draw());
+            if ((variant >= 4U && variant <= 8U) || variant == 11U) {
+                std::uint32_t rejected{};
+                PROGPU_REQUIRE(!builder.add_recorded_hit_test_index(rejected,
+                    progpu::native::scene_hit_test_opacity_mode::source_geometry));
+                PROGPU_REQUIRE(rejected == PROGPU_NATIVE_SCENE_NO_INDEX);
+                continue;
+            }
+            const auto hits = capture_hits(builder, progpu::native::scene_hit_test_opacity_mode::source_geometry);
+            PROGPU_REQUIRE(hits.size() == (variant == 3U ? 1U : 3U));
+            PROGPU_REQUIRE(hits.back().id == 711 && hits.back().clip_segment_count == 0U);
+            if (variant == 3U) continue;
+            PROGPU_REQUIRE(hits[0].id == 710 && hits[1].id == 710);
+            PROGPU_REQUIRE(hits[0].bounds_min.x == 20 && hits[0].bounds_min.y == 20);
+            PROGPU_REQUIRE(hits[0].bounds_max.x == 80 && hits[0].bounds_max.y == 80);
+            PROGPU_REQUIRE(hits[0].clip_segment_count == 4U && hits[0].clip_fill_rule == 1U);
+            PROGPU_REQUIRE(hits[0].clip_start_segment == hits[1].clip_start_segment);
+            std::vector<std::byte> stream; PROGPU_REQUIRE(builder.build(stream));
+            const auto header = read_value<progpu_native_scene_header>(stream, 0U);
+            for (std::uint32_t i = 0U; i < header.resource_count; ++i) {
+                const auto resource = read_value<progpu_native_scene_resource>(stream,
+                    header.resource_offset + i * sizeof(progpu_native_scene_resource));
+                if (resource.kind != PROGPU_NATIVE_SCENE_RESOURCE_HIT_TEST_INDEX) continue;
+                const auto page = read_value<progpu_native_scene_hit_test_index>(stream, resource.payload_offset);
+                PROGPU_REQUIRE(page.path_segment_count == 8U); // original plus one shared intersection
+                const std::array expected{progpu_native_point{20, 20}, progpu_native_point{80, 20},
+                    progpu_native_point{80, 80}, progpu_native_point{20, 80}};
+                for (std::size_t j = 0U; j < 4U; ++j) {
+                    const auto edge = read_value<progpu_native_path_segment>(stream,
+                        resource.auxiliary_offset + page.path_segment_offset +
+                            (hits[0].clip_start_segment + j) * sizeof(progpu_native_path_segment));
+                    PROGPU_REQUIRE(edge.kind == PROGPU_NATIVE_PATH_SEGMENT_LINE);
+                    PROGPU_REQUIRE(edge.p0.x == expected[j].x && edge.p0.y == expected[j].y);
+                    PROGPU_REQUIRE(edge.p1.x == expected[(j + 1U) % 4U].x && edge.p1.y == expected[(j + 1U) % 4U].y);
+                }
+            }
+        }
+    }
+    {
         // Source selection harness: triangle geometry, not its rectangular envelope.
         // Paired with SourceTriangleClipRetainsWorldEdgesAndRestoresSiblingInput.
         for (std::uint32_t variant = 0U; variant < 5U; ++variant) {
@@ -22476,7 +22585,8 @@ int main() {
     }
     {
         // Source visual with Showcase Blur/DropShadow settings, through canonical MIL.
-        for (std::uint32_t variant = 0U; variant < 12U; ++variant) {
+        for (const bool vector_effect_clip : {false, true})
+        for (std::uint32_t variant = 0U; variant < (vector_effect_clip ? 3U : 12U); ++variant) {
             channel state;
             std::vector<std::byte> batch, content;
             append_create(batch, 1U, 39U); append_create(batch, 2U, 43U);
@@ -22554,7 +22664,7 @@ int main() {
                 append_create(batch, visual_handle, 39U);
                 append_command(batch, command::visual_create, visual_handle);
             }
-            append_create(batch, 9U, 69U); append_create(batch, 10U, 43U);
+            append_create(batch, 9U, vector_effect_clip ? 73U : 69U); append_create(batch, 10U, 43U);
             append_command(batch, command::target_set_root, 3U, 6U);
             append_command(batch, command::visual_insert_child_at, 6U, 1U, 0U);
             append_command(batch, command::visual_insert_child_at, 6U, 8U, 1U);
@@ -22562,7 +22672,9 @@ int main() {
             append_command(batch, command::visual_set_alpha, 1U, 1.0);
             append_command(batch, command::visual_set_offset, 1U, 5.0, 6.0);
             append_command(batch, command::visual_set_offset, 7U, 30.0, 30.0);
-            append_command(batch, command::rectangle_geometry, 9U,
+            if (vector_effect_clip)
+                append_path_geometry(batch, 9U, 0U, 1U, make_rectangle_path_figures(0, 0, 75, 70));
+            else append_command(batch, command::rectangle_geometry, 9U,
                 0.0, 0.0, 0.0, 0.0, 75.0, 70.0, 0U, 0U, 0U, 0U);
             append_command(batch, command::visual_set_clip, 1U, 9U);
             content.clear();

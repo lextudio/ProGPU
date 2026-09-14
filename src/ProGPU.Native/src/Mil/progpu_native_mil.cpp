@@ -19509,10 +19509,11 @@ struct channel::implementation {
         // Built-in source effects inherit WPF's identity EffectMapping. Preserve
         // geometric input, not expanded raster bounds. An inner local cache
         // publishes its own original-content frame; the effect preserves that
-        // frame and applies only its final source clip. Spatial masks remain
-        // unqualified at either boundary and must still fail closed.
-        const bool source_effect_input = record_hit_owner && !has_spatial_visual_mask &&
-            state.mask_resource_index == PROGPU_NATIVE_SCENE_NO_INDEX;
+        // frame and applies only its final source clip. The builder preserves
+        // declared geometric masks separately from opacity masks, admitting
+        // proven rectangular intersections during complete input capture.
+        // Spatial opacity masks remain unqualified at either boundary.
+        const bool source_effect_input = record_hit_owner && !has_spatial_visual_mask;
         const auto effect_hit_mode = source_effect_input
             ? native::scene_layer_hit_test_mode::source_identity_effect
             : native::scene_layer_hit_test_mode::unspecified;

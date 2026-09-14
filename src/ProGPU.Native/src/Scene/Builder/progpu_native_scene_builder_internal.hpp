@@ -57,6 +57,7 @@ struct semantic_scene_builder::implementation final {
         std::size_t command_index{};
         bool changes_frame{};
         progpu_native_affine_2d content_to_parent{};
+        std::uint32_t geometry_clip{PROGPU_NATIVE_SCENE_NO_INDEX};
     };
     std::vector<source_hit_layer> source_geometry_hit_layers{};
     struct input_only_range final {

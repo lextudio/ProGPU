@@ -38,12 +38,28 @@ publishes a successful index. There are no per-primitive native calls, GPU
 submissions, raster readbacks or new compute fallback paths.
 
 A containing rectangular clip is redundant and keeps the real vector clip.
-Nonredundant rectangle intersections, multiple vector paths, boolean clip
+An exact four-line rectangular vector path can also intersect a nonredundant
+rectangle. Admission proves closure, four unique bounds corners and nonzero
+axis-aligned edges after the clip transform; bounds alone never prove topology.
+Both winding directions, rotated starting vertices, axis reflection and quarter
+turns work. Curves, disconnected edges, repeated corners, bow ties and shears
+do not acquire rectangular semantics. The existing intrinsic rectangle
+intersection produces one shared four-edge range per state/layer/frame scope.
+
+Declared rectangular geometry masks on source identity-effect layers likewise
+become final source clips, intersected with enclosing composite clips. They do
+not contribute shadow padding, effect allocation bounds or opacity-mask coverage
+to input. Save/layer exit restores the previous clip. Undeclared effect masks
+are rejected at recording; nonrectangular masks remain rejected by complete input
+capture. MIL records this metadata before effect raster lowering, preserving
+actual source ownership and cached content frames.
+
+Nonrectangular nonredundant intersections, multiple vector paths, boolean clip
 programs, arcs, spatial opacity masks and undeclared material masks remain
 explicit unsupported native-input contracts. Do not overwrite a path clip with
 rectangle segments or combine independent contours as if winding meant
-intersection. Built-in effect/cache layers carrying masks remain independently
-guarded. Generic rendered-visibility capture continues rejecting mask states.
+intersection. Cache-boundary masks remain independently guarded. Generic
+rendered-visibility capture continues rejecting mask states.
 
 ## Paired applicability and provenance
 
@@ -68,3 +84,28 @@ The MIL coverage digest is regenerated after source decoder edits. Fixtures are
 authored for final execution, not evidence of runtime correctness or performance.
 Native provider/module, managed renderer/headless, source/package applications,
 Windows comparisons, lifetime/performance and both PR CI gates remain required.
+
+## Showcase popup follow-up — 2026-09-14
+
+The actual package-derived Showcase native-input probe exposed a popup vector
+rectangle `(0,0)-(173,74)` intersected with client clip `(3,3)-(170,71)`, followed
+by a separate drop-shadow popup with an output geometry mask. The native producer
+rejected these compositions despite their exact rectangular topology. Scene
+10801 now covers both state and effect placement, shared ranges, clipped bounds,
+disjoint clips, restoration and explicit invalid/undeclared-mask rejection.
+Canonical MIL fixtures cover rectangular PathGeometry clips around blur, zero
+blur and shadow, point-only children, source edits and unmasked siblings.
+
+Both native providers compile and all 19 CTest suites pass on macOS ARM64.
+The live diagnostic overlay advances past the previous compilation failures but
+is not a passing package/application gate: its follow-up is GPU query completion.
+Final-head package, Windows/Linux and full managed/headless gates remain required.
+
+This is a native index-producer integration gap, not a change in shared query or
+managed source clipping semantics. Existing managed source clip/effect traversal
+already preserves these scopes; its paired fixtures remain authoritative. The
+implementation reuses original ProGPU `transform_hit_coordinates` and
+`intersect_hit_clips`; no foreign source, ABI, shader or fallback is introduced.
+Rectangle recognition is four dependency-bound topology checks once per used
+clip/frame; independent coordinate/intersection lanes retain NEON/SSE2. No new
+performance claim follows from passing correctness tests.

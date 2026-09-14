@@ -1,5 +1,12 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native input may intersect a vector clip as a rectangle only after proving its
+four closed axis-aligned edges and unique corners in the active input frame.
+Reuse intrinsic intersection and scope/frame-qualified clip ranges. Declared
+identity-effect geometry masks retain the final source clip, never shadow bounds
+or opacity-mask coverage. Curved/composed and undeclared masks stay explicit;
+preserve scope restoration and independent package/application qualification.
+
 Static MIL visual guidelines preserve infinite anchors produced by float
 narrowing of unbounded source adorners. Keep NaN rejection atomic, dynamic
 explicit offsets finite, mirrored ordering and zero infinite displacement.
