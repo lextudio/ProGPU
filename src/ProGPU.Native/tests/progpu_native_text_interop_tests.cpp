@@ -404,6 +404,63 @@ void bulk_shape_is_deterministic_and_caller_owned() {
         0U,
         0U};
     {
+        auto continued_request = retained_request;
+        auto options = paragraph_options;
+        options.alignment = PROGPU_NATIVE_TEXT_ALIGNMENT_LEFT;
+        progpu_native_text_paragraph_requirements needed{};
+        needed.struct_size = sizeof(needed);
+        require(progpu_native_text_context_get_flow_paragraph_requirements(context, &continued_request,
+            &options, nullptr, 0, nullptr, &needed) == PROGPU_NATIVE_STATUS_SUCCESS);
+        std::vector<progpu_native_positioned_text_glyph> output(needed.glyph_capacity);
+        std::vector<progpu_native_positioned_text_line> output_lines(needed.line_capacity);
+        std::vector<std::uint8_t> workspace(static_cast<std::size_t>(needed.scratch_bytes));
+        progpu_native_text_paragraph_result result{};
+        for (const auto direction : {PROGPU_NATIVE_TEXT_DIRECTION_LEFT_TO_RIGHT, PROGPU_NATIVE_TEXT_DIRECTION_RIGHT_TO_LEFT}) {
+            continued_request.direction = direction;
+            options.maximum_width = 1000;
+            result.struct_size = sizeof(result);
+            require(progpu_native_text_context_layout_configured_flow_paragraph(context, &continued_request,
+                &options, nullptr, 0, nullptr, output.data(), static_cast<std::uint32_t>(output.size()),
+                output_lines.data(), static_cast<std::uint32_t>(output_lines.size()), workspace.data(), workspace.size(),
+                &result, 0, nullptr) == PROGPU_NATIVE_STATUS_SUCCESS);
+            const auto reference = output;
+            const auto reference_count = result.glyph_count;
+            auto continue_at = [&](std::int32_t start) {
+                result.struct_size = sizeof(result);
+                return progpu_native_text_context_layout_continued_flow_paragraph(context, &continued_request,
+                    &options, nullptr, 0, nullptr, nullptr, nullptr, 0,
+                    output.data(), static_cast<std::uint32_t>(output.size()), output_lines.data(),
+                    static_cast<std::uint32_t>(output_lines.size()), workspace.data(), workspace.size(), &result, 0, start, -1.0F);
+            };
+            for (const float width : {40.0F, 80.0F}) {
+                options.maximum_width = width;
+                for (std::uint32_t source = 1; source < reference_count; ++source) {
+                    const auto start = reference[source].cluster;
+                    require(continue_at(start) == PROGPU_NATIVE_STATUS_SUCCESS);
+                    require(result.line_count > 0 && output_lines[0].input_start == start);
+                    for (std::uint32_t i = 0; i < result.glyph_count; ++i) {
+                        const auto& glyph = output[i];
+                        bool matched = false;
+                        for (std::uint32_t r = 0; r < reference_count; ++r) {
+                            const auto& original = reference[r];
+                            if (original.glyph_index != glyph.glyph_index) continue;
+                            require(glyph.cluster >= start && glyph.cluster == original.cluster &&
+                                glyph.glyph_id == original.glyph_id && glyph.font_index == original.font_index &&
+                                glyph.advance_x == original.advance_x);
+                            matched = true;
+                        }
+                        require(matched);
+                    }
+                }
+            }
+            for (const auto invalid : {-1, static_cast<int>(continued_request.input_count) + 1}) {
+                const auto before = output[0];
+                require(continue_at(invalid) == PROGPU_NATIVE_STATUS_INVALID_ARGUMENT);
+                require(result.glyph_count == 0 && result.line_count == 0 && output[0].glyph_id == before.glyph_id);
+            }
+        }
+    }
+    {
         auto inline_input = ascii_scalars("A#B");
         inline_input[1].code_point = 0xFFFC;
         auto inline_request = retained_request;
@@ -435,6 +492,23 @@ void bulk_shape_is_deterministic_and_caller_owned() {
         };
         require(measure() == PROGPU_NATIVE_STATUS_SUCCESS);
         require(measured.glyph_count == 3 && measured.line_count == 1 && measured.content_height == 42);
+        const auto inline_reference = inline_glyphs;
+        for (const std::int32_t start : {1, 2}) {
+            measured.struct_size = sizeof(measured);
+            require(progpu_native_text_context_layout_continued_flow_paragraph(context, &inline_request,
+                &options, &style, 1, nullptr, &metric, &object, 1,
+                inline_glyphs.data(), static_cast<std::uint32_t>(inline_glyphs.size()),
+                measured_lines.data(), static_cast<std::uint32_t>(measured_lines.size()),
+                workspace.data(), workspace.size(), &measured, 0, start, -1.0F) == PROGPU_NATIVE_STATUS_SUCCESS);
+            require(measured.glyph_count == 3U - static_cast<std::uint32_t>(start) && measured_lines[0].input_start == start);
+            for (std::uint32_t i = 0; i < measured.glyph_count; ++i) {
+                const auto& original = inline_reference[i + static_cast<std::uint32_t>(start)];
+                require(inline_glyphs[i].glyph_index == original.glyph_index &&
+                    inline_glyphs[i].font_index == original.font_index && inline_glyphs[i].cluster == original.cluster &&
+                    inline_glyphs[i].advance_x == original.advance_x);
+            }
+        }
+        require(measure() == PROGPU_NATIVE_STATUS_SUCCESS);
         {
             static_assert(sizeof(progpu_native_text_floating_item) == 16);
             static_assert(sizeof(progpu_native_text_floating_options) == 32);

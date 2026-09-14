@@ -155,7 +155,23 @@ public sealed class NativeTextParagraphSnapshot
         var collapsedOptions = options with { MaximumLines = checked((uint)collapse.LineIndex + 1),
             Trimming = collapse.Trimming, EllipsisGlyphId = 0, EllipsisAdvance = collapse.SymbolWidth / options.Scale };
         return CreateCore(context, text, direction, in collapsedOptions, features, styles, incrementalTab, tabOrigin,
-            false, wrapping, original, collapse);
+            false, wrapping, original, collapse,
+            continuationStart: original.Lines.Span[0].InputStart > 0 ? original.Lines.Span[0].InputStart : null);
+    }
+
+    /// <summary>Places a shaped-boundary suffix while retaining full original shaping/bidi context and indices.</summary>
+    public static NativeTextParagraphSnapshot CreateContinued(NativeTextShapingContext context,
+        ReadOnlySpan<char> text, NativeTextDirection direction, in NativeTextParagraphOptions options,
+        int inputStart, ReadOnlySpan<NativeTextFeature> features = default,
+        ReadOnlySpan<NativeTextParagraphStyle> styles = default, float incrementalTab = 0, float tabOrigin = 0,
+        NativeTextWrapping wrapping = NativeTextWrapping.Emergency, bool measuredLines = false,
+        ReadOnlySpan<NativeTextStyleMetrics> styleMetrics = default,
+        ReadOnlySpan<NativeTextParagraphInlineObject> inlineObjects = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(inputStart);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(inputStart, text.Length);
+        return CreateCore(context, text, direction, in options, features, styles, incrementalTab, tabOrigin,
+            false, wrapping, null, null, measuredLines, styleMetrics, inlineObjects, continuationStart: inputStart);
     }
 
     private static NativeTextParagraphSnapshot CreateCore(NativeTextShapingContext context,
@@ -167,7 +183,8 @@ public sealed class NativeTextParagraphSnapshot
         ReadOnlySpan<NativeTextParagraphInlineObject> inlineObjects = default,
         NativeTextExclusionOptions? exclusionOptions = null,
         ReadOnlySpan<NativeTextExclusionRectangle> exclusions = default, double? originY = null,
-        NativeTextFloatingOptions? floatingOptions = null, ReadOnlySpan<NativeTextParagraphFloat> floats = default)
+        NativeTextFloatingOptions? floatingOptions = null, ReadOnlySpan<NativeTextParagraphFloat> floats = default,
+        int? continuationStart = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (originY.HasValue && (!double.IsFinite(originY.Value) || originY.Value < 0 || originY.Value > float.MaxValue))
@@ -225,7 +242,11 @@ public sealed class NativeTextParagraphSnapshot
         NativeTextIntrinsicWidths? intrinsicWidths = null;
         try
         {
-            if (floatingOptions.HasValue)
+            if (continuationStart is { } start)
+                Check(context.LayoutContinuedFlowParagraph(in input, in options, nativeStyles, in flow,
+                    glyphBuffer, lineBuffer, scratch, wrapping, start, measuredLines, styleMetrics, nativeObjects,
+                    out result, collapse?.Width));
+            else if (floatingOptions.HasValue)
             {
                 Check(context.LayoutFloatingFlowParagraph(in input, in options, nativeStyles, in flow,
                     styleMetrics, nativeObjects, in floating, nativeFloats, exclusions, glyphBuffer, lineBuffer,
@@ -339,7 +360,7 @@ public sealed class NativeTextParagraphSnapshot
             boxes.AsMemory(0, checked((int)interactionResult.ClusterBoxCount)),
             carets.AsMemory(0, checked((int)interactionResult.CaretStopCount)), intrinsicWidths,
             measuredLines: measuredLines, inlineObjects: measuredLines
-                ? BuildInlinePlacements(inlineObjects, glyphBuffer, lineBuffer) : null,
+                ? BuildInlinePlacements(inlineObjects, glyphBuffer, lineBuffer, continuationStart ?? 0) : null,
             fragments: fragmentBuffer, fragmentLayout: fragmented ? result : null,
             floatingPlacements: floatBuffer, floatingLayout: floatingResult, floatingItems: floats.ToArray());
     }
@@ -390,8 +411,11 @@ public sealed class NativeTextParagraphSnapshot
 
     private static NativeTextInlineObjectPlacement[] BuildInlinePlacements(
         ReadOnlySpan<NativeTextParagraphInlineObject> objects,
-        ReadOnlySpan<NativePositionedTextGlyph> glyphs, ReadOnlySpan<NativePositionedTextLine> lines)
+        ReadOnlySpan<NativePositionedTextGlyph> glyphs, ReadOnlySpan<NativePositionedTextLine> lines, int inputStart = 0)
     {
+        int firstObject = 0;
+        while (firstObject < objects.Length && objects[firstObject].Position < inputStart) ++firstObject;
+        objects = objects[firstObject..];
         if (objects.IsEmpty) return [];
         var result = new NativeTextInlineObjectPlacement[objects.Length];
         Array.Fill(result, new NativeTextInlineObjectPlacement(-1, -1, -1, 0, 0, 0, 0));
@@ -428,11 +452,15 @@ public sealed class NativeTextParagraphSnapshot
         if (lines.Length != request.LineIndex + 1)
             throw new InvalidOperationException("Collapsed layout changed the source line count.");
         var sourceLine = original.Lines.Span[request.LineIndex];
+        uint logicalOrigin = uint.MaxValue;
+        foreach (var glyph in original.Glyphs.Span) logicalOrigin = Math.Min(logicalOrigin, glyph.GlyphIndex);
         var lookup = new int[original.Glyphs.Length];
+        Array.Fill(lookup, -1);
         for (int i = 0; i < lookup.Length; ++i)
         {
-            uint logical = original.Glyphs.Span[i].GlyphIndex;
-            if (logical >= lookup.Length) throw new InvalidOperationException("Original glyph topology is incomplete.");
+            uint logical = original.Glyphs.Span[i].GlyphIndex - logicalOrigin;
+            if (logical >= lookup.Length || lookup[logical] != -1)
+                throw new InvalidOperationException("Original glyph topology is incomplete.");
             lookup[logical] = i;
         }
         int sign = -1;
@@ -448,8 +476,9 @@ public sealed class NativeTextParagraphSnapshot
                 levels[i] = direction == NativeTextDirection.RightToLeft ? (sbyte)1 : (sbyte)0;
                 continue;
             }
-            if (glyph.GlyphIndex >= lookup.Length) throw new InvalidOperationException("Collapsed glyph has no original source.");
-            int source = lookup[glyph.GlyphIndex]; var prior = original.Glyphs.Span[source];
+            if (glyph.GlyphIndex < logicalOrigin || glyph.GlyphIndex - logicalOrigin >= lookup.Length)
+                throw new InvalidOperationException("Collapsed glyph has no original source.");
+            int source = lookup[glyph.GlyphIndex - logicalOrigin]; var prior = original.Glyphs.Span[source];
             if (glyph.Cluster != prior.Cluster || glyph.GlyphId != prior.GlyphId || glyph.FontIndex != prior.FontIndex ||
                 glyph.AdvanceX != prior.AdvanceX || glyph.AdvanceY != prior.AdvanceY)
                 throw new InvalidOperationException("Collapse must retain the original text, font, style and tab domain.");

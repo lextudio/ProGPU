@@ -68,6 +68,16 @@ public interface IPortableTextFormatting
     IPortableTextParagraph Format(in PortableTextParagraphRequest request);
 }
 
+/// <summary>
+/// Explicit retained paragraph reflow. Full shaping context and original UTF-16
+/// indices survive; only placement from an existing shaped boundary changes.
+/// Exclusion/float geometry needs its own continuation contract.
+/// </summary>
+public interface IPortableReflowTextParagraph : IPortableTextParagraph
+{
+    IPortableTextParagraph Reflow(int inputStart, float maximumWidth);
+}
+
 /// <summary>Source physical-font extents in paragraph DIPs, one per explicit style.</summary>
 public readonly record struct PortableTextStyleMetrics(float Ascent, float Descent);
 

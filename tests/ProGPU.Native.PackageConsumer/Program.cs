@@ -488,6 +488,7 @@ Console.WriteLine(
 
 static void ValidateNativeInlineParagraph()
 {
+    TextContinuationValidation.Run(Path.Combine(AppContext.BaseDirectory, "Inter-Regular.ttf"));
     if (Marshal.SizeOf<NativeTextFloatingItem>() != 16 || Marshal.SizeOf<NativeTextFloatingOptions>() != 32 ||
         Marshal.SizeOf<NativeTextFloatingPlacement>() != 24 || Marshal.SizeOf<NativeTextFloatingResult>() != 32)
         throw new InvalidOperationException("Native floating wire record sizes changed.");

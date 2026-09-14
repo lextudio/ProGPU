@@ -1,5 +1,13 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Width-changing text continuations shape the complete original paragraph before
+native suffix placement at a proven shaped cluster boundary. Retain full source,
+font, bidi and logical glyph identities, measured object ownership and context
+leases. Never reshape an isolated suffix, round an interior boundary or ignore
+width. Continued collapse accounts for original nonzero glyph indices; fragment/
+float reflow and measured sign semantics remain explicit. See
+docs/native-text-continuation-reflow.md.
+
 Native package CI groups must preserve every original independent JIT/NativeAOT
 case on each RID, along with ordered/default core and separate DX12 gates. Keep
 the selector coverage verifier, fail-closed jobs and exact successful-Build staging.

@@ -78,6 +78,16 @@ public sealed unsafe partial class NativeTextShapingContext
         => LayoutFlowParagraphCore(in input, in options, styles, in flowOptions, glyphs, lines, scratch,
             wrapping, measureIntrinsicWidths, out result, out widths);
 
+    public NativeRendererStatus LayoutContinuedFlowParagraph(in NativeTextShapeInput input,
+        in NativeTextParagraphOptions options, ReadOnlySpan<NativeTextStyleRun> styles,
+        in NativeTextFlowOptions flowOptions, Span<NativePositionedTextGlyph> glyphs,
+        Span<NativePositionedTextLine> lines, Span<byte> scratch, NativeTextWrapping wrapping,
+        int inputStart, bool measuredLines, ReadOnlySpan<NativeTextStyleMetrics> metrics,
+        ReadOnlySpan<NativeTextInlineObject> objects, out NativeTextParagraphResult result, float? collapseWidth = null)
+        => LayoutFlowParagraphCore(in input, in options, styles, in flowOptions, glyphs, lines, scratch,
+            wrapping, false, out result, out _, inline: measuredLines, metrics: metrics, objects: objects,
+            continuationStart: inputStart, collapseWidth: collapseWidth);
+
     private NativeRendererStatus LayoutFlowParagraphCore(in NativeTextShapeInput input,
         in NativeTextParagraphOptions options, ReadOnlySpan<NativeTextStyleRun> styles,
         in NativeTextFlowOptions flowOptions, Span<NativePositionedTextGlyph> glyphs,
@@ -87,7 +97,8 @@ public sealed unsafe partial class NativeTextShapingContext
         ReadOnlySpan<NativeTextInlineObject> objects = default,
         NativeTextExclusionOptions? exclusionOptions = null,
         ReadOnlySpan<NativeTextExclusionRectangle> exclusions = default,
-        Span<NativeTextFragmentPlacement> fragments = default, double? originY = null)
+        Span<NativeTextFragmentPlacement> fragments = default, double? originY = null,
+        int? continuationStart = null)
     {
         if (inline && metrics.Length != styles.Length)
             throw new ArgumentException("Each style requires one metric pair.", nameof(metrics));
@@ -116,6 +127,12 @@ public sealed unsafe partial class NativeTextShapingContext
             var shaping = NativeTextShapingInterop.CreateRequest(in input, null, scalars, pre, post,
                 features, coordinates, null, includeOwnedResources: false);
             var layout = CreateParagraphLayoutOptions(in input, in options);
+            if (continuationStart is { } start)
+                return NativeMethods.LayoutContinuedFlowParagraph(use.Handle, &shaping, &layout, styleData,
+                    checked((uint)styles.Length), &flow, inline ? metricData : null, objectData,
+                    checked((uint)objects.Length), positioned, checked((uint)glyphs.Length),
+                    positionedLines, checked((uint)lines.Length), scratchData, checked((nuint)scratch.Length),
+                    output, (uint)wrapping, start, collapseWidth ?? -1);
             if (exclusionOptions.HasValue && originY.HasValue)
                 return NativeMethods.LayoutExcludedFlowParagraphAt(use.Handle, &shaping, &layout, styleData,
                     checked((uint)styles.Length), &flow, metricData, objectData, checked((uint)objects.Length),
@@ -292,4 +309,13 @@ internal static unsafe partial class NativeMethods
         uint styleCount, NativeTextFlowOptions* flow, NativePositionedTextGlyph* glyphs, uint glyphCapacity,
         NativePositionedTextLine* lines, uint lineCapacity, void* scratch, nuint scratchSize,
         NativeTextParagraphResult* result, uint wrapping, NativeTextIntrinsicWidths* widths);
+
+    [LibraryImport(LibraryName, EntryPoint = "progpu_native_text_context_layout_continued_flow_paragraph")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial NativeRendererStatus LayoutContinuedFlowParagraph(nint context,
+        NativeTextShapeRequest* shaping, NativeTextLayoutOptions* layout, NativeTextStyleRun* styles,
+        uint styleCount, NativeTextFlowOptions* flow, NativeTextStyleMetrics* metrics,
+        NativeTextInlineObject* objects, uint objectCount, NativePositionedTextGlyph* glyphs, uint glyphCapacity,
+        NativePositionedTextLine* lines, uint lineCapacity, void* scratch, nuint scratchSize,
+        NativeTextParagraphResult* result, uint wrapping, int inputStart, float collapseWidth);
 }

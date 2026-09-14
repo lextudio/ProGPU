@@ -255,6 +255,26 @@ PROGPU_NATIVE_API progpu_native_status progpu_native_text_context_layout_configu
     void* scratch, size_t scratch_size, progpu_native_text_paragraph_result* result,
     uint32_t wrapping, progpu_native_text_intrinsic_widths* widths);
 
+/* Complete original shaping/bidi input and styles; placement starts at input_start,
+ * an exact original shaped cluster boundary. Never pass a separately shaped suffix.
+ * Original glyph/font/cluster identities remain intact; line Y starts at zero.
+ * Supply metrics for measured inline layout (same requirements as inline flow),
+ * otherwise pass null metrics/objects and zero object_count. Uses existing full
+ * flow/inline requirements and scratch; no exclusions or intrinsic scan.
+ * collapse_width is -1 for ordinary reflow or follows the existing collapsed-flow
+ * contract, with positive maximum_lines and non-NONE trimming in layout.
+ * Work/storage stay bounded by full paragraph shaping plus suffix layout. */
+PROGPU_NATIVE_API progpu_native_status progpu_native_text_context_layout_continued_flow_paragraph(
+    progpu_native_text_context* context, const progpu_native_text_shape_request* shaping,
+    const progpu_native_text_layout_options* layout, const progpu_native_text_style_run* styles,
+    uint32_t style_count, const progpu_native_text_flow_options* flow,
+    const progpu_native_text_style_metrics* style_metrics,
+    const progpu_native_text_inline_object* objects, uint32_t object_count,
+    progpu_native_positioned_text_glyph* glyphs, uint32_t glyph_capacity,
+    progpu_native_positioned_text_line* lines, uint32_t line_capacity,
+    void* scratch, size_t scratch_size, progpu_native_text_paragraph_result* result,
+    uint32_t wrapping, int32_t input_start, float collapse_width);
+
 /* Same capacities as flow layout. Preserve maximum_width for original line breaks;
  * collapse_width constrains only the final maximum_lines line, and may be zero.
  * Requires positive maximum_lines and non-NONE trimming. A synthetic sign has
