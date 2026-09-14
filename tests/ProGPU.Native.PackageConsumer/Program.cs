@@ -884,6 +884,9 @@ static void ValidateNativeDocumentRows()
 static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompositor compositor)
 {
     const ulong sceneId = 817;
+    var initialMemory = compositor.GetGpuMemorySnapshot();
+    if (initialMemory.EngineId == 0 || initialMemory.OwnedBufferCount == 0 || initialMemory.OwnedBufferBytes == 0)
+        throw new InvalidOperationException("Native memory inventory lost the initialized engine's actual buffers.");
     var firstOwner = new object();
     var secondOwner = new object();
     InstallIndex(compositor, sceneId, 1);
@@ -938,6 +941,14 @@ static void ValidateNativeHitTestOwnerSnapshots(WgpuContext context, NativeCompo
     // The desktop completion path must return the same records/counters as
     // polling, and repeated maps must not observe an earlier callback's state.
     NativeGpuHitTestResult firstSummary = summary;
+    var queryMemory = compositor.GetGpuMemorySnapshot();
+    if (queryMemory.EngineId != initialMemory.EngineId || queryMemory.SceneId != sceneId || queryMemory.SceneGeneration != 1 ||
+        queryMemory.OwnedBufferCount <= initialMemory.OwnedBufferCount || queryMemory.OwnedBufferBytes <= initialMemory.OwnedBufferBytes)
+        throw new InvalidOperationException("Native memory inventory lost the retained query index or its generation.");
+    var repeatedMemory = compositor.GetGpuMemorySnapshot();
+    if (!queryMemory.Equals(repeatedMemory))
+        throw new InvalidOperationException("Reading native memory changed resource ownership, storage or the submission timeline.");
+    Console.WriteLine($"package-consumer: native memory engine={queryMemory.EngineId}, buffers={queryMemory.OwnedBufferCount}/{queryMemory.OwnedBufferBytes}, textures={queryMemory.OwnedTextureCount}/{queryMemory.OwnedTextureBytes}, opaque={queryMemory.UnquantifiedTextureCount}, borrowed={queryMemory.BorrowedViewCount}");
     for (int repetition = 0; repetition < 16; repetition++)
     {
         Console.WriteLine($"package-consumer: native owner-query repeated wait {repetition} begin");

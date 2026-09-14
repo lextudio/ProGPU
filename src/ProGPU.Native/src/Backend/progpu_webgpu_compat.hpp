@@ -60,6 +60,7 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(BufferDestroy) \
     X(BufferGetConstMappedRange) \
     X(BufferGetMapState) \
+    X(BufferGetSize) \
     X(BufferMapAsync) \
     X(BufferRelease) \
     X(BufferUnmap) \
@@ -129,6 +130,13 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(ShaderModuleRelease) \
     X(TextureCreateView) \
     X(TextureDestroy) \
+    X(TextureGetDepthOrArrayLayers) \
+    X(TextureGetDimension) \
+    X(TextureGetFormat) \
+    X(TextureGetHeight) \
+    X(TextureGetMipLevelCount) \
+    X(TextureGetSampleCount) \
+    X(TextureGetWidth) \
     X(TextureRelease) \
     X(TextureViewAddRef) \
     X(TextureViewRelease)
@@ -499,6 +507,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuBufferGetConstMappedRange)
 #define wgpuBufferGetMapState \
     (::progpu::native::webgpu::active_dispatch().wgpuBufferGetMapState)
+#define wgpuBufferGetSize \
+    (::progpu::native::webgpu::active_dispatch().wgpuBufferGetSize)
 #define wgpuBufferMapAsync \
     (::progpu::native::webgpu::active_dispatch().wgpuBufferMapAsync)
 #define wgpuBufferRelease \
@@ -623,6 +633,20 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuTextureCreateView)
 #define wgpuTextureDestroy \
     (::progpu::native::webgpu::active_dispatch().wgpuTextureDestroy)
+#define wgpuTextureGetDepthOrArrayLayers \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetDepthOrArrayLayers)
+#define wgpuTextureGetDimension \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetDimension)
+#define wgpuTextureGetFormat \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetFormat)
+#define wgpuTextureGetHeight \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetHeight)
+#define wgpuTextureGetMipLevelCount \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetMipLevelCount)
+#define wgpuTextureGetSampleCount \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetSampleCount)
+#define wgpuTextureGetWidth \
+    (::progpu::native::webgpu::active_dispatch().wgpuTextureGetWidth)
 #define wgpuTextureRelease \
     (::progpu::native::webgpu::active_dispatch().wgpuTextureRelease)
 #define wgpuTextureViewRelease \

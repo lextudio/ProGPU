@@ -626,6 +626,25 @@ public partial struct NativeSceneHitTestIndex
     public uint PathSegmentOffset;
 }
 
+// Native source: progpu_native_gpu_memory_snapshot.
+[StructLayout(LayoutKind.Sequential)]
+public partial struct NativeGpuMemorySnapshot
+{
+    public uint StructSize;
+    public uint UnquantifiedTextureCount;
+    public ulong EngineId;
+    public ulong SceneId;
+    public ulong SceneGeneration;
+    public ulong SubmissionIndex;
+    public ulong OwnedBufferCount;
+    public ulong OwnedBufferBytes;
+    public ulong OwnedTextureCount;
+    public ulong OwnedTextureBytes;
+    public ulong BorrowedViewCount;
+    public ulong RetainedSubmissionBatchCount;
+    public ulong InventoryStorageBytes;
+}
+
 internal static unsafe partial class NativeMethods
 {
     // Native source: progpu_native_scene_header.

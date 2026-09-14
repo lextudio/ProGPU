@@ -44,6 +44,10 @@ public:
 
     void clear() noexcept { batches_.clear(); }
     [[nodiscard]] std::size_t size() const noexcept { return batches_.size(); }
+    template<class Visitor>
+    void visit_resources(Visitor&& visitor) const {
+        for (const auto& value : batches_) visitor(value->resources);
+    }
 
 private:
     std::vector<std::unique_ptr<batch>> batches_;

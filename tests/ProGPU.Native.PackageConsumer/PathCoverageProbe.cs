@@ -33,6 +33,13 @@ internal static unsafe class PathCoverageProbe
             $"brushBytes={metrics.BrushUploadBytes}; pathBytes={metrics.PathUploadBytes}; " +
             $"atlas={metrics.AtlasWidth}x{metrics.AtlasHeight}; submissions={metrics.SubmissionCount}");
         var token = renderer.GetLastSubmissionToken();
+        var pendingMemory = renderer.GetGpuMemorySnapshot();
+        if (!pendingMemory.HasCompleteTextureByteCount || pendingMemory.OwnedTextureCount == 0 ||
+            pendingMemory.OwnedTextureBytes < (ulong)metrics.AtlasWidth * metrics.AtlasHeight ||
+            pendingMemory.RetainedSubmissionBatchCount == 0 || pendingMemory.OwnedBufferBytes == 0)
+            throw new InvalidOperationException("Native path memory omitted its atlas or retained raster resources.");
+        if (!pendingMemory.Equals(renderer.GetGpuMemorySnapshot()))
+            throw new InvalidOperationException("Native path memory inspection changed pending resources.");
         if (!deferRetirement) renderer.WaitForSubmission(token);
         byte[] pixels;
         try
@@ -46,6 +53,14 @@ internal static unsafe class PathCoverageProbe
         {
             if (deferRetirement) renderer.WaitForSubmission(token);
         }
+        var retiredMemory = renderer.GetGpuMemorySnapshot();
+        if (retiredMemory.EngineId != pendingMemory.EngineId ||
+            retiredMemory.RetainedSubmissionBatchCount != 0 ||
+            retiredMemory.OwnedBufferBytes >= pendingMemory.OwnedBufferBytes ||
+            retiredMemory.OwnedTextureBytes != pendingMemory.OwnedTextureBytes)
+            throw new InvalidOperationException("Native memory did not distinguish completed raster buffers from the retained atlas.");
+        Console.WriteLine($"package-consumer: native raster memory pendingBuffers={pendingMemory.OwnedBufferBytes}, " +
+            $"retiredBuffers={retiredMemory.OwnedBufferBytes}, textureBytes={retiredMemory.OwnedTextureBytes}");
         int inside = (8 * 64 + 16) * 4, outside = (2 * 64 + 2) * 4;
         Console.WriteLine($"package-consumer: cold direct native path inside=" +
             $"({pixels[inside]},{pixels[inside + 1]},{pixels[inside + 2]},{pixels[inside + 3]}), " +

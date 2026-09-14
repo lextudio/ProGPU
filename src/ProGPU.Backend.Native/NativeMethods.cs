@@ -561,6 +561,10 @@ internal static unsafe partial class NativeMethods
         nint engine,
         LayerMetrics* metrics);
 
+    [LibraryImport(LibraryName, EntryPoint = "progpu_native_engine_get_gpu_memory_snapshot")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial NativeRendererStatus GetGpuMemorySnapshot(nint engine, NativeGpuMemorySnapshot* snapshot);
+
     [LibraryImport(LibraryName, EntryPoint = "progpu_native_engine_poll_submission")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial NativeRendererStatus PollSubmission(

@@ -302,6 +302,23 @@ public sealed unsafe class NativeCompositor : IDisposable
     }
 
     /// <summary>
+    /// Enumerates unique buffers and textures directly retained by this native
+    /// engine, including pending submission leases. This is logical resource
+    /// storage, not driver residency or total device usage. Does not submit,
+    /// wait, purge or read back pixels. Call at an owner-thread API boundary.
+    /// </summary>
+    public NativeGpuMemorySnapshot GetGpuMemorySnapshot()
+    {
+        var snapshot = new NativeGpuMemorySnapshot { StructSize = (uint)Unsafe.SizeOf<NativeGpuMemorySnapshot>() };
+        lock (_context.RenderLock)
+        {
+            ThrowIfGpuUnavailable();
+            ThrowForStatus(NativeRendererInterop.GetGpuMemorySnapshot(_interopKind, _engine, &snapshot));
+        }
+        return snapshot;
+    }
+
+    /// <summary>
     /// Returns pooled group-layer activity for the most recently submitted frame.
     /// </summary>
     public NativeLayerMetrics GetLayerMetrics()

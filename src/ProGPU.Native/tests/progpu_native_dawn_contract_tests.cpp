@@ -54,9 +54,22 @@ progpu_native_dawn_engine_options valid_options(
 } // namespace
 
 void test_dawn_indirect_dispatch();
+void test_native_memory_inventory();
 
 int main() {
     test_dawn_indirect_dispatch();
+    test_native_memory_inventory();
+    for (const char* name : std::array{
+        "wgpuBufferGetSize", "wgpuTextureGetDepthOrArrayLayers",
+        "wgpuTextureGetDimension", "wgpuTextureGetFormat", "wgpuTextureGetHeight",
+        "wgpuTextureGetMipLevelCount", "wgpuTextureGetSampleCount", "wgpuTextureGetWidth"}) {
+        resolver_state missing{name, 0U, false};
+        auto memory_options = valid_options(missing);
+        progpu_native_engine* memory_engine = nullptr;
+        require(progpu_native_dawn_engine_create(&memory_options, &memory_engine) ==
+            PROGPU_NATIVE_STATUS_UNSUPPORTED);
+        require(memory_engine == nullptr && missing.call_count > 1U && !missing.invalid_name);
+    }
     progpu_native_hit_test_result hit_summary{};
     std::uint32_t hit_count = 0U;
     require(progpu_native_engine_wait_hit_test(

@@ -675,6 +675,28 @@ struct portable_scene final {
     require(progpu_native_engine_create(&options, &engine) ==
             PROGPU_NATIVE_STATUS_SUCCESS &&
         engine != nullptr, "ProGPU WebGPU engine creation failed");
+    progpu_native_gpu_memory_snapshot memory{};
+    memory.struct_size = sizeof(memory);
+    require(progpu_native_engine_get_gpu_memory_snapshot(engine, &memory) ==
+            PROGPU_NATIVE_STATUS_SUCCESS && memory.engine_id != 0U &&
+        memory.owned_buffer_count != 0U && memory.owned_buffer_bytes != 0U,
+        "native memory omitted initialized buffers");
+    auto invalid_memory = memory;
+    --invalid_memory.struct_size;
+    const auto invalid_before = invalid_memory;
+    require(progpu_native_engine_get_gpu_memory_snapshot(engine, &invalid_memory) ==
+            PROGPU_NATIVE_STATUS_INVALID_ARGUMENT &&
+        std::memcmp(&invalid_memory, &invalid_before, sizeof(memory)) == 0,
+        "invalid memory record changed caller output");
+    auto wrong_thread_memory = memory;
+    progpu_native_status wrong_thread_status = PROGPU_NATIVE_STATUS_SUCCESS;
+    std::thread worker([&] {
+        wrong_thread_status = progpu_native_engine_get_gpu_memory_snapshot(engine, &wrong_thread_memory);
+    });
+    worker.join();
+    require(wrong_thread_status == PROGPU_NATIVE_STATUS_WRONG_THREAD &&
+        std::memcmp(&wrong_thread_memory, &memory, sizeof(memory)) == 0,
+        "wrong-thread memory query changed output or entered WebGPU");
     return engine;
 }
 
@@ -773,6 +795,17 @@ struct portable_scene final {
     }
     require(render_matches,
         "portable Direct2D scene submission failed");
+
+    progpu_native_gpu_memory_snapshot memory{};
+    memory.struct_size = sizeof(memory);
+    require(progpu_native_engine_get_gpu_memory_snapshot(engine, &memory) ==
+            PROGPU_NATIVE_STATUS_SUCCESS && memory.owned_buffer_bytes > 0U,
+        "rendered scene memory inventory failed");
+    auto repeated_memory = memory;
+    require(progpu_native_engine_get_gpu_memory_snapshot(engine, &repeated_memory) ==
+            PROGPU_NATIVE_STATUS_SUCCESS &&
+        std::memcmp(&memory, &repeated_memory, sizeof(memory)) == 0,
+        "rendered scene memory inspection changed retained ownership");
 
     WGPUBufferDescriptor buffer_descriptor{};
     buffer_descriptor.label = "ProGPU portable Direct2D readback";

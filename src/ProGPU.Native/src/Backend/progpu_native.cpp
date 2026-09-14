@@ -18,6 +18,7 @@
 
 #include "progpu_webgpu_compat.hpp"
 #include "progpu_native_engine.hpp"
+#include "progpu_native_engine_memory.hpp"
 #include "progpu_native_pipeline.hpp"
 #include "progpu_native_child_engine.hpp"
 
@@ -550,6 +551,28 @@ progpu_native_status progpu_native_engine_get_last_submission(
     *submission_index = engine->last_submission_index;
     engine->last_error.clear();
     return PROGPU_NATIVE_STATUS_SUCCESS;
+}
+
+progpu_native_status progpu_native_engine_get_gpu_memory_snapshot(
+    progpu_native_engine* engine,
+    progpu_native_gpu_memory_snapshot* snapshot) {
+    if (engine == nullptr || snapshot == nullptr || snapshot->struct_size != sizeof(*snapshot))
+        return PROGPU_NATIVE_STATUS_INVALID_ARGUMENT;
+    if (!engine->is_owner_thread())
+        return engine->fail(PROGPU_NATIVE_STATUS_WRONG_THREAD, "Native GPU memory must be queried on the owner thread.");
+    if (engine->device_lost)
+        return engine->fail(PROGPU_NATIVE_STATUS_DEVICE_LOST, "The native GPU memory inventory belongs to a lost device.");
+    const progpu::native::webgpu::dispatch_scope dispatch_scope(&engine->webgpu_dispatch);
+    try {
+        const auto result = progpu::native::collect_memory(*engine);
+        *snapshot = result;
+        engine->last_error.clear();
+        return PROGPU_NATIVE_STATUS_SUCCESS;
+    } catch (const std::bad_alloc&) {
+        return engine->fail(PROGPU_NATIVE_STATUS_OUT_OF_MEMORY, "Native GPU memory inventory allocation failed.");
+    } catch (...) {
+        return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR, "Native GPU memory inventory failed.");
+    }
 }
 
 progpu_native_status progpu_native_engine_get_layer_metrics(

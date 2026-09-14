@@ -464,6 +464,12 @@ void native_temporary_resources_follow_completed_submissions() {
     std::uint32_t released = 0U;
     auto& active = queue.begin();
     active.resources.released = &released;
+    std::size_t visited = 0U;
+    queue.visit_resources([&](const auto& resource) {
+        require(resource.released == &released);
+        ++visited;
+    });
+    require(visited == 1U && released == 0U);
     queue.retire(8U);
     require(released == 0U && queue.size() == 1U);
     // Borrowed encoders require the following submission, not the previously

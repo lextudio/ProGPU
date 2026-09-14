@@ -217,6 +217,10 @@ internal static unsafe partial class NativeDawnMethods
         nint engine,
         NativeMethods.LayerMetrics* metrics);
 
+    [LibraryImport(LibraryName, EntryPoint = "progpu_native_engine_get_gpu_memory_snapshot")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial NativeRendererStatus GetGpuMemorySnapshot(nint engine, NativeGpuMemorySnapshot* snapshot);
+
     [LibraryImport(
         LibraryName,
         EntryPoint = "progpu_native_engine_poll_submission")]

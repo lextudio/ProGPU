@@ -15,6 +15,7 @@
 #include "progpu_native_semantic_replay.hpp"
 #include "progpu_native_submission_resources.hpp"
 #include "progpu_native_webgpu_resources.hpp"
+#include "progpu_native_memory_inventory.hpp"
 
 #include <algorithm>
 #include <array>
@@ -44,6 +45,7 @@ using progpu::native::native_path_raster;
 using progpu::native::vector_vertex;
 
 struct progpu_native_engine {
+    progpu::native::gpu_memory_inventory memory_inventory;
     std::thread::id owner_thread;
     progpu::native::webgpu::dispatch webgpu_dispatch{};
     WGPUInstance instance = nullptr;

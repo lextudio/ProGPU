@@ -13,6 +13,22 @@ namespace Avalonia.ProGpu.UnitTests;
 public class NativeRendererInteropTests
 {
     [Fact]
+    public void NativeGpuMemorySnapshotKeepsGeneratedLayoutAndUnknownByteState()
+    {
+        Assert.Equal(96, Unsafe.SizeOf<NativeGpuMemorySnapshot>());
+        Assert.Equal(8, OffsetOf<NativeGpuMemorySnapshot>(nameof(NativeGpuMemorySnapshot.EngineId)));
+        Assert.Equal(88, OffsetOf<NativeGpuMemorySnapshot>(nameof(NativeGpuMemorySnapshot.InventoryStorageBytes)));
+        var snapshot = new NativeGpuMemorySnapshot { OwnedBufferBytes = 64, OwnedTextureBytes = 128 };
+        Assert.True(snapshot.HasCompleteTextureByteCount);
+        Assert.Equal(192UL, snapshot.TotalKnownOwnedBytes);
+        snapshot.UnquantifiedTextureCount = 1;
+        Assert.False(snapshot.HasCompleteTextureByteCount);
+        Assert.Equal(192UL, snapshot.TotalKnownOwnedBytes);
+        snapshot.OwnedBufferBytes = ulong.MaxValue;
+        Assert.Throws<OverflowException>(() => snapshot.TotalKnownOwnedBytes);
+    }
+
+    [Fact]
     public void DirectImageFramesKeepStraightAlphaMaskBlendingSeparateFromRetainedScenes()
     {
         string factory = File.ReadAllText(FindRepoFile("src", "ProGPU.Native", "src", "Backend", "progpu_native_image_execution.cpp"));

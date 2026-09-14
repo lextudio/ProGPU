@@ -2692,6 +2692,26 @@ typedef struct progpu_native_draw_state {
     uint32_t reserved2;
 } progpu_native_draw_state;
 
+/* Directly retained engine allocations, not driver residency or whole-device
+ * usage. Borrowed views and opaque-format bytes are explicitly separate.
+ * All dimensions/mips/samples use the actual live WebGPU resource descriptors. */
+/* PROGPU_CSHARP_STRUCT: Public.NativeGpuMemorySnapshot */
+typedef struct progpu_native_gpu_memory_snapshot {
+    uint32_t struct_size;
+    uint32_t unquantified_texture_count;
+    uint64_t engine_id;
+    uint64_t scene_id;
+    uint64_t scene_generation;
+    uint64_t submission_index;
+    uint64_t owned_buffer_count;
+    uint64_t owned_buffer_bytes;
+    uint64_t owned_texture_count;
+    uint64_t owned_texture_bytes;
+    uint64_t borrowed_view_count;
+    uint64_t retained_submission_batch_count;
+    uint64_t inventory_storage_bytes;
+} progpu_native_gpu_memory_snapshot;
+
 typedef struct progpu_native_layer_metrics {
     uint32_t struct_size;
     uint32_t texture_width;
@@ -3095,6 +3115,13 @@ PROGPU_NATIVE_API progpu_native_status progpu_native_engine_get_last_submission(
 PROGPU_NATIVE_API progpu_native_status progpu_native_engine_get_layer_metrics(
     progpu_native_engine* engine,
     progpu_native_layer_metrics* metrics);
+
+/* Owner-thread, quiescent API-boundary snapshot. Does not submit, wait, purge,
+ * map, or read GPU contents. O(R log R) work and retained O(R) scratch for R
+ * resource references; no allocation after the inventory high-water mark. */
+PROGPU_NATIVE_API progpu_native_status progpu_native_engine_get_gpu_memory_snapshot(
+    progpu_native_engine* engine,
+    progpu_native_gpu_memory_snapshot* snapshot);
 /*
  * Polls or waits for one submission from this engine. This is the consumer
  * fence used by external-image owners before recycling a borrowed texture.

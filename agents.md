@@ -1,5 +1,13 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native GPU memory snapshots enumerate live engine-owned handles, including retained
+submission resources, with alias deduplication and actual descriptor sizes. Keep
+borrowed views and opaque-format byte counts explicit; logical storage is not
+driver residency, whole-device usage or a budget. Never dereference stale binding
+cache identity keys, retire resources while inspecting, or use idle managed
+counters for native qualification. Keep the ownership source guard synchronized
+with new resource containers. See docs/native-gpu-memory-diagnostics.md.
+
 Full-capacity GPU query qualification must actually fill 256 ordered entries,
 retain duplicate/tie order and compare every raw result/counter/unused slot.
 Native scene probes use independently referenced admitted inputs; preserve the

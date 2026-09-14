@@ -1111,6 +1111,7 @@ if(NOT EMSCRIPTEN AND PROGPU_NATIVE_DAWN_WEBGPU_INCLUDE_DIR)
     if(BUILD_TESTING)
         add_executable(progpu_native_dawn_contract_tests
             tests/progpu_native_dawn_contract_tests.cpp
+            tests/progpu_native_memory_inventory_tests.cpp
             tests/progpu_native_dawn_dispatch_tests.cpp)
         target_compile_features(progpu_native_dawn_contract_tests
             PRIVATE cxx_std_20)
