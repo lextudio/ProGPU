@@ -1,4 +1,5 @@
 using ProGPU.Backend;
+using Silk.NET.WebGPU;
 using Xunit;
 
 namespace ProGPU.Tests;
@@ -8,11 +9,30 @@ public sealed class GpuHitTestExecutionTests
     private static readonly WgpuComputeLimits Limits = new(128UL * 1024 * 1024, 8, 256, 256, 65535);
 
     [Fact]
-    public void AutomaticRetainsSinglePassUntilQualification()
+    public void UnknownDeviceRetainsSinglePassAndExplicitChoices()
     {
         Assert.Equal(GpuHitTestExecutionPreference.SinglePass, GpuHitTestExecutionPolicy.Resolve(GpuHitTestExecutionPreference.Automatic));
         Assert.Equal(GpuHitTestExecutionPreference.OrderedStages, GpuHitTestExecutionPolicy.Resolve(GpuHitTestExecutionPreference.OrderedStages));
         Assert.Throws<ArgumentOutOfRangeException>(() => GpuHitTestExecutionPolicy.Resolve((GpuHitTestExecutionPreference)99));
+    }
+
+    [Theory]
+    [InlineData(BackendType.D3D12, WgpuDx12ShaderCompiler.Fxc, GpuHitTestExecutionPreference.OrderedStages)]
+    [InlineData(BackendType.D3D12, WgpuDx12ShaderCompiler.Dxc, GpuHitTestExecutionPreference.SinglePass)]
+    [InlineData(BackendType.D3D12, WgpuDx12ShaderCompiler.Automatic, GpuHitTestExecutionPreference.SinglePass)]
+    [InlineData(BackendType.D3D12, null, GpuHitTestExecutionPreference.SinglePass)]
+    [InlineData(BackendType.Metal, WgpuDx12ShaderCompiler.Fxc, GpuHitTestExecutionPreference.SinglePass)]
+    [InlineData(BackendType.Vulkan, WgpuDx12ShaderCompiler.Fxc, GpuHitTestExecutionPreference.SinglePass)]
+    [InlineData(BackendType.Undefined, WgpuDx12ShaderCompiler.Fxc, GpuHitTestExecutionPreference.SinglePass)]
+    public void AutomaticUsesActualD3D12FxcIdentity(
+        BackendType backend, WgpuDx12ShaderCompiler? compiler, GpuHitTestExecutionPreference expected)
+    {
+        Assert.Equal(expected, GpuHitTestExecutionPolicy.Resolve(GpuHitTestExecutionPreference.Automatic, backend, compiler));
+        Assert.Equal(GpuHitTestExecutionPreference.SinglePass,
+            GpuHitTestExecutionPolicy.Resolve(GpuHitTestExecutionPreference.SinglePass, backend, compiler));
+        Assert.Equal(GpuHitTestExecutionPreference.OrderedStages,
+            GpuHitTestExecutionPolicy.Resolve(GpuHitTestExecutionPreference.OrderedStages, backend, compiler));
+        Assert.Throws<ArgumentOutOfRangeException>(() => GpuHitTestExecutionPolicy.Resolve((GpuHitTestExecutionPreference)99, backend, compiler));
     }
 
     [Theory]

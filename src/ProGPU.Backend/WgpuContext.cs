@@ -56,7 +56,8 @@ public unsafe class WgpuContext : IDisposable
     public WgpuComputeLimits ComputeLimits { get => _computeLimits; init => _computeLimits = value; }
     private GpuHitTestExecutionPreference _hitTestExecutionPreference = GpuHitTestExecutionPolicy.ReadEnvironmentPreference();
     public GpuHitTestExecutionPreference HitTestExecutionPreference { get => _hitTestExecutionPreference; init => _hitTestExecutionPreference = value; }
-    public GpuHitTestExecutionPreference HitTestExecutionPath => GpuHitTestExecutionPolicy.Resolve(_hitTestExecutionPreference);
+    public GpuHitTestExecutionPreference HitTestExecutionPath => GpuHitTestExecutionPolicy.Resolve(
+        _hitTestExecutionPreference, AdapterBackendType, SelectedDx12ShaderCompiler);
     public bool SupportsReadOnlyAndReadWriteStorageTextures { get; private set; }
     public bool SupportsTextureFormatsTier1 { get; private set; }
     public BackendType AdapterBackendType { get; private set; } = BackendType.Undefined;
@@ -1179,6 +1180,8 @@ public unsafe class WgpuContext : IDisposable
             _dx12CompilerPaths = compilerPaths;
             ProGpuBackendDiagnostics.WriteLine(
                 $"[D3D12] Shader compiler={SelectedDx12ShaderCompiler}, requested={Dx12CompilerOptions.Preference}, library='{Dx12CompilerLibraryPath ?? "backend default"}'.");
+            ProGpuBackendDiagnostics.WriteLine(
+                $"[D3D12] Hit queries={HitTestExecutionPath}, requested={HitTestExecutionPreference}.");
         }
 
         // 7. Configure Surface if window exists

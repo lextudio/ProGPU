@@ -36,6 +36,12 @@ internal static unsafe class Program
         if (ownedContext != null) context.Initialize(null);
         if (args.Contains("--require-fxc") && context.SelectedDx12ShaderCompiler != WgpuDx12ShaderCompiler.Fxc)
             throw new InvalidOperationException("This qualification requires the actual FXC compiler; another compiler is not an equivalent pass.");
+        if (args.Contains("--require-automatic-fxc") &&
+            (context.HitTestExecutionPreference != GpuHitTestExecutionPreference.Automatic ||
+             context.AdapterBackendType != BackendType.D3D12 ||
+             context.SelectedDx12ShaderCompiler != WgpuDx12ShaderCompiler.Fxc ||
+             context.HitTestExecutionPath != GpuHitTestExecutionPreference.OrderedStages))
+            throw new InvalidOperationException("Automatic FXC qualification requires the owned D3D12/FXC device and its automatic ordered-query selection.");
         Console.WriteLine($"Query policy: {context.HitTestExecutionPath}; adapter={context.AdapterName}; architecture={RuntimeInformation.ProcessArchitecture}.");
         using var cache = new RenderPipelineCache(context);
         var shader = cache.GetOrCreateShader("HitQueryStages", ShaderResource.Load(typeof(GpuHitTestEngine), "GpuHitTesting.wgsl"));
@@ -134,7 +140,7 @@ internal static unsafe class Program
             nativeProduct.UpdateScene(stream);
         }
         if (productIndex != null && context.HitTestExecutionPath != GpuHitTestExecutionPreference.OrderedStages)
-            throw new ArgumentException("Product-stage comparison requires PROGPU_HIT_TEST_EXECUTION=ordered-stages.");
+            throw new ArgumentException("Product-stage comparison requires the resolved ordered GPU query path.");
         int productComparisons = 0;
         int nativeComparisons = 0;
         int candidateCapacity = Option("--candidate-capacity") is { } candidateValue

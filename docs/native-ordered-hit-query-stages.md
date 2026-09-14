@@ -5,9 +5,11 @@
 Acceptance application: **ProGPU.Wpf.ShowcaseApp**. User action: pointer selection
 and geometry-region queries against a presented native MIL owner index. The
 blocking path is the Windows system-WARP execution of the canonical query shader.
-The managed and C++ product dispatchers now support explicitly selected ordered
-stages, using retained device/index-owned resources. Automatic selection retains
-single-pass queries pending final platform/application qualification. The existing
+The managed and C++ product dispatchers support ordered stages using retained
+device/index-owned resources. Automatic selection now chooses this GPU path on
+owned D3D12/FXC devices; other devices and explicit caller choices are unchanged.
+See the [compiler-specific selection decision](#automatic-d3d12fxc-selection).
+Final application/package qualification remains required before merge. The
 six-binding point/bounds/ellipse entrypoints remain available and independent.
 
 The staged probe now passes all **120 complete result buffers** on system ARM64
@@ -53,7 +55,7 @@ A constant false argument alone was insufficient for automatic layout inference;
 the shared iterator keeps traversal reuse without adding a seventh legacy binding.
 Without a forced execution policy, the probe also executes actual
 `GpuHitTestEngine` calls to check the six-binding product layout. `--product`
-requires explicit ordered selection and compares public product queries too.
+requires the resolved ordered path and compares public product queries too.
 
 For N primitives, K candidates, S path segments and result capacity R, average work
 is O(log N + K*(S+R)), worst-case O(N*(S+R)). Staged scratch is O(M) for M retained
@@ -194,8 +196,8 @@ Managed hosts configure `WgpuContext.HitTestExecutionPreference` with
 `Automatic`, `SinglePass` or `OrderedStages` before resource construction.
 `PROGPU_HIT_TEST_EXECUTION=auto|single-pass|ordered-stages` supplies the process
 default; invalid values fail. `HitTestExecutionPath` reports the resolved path.
-Automatic currently resolves to SinglePass: the new path is not silently promoted
-from an isolated passing probe. Shared surfaces inherit their actual device
+At this earlier checkpoint Automatic resolved to SinglePass; the subsequent
+compiler-specific decision is recorded below. Shared surfaces inherit their actual device
 owner's selection and limit snapshot. Raw C hosts opt in using the generated
 `PROGPU_NATIVE_ENGINE_ORDERED_HIT_QUERIES` flag (32); old native libraries reject
 the unsupported flag rather than selecting another path.
@@ -364,6 +366,88 @@ Maximum result-list coverage is not maximum device-buffer/dispatch capacity.
 Final CI, matched latency/residency, native source/package/Showcase qualification,
 and a separately reviewed automatic-selection decision remain required. No
 dependency pins or merges advance on this checkpoint.
+
+## Automatic D3D12/FXC selection
+
+The automatic product policy now selects ordered GPU queries when the initialized
+owned device reports both D3D12 and the actual FXC compiler. It does not select a
+different adapter, install DXC, inspect OS/adapter-name strings, retry after a
+failed query, read candidates to the CPU or weaken result admission.
+
+| Requested query policy | Actual device/compiler | Resolved path |
+| --- | --- | --- |
+| Automatic | Owned D3D12 / FXC | OrderedStages |
+| Automatic | DXC, Metal, Vulkan or unknown/borrowed compiler | SinglePass |
+| SinglePass or OrderedStages | Any device | Explicit choice unchanged |
+
+This is a compiler-specific selection decision, not a claim that a passing
+standalone probe fixed the monolithic compiler/runtime fault. The repeated stock
+FXC failures include access violations, bounds termination and ellipse summaries
+with one hit but zero list records. Ordered dispatch retains the exact shader
+predicates and traversal order while reducing individual pipeline complexity.
+Its independent full-buffer, full-capacity, public managed/native and complete
+ordered package evidence is recorded above. The integration candidate still
+requires final default-package/platform/Showcase gates before merge; the old
+single-pass FXC fault remains reproducible through explicit selection.
+
+Both product implementations consume `WgpuContext.HitTestExecutionPath`:
+`GpuHitTestDeviceIndex` constructs the ordered managed dispatcher, and
+`NativeCompositor` passes the existing generated ordered-query flag to the C++
+engine. No second C++ geometry implementation is added. Shared surfaces inherit
+the actual owner's compiler, adapter diagnostics, request preference and limits.
+External devices without compiler identity retain their explicit host policy;
+raw C hosts retain the documented engine flag. Missing or inadequate limits
+still reject ordered buffers/dispatch, never fall back to the failed pipeline.
+
+Selection is O(1) with no allocation; pipeline laziness, index-owned O(M) scratch,
+one-submission dispatch, completion and readback contracts are unchanged. No
+numeric CPU/SIMD work, shader bodies or rendering quality changes. Automatic
+compiler and adapter preferences are unchanged. There is no claim that a
+specific path is fastest on all devices; this decision addresses the observed
+FXC correctness failure while retaining other defaults.
+
+CI keeps the explicit ordered lane and all default package consumers. An added
+Windows x64/ARM64 step runs the same independent 210-query full-capacity reference
+with automatic selection, requiring actual D3D12/FXC, an Automatic request and
+the resolved ordered path. Forced OrderedStages or DXC cannot satisfy that step.
+Existing device-limit, overflow, counter, duplicate/tie and untouched-tail checks
+remain. Pure policy/interop tests currently pass 141 cases; workflow lint passes.
+
+Local validation uses Windows 11 ARM64 in the existing Parallels VM with system
+WARP, stock WebGPU and no policy/configuration changes. Windows PowerShell 5
+initially rejects scripts; the existing task-local PowerShell 7 runner reports
+RemoteSigned and executes them without an execution-policy override. Native
+ARM64 and emulated x64 automatic selection each pass all 210 raw buffers, 182
+managed queries and 210 C++ queries, including 23 full 256-entry lists. Artifacts are under
+`artifacts/query-automatic.3kyONl`. The native DLLs are from CI `34805390052`
+(`8c208aea`), alongside current managed policy outputs: this is an explicitly
+staged diagnostic graph, not unchanged final NuGet qualification. Metal's
+automatic native owner-query probe also still passes its single-pass route.
+
+The formerly failing `--native-owner-query-probe` now exits zero under automatic
+selection on both VM architectures. It covers point/bounds/ellipse participation,
+16 repeated waits, region-first lazy pipeline creation and native owner/generation
+isolation with unchanged exact assertions. It reports 11 buffers/82,512 logical
+bytes and no textures for the simple native index. The system compiler/WARP/D3D12
+modules are loaded from Windows System32; no compiler or WARP payload is injected.
+Native DLL SHA-256: ARM64
+`6764086bb8b9baa7fd206e135223c2f669d61c1e2733949165eae4f9d71f7368`,
+x64 `fc43eacf54b897d660d0e5a1a24b4b9c012d060042b63bfb6de1234ba9a2b99d`.
+Both use managed backend
+`5e3a44758d96256643a4ad26efa0927d292c6771b359c948cdff4732ba844d2b`
+and the independent reference
+`ba0a01e4d409f5570fbc62f5b8e22334a5facf4a289c0e0af2fb0925ef0071c3`.
+This closes the local default-owner-query failure through the selected GPU
+algorithm, not the explicit single-pass FXC defect or final package/application
+qualification. Current-head package CI is still required.
+
+The cross-engine architecture sources below were rechecked together with
+[HLSL shader profiles](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-models)
+and the [WGSL program-order contract](https://www.w3.org/TR/WGSL/#program-order).
+Keep device-qualified lazy GPU stages and retained exact results; neither a
+barrier guess nor a CPU geometry rewrite follows from these failures. No foreign
+implementation is copied. Complete source/package/hardware qualification,
+native memory endpoints and ordered merges remain independent requirements.
 
 ## Research and design decisions
 

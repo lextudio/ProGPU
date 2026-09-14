@@ -1,3 +1,5 @@
+using Silk.NET.WebGPU;
+
 namespace ProGPU.Backend;
 
 public enum GpuHitTestExecutionPreference
@@ -37,11 +39,24 @@ public static class GpuHitTestExecutionPolicy
             _ => throw new ArgumentException("PROGPU_HIT_TEST_EXECUTION must be auto, single-pass or ordered-stages.")
         };
 
-    // Automatic remains on the qualified existing path until the full staged
-    // application/package and device-limit gates close. Never silently fall back.
-    public static GpuHitTestExecutionPreference Resolve(GpuHitTestExecutionPreference preference) => preference switch
+    public static GpuHitTestExecutionPreference Resolve(GpuHitTestExecutionPreference preference) =>
+        Resolve(preference, BackendType.Undefined, null);
+
+    // FXC's monolithic region query is not reliable on the pinned D3D12 runtime.
+    // Select the same ordered GPU algorithm for both renderer implementations,
+    // using actual owned-device compiler identity, not OS/adapter-name guesses.
+    // Borrowed/unknown compilers retain explicit host selection. Device/index
+    // limits still reject unsupported ordered dispatch; there is no fallback.
+    public static GpuHitTestExecutionPreference Resolve(
+        GpuHitTestExecutionPreference preference,
+        BackendType adapterBackend,
+        WgpuDx12ShaderCompiler? shaderCompiler) => preference switch
     {
-        GpuHitTestExecutionPreference.Automatic or GpuHitTestExecutionPreference.SinglePass => GpuHitTestExecutionPreference.SinglePass,
+        GpuHitTestExecutionPreference.Automatic => adapterBackend == BackendType.D3D12 &&
+            shaderCompiler == WgpuDx12ShaderCompiler.Fxc
+                ? GpuHitTestExecutionPreference.OrderedStages
+                : GpuHitTestExecutionPreference.SinglePass,
+        GpuHitTestExecutionPreference.SinglePass => GpuHitTestExecutionPreference.SinglePass,
         GpuHitTestExecutionPreference.OrderedStages => GpuHitTestExecutionPreference.OrderedStages,
         _ => throw new ArgumentOutOfRangeException(nameof(preference))
     };

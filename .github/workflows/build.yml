@@ -1182,6 +1182,16 @@ jobs:
             --expected-results artifacts/query-reference/progpu-hit-query-native-reference.bin
           if ($LASTEXITCODE -ne 0) { throw 'System-WARP query parity failed.' }
 
+      - name: Compare automatic FXC product selection with the independent reference
+        shell: pwsh
+        env:
+          PROGPU_HIT_TEST_EXECUTION: auto
+        run: |
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- `
+            --software-adapter --require-automatic-fxc --staged-only --product --native-product --sparse --large-capacity --admitted-index `
+            --expected-results artifacts/query-reference/progpu-hit-query-native-reference.bin
+          if ($LASTEXITCODE -ne 0) { throw 'Automatic system-FXC query parity failed.' }
+
   build-test:
     name: Build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

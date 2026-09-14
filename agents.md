@@ -15,6 +15,13 @@ separate raw unknown-kind controls rather than weakening scene validation.
 Exercise both product readers, including untouched caller tails. Passing ordered
 queries is not automatic-policy or full application/package qualification.
 
+Automatic hit-query dispatch uses actual owned D3D12/FXC identity to select the
+shared ordered GPU path; do not infer compiler identity from OS or adapter names,
+change compiler/adapter defaults, or override explicit query choices. Shared
+surfaces inherit the owner's identity and limits. Borrowed unknown compilers and
+raw C hosts retain explicit selection. Preserve independent full-result and
+default-package gates, and reject insufficient staged limits without fallback.
+
 Native glyph raster identity is independent of positioned scene revisions.
 Reuse only owned exact outline/segment bytes, DPI and live atlas generation;
 placement/paint changes still upload current instances. Keep intrinsic byte
