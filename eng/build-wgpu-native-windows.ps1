@@ -4,6 +4,7 @@ param(
     [ValidateSet('win-x64', 'win-arm64')]
     [string] $Rid = 'win-x64',
     [string] $BuildDirectory,
+    [string] $ArtifactDirectory,
     [string] $CargoExecutable = 'cargo',
     [string] $RustcExecutable = 'rustc',
     [ValidateRange(1, 64)]
@@ -25,6 +26,12 @@ if ((Get-FileHash -Algorithm SHA256 -LiteralPath $LockFile).Hash -ne $Inputs.loc
 }
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $RepoRoot "artifacts/wgpu-native-windows/$Rid" }
 $BuildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
+if ($ArtifactDirectory) {
+    $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
+    if (Test-Path -LiteralPath $ArtifactDirectory) {
+        throw 'Dependency artifact output must be a new directory.'
+    }
+}
 $Target = if ($Rid -eq 'win-arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
 $ExpectedMachine = if ($Rid -eq 'win-arm64') { 0xAA64 } else { 0x8664 }
 $Source = Join-Path $BuildDirectory 'source'
@@ -129,7 +136,9 @@ try {
 
 # Publish into a fresh directory only after successful feature, lock and PE checks.
 # No NuGet cache, existing consumer, system DLL or default product asset is replaced.
-$Publication = Join-Path $BuildDirectory ("dependency-" + [Guid]::NewGuid().ToString('N'))
+$Publication = if ($ArtifactDirectory) { $ArtifactDirectory } else {
+    Join-Path $BuildDirectory ("dependency-" + [Guid]::NewGuid().ToString('N'))
+}
 New-Item -ItemType Directory -Path $Publication | Out-Null
 Copy-Item -LiteralPath $Dll -Destination $Publication
 Copy-Item -LiteralPath (Join-Path $Source 'LICENSE.MIT'), (Join-Path $Source 'LICENSE.APACHE') -Destination $Publication

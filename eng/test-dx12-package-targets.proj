@@ -1,0 +1,26 @@
+<Project DefaultTargets="Test">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <NativeCopyLocalItems Include="stock/wgpu_native.dll" NuGetPackageId="Silk.NET.WebGPU.Native.WGPU" />
+    <NativeCopyLocalItems Include="caller/wgpu_native.dll" NuGetPackageId="Caller" />
+    <NativeCopyLocalItems Include="stock/other.dll" NuGetPackageId="Silk.NET.WebGPU.Native.WGPU" />
+    <_ResolvedCopyLocalPublishAssets Include="@(NativeCopyLocalItems)" />
+  </ItemGroup>
+  <Import Project="../src/ProGPU.Backend.Dx12/buildTransitive/ProGPU.Backend.Dx12.targets" />
+  <Target Name="Test" DependsOnTargets="SelectProGpuDx12BuildAsset;SelectProGpuDx12PublishAsset">
+    <PropertyGroup>
+      <ExpectedCount Condition="'$(_ProGpuDx12Selected)' == 'true'">2</ExpectedCount>
+      <ExpectedCount Condition="'$(_ProGpuDx12Selected)' != 'true'">3</ExpectedCount>
+    </PropertyGroup>
+    <Error Condition="'@(NativeCopyLocalItems->Count())' != '$(ExpectedCount)'" Text="Incorrect build asset selection." />
+    <Error Condition="'@(_ResolvedCopyLocalPublishAssets->Count())' != '$(ExpectedCount)'" Text="Incorrect publish asset selection." />
+    <ItemGroup>
+      <CallerBuild Include="@(NativeCopyLocalItems)" Condition="'%(NativeCopyLocalItems.NuGetPackageId)' == 'Caller'" />
+      <CallerPublish Include="@(_ResolvedCopyLocalPublishAssets)" Condition="'%(_ResolvedCopyLocalPublishAssets.NuGetPackageId)' == 'Caller'" />
+    </ItemGroup>
+    <Error Condition="'@(CallerBuild)' != 'caller/wgpu_native.dll' Or '@(CallerPublish)' != 'caller/wgpu_native.dll'" Text="Caller-owned native asset changed." />
+    <Message Importance="high" Text="DX12 package asset selection passed: RID=$(RuntimeIdentifier), selected=$(_ProGpuDx12Selected)." />
+  </Target>
+</Project>

@@ -45,6 +45,13 @@ publication. Never infer architecture from an archive folder, relax pure-ARM64
 admission for a hybrid payload, overwrite existing artifacts, or include testing-
 only WARP in compiler packages. Artifact provenance is not runtime qualification.
 
+The optional DX12 runtime package selects only the known Silk Windows native
+asset in both build and publish. Keep explicit RID admission, original notices,
+fresh verified payload staging and pre-NuGet completeness checks. Never edit
+the package cache/system DLLs, discard caller-owned same-name assets, distribute
+WARP or infer qualified defaults from package presence. Both renderer modes
+use the same loaded dependency; retain separate full-package/NativeAOT gates.
+
 Rectangle-edge query batching keeps independent four-lane crossing/collinearity
 masks until the final any reduction. Preserve original inclusive tests and both
 tolerances, and select a safe denominator for parallel lanes. Managed/native

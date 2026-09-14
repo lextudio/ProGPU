@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <PackageDescription>Optional pinned DXC-capable Windows WebGPU dependency and redistributable shader compiler for ProGPU.</PackageDescription>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <ProGpuDx12RuntimeRoot Condition="'$(ProGpuDx12RuntimeRoot)' == ''">$(MSBuildThisFileDirectory)../../artifacts/progpu-dx12/package</ProGpuDx12RuntimeRoot>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="$(MSBuildThisFileDirectory)../../README.md" />
+    <None Update="README.md" Pack="true" PackagePath="/" />
+    <None Update="buildTransitive/ProGPU.Backend.Dx12.targets" Pack="true" PackagePath="buildTransitive/ProGPU.Backend.Dx12.targets" />
+    <None Include="$(ProGpuDx12RuntimeRoot)/**/*" Pack="true"
+          PackagePath="buildTransitive/runtimes/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <Target Name="ValidateProGpuDx12Payload" BeforeTargets="_GetPackageFiles;GenerateNuspec">
+    <ItemGroup>
+      <_ProGpuDx12Rid Include="win-x64;win-arm64" />
+      <_ProGpuDx12Required Include="@(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/wgpu_native.dll');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/dxcompiler.dll');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/dxil.dll');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/wgpu-native-build.json');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/dxc-compiler-package.json');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/LICENSE.MIT');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/LICENSE.APACHE');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/LICENSE-MS.txt');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/LICENSE-LLVM.txt');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/LICENCE-MIT.txt');
+                                   @(_ProGpuDx12Rid->'$(ProGpuDx12RuntimeRoot)/%(Identity)/native/Microsoft.Direct3D.DXC.package.xml')" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(ProGpuDx12RuntimeRoot)/%(_ProGpuDx12Rid.Identity)/native/progpu-dx12-runtime.json')"
+           Text="Missing verified DX12 runtime payload for %(_ProGpuDx12Rid.Identity). Run eng/stage-dx12-runtime.ps1 first." />
+    <Error Condition="!Exists('%(_ProGpuDx12Required.Identity)')" Text="Missing required DX12 package input: %(_ProGpuDx12Required.Identity)." />
+    <Error Condition="Exists('$(ProGpuDx12RuntimeRoot)/%(_ProGpuDx12Rid.Identity)/native/d3d10warp.dll')" Text="WARP must not be distributed in the DX12 compiler package." />
+  </Target>
+</Project>

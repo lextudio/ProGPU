@@ -114,6 +114,46 @@ jobs:
             artifacts/progpu-native/browser-evidence/progpu-native-browser-gallery.json
           if-no-files-found: warn
 
+  dx12-runtime:
+    name: Windows compiler runtime (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Cache pinned compiler dependency build
+        uses: actions/cache@v5
+        with:
+          path: artifacts/wgpu-native-windows/${{ matrix.rid }}
+          key: progpu-dx12-${{ matrix.rid }}-${{ hashFiles('eng/wgpu-dxc/**', 'eng/progpu-native-wgpu.version.json', 'eng/build-wgpu-native-windows.ps1') }}
+      - name: Build and verify Windows runtime payload
+        shell: pwsh
+        run: |
+          ./eng/test-dx12-runtime-inputs.ps1
+          foreach ($rid in @('win-x64', 'win-arm64', 'linux-x64')) {
+            dotnet msbuild eng/test-dx12-package-targets.proj -p:RuntimeIdentifier=$rid -nologo
+            if ($LASTEXITCODE -ne 0) { throw 'DX12 package asset selection failed.' }
+          }
+          ./eng/build-progpu-dx12-runtime-windows.ps1 -Rid '${{ matrix.rid }}'
+      - name: Upload Windows runtime payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-dx12-runtime-${{ matrix.rid }}
+          path: artifacts/progpu-dx12/package
+          if-no-files-found: error
+
   native-cpp:
     name: Native C++ renderer (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
@@ -531,7 +571,7 @@ jobs:
 
   native-package:
     name: Native C++ NuGet package
-    needs: native-cpp
+    needs: [native-cpp, dx12-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -558,6 +598,13 @@ jobs:
           path: artifacts/progpu-native/package
           merge-multiple: true
 
+      - name: Download Windows compiler runtimes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-dx12-runtime-*
+          path: artifacts/progpu-dx12/package
+          merge-multiple: true
+
       - name: Pack and run source-independent consumer
         shell: bash
         run: |
@@ -573,6 +620,9 @@ jobs:
           dotnet pack src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj \
             --configuration Release --output "${output}" \
             -p:Version="${version}" -p:PackageVersion="${version}"
+          dotnet pack src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj \
+            --configuration Release --output "${output}" \
+            -p:Version="${version}" -p:PackageVersion="${version}"
           PROGPU_PACKAGE_VERSION="${version}" \
           PROGPU_PACKAGE_OUTPUT="${output}" \
             ./eng/progpu-verify-native-package.sh
@@ -585,6 +635,58 @@ jobs:
             artifacts/packages-native/Release/*.nupkg
             artifacts/packages-native/Release/*.snupkg
           if-no-files-found: error
+
+  native-dx12-package-consumer:
+    name: Native DX12 package consumer (${{ matrix.rid }})
+    needs: native-package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    env:
+      PROGPU_HIT_TEST_EXECUTION: ordered-stages
+      PROGPU_DX12_SHADER_COMPILER: dxc
+      PROGPU_BACKEND_DIAGNOSTICS: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: progpu-native-package
+          path: artifacts/packages-native/Release
+      - name: Run full packaged system-WARP consumer
+        shell: pwsh
+        run: |
+          $version = "0.1.0-preview.$env:GITHUB_RUN_NUMBER.ci"
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+            --configuration Release --runtime '${{ matrix.rid }}' `
+            -p:ProGpuUseDx12Runtime=true `
+            -p:ProGpuNativePackageSource="$env:GITHUB_WORKSPACE/artifacts/packages-native/Release" `
+            -p:ProGpuNativePackageVersion="$version" -- --software-adapter
+          if ($LASTEXITCODE -ne 0) { throw 'Full DX12 package consumer failed.' }
+      - name: Publish and run full NativeAOT system-WARP consumer
+        shell: pwsh
+        run: |
+          $version = "0.1.0-preview.$env:GITHUB_RUN_NUMBER.ci"
+          $output = "$env:GITHUB_WORKSPACE/artifacts/dx12-consumer-aot"
+          dotnet publish tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+            --configuration Release --runtime '${{ matrix.rid }}' -p:PublishAot=true `
+            -p:ProGpuUseDx12Runtime=true --output $output `
+            -p:ProGpuNativePackageSource="$env:GITHUB_WORKSPACE/artifacts/packages-native/Release" `
+            -p:ProGpuNativePackageVersion="$version"
+          if ($LASTEXITCODE -ne 0) { throw 'DX12 NativeAOT publication failed.' }
+          & "$output/ProGPU.Native.PackageConsumer.exe" --software-adapter
+          if ($LASTEXITCODE -ne 0) { throw 'Full DX12 NativeAOT consumer failed.' }
 
   native-package-consumer:
     name: Native package consumer (${{ matrix.rid }})

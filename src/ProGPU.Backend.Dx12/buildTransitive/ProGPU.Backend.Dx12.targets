@@ -1,0 +1,34 @@
+<Project>
+  <PropertyGroup>
+    <_ProGpuDx12Selected Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == 'win-arm64'">true</_ProGpuDx12Selected>
+    <_ProGpuDx12Payload>$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/native/</_ProGpuDx12Payload>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(_ProGpuDx12Selected)' == 'true'">
+    <Content Include="$(_ProGpuDx12Payload)**/*"
+             Link="%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+             ExcludeFromSingleFile="true" />
+  </ItemGroup>
+  <Target Name="ValidateProGpuDx12Consumer" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(RuntimeIdentifier)' == '' And ('$(OutputType)' == 'Exe' Or '$(OutputType)' == 'WinExe')"
+           Text="ProGPU.Backend.Dx12 executable consumers require an explicit RuntimeIdentifier." />
+    <Error Condition="'$(_ProGpuDx12Selected)' == 'true' And !Exists('$(_ProGpuDx12Payload)progpu-dx12-runtime.json')"
+           Text="The selected ProGPU.Backend.Dx12 runtime payload is missing." />
+  </Target>
+  <!-- Replace only the known package asset, never arbitrary caller libraries.
+       ResolvePackageAssets feeds build; publish also resolves its own asset list. -->
+  <Target Name="SelectProGpuDx12BuildAsset" AfterTargets="ResolvePackageAssets"
+          Condition="'$(_ProGpuDx12Selected)' == 'true'">
+    <ItemGroup>
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)"
+          Condition="'%(NativeCopyLocalItems.NuGetPackageId)' == 'Silk.NET.WebGPU.Native.WGPU' And '%(NativeCopyLocalItems.Filename)%(NativeCopyLocalItems.Extension)' == 'wgpu_native.dll'" />
+    </ItemGroup>
+  </Target>
+  <Target Name="SelectProGpuDx12PublishAsset" AfterTargets="_ResolveCopyLocalAssetsForPublish"
+          Condition="'$(_ProGpuDx12Selected)' == 'true'">
+    <ItemGroup>
+      <_ResolvedCopyLocalPublishAssets Remove="@(_ResolvedCopyLocalPublishAssets)"
+          Condition="'%(_ResolvedCopyLocalPublishAssets.NuGetPackageId)' == 'Silk.NET.WebGPU.Native.WGPU' And '%(_ResolvedCopyLocalPublishAssets.Filename)%(_ResolvedCopyLocalPublishAssets.Extension)' == 'wgpu_native.dll'" />
+    </ItemGroup>
+  </Target>
+</Project>

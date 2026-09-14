@@ -10,6 +10,9 @@
   <ItemGroup Condition="'$(ProGpuNativeUseProjectReference)' != 'true'">
     <PackageReference Include="ProGPU.Backend.Native" VersionOverride="$(ProGpuNativePackageVersion)" />
   </ItemGroup>
+  <ItemGroup Condition="'$(ProGpuUseDx12Runtime)' == 'true'">
+    <PackageReference Include="ProGPU.Backend.Dx12" VersionOverride="$(ProGpuNativePackageVersion)" />
+  </ItemGroup>
   <ItemGroup Condition="'$(ProGpuNativeUseProjectReference)' == 'true'">
     <ProjectReference Include="..\..\src\ProGPU.Backend.Native\ProGPU.Backend.Native.csproj" />
   </ItemGroup>
