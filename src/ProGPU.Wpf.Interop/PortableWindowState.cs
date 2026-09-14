@@ -5,6 +5,15 @@ public interface IPortableWindowStateSource
     bool TryGetPortableWindowState(out PortableWindowState state);
 }
 
+/// <summary>
+/// Source-owned top-level window state updated from a native host move.
+/// Coordinates are desktop logical positions, not framebuffer pixels.
+/// </summary>
+public interface IPortableWindowLocationSink
+{
+    void OnPortableWindowLocationChanged(double left, double top);
+}
+
 public sealed class PortableWindowState
 {
     public bool HasTitle { get; set; }
