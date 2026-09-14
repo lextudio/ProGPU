@@ -108,3 +108,9 @@ new API, exact package graph validation, source-host report integration, warmed
 application memory-growth checks, and matched final Release Instruments/counter
 measurements. The Windows default hit-query failure remains independent. No
 SDK, performance, policy-default or PR merge gate is waived by this checkpoint.
+
+Hosted follow-up: the first GCC/Linux/macOS builds compiled and reached export
+verification, which rejected the new entry's position in the sorted allowlist.
+Both allowlists now place the additive symbol in lexical order. Actual built
+wgpu-native and Dawn export verification passes locally; no symbol or check is
+removed. The new hosted run still has to qualify the corrected head.
