@@ -26,6 +26,77 @@
 namespace progpu::native::execution {
 namespace {
 
+bool ordered_queries(const progpu_native_engine& engine) noexcept {
+    return (engine.engine_flags & PROGPU_NATIVE_ENGINE_ORDERED_HIT_QUERIES) != 0U;
+}
+
+std::uint64_t ordered_storage_limit(progpu_native_engine& engine, std::uint32_t references) noexcept {
+#if defined(PROGPU_NATIVE_DAWN_ABI)
+    WGPULimits limits = WGPU_LIMITS_INIT;
+    if (wgpuDeviceGetLimits(engine.device, &limits) != WGPUStatus_Success) return 0U;
+#else
+    WGPUSupportedLimits supported{};
+    if (!wgpuDeviceGetLimits(engine.device, &supported)) return 0U;
+    const auto& limits = supported.limits;
+#endif
+    const std::uint64_t bytes = 32ULL + 8ULL * references;
+    if (references == 0U || references == std::numeric_limits<std::uint32_t>::max() ||
+        bytes > std::numeric_limits<std::uint32_t>::max() || bytes > limits.maxBufferSize ||
+        bytes > limits.maxStorageBufferBindingSize || limits.maxStorageBuffersPerShaderStage < 7U ||
+        limits.maxComputeInvocationsPerWorkgroup < 64U || limits.maxComputeWorkgroupSizeX < 64U ||
+        (static_cast<std::uint64_t>(references) + 63U) / 64U > limits.maxComputeWorkgroupsPerDimension)
+        return 0U;
+    return std::min(limits.maxStorageBufferBindingSize, limits.maxBufferSize);
+}
+
+constexpr std::array<std::array<const char*, 10U>, 3U> ordered_entry_points{{
+    {{"cs_point_clip", "cs_point_bounds", "cs_point_rect_fill", "cs_point_rect_stroke", "cs_point_ellipse_fill", "cs_point_ellipse_stroke", "cs_point_line_stroke", "cs_point_path_fill", "cs_point_path_stroke", "cs_point_other"}},
+    {{"cs_bounds_clip", "cs_bounds_bounds", "cs_bounds_rect_fill", "cs_bounds_rect_stroke", "cs_bounds_ellipse_fill", "cs_bounds_ellipse_stroke", "cs_bounds_line_stroke", "cs_bounds_path_fill", "cs_bounds_path_stroke", "cs_bounds_other"}},
+    {{"cs_ellipse_clip", "cs_ellipse_bounds", "cs_ellipse_rect_fill", "cs_ellipse_rect_stroke", "cs_ellipse_ellipse_fill", "cs_ellipse_ellipse_stroke", "cs_ellipse_line_stroke", "cs_ellipse_path_fill", "cs_ellipse_path_stroke", "cs_ellipse_other"}}
+}};
+
+bool ensure_ordered_pipelines(progpu_native_engine& engine, std::size_t kind) noexcept {
+    const auto prepare = [&](std::size_t slot, const char* entry) {
+        auto& pipeline = engine.semantic_hit_test_ordered_pipelines[slot];
+        if (pipeline != nullptr) return true;
+        WGPUComputePipelineDescriptor descriptor{};
+        descriptor.layout = engine.semantic_hit_test_pipeline_layout;
+        descriptor.compute.module = engine.semantic_hit_test_shader;
+        descriptor.compute.entryPoint = webgpu::string_view(entry);
+        pipeline = wgpuDeviceCreateComputePipeline(engine.device, &descriptor);
+        return pipeline != nullptr;
+    };
+    if (!prepare(0U, "cs_collect") || !prepare(1U, "cs_merge")) return false;
+    for (std::size_t family = 0U; family < 10U; ++family) {
+        if ((family == 0U || (engine.semantic_hit_test_family_mask & (1U << (family - 1U))) != 0U) &&
+            !prepare(2U + kind * 10U + family, ordered_entry_points[kind][family])) return false;
+    }
+    return true;
+}
+
+bool encode_ordered_query(progpu_native_engine& engine, WGPUCommandEncoder encoder, std::size_t kind) noexcept {
+    const auto dispatch = [&](std::size_t slot, bool indirect) {
+        WGPUComputePassDescriptor descriptor{};
+        auto pass = wgpuCommandEncoderBeginComputePass(encoder, &descriptor);
+        if (pass == nullptr) return false;
+        wgpuComputePassEncoderSetPipeline(pass, engine.semantic_hit_test_ordered_pipelines[slot]);
+        wgpuComputePassEncoderSetBindGroup(pass, 0U, engine.semantic_hit_test_bind_group, 0U, nullptr);
+        if (indirect) wgpuComputePassEncoderDispatchWorkgroupsIndirect(pass, engine.semantic_hit_test_dispatch_arguments, 0U);
+        else wgpuComputePassEncoderDispatchWorkgroups(pass, 1U, 1U, 1U);
+        wgpuComputePassEncoderEnd(pass);
+        wgpuComputePassEncoderRelease(pass);
+        return true;
+    };
+    if (!dispatch(0U, false)) return false;
+    wgpuCommandEncoderCopyBufferToBuffer(encoder, engine.semantic_hit_test_candidates, 16U,
+        engine.semantic_hit_test_dispatch_arguments, 0U, 12U);
+    for (std::size_t family = 0U; family < 10U; ++family) {
+        if ((family == 0U || (engine.semantic_hit_test_family_mask & (1U << (family - 1U))) != 0U) &&
+            !dispatch(2U + kind * 10U + family, true)) return false;
+    }
+    return dispatch(1U, false);
+}
+
 constexpr std::uint64_t result_buffer_size =
     static_cast<std::uint64_t>(PROGPU_NATIVE_HIT_TEST_MAX_RESULT_COUNT + 1U) *
     sizeof(progpu_native_hit_test_result);
@@ -288,18 +359,22 @@ bool ensure_hit_test_resources(progpu_native_engine& engine) noexcept {
         return false;
     }
 
-    std::array<WGPUBindGroupLayoutEntry, 6U> entries{};
-    const std::array<std::uint64_t, 6U> minimum_sizes{{
+    if (ordered_queries(engine) && ordered_storage_limit(engine, 1U) == 0U) {
+        engine.release_semantic_hit_test_resources();
+        return false;
+    }
+    std::array<WGPUBindGroupLayoutEntry, 7U> entries{};
+    const std::array<std::uint64_t, 7U> minimum_sizes{{
         sizeof(progpu_native_hit_test_query),
         sizeof(progpu_native_hit_test_node),
         sizeof(std::uint32_t),
         sizeof(progpu_native_hit_test_primitive),
         sizeof(progpu_native_hit_test_result),
-        sizeof(progpu_native_path_segment)}};
+        sizeof(progpu_native_path_segment), 40U}};
     for (std::uint32_t index = 0U; index < entries.size(); ++index) {
-        entries[index].binding = index;
+        entries[index].binding = index == 6U ? 7U : index;
         entries[index].visibility = WGPUShaderStage_Compute;
-        entries[index].buffer.type = index == 4U
+        entries[index].buffer.type = index == 4U || index == 6U
             ? WGPUBufferBindingType_Storage
             : WGPUBufferBindingType_ReadOnlyStorage;
         entries[index].buffer.minBindingSize = minimum_sizes[index];
@@ -307,7 +382,7 @@ bool ensure_hit_test_resources(progpu_native_engine& engine) noexcept {
     WGPUBindGroupLayoutDescriptor layout_descriptor{};
     layout_descriptor.label = webgpu::string_view(
         "ProGPU retained GPU hit-test storage layout");
-    layout_descriptor.entryCount = entries.size();
+    layout_descriptor.entryCount = ordered_queries(engine) ? 7U : 6U;
     layout_descriptor.entries = entries.data();
     engine.semantic_hit_test_layout = wgpuDeviceCreateBindGroupLayout(
         engine.device,
@@ -436,6 +511,21 @@ bool ensure_hit_test_index(progpu_native_engine& engine) noexcept {
         static_cast<std::size_t>(page.path_segment_count) *
         sizeof(progpu_native_path_segment);
 
+    const bool staged = ordered_queries(engine);
+    const std::uint64_t candidate_bytes = 32ULL + 8ULL * page.primitive_index_count;
+    std::uint32_t families = 0U;
+    if (staged) {
+        const auto maximum = ordered_storage_limit(engine, page.primitive_index_count);
+        if (maximum == 0U || primitive_bytes > maximum || node_bytes > maximum ||
+            primitive_index_bytes > maximum || path_segment_bytes > maximum || result_buffer_size > maximum)
+            return false;
+        for (std::uint32_t i = 0U; i < page.primitive_count; ++i) {
+            progpu_native_hit_test_primitive primitive{};
+            std::memcpy(&primitive, primitives + static_cast<std::size_t>(i) * sizeof(primitive), sizeof(primitive));
+            families |= 1U << std::min(primitive.kind, 8U);
+        }
+    }
+
     WGPUBuffer next_nodes = create_storage_buffer(
         engine,
         "ProGPU retained GPU hit-test nodes",
@@ -460,16 +550,30 @@ bool ensure_hit_test_index(progpu_native_engine& engine) noexcept {
         path_segments,
         path_segment_bytes,
         sizeof(progpu_native_path_segment));
+    WGPUBuffer next_candidates = nullptr;
+    WGPUBuffer next_arguments = nullptr;
+    if (staged) {
+        WGPUBufferDescriptor descriptor{};
+        descriptor.size = candidate_bytes;
+        descriptor.usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopySrc;
+        next_candidates = wgpuDeviceCreateBuffer(engine.device, &descriptor);
+        descriptor.size = 12U;
+        descriptor.usage = WGPUBufferUsage_Indirect | WGPUBufferUsage_CopyDst;
+        next_arguments = wgpuDeviceCreateBuffer(engine.device, &descriptor);
+    }
     if (next_nodes == nullptr || next_indices == nullptr ||
-        next_primitives == nullptr || next_path_segments == nullptr) {
+        next_primitives == nullptr || next_path_segments == nullptr ||
+        (staged && (next_candidates == nullptr || next_arguments == nullptr))) {
         release_buffer(next_nodes);
         release_buffer(next_indices);
         release_buffer(next_primitives);
         release_buffer(next_path_segments);
+        release_buffer(next_candidates);
+        release_buffer(next_arguments);
         return false;
     }
 
-    const std::array<WGPUBindGroupEntry, 6U> bind_entries{{
+    const std::array<WGPUBindGroupEntry, 7U> bind_entries{{
         {nullptr, 0U, engine.semantic_hit_test_query_buffer, 0U,
             sizeof(progpu_native_hit_test_query), nullptr, nullptr},
         {nullptr, 1U, next_nodes, 0U,
@@ -485,12 +589,13 @@ bool ensure_hit_test_index(progpu_native_engine& engine) noexcept {
             result_buffer_size, nullptr, nullptr},
         {nullptr, 5U, next_path_segments, 0U,
             std::max(path_segment_bytes, sizeof(progpu_native_path_segment)),
-            nullptr, nullptr}}};
+            nullptr, nullptr},
+        {nullptr, 7U, next_candidates, 0U, candidate_bytes, nullptr, nullptr}}};
     WGPUBindGroupDescriptor bind_descriptor{};
     bind_descriptor.label = webgpu::string_view(
         "ProGPU retained GPU hit-test index bindings");
     bind_descriptor.layout = engine.semantic_hit_test_layout;
-    bind_descriptor.entryCount = bind_entries.size();
+    bind_descriptor.entryCount = staged ? 7U : 6U;
     bind_descriptor.entries = bind_entries.data();
     WGPUBindGroup next_bind_group = wgpuDeviceCreateBindGroup(
         engine.device,
@@ -500,6 +605,8 @@ bool ensure_hit_test_index(progpu_native_engine& engine) noexcept {
         release_buffer(next_indices);
         release_buffer(next_primitives);
         release_buffer(next_path_segments);
+        release_buffer(next_candidates);
+        release_buffer(next_arguments);
         return false;
     }
 
@@ -508,6 +615,9 @@ bool ensure_hit_test_index(progpu_native_engine& engine) noexcept {
     engine.semantic_hit_test_primitive_index_buffer = next_indices;
     engine.semantic_hit_test_primitive_buffer = next_primitives;
     engine.semantic_hit_test_path_segment_buffer = next_path_segments;
+    engine.semantic_hit_test_candidates = next_candidates;
+    engine.semantic_hit_test_dispatch_arguments = next_arguments;
+    engine.semantic_hit_test_family_mask = families;
     engine.semantic_hit_test_bind_group = next_bind_group;
     engine.semantic_hit_test_gpu_hash = engine.semantic_hashes.hit_test;
     engine.semantic_hit_test_primitive_count = page.primitive_count;
@@ -601,7 +711,12 @@ progpu_native_status begin_hit_test(
         (query->flags & PROGPU_NATIVE_HIT_TEST_BOUNDS_REGION) == 0U ? 0U :
         (query->flags & PROGPU_NATIVE_HIT_TEST_ELLIPSE_REGION) == 0U ? 1U : 2U;
     auto& query_pipeline = engine->semantic_hit_test_pipelines[query_kind];
-    if (query_pipeline == nullptr) {
+    const bool staged = ordered_queries(*engine);
+    if (staged && !ensure_ordered_pipelines(*engine, query_kind)) {
+        return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+            "The ordered GPU hit-test pipelines could not be created.");
+    }
+    if (!staged && query_pipeline == nullptr) {
         constexpr std::array<const char*, 3U> entry_points{{
             "cs_point", "cs_bounds", "cs_ellipse"}};
         WGPUComputePipelineDescriptor descriptor{};
@@ -664,6 +779,13 @@ progpu_native_status begin_hit_test(
             PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
             "The retained GPU hit-test encoder could not be created.");
     }
+    if (staged) {
+        if (!encode_ordered_query(*engine, encoder, query_kind)) {
+            wgpuCommandEncoderRelease(encoder);
+            return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+                "The ordered GPU hit-test passes could not be encoded.");
+        }
+    } else {
     WGPUComputePassDescriptor pass_descriptor{};
     pass_descriptor.label = webgpu::string_view(
         "ProGPU retained GPU hit-test pass");
@@ -688,6 +810,7 @@ progpu_native_status begin_hit_test(
     wgpuComputePassEncoderDispatchWorkgroups(pass, 1U, 1U, 1U);
     wgpuComputePassEncoderEnd(pass);
     wgpuComputePassEncoderRelease(pass);
+    }
 #if defined(PROGPU_NATIVE_BROWSER)
     WGPUComputePassDescriptor readback_pass_descriptor{};
     readback_pass_descriptor.label = webgpu::string_view(
@@ -942,6 +1065,15 @@ progpu_native_status poll_hit_test(
             "The retained GPU hit-test readback range is unavailable.");
     }
 
+    if (ordered_queries(*engine) && mapped[0].hit == std::numeric_limits<std::uint32_t>::max()) {
+        webgpu::buffer_unmap(engine->semantic_hit_test_readback_buffer);
+        engine->semantic_hit_test_pending_token = 0U;
+        engine->semantic_hit_test_map_future = 0U;
+        engine->semantic_hit_test_pending_bytes = 0U;
+        engine->semantic_hit_test_requested_result_count = 0U;
+        return engine->fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+            "Ordered GPU hit-test candidate overflow; no result was published.");
+    }
     *summary = mapped[0];
     const std::uint32_t requested =
         engine->semantic_hit_test_requested_result_count;

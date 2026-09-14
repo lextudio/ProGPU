@@ -955,7 +955,13 @@ typedef enum progpu_native_engine_flag {
     /* Fail instead of using an explicit occupied-tile shader when a host
      * forces hardware sampling. Mutually exclusive with explicit sampling. */
     /* PROGPU_CSHARP_ULONG: EngineImageRequireNativeSampling */
-    PROGPU_NATIVE_ENGINE_IMAGE_REQUIRE_NATIVE_SAMPLING = 16ULL
+    PROGPU_NATIVE_ENGINE_IMAGE_REQUIRE_NATIVE_SAMPLING = 16ULL,
+    /* Explicit ordered collection/clip/family/merge GPU queries. Candidate
+     * storage and dispatch limits are checked on the actual device; overflow
+     * rejects the query before publishing any result. Zero keeps single-pass
+     * queries until full platform/application qualification. No CPU fallback. */
+    /* PROGPU_CSHARP_ULONG: EngineOrderedHitQueries */
+    PROGPU_NATIVE_ENGINE_ORDERED_HIT_QUERIES = 32ULL
 } progpu_native_engine_flag;
 
 /*

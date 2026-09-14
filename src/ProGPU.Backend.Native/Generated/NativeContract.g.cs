@@ -19,6 +19,8 @@ internal static unsafe partial class NativeMethods
     internal const ulong EngineImageExplicitShaderSampling = 8UL;
     // Native source: PROGPU_NATIVE_ENGINE_IMAGE_REQUIRE_NATIVE_SAMPLING.
     internal const ulong EngineImageRequireNativeSampling = 16UL;
+    // Native source: PROGPU_NATIVE_ENGINE_ORDERED_HIT_QUERIES.
+    internal const ulong EngineOrderedHitQueries = 32UL;
     // Native source: PROGPU_NATIVE_SCENE_FRAME_PRESENTATION.
     internal const ulong SceneFramePresentationFlag = 4UL;
     // Native source: PROGPU_NATIVE_GEOMETRY_RELATION_UNKNOWN.

@@ -20,6 +20,13 @@ The standalone stages are not product admission: retain paired dispatcher,
 overflow/device-limit/owner-lease and final Windows requirements in
 docs/native-ordered-hit-query-stages.md. Never waive counter or unused-slot
 differences merely because the topmost owner agrees.
+Product ordered queries use generation-owned candidate/indirect buffers, actual
+device limits and lazy retained-family pipelines in both renderers. Keep explicit
+selection/default qualification separate. Reject the UINT_MAX overflow summary
+before publishing owners, using existing readback/token lifetime; never replace
+it with a miss, add CPU candidate readback or infer borrowed-device limits.
+Preserve external initialization signatures and original-provider sparse counter
+evidence: historical wgpu-native Metal's constant node count is not an oracle.
 
 Windows compiler-feature builds must retain the exact Silk native/header ABI,
 reviewed locked dependency graph and verified target PE architecture. Keep the

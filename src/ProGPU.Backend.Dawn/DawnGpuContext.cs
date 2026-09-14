@@ -446,7 +446,11 @@ public sealed unsafe partial class DawnGpuContext :
                     queue,
                     deviceLossStateHandle);
             deviceLossStateHandle = default;
-            context = new WgpuContext();
+            context = new WgpuContext {
+                ComputeLimits = new(limits.MaxStorageBufferBindingSize,
+                    limits.MaxStorageBuffersPerShaderStage, limits.MaxComputeInvocationsPerWorkgroup,
+                    limits.MaxComputeWorkgroupSizeX, limits.MaxComputeWorkgroupsPerDimension)
+            };
             context.InitializeExternalNativeDevice(
                 new DawnWebGpuApi(),
                 lifetime,

@@ -2841,6 +2841,13 @@ async function initializeGpu(request, canvas, executionMode, diagnostics) {
     supportsOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
     supportsBgra8UnormStorage: supportsBgraStorage,
     maxBufferSize: state.device.limits.maxBufferSize,
+    computeLimits: {
+      maxStorageBufferBindingSize: state.device.limits.maxStorageBufferBindingSize,
+      maxStorageBuffersPerShaderStage: state.device.limits.maxStorageBuffersPerShaderStage,
+      maxComputeInvocationsPerWorkgroup: state.device.limits.maxComputeInvocationsPerWorkgroup,
+      maxComputeWorkgroupSizeX: state.device.limits.maxComputeWorkgroupSizeX,
+      maxComputeWorkgroupsPerDimension: state.device.limits.maxComputeWorkgroupsPerDimension
+    },
     features: [...state.adapter.features],
     diagnostics
   };

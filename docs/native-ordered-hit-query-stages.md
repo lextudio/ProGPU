@@ -5,14 +5,17 @@
 Acceptance application: **ProGPU.Wpf.ShowcaseApp**. User action: pointer selection
 and geometry-region queries against a presented native MIL owner index. The
 blocking path is the Windows system-WARP execution of the canonical query shader.
-This work provides a standalone differential probe and optional shader entrypoints;
-it does **not** switch the managed or C++ product dispatcher to staged execution.
-The existing six-binding point/bounds/ellipse entrypoints remain available.
+The managed and C++ product dispatchers now support explicitly selected ordered
+stages, using retained device/index-owned resources. Automatic selection retains
+single-pass queries pending final platform/application qualification. The existing
+six-binding point/bounds/ellipse entrypoints remain available and independent.
 
 The staged probe now passes all **120 complete result buffers** on system ARM64
 WARP with the verified DXC configuration, matching the independent Metal/original
 shader reference. This closes the isolated staged-query differential, not the
-product dispatcher, package or Showcase qualification gates.
+final package/default or Showcase qualification gates. The full native consumer
+also passes with the product dispatcher on Metal and system ARM64 WARP/DXC;
+the Windows package-production/default configuration remains a separate gate.
 
 The implementation is original ProGPU code, refactored from
 `src/ProGPU.Vector/Shaders/GpuHitTesting.wgsl` at `20bbf7f1`. No foreign renderer
@@ -48,8 +51,9 @@ isolation; its timings are not normal-path performance measurements.
 The legacy entrypoints cannot reach candidate storage through their call graph.
 A constant false argument alone was insufficient for automatic layout inference;
 the shared iterator keeps traversal reuse without adding a seventh legacy binding.
-The probe also executes actual `GpuHitTestEngine` calls to check the six-binding
-product layout, rather than only its own explicit staged layout.
+Without a forced execution policy, the probe also executes actual
+`GpuHitTestEngine` calls to check the six-binding product layout. `--product`
+requires explicit ordered selection and compares public product queries too.
 
 For N primitives, K candidates, S path segments and result capacity R, average work
 is O(log N + K*(S+R)), worst-case O(N*(S+R)). Staged scratch is O(M) for M retained
@@ -126,15 +130,11 @@ is not counted as a pass. The independent contract project has no such dependenc
 
 - Extend the passing system ARM64/Metal differential to x64, Linux, multi-level
   BVHs and device limits. Retain original deadlines/fences and exact counters.
-- Pair managed and C++ dispatcher/resource lifetime changes. The shared indirect
-  API is now connected (below), but product query dispatch still uses the original
-  single-pass entrypoints; transport support is not product query admission.
-- Size scratch from the validated immutable index generation, reject overflow
-  before publishing results, preserve pending-readback/owner-map leases, and
-  respect device storage/indirect-workgroup limits with bounded dispatching.
-- Compile only required pipelines for actual retained primitive families, retain
-  device-qualified cache ownership and measure cold/warm query latency, allocation
-  and residency against the same final legacy/native binaries.
+- Qualify the paired product dispatchers (below) on the final package/host graph,
+  including failure recovery, pending owner-map leases and large admitted device
+  capacities. Oversized indices currently reject rather than chunking dispatches.
+- Measure cold/warm query latency, allocation and residency against the same
+  final legacy/native binaries; retained family selection alone is not a benchmark.
 - Finish compiler-feature packaging and final native package/Showcase input,
   popup/DPI/lifetime gates. No dependency pin or merge advances from this probe.
 
@@ -186,8 +186,101 @@ Validation:
 - CI includes browser decoder checks and the independent Dawn/Metal differential,
   in addition to the existing native provider and original-shader query gates.
 
-Typed product execution selection, bounded candidate resources, device limits,
-pending readback/overflow handling and paired product dispatch remain required.
+This shared-API checkpoint preceded the product connection below.
+
+## Paired product dispatch — 2026-09-14
+
+Managed hosts configure `WgpuContext.HitTestExecutionPreference` with
+`Automatic`, `SinglePass` or `OrderedStages` before resource construction.
+`PROGPU_HIT_TEST_EXECUTION=auto|single-pass|ordered-stages` supplies the process
+default; invalid values fail. `HitTestExecutionPath` reports the resolved path.
+Automatic currently resolves to SinglePass: the new path is not silently promoted
+from an isolated passing probe. Shared surfaces inherit their actual device
+owner's selection and limit snapshot. Raw C hosts opt in using the generated
+`PROGPU_NATIVE_ENGINE_ORDERED_HIT_QUERIES` flag (32); old native libraries reject
+the unsupported flag rather than selecting another path.
+
+`GpuOrderedHitQueries` belongs to one retained `GpuHitTestDeviceIndex`. It leases
+the common layout from the same device resource domain and uses a retained
+pipeline cache, compiling only collection, merge, the requested clip shape and
+the actual retained primitive families. It retains separate single/list bindings,
+an M-record candidate buffer and a 12-byte indirect buffer. Disposing the index
+queues the usual completion-safe resource releases. No shader/pipeline/bind-group
+creation or index upload repeats for warm queries of an already requested family.
+
+The C++ dispatcher uses the same canonical entrypoints, family mask and ordered
+passes. Candidate/argument buffers follow its existing immutable index generation;
+pipeline resources follow engine/device lifetime. Index replacement publishes all
+new resources together, and failed allocation releases only unpublished resources.
+Existing pending token/map, owner snapshot, query completion and browser packing
+contracts remain in place. Query dispatch remains one submission; native desktop
+readback retains its separate submission for the existing Vulkan hazard contract.
+
+Both sides validate actual storage and compute limits before admission. Native
+queries read the owning device limits through its provider. Managed owned devices
+capture limits at initialization; Dawn and browser factories publish their actual
+device snapshot through immutable `WgpuComputeLimits`. Other borrowed hosts must
+provide that snapshot—default/zero limits do not grant staged admission. Existing
+external initialization method signatures are preserved. The candidate buffer is
+`32 + 8*M` bytes; limits cover buffer/storage size, seven storage bindings, 64 X
+invocations and `ceil(M/64)` workgroups. Oversized indices explicitly reject, with
+no scalar/managed geometry fallback and no readback to calculate dispatch sizes.
+
+If GPU collection overflows, merge publishes the reserved UINT_MAX summary hit
+marker through the ordinary result readback. Admitted M is strictly below that
+value, so valid hit counts cannot collide. Both product readers reject the marker
+before copying any owner results to the caller; native map/token state is released
+as an explicit failed query. This avoids another readback/map lifetime.
+
+### Product evidence and remaining limits
+
+- The full project-reference native consumer passes on Metal and system ARM64
+  WARP with DXC, including real retained MIL pixels, native owner/generation
+  isolation, repeated waits, participation and region-first queries. The loaded
+  native product DLL hash on Windows is
+  `16490f220019d0f1125349bc6ec2b1a10e11a1765529d5be75f0a787148235d5`.
+  The Windows stdout hash is
+  `fd6ad3e6bacb62772714e9eb51ed40385aaafec3bfb84a06b953ff62a9cd2eea`.
+  These are staged project-reference binaries, not proof of the final NuGet graph.
+- The matched system-WARP/FXC run fails during compute pipeline creation with
+  D3DCompile X3511 (forced loop unrolling failed). The pinned wgpu error conversion
+  subsequently aborts on a NUL in that diagnostic. No owner-query submission or
+  readback completed in this run. Splitting dispatch therefore does not qualify
+  FXC: the next Windows release blocker is the DXC-capable dependency/compiler
+  package graph, followed by exact packaged runtime and adapter qualification.
+- The dense probe matches 120 complete buffers plus 100 public managed product
+  queries on wgpu-native Metal, Dawn Metal and system ARM64 WARP/DXC. Public list
+  APIs do not execute zero-capacity queries; single-point summary is separately
+  covered. Public output comparison retains untouched caller-tail records and
+  the managed API's existing -Infinity empty-depth initialization (the raw native
+  probe uses -FLT_MAX). No other result fields or tolerances are normalized.
+- The sparse fixture adds root-local coverage and separated child subtrees.
+  All 168 complete buffers and 140 public queries match the original shader on
+  Dawn Metal, current single-pass Metal and staged Metal. The independent original
+  Dawn reference SHA-256 is
+  `12e78381009b7417e38f04fd88f6f4d6b54f302b0f091a50d756956a1a658530`.
+  Historical `20bbf7f1` through wgpu-native Metal reports `nodes_visited=1` where
+  Dawn's original shader and the new local reduction report 11 or 13. That old
+  compiler-path discrepancy is retained explicitly; counters are not ignored.
+  CI cross-checks complete sparse outputs against Dawn's original shader, rather
+  than treating the broken old Metal counter as authoritative or waiving it.
+- Both C++ providers build on Apple Clang and Windows ARM64 MSVC; 19 native tests,
+  20 focused managed policy/browser tests, nine actual browser-decoder checks and
+  generated native contract verification pass. The full managed test checkout
+  still requires its missing external source submodules.
+- Linux/macOS native package lanes now run the full consumer with explicit
+  ordered stages in addition to their unchanged default and NativeAOT gates.
+  Windows keeps its existing gates; the DXC-enabled package gate still needs the
+  feature-capable dependency payload and cannot use the stock FXC-only binary.
+- Large-capacity runtime, sparse Windows/x64, browser device execution, exact final
+  package CI, qualified automatic selection and Showcase source/runtime gates
+  remain required. VM configuration/system libraries were not changed; WARP is
+  not redistributed. CPU work here is one dependency-free fixed family-mask
+  reduction over strided metadata per index, not geometry or a compute fallback.
+
+This connection changes no font/layout, clip geometry, owner identity, ordering,
+sampling quality or source input policy. It shares original ProGPU traversal and
+predicates; the cross-engine and WebGPU research decisions above remain applicable.
 
 ## Research and design decisions
 

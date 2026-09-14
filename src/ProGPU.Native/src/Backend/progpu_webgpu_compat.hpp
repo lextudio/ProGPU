@@ -80,6 +80,7 @@ using proc_resolver = void* (*)(void* context, const char* name);
     X(ComputePassEncoderSetPipeline) \
     X(ComputePipelineRelease) \
     X(DeviceAddRef) \
+    X(DeviceGetLimits) \
     X(DeviceCreateBindGroup) \
     X(DeviceCreateBindGroupLayout) \
     X(DeviceCreateBuffer) \
@@ -538,6 +539,8 @@ inline WGPUVertexAttribute vertex_attribute(
     (::progpu::native::webgpu::active_dispatch().wgpuComputePipelineRelease)
 #define wgpuDeviceCreateBindGroup \
     (::progpu::native::webgpu::active_dispatch().wgpuDeviceCreateBindGroup)
+#define wgpuDeviceGetLimits \
+    (::progpu::native::webgpu::active_dispatch().wgpuDeviceGetLimits)
 #define wgpuDeviceCreateBindGroupLayout \
     (::progpu::native::webgpu::active_dispatch().wgpuDeviceCreateBindGroupLayout)
 #define wgpuDeviceCreateBuffer \

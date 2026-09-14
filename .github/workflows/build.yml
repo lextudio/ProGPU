@@ -631,6 +631,18 @@ jobs:
           name: progpu-native-package
           path: artifacts/packages-native/Release
 
+      - name: Run ordered-query native package consumer
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PROGPU_HIT_TEST_EXECUTION: ordered-stages
+        run: |
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+            -p:ProGpuNativePackageVersion="${version}"
+
       - name: Restore and run package consumer
         shell: bash
         run: |
@@ -1103,20 +1115,30 @@ jobs:
       - name: Compare ordered GPU query stages with original shader
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          PROGPU_HIT_TEST_EXECUTION: ordered-stages
         run: |
           git fetch --no-tags --depth=1 origin 20bbf7f1f65d15bc05b6e12e17d635ccaefa7162
           git show 20bbf7f1f65d15bc05b6e12e17d635ccaefa7162:src/ProGPU.Vector/Shaders/GpuHitTesting.wgsl > "$RUNNER_TEMP/progpu-hit-query-reference.wgsl"
           dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release -- \
-            --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --product --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
             --write-reference "$RUNNER_TEMP/progpu-hit-query-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --product --sparse \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-sparse-reference.bin"
 
       - name: Compare Dawn ordered GPU queries with the independent reference
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          PROGPU_HIT_TEST_EXECUTION: ordered-stages
         run: |
           dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
-            --dawn --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --dawn --product --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
             --expected-results "$RUNNER_TEMP/progpu-hit-query-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --sparse --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --expected-results "$RUNNER_TEMP/progpu-hit-query-sparse-reference.bin"
 
       - name: Upload ordered query reference
         if: runner.os != 'Windows' && always()
@@ -1126,6 +1148,7 @@ jobs:
           path: |
             ${{ runner.temp }}/progpu-hit-query-reference.wgsl
             ${{ runner.temp }}/progpu-hit-query-reference.bin
+            ${{ runner.temp }}/progpu-hit-query-sparse-reference.bin
           if-no-files-found: warn
 
       - name: Test

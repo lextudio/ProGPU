@@ -2497,7 +2497,11 @@ fn classify_candidate(index: u32, kind: u32, region_query: bool, ellipse_region:
 
 @compute @workgroup_size(1)
 fn cs_merge(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (any(global_id != vec3<u32>(0u)) || candidates.overflow != 0u) { return; }
+    if (any(global_id != vec3<u32>(0u))) { return; }
+    // Reserved failure marker: admitted indices contain fewer than UINT_MAX
+    // references, so no valid summary count can collide. Hosts reject before
+    // publishing any owner result; the ordinary readback carries the failure.
+    if (candidates.overflow != 0u) { results[0].hit = 0xffffffffu; return; }
     var hit_count = results[0].hit;
     for (var index = 0u; index < candidates.count; index = index + 1u) {
         let candidate = candidates.records[index];

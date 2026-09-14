@@ -2344,6 +2344,8 @@ public sealed unsafe class NativeCompositor : IDisposable
     }
 
     private static ulong GetEngineFlags(WgpuContext context) =>
+        (context.HitTestExecutionPath == GpuHitTestExecutionPreference.OrderedStages
+            ? NativeMethods.EngineOrderedHitQueries : 0UL) |
         (context.ImageSamplingPreference == GpuImageSamplingPreference.NativeSampler
             ? NativeMethods.EngineImageRequireNativeSampling : 0UL) |
         (context.ImageSamplingPath == GpuImageSamplingPath.ExplicitShader

@@ -51,6 +51,12 @@ public unsafe class WgpuContext : IDisposable
     public uint MaxSamplersPerShaderStage { get; private set; } = 16;
     public uint MaxBindGroups { get; private set; } = 4;
     public ulong MaxBufferSize { get; private set; } = DefaultMaxBufferSize;
+    private WgpuComputeLimits _computeLimits;
+    /// <summary>Borrowed hosts supply the actual device snapshot at construction; owned devices query it directly.</summary>
+    public WgpuComputeLimits ComputeLimits { get => _computeLimits; init => _computeLimits = value; }
+    private GpuHitTestExecutionPreference _hitTestExecutionPreference = GpuHitTestExecutionPolicy.ReadEnvironmentPreference();
+    public GpuHitTestExecutionPreference HitTestExecutionPreference { get => _hitTestExecutionPreference; init => _hitTestExecutionPreference = value; }
+    public GpuHitTestExecutionPreference HitTestExecutionPath => GpuHitTestExecutionPolicy.Resolve(_hitTestExecutionPreference);
     public bool SupportsReadOnlyAndReadWriteStorageTextures { get; private set; }
     public bool SupportsTextureFormatsTier1 { get; private set; }
     public BackendType AdapterBackendType { get; private set; } = BackendType.Undefined;
@@ -1128,6 +1134,9 @@ public unsafe class WgpuContext : IDisposable
 
         var deviceLimits = new SupportedLimits();
         Wgpu.DeviceGetLimits(Device, &deviceLimits);
+        _computeLimits = new(deviceLimits.Limits.MaxStorageBufferBindingSize,
+            deviceLimits.Limits.MaxStorageBuffersPerShaderStage, deviceLimits.Limits.MaxComputeInvocationsPerWorkgroup,
+            deviceLimits.Limits.MaxComputeWorkgroupSizeX, deviceLimits.Limits.MaxComputeWorkgroupsPerDimension);
         MaxSampledTexturesPerShaderStage = Math.Max(16, deviceLimits.Limits.MaxSampledTexturesPerShaderStage);
         MaxSamplersPerShaderStage = Math.Max(16, deviceLimits.Limits.MaxSamplersPerShaderStage);
         MaxBindGroups = Math.Max(4, deviceLimits.Limits.MaxBindGroups);
@@ -1848,6 +1857,8 @@ public unsafe class WgpuContext : IDisposable
         MaxSamplersPerShaderStage = deviceOwner.MaxSamplersPerShaderStage;
         MaxBindGroups = deviceOwner.MaxBindGroups;
         MaxBufferSize = deviceOwner.MaxBufferSize;
+        _computeLimits = deviceOwner.ComputeLimits;
+        _hitTestExecutionPreference = deviceOwner.HitTestExecutionPreference;
         SupportsReadOnlyAndReadWriteStorageTextures = deviceOwner.SupportsReadOnlyAndReadWriteStorageTextures;
         SupportsTextureFormatsTier1 =
             deviceOwner.SupportsTextureFormatsTier1;

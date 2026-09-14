@@ -73,7 +73,28 @@ internal static unsafe class Program
             else if (i % 19 == 0) shape = shape.WithFlags(GpuHitTestPrimitiveFlags.None);
             shapes.Add(shape);
         }
+        bool sparse = args.Contains("--sparse");
+        if (sparse)
+        {
+            // Retain root-local coverage as well as spatially separated children;
+            // the original shader remains the independent traversal-order oracle.
+            shapes.Add(GpuHitTestPrimitive.Bounds(7, new(-1), new(1000), zIndex: 0));
+            for (int i = 0; i < 64; i++)
+            {
+                var origin = new Vector2(100 + i % 8 * 100, 100 + i / 8 * 100);
+                shapes.Add(GpuHitTestPrimitive.RectangleFill(i % 11, origin, origin + new Vector2(30), new(3), zIndex: i % 3));
+                shapes.Add(GpuHitTestPrimitive.Bounds(i % 11, origin + new Vector2(5), origin + new Vector2(25), zIndex: i % 3));
+            }
+        }
         var index = GpuHitTestIndex.Build(CollectionsMarshal.AsSpan(shapes), pathSegments, maxPrimitivesPerNode: 4);
+        if (sparse && index.Nodes.Count < 8) throw new InvalidOperationException("Sparse fixture did not create a multi-level tree.");
+        Vector2[] points = [new(10), new(-1), new(100), new(0), new(19), new(10, 0), new(20, 10), new(5), new(25), new(15, 5)];
+        if (sparse) points = [.. points, new(110), new(310, 410), new(810, 710), new(500, 900)];
+        using var productIndex = args.Contains("--product") ? new GpuHitTestDeviceIndex(context, index) : null;
+        using var productCache = productIndex == null ? null : new RenderPipelineCache(context);
+        if (productIndex != null && context.HitTestExecutionPath != GpuHitTestExecutionPreference.OrderedStages)
+            throw new ArgumentException("Product-stage comparison requires PROGPU_HIT_TEST_EXECUTION=ordered-stages.");
+        int productComparisons = 0;
         int candidateCapacity = Option("--candidate-capacity") is { } candidateValue
             ? int.Parse(candidateValue, CultureInfo.InvariantCulture) : index.PrimitiveIndices.Count;
         if (candidateCapacity < 1 || candidateCapacity > index.PrimitiveIndices.Count)
@@ -122,7 +143,7 @@ internal static unsafe class Program
             int mismatches = 0;
             foreach (uint mode in new uint[] { 0, 0x80000000, 0xc0000000 })
             foreach (uint capacity in new uint[] { 0, 1, 4, 16 })
-            foreach (Vector2 point in new[] { new Vector2(10), new Vector2(-1), new Vector2(100), new Vector2(0), new Vector2(19), new Vector2(10, 0), new Vector2(20, 10), new Vector2(5), new Vector2(25), new Vector2(15, 5) })
+            foreach (Vector2 point in points)
             {
                 var query = new GpuHitTestQuery {
                     Point = point, RegionMax = point + new Vector2(3), PrimitiveCount = (uint)index.Primitives.Count,
@@ -133,6 +154,14 @@ internal static unsafe class Program
                 string modeName = mode == 0 ? "point" : mode == 0x80000000 ? "bounds" : "ellipse";
                 byte[]? reference = stagedOnly ? null : Execute(false, modeName);
                 byte[] staged = Execute(true, modeName);
+                if (productIndex != null && (capacity != 0 || mode == 0))
+                {
+                    ReadOnlySpan<byte> oracle = expectedResults != null
+                        ? expectedResults.AsSpan(checked(compared * staged.Length), staged.Length)
+                        : reference ?? throw new InvalidOperationException("Product queries require an independent reference.");
+                    CheckProduct(mode, capacity, point, MemoryMarshal.Cast<byte, GpuHitTestResult>(oracle));
+                    productComparisons++;
+                }
                 if (expectedResults != null)
                 {
                     int offset = checked(compared * staged.Length);
@@ -166,6 +195,7 @@ internal static unsafe class Program
                 referenceResults.CopyTo(referenceFile);
             }
             Console.WriteLine($"Hit query stages: {compared} complete query records matched byte-for-byte; compiler={context.SelectedDx12ShaderCompiler?.ToString() ?? "not-D3D12"}.");
+            if (productIndex != null) Console.WriteLine($"Product ordered queries: {productComparisons} public query results matched the reference.");
         }
         finally
         {
@@ -232,6 +262,48 @@ internal static unsafe class Program
                     context.Api.CommandEncoderRelease(encoder);
                     var nextEncoderDescriptor = new CommandEncoderDescriptor();
                     encoder = context.Api.DeviceCreateCommandEncoder(context.Device, &nextEncoderDescriptor);
+                }
+            }
+        }
+
+        void CheckProduct(uint mode, uint capacity, Vector2 point, ReadOnlySpan<GpuHitTestResult> oracle)
+        {
+            if (capacity == 0)
+            {
+                bool hit = GpuHitTestEngine.TryHitTestPoint(context, productCache!, productIndex!, point, out var actual);
+                RequireEqual(oracle[0], actual);
+                if (hit != actual.HasHit) throw new InvalidOperationException("Product point hit status differs.");
+                return;
+            }
+            Span<GpuHitTestResult> actualResults = stackalloc GpuHitTestResult[(int)capacity];
+            var sentinel = new GpuHitTestResult { Id = -1234567, Hit = 42 };
+            actualResults.Fill(sentinel);
+            int count;
+            GpuHitTestResult summary;
+            bool hasHit = mode == 0
+                ? GpuHitTestEngine.TryHitTestPointAll(context, productCache!, productIndex!, point, actualResults, out count, out summary)
+                : mode == 0x80000000u
+                    ? GpuHitTestEngine.TryQueryBoundsAll(context, productCache!, productIndex!, point, point + new Vector2(3), actualResults, out count, out summary)
+                    : GpuHitTestEngine.TryQueryEllipseAll(context, productCache!, productIndex!, point, point + new Vector2(3), actualResults, out count, out summary);
+            RequireEqual(oracle[0], summary);
+            int expectedCount = 0;
+            while (expectedCount < capacity && oracle[expectedCount + 1].HasHit) expectedCount++;
+            if (count != expectedCount || hasHit != (count != 0))
+                throw new InvalidOperationException("Product list count/status differs.");
+            for (int i = 0; i < actualResults.Length; i++)
+                RequireEqual(i < count ? oracle[i + 1] : sentinel, actualResults[i]);
+
+            static void RequireEqual(GpuHitTestResult expected, GpuHitTestResult actual)
+            {
+                // The existing managed API initializes empty depths to -Infinity;
+                // the raw/native reference uses -FLT_MAX. Preserve both contracts.
+                if (expected.ZIndex == -float.MaxValue) expected.ZIndex = float.NegativeInfinity;
+                if (!MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref expected, 1)).SequenceEqual(
+                    MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref actual, 1))))
+                {
+                    ReportDifference(MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref expected, 1)),
+                        MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref actual, 1)));
+                    throw new InvalidOperationException($"Product result differs: expected owner={expected.Id}, count={expected.Hit}; actual owner={actual.Id}, count={actual.Hit}.");
                 }
             }
         }
