@@ -1,5 +1,11 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Recorded source rectangle input omits exactly singular finite affine mappings,
+matching managed image/point scopes, while retaining balanced state and following
+owners. Do not fabricate identity inverses, reject tiny invertible transforms by
+epsilon, or conflate source transform collapse with zero-scale bitmap-cache input.
+Keep unsupported clip/effect/cache contracts and complete native-index gates.
+
 Static MIL DrawRectangle retains the exact source Rect.Empty wire sentinel until
 the shared C++ compiler validates handles and emits no ink/geometry. Preserve
 scope balance, owners and descendants; partial infinity/NaN/negative-size inputs

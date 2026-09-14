@@ -458,6 +458,13 @@ bool semantic_scene_builder::add_recorded_hit_test_index(std::uint32_t& resource
                                           std::uint32_t state_index) {
             if ((rectangle.width == 0.0F || rectangle.height == 0.0F) &&
                 query_participation != PROGPU_NATIVE_HIT_TEST_POINT_ONLY) return true;
+            // Match retained managed input: a finite singular source transform
+            // has no inverse point/region mapping. This is not an unsupported
+            // index and must not manufacture identity inverse coordinates.
+            // Use exact double determinant arithmetic, never an epsilon cutoff.
+            if (is_finite(transform) &&
+                double{transform.m11} * transform.m22 == double{transform.m12} * transform.m21)
+                return true;
             progpu_native_hit_test_primitive hit{};
             hit.kind = PROGPU_NATIVE_HIT_TEST_RECTANGLE_FILL;
             hit.data0 = {rectangle.x, rectangle.y,

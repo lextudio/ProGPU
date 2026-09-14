@@ -21531,6 +21531,39 @@ int main() {
         return hits;
     };
     {
+        // Source image/point rectangles with a finite noninvertible transform
+        // emit no query shape. Restoration must preserve subsequent owners.
+        for (const bool point_only : {false, true}) {
+            for (const auto transform : {
+                progpu_native_affine_2d{0, 0, 0, 0, 227.799F, 2772.94F},
+                progpu_native_affine_2d{1, 0, 0, 0, 4, 5},
+                progpu_native_affine_2d{1, 2, 2, 4, 4, 5},
+                progpu_native_affine_2d{1.0e-12F, 0, 0, 1, 4, 5},
+                progpu_native_affine_2d{-1, 0, 0, 1, 4, 5}}) {
+                progpu::native::semantic_scene_builder builder(9842U, 1U);
+                auto state = builder.identity_state();
+                state.transform = transform;
+                std::uint32_t state_index{};
+                PROGPU_REQUIRE(builder.add_state(state, state_index));
+                const progpu_native_image_rect rectangle{0, 0, 20, 20};
+                PROGPU_REQUIRE(builder.set_hit_test_owner(17));
+                PROGPU_REQUIRE(builder.save(state_index, &rectangle, point_only));
+                PROGPU_REQUIRE(builder.restore());
+                PROGPU_REQUIRE(builder.set_hit_test_owner(18));
+                PROGPU_REQUIRE(builder.save(PROGPU_NATIVE_SCENE_NO_INDEX, &rectangle));
+                PROGPU_REQUIRE(builder.restore());
+                const auto hits = capture_hits(builder, progpu::native::scene_hit_test_opacity_mode::source_geometry);
+                const bool singular = double{transform.m11} * transform.m22 == double{transform.m12} * transform.m21;
+                PROGPU_REQUIRE(hits.size() == (singular ? 1U : 2U));
+                PROGPU_REQUIRE(hits.back().id == 18 && hits.back().bounds_min.x == 0 && hits.back().bounds_max.x == 20);
+                if (!singular) {
+                    PROGPU_REQUIRE(hits.front().id == 17);
+                    PROGPU_REQUIRE(hits.front().flags == (point_only ? 7U : 3U));
+                }
+            }
+        }
+    }
+    {
         // Stroke guideline lowering needs the widened outline, not a snapped
         // centerline. Preserve native cubic caps and output transactionality.
         namespace d2d = progpu::native::direct2d::compat;
