@@ -1,6 +1,7 @@
 #pragma once
 
 #include "progpu_native_scene_builder.hpp"
+#include "progpu_native_scene_builder_capacity.hpp"
 
 #include <array>
 #include <bit>

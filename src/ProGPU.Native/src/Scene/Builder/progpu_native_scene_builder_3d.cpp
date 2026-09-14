@@ -93,10 +93,10 @@ bool semantic_scene_builder::draw_lines_3d(
         }
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         return append_3d_command(
             PROGPU_NATIVE_SCENE_RESOURCE_LINE_3D_BATCH,
             PROGPU_NATIVE_SCENE_COMMAND_DRAW_LINE_3D_BATCH,
@@ -279,10 +279,10 @@ bool semantic_scene_builder::draw_meshes_3d(
             }
             material_brush_indices.push_back(brush_index);
         }
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         std::vector<std::byte> auxiliary(
             static_cast<std::size_t>(auxiliary_bytes));
         if (!vertices.empty()) {

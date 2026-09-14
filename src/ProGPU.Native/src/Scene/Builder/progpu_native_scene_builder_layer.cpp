@@ -32,8 +32,8 @@ bool semantic_scene_builder::add_rounded_rectangle_mask(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -73,8 +73,8 @@ bool semantic_scene_builder::add_coverage_mask(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -123,8 +123,8 @@ bool semantic_scene_builder::add_brush_mask(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -183,8 +183,8 @@ bool semantic_scene_builder::add_geometry_mask(
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -239,8 +239,8 @@ bool semantic_scene_builder::add_picture_mask(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -292,8 +292,8 @@ bool semantic_scene_builder::add_analytic_mask_chain(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -354,8 +354,8 @@ bool semantic_scene_builder::add_vector_clip_mask(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -481,8 +481,8 @@ bool semantic_scene_builder::add_composite_mask(
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_LAYER_MASK;
@@ -554,8 +554,8 @@ bool semantic_scene_builder::add_effect_chain(
             static_cast<std::uint32_t>(effects.size()),
             revision,
             0U};
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_EFFECT_CHAIN;
@@ -759,8 +759,8 @@ bool semantic_scene_builder::push_layer(
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::command_entry command{};
         command.record.struct_size = sizeof(command.record);
         command.record.kind = PROGPU_NATIVE_SCENE_COMMAND_PUSH_LAYER;
@@ -808,8 +808,8 @@ bool semantic_scene_builder::pop_layer() noexcept {
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::command_entry command{};
         command.record.struct_size = sizeof(command.record);
         command.record.kind = PROGPU_NATIVE_SCENE_COMMAND_POP_LAYER;

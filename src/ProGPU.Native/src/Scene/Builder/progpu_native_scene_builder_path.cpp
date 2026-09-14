@@ -68,10 +68,10 @@ bool semantic_scene_builder::draw_paths(
         }
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_PATH_BATCH;

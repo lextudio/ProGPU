@@ -312,7 +312,8 @@ bool semantic_scene_builder::copy_image_resource_from(
         auto resource = source_resource;
         resource.record.resource_id = implementation_->resources.size() + 1U;
         resource.record.generation = implementation_->generation;
-        implementation_->resources.reserve(implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation_->resources.push_back(std::move(resource));
         resource_index = static_cast<std::uint32_t>(implementation_->resources.size() - 1U);
         implementation_->error = scene_build_error::none;
@@ -353,7 +354,8 @@ bool semantic_scene_builder::copy_image_from_builder(
         implementation_->resources.size() >= PROGPU_NATIVE_SCENE_MAX_RESOURCES)
         return implementation_->fail(scene_build_error::invalid_argument);
     try {
-        implementation_->resources.reserve(implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         resource.record.resource_id = implementation_->resources.size() + 1U;
         resource.record.generation = implementation_->generation;
         const auto resource_index = static_cast<std::uint32_t>(implementation_->resources.size());
@@ -426,8 +428,8 @@ bool semantic_scene_builder::add_upload_image(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_IMAGE;
@@ -503,8 +505,8 @@ bool semantic_scene_builder::add_external_image(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_IMAGE;
@@ -663,8 +665,8 @@ bool semantic_scene_builder::draw_image(
             implementation_->error = scene_build_error::none;
             return true;
         }
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::command_entry command{};
         command.record.struct_size = sizeof(command.record);
         command.record.kind = PROGPU_NATIVE_SCENE_COMMAND_DRAW_IMAGE;
@@ -820,8 +822,8 @@ bool semantic_scene_builder::draw_image_patches(
             return implementation_->fail(scene_build_error::invalid_argument);
         }
         command.record.payload_offset = 0U;
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation_->commands.push_back(std::move(command));
         implementation_->error = scene_build_error::none;
         return true;

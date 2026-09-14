@@ -40,8 +40,8 @@ bool semantic_scene_builder::add_text_style(
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->text_styles.reserve(
-            implementation_->text_styles.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->text_styles, 1U);
         if (implementation_->text_style_resource_index ==
             PROGPU_NATIVE_SCENE_NO_INDEX) {
             if (implementation_->resources.size() >=
@@ -49,8 +49,8 @@ bool semantic_scene_builder::add_text_style(
                 return implementation_->fail(
                     scene_build_error::capacity_exceeded);
             }
-            implementation_->resources.reserve(
-                implementation_->resources.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->resources, 1U);
             implementation::resource_entry resource{};
             resource.record.struct_size = sizeof(resource.record);
             resource.record.kind =
@@ -110,8 +110,8 @@ bool semantic_scene_builder::add_glyph_outlines(
         }
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_GLYPH_RUN;
@@ -153,8 +153,8 @@ bool semantic_scene_builder::add_color_glyph_bitmaps(
         }
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_GLYPH_RUN;
@@ -220,8 +220,8 @@ bool semantic_scene_builder::draw_glyph_run(
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         if (record_ink && implementation_->glyph_hit_bounds.size() == implementation_->glyph_hit_bounds.capacity())
             implementation_->glyph_hit_bounds.reserve(std::max<std::size_t>(16U,
                 implementation_->glyph_hit_bounds.size() * 2U));

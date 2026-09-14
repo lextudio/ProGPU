@@ -269,10 +269,10 @@ bool semantic_scene_builder::add_solid_brush(
                 return implementation_->fail(
                     scene_build_error::capacity_exceeded);
             }
-            implementation_->resources.reserve(
-                implementation_->resources.size() + 1U);
-            implementation_->brushes.reserve(
-                implementation_->brushes.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->resources, 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->brushes, 1U);
             implementation::resource_entry resource{};
             resource.record.struct_size = sizeof(resource.record);
             resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_BRUSH_TABLE;
@@ -284,8 +284,8 @@ bool semantic_scene_builder::add_solid_brush(
                 static_cast<std::uint32_t>(implementation_->resources.size());
             implementation_->resources.push_back(std::move(resource));
         } else {
-            implementation_->brushes.reserve(
-                implementation_->brushes.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->brushes, 1U);
         }
         progpu_native_scene_brush brush{};
         brush.type = PROGPU_NATIVE_SCENE_BRUSH_SOLID;
@@ -327,13 +327,13 @@ bool semantic_scene_builder::add_brush(
                 return implementation_->fail(
                     scene_build_error::capacity_exceeded);
             }
-            implementation_->resources.reserve(
-                implementation_->resources.size() + 1U);
+            scene_builder_detail::reserve_append(
+                implementation_->resources, 1U);
         }
-        implementation_->brushes.reserve(
-            implementation_->brushes.size() + 1U);
-        implementation_->gradient_stops.reserve(
-            implementation_->gradient_stops.size() + gradient_stops.size());
+        scene_builder_detail::reserve_append(
+            implementation_->brushes, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->gradient_stops, gradient_stops.size());
         if (create_resource) {
             implementation::resource_entry resource{};
             resource.record.struct_size = sizeof(resource.record);

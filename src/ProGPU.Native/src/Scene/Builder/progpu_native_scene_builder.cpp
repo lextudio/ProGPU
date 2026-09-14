@@ -143,8 +143,8 @@ bool semantic_scene_builder::add_state(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         progpu_native_scene_state state = source;
         state.struct_size = sizeof(state);
         state.reserved = 0U;
@@ -273,8 +273,8 @@ bool semantic_scene_builder::add_guideline_set(
         return implementation_->fail(scene_build_error::invalid_argument);
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         progpu_native_scene_guideline_set header{};
         header.struct_size = sizeof(header);
         header.flags = composite_only
@@ -391,8 +391,8 @@ bool semantic_scene_builder::add_guideline_set_with_offsets(
         append(guidelines_y);
         append(offsets_x);
         append(offsets_y);
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
         resource_index = static_cast<std::uint32_t>(
             implementation_->resources.size());
         implementation_->resources.push_back(std::move(resource));
@@ -433,8 +433,8 @@ bool semantic_scene_builder::save(
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::command_entry command{};
         command.record.struct_size = sizeof(command.record);
         command.record.kind = PROGPU_NATIVE_SCENE_COMMAND_SAVE;
@@ -488,8 +488,8 @@ bool semantic_scene_builder::restore() noexcept {
         return implementation_->fail(scene_build_error::capacity_exceeded);
     }
     try {
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::command_entry command{};
         command.record.struct_size = sizeof(command.record);
         command.record.kind = PROGPU_NATIVE_SCENE_COMMAND_RESTORE;
@@ -549,10 +549,10 @@ bool semantic_scene_builder::draw_analytic(
         }
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_ANALYTIC_BATCH;

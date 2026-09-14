@@ -2,6 +2,7 @@
 
 #include "progpu_native_scene.hpp"
 #include "progpu_native_scene_builder.hpp"
+#include "progpu_native_scene_builder_capacity.hpp"
 #include "progpu_native_semantic_identity.hpp"
 #include "progpu_native_semantic_state.hpp"
 
@@ -15,6 +16,26 @@ namespace progpu::native::tests {
 static_assert(sizeof(progpu_native_scene_picture_image) == 48U);
 namespace {
 
+template<class T>
+struct append_test_allocator {
+    using value_type = T;
+    inline static std::size_t allocations = 0U;
+    inline static std::size_t limit = 16384U;
+    inline static bool reject = false;
+    append_test_allocator() = default;
+    template<class U> append_test_allocator(const append_test_allocator<U>&) {}
+    T* allocate(std::size_t count) {
+        if (reject) throw std::bad_alloc();
+        ++allocations;
+        return std::allocator<T>{}.allocate(count);
+    }
+    void deallocate(T* pointer, std::size_t count) noexcept {
+        std::allocator<T>{}.deallocate(pointer, count);
+    }
+    std::size_t max_size() const noexcept { return limit; }
+    bool operator==(const append_test_allocator&) const noexcept = default;
+};
+
 template<typename T>
 T read(const std::vector<std::byte>& bytes, std::uint32_t offset) noexcept {
     T value{};
@@ -23,6 +44,90 @@ T read(const std::vector<std::byte>& bytes, std::uint32_t offset) noexcept {
 }
 
 } // namespace
+
+bool semantic_scene_builder_append_capacity_is_amortized_and_atomic() {
+    using allocator = append_test_allocator<std::uint32_t>;
+    using scene_builder_detail::reserve_append;
+    allocator::allocations = 0U;
+    allocator::limit = 16384U;
+    allocator::reject = false;
+    {
+        std::vector<std::uint32_t, allocator> values;
+        reserve_append(values, 0U);
+        if (allocator::allocations != 0U) return false;
+        for (std::uint32_t index = 0U; index != 4097U; ++index) {
+            reserve_append(values, 1U);
+            values.push_back(index);
+            if (values.capacity() < values.size() ||
+                values.capacity() > std::max<std::size_t>(8U, values.size() * 2U))
+                return false;
+        }
+        if (allocator::allocations > 11U) return false;
+        for (std::uint32_t index = 0U; index != values.size(); ++index)
+            if (values[index] != index) return false;
+        const auto capacity = values.capacity();
+        allocator::reject = true;
+        try {
+            reserve_append(values, capacity);
+            return false;
+        } catch (const std::bad_alloc&) {}
+        allocator::reject = false;
+        if (values.size() != 4097U || values.capacity() != capacity ||
+            values.back() != 4096U) return false;
+        try {
+            reserve_append(values, std::numeric_limits<std::size_t>::max());
+            return false;
+        } catch (const std::length_error&) {}
+        if (values.size() != 4097U || values.capacity() != capacity) return false;
+        // Bulk preflight and subsequent append must not allocate twice.
+        reserve_append(values, 6000U);
+        const auto allocations = allocator::allocations;
+        values.insert(values.end(), 6000U, 7U);
+        if (values.size() != 10097U || allocator::allocations != allocations)
+            return false;
+    }
+    allocator::limit = 31U;
+    {
+        std::vector<std::uint32_t, allocator> values;
+        for (std::uint32_t index = 0U; index != allocator::limit; ++index) {
+            reserve_append(values, 1U);
+            values.push_back(index);
+        }
+        if (values.capacity() != allocator::limit) return false;
+        try {
+            reserve_append(values, 1U);
+            return false;
+        } catch (const std::length_error&) {}
+        if (values.size() != 31U || values.back() != 30U) return false;
+    }
+    allocator::limit = 16384U;
+
+    // Capacity hints and retained capacity after reset cannot change the wire
+    // stream, including IDs, source state, payloads or hashes.
+    semantic_scene_builder incremental(719U, 2U), preallocated(719U, 2U);
+    if (!preallocated.reserve(3072U, 1024U, 0U)) return false;
+    const progpu_native_analytic_primitive rectangle{
+        PROGPU_NATIVE_PRIMITIVE_RECTANGLE, 0U, 1.0F, 2.0F, 3.0F, 4.0F,
+        0.0F, 0.0F, {0.2F, 0.4F, 0.6F, 1.0F},
+        semantic_scene_builder::identity_transform()};
+    std::vector<std::byte> expected;
+    for (auto* builder : {&preallocated, &incremental, &incremental}) {
+        if (!builder->reset(719U, 2U)) return false;
+        for (std::uint32_t index = 0U; index != 1024U; ++index) {
+            if (!builder->save() ||
+                !builder->draw_analytic({&rectangle, 1U}, {}, {1.0F, 2.0F, 3.0F, 4.0F}) ||
+                !builder->restore()) return false;
+        }
+        std::vector<std::byte> before, after;
+        scene_build_metrics metrics{};
+        if (!builder->build(before, &metrics) || metrics.command_count != 3072U ||
+            builder->draw_analytic({}, {}, {1.0F, 2.0F, 3.0F, 4.0F}) ||
+            !builder->build(after) || before != after) return false;
+        if (expected.empty()) expected = before;
+        else if (before != expected) return false;
+    }
+    return true;
+}
 
 bool semantic_scene_builder_is_deterministic_and_valid() {
     semantic_scene_builder builder(701U, 4U);

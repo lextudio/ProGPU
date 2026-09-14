@@ -1454,6 +1454,11 @@ Keep pixel-oracle and first-frame tests: a non-null cached texture or a compiled
 mask is not proof that pending outer coverage survived. Do not widen pixel
 tolerances to hide differences in overlap, alpha or antialias coverage.
 
+Native semantic builder append preflights must preserve geometric capacity growth
+before publishing related records. Never restore exact size-plus-one reserve
+calls or remove atomic allocation preflights. Keep overflow/failure and complete
+wire-stream equality tests; retained capacity must not change scene identity.
+
 Native hit-query fixtures must honor the shared poll/wait result contract.
 Zero-list queries return their topmost owner in summary; list queries return
 owners in ordered records and counters in summary. Assert participation, counts,

@@ -936,6 +936,7 @@ add_library(progpu_native_scene_builder STATIC
     src/Scene/Builder/progpu_native_scene_builder_path.cpp
     src/Scene/Builder/progpu_native_scene_builder_text.cpp
     src/Scene/Builder/progpu_native_scene_builder_internal.hpp
+    src/Scene/Builder/progpu_native_scene_builder_capacity.hpp
     src/Scene/progpu_native_semantic_layer_mask.cpp
     src/Scene/progpu_native_semantic_brush_validation.cpp
     src/Scene/progpu_native_semantic_layer_mask.hpp
