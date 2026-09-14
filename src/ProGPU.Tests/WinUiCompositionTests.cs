@@ -517,7 +517,8 @@ public sealed class WinUiCompositionTests
                 $"Expected linear-RGB interpolation, got {linearLight}.");
 
             window.Render();
-            Assert.True(window.Compositor.Metrics.SceneCacheHit);
+            Assert.True(window.Compositor.Metrics.SceneCacheHit,
+                $"Stable gradient scene missed retained replay: {window.Compositor.Metrics.SceneCacheMissReason}.");
         }
         finally
         {

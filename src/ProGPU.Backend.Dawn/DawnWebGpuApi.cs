@@ -730,6 +730,13 @@ public sealed unsafe class DawnWebGpuApi :
         SW.ComputePassEncoder* pass) =>
         ComputePassEncoderHandle(pass).End();
 
+    public void ComputePassEncoderDispatchWorkgroupsIndirect(
+        SW.ComputePassEncoder* pass,
+        SilkBuffer* indirectBuffer,
+        ulong indirectOffset) =>
+        ComputePassEncoderHandle(pass).DispatchWorkgroupsIndirect(
+            BufferHandle(indirectBuffer), indirectOffset);
+
     public void RenderPassEncoderSetPipeline(
         SW.RenderPassEncoder* pass,
         SW.RenderPipeline* pipeline) =>

@@ -119,6 +119,12 @@ for package_id in "${selected_package_ids[@]}"; do
         exit 1
       fi
     done
+  elif [[ "${package_id}" == "ProGPU.Backend.Dx12" ]]; then
+    if [[ -f "${symbols}" ]]; then
+      echo "Native-assets-only package must not produce an empty symbol package: ${symbols}" >&2
+      exit 1
+    fi
+    "${repo_root}/eng/progpu-verify-dx12-package.sh" "${package}"
   elif [[ ! -f "${symbols}" ]]; then
     echo "Expected symbol package was not produced: ${symbols}" >&2
     exit 1
@@ -131,7 +137,9 @@ for package_id in "${selected_package_ids[@]}"; do
       runtimes/osx-x64/native/libprogpu_native.dylib \
       runtimes/osx-arm64/native/libprogpu_native.dylib \
       runtimes/win-x64/native/progpu_native.dll \
+      runtimes/win-x64/native/progpu_native_direct2d.dll \
       runtimes/win-arm64/native/progpu_native.dll \
+      runtimes/win-arm64/native/progpu_native_direct2d.dll \
       build/native/include/progpu_native.h; do
       if ! unzip -Z1 "${package}" | grep -Fx "${native_entry}" >/dev/null; then
         echo "${package_id} is missing ${native_entry}." >&2

@@ -5,6 +5,7 @@
 progpu_portable_package_ids=(
   ProGPU.Backend
   ProGPU.Backend.Native
+  ProGPU.Backend.Dx12
   ProGPU.Backend.Dawn
   ProGPU.Media
   ProGPU.Media.Editing
@@ -15,6 +16,8 @@ progpu_portable_package_ids=(
   ProGPU.Text.Shaping
   ProGPU.Browser
   ProGPU.DirectX
+  ProGPU.Direct2D
+  ProGPU.Win2D
   ProGPU.Transpiler
   ProGPU.Compute
   ProGPU.Vector
@@ -51,6 +54,7 @@ progpu_portable_package_ids=(
 progpu_portable_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
+  src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
   src/ProGPU.Media/ProGPU.Media.csproj
   src/ProGPU.Media.Editing/ProGPU.Media.Editing.csproj
@@ -61,6 +65,8 @@ progpu_portable_package_projects=(
   src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
   src/ProGPU.Browser/ProGPU.Browser.csproj
   src/ProGPU.DirectX/ProGPU.DirectX.csproj
+  src/ProGPU.Direct2D/ProGPU.Direct2D.csproj
+  src/ProGPU.Win2D/ProGPU.Win2D.csproj
   src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
   src/ProGPU.Compute/ProGPU.Compute.csproj
   src/ProGPU.Vector/ProGPU.Vector.csproj
@@ -97,6 +103,7 @@ progpu_portable_package_projects=(
 progpu_portable_package_purposes=(
   "WebGPU device, swapchain, Silk.NET windowing, and platform backend services."
   "Experimental typed .NET host plus validated x64/arm64 desktop runtimes for the ProGPU C++ WebGPU renderer."
+  "Optional pinned Windows x64/arm64 DXC-capable WebGPU and shader compiler runtime assets."
   "Exact-ABI Dawn shared texture memory and cross-queue fence extensions."
   "Framework-neutral media playback, diagnostics, audio processing, effects, and provider contracts."
   "Reusable non-destructive composition, project serialization, overlays, effects, and native export coordination."
@@ -107,6 +114,8 @@ progpu_portable_package_purposes=(
   "AOT-safe OpenType shaping contracts and execution primitives."
   "Batched .NET WebAssembly dispatcher and navigator.gpu browser host services."
   "DirectX-compatible facade and shader-oriented API surface implemented on ProGPU/WebGPU."
+  "Genuine Windows Direct2D COM surfaces with zero-copy synchronized Dawn/WebGPU texture sharing."
+  "Portable Win2D-compatible Canvas API compiled to the retained ProGPU C++ WebGPU renderer."
   "Shader/source transformation helpers used by generated GPU pipelines."
   "Compute pipeline helpers for GPU-side effects, acceleration, and future hit-test indexes."
   "Vector primitives, paths, geometry, brushes, pens, and rasterization data models."

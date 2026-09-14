@@ -451,7 +451,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
         Assert.Equal(source, picture.RetainedCommands.Clone());
         Assert.True(Unsafe.SizeOf<RetainedSimpleGlyphRunCommand>() <= 96);
-        Assert.Equal(8, Unsafe.SizeOf<RetainedScalarStateCommand>());
+        // The source opacity policy is retained independently of its float value.
+        Assert.Equal(12, Unsafe.SizeOf<RetainedScalarStateCommand>());
         Assert.True(Unsafe.SizeOf<RetainedSimpleRoundedRectangleCommand>() <= 80);
         Assert.Equal(16, Unsafe.SizeOf<RetainedSimpleVisualCommand>());
         Assert.True(
@@ -473,8 +474,19 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
                 Rect = new Rect(index & 7, index & 3, 16f, 16f),
                 SrcRect = new Rect(0f, 0f, 16f, 16f),
                 Transform = transform,
-                TextureSamplingMode = TextureSamplingMode.Linear,
-                TextureMaxAnisotropy = 1
+                TextureSamplingMode =
+                    TextureSamplingMode.MagNearestMinLinearMipLinear,
+                TextureMaxAnisotropy = byte.MaxValue,
+                TextureAddressModeU = TextureAddressMode.Repeat,
+                TextureAddressModeV = TextureAddressMode.MirrorRepeat,
+                TextureOpacity = 0.375f,
+                HasTextureOpacity = true,
+                AllowExtendedTextureSourceRect = true,
+                SnapTextureToPixels = true,
+                IsEdgeAliased = true,
+                PresentationDependencies =
+                    RenderCommandPresentationDependencies.TextureSampling |
+                    RenderCommandPresentationDependencies.TextHinting
             };
         }
 
@@ -1044,7 +1056,8 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
 
         window.Render();
 
-        Assert.True(window.Compositor.Metrics.SceneCacheHit);
+        Assert.True(window.Compositor.Metrics.SceneCacheHit,
+            window.Compositor.Metrics.SceneCacheMissReason);
         Assert.True(Assert.Single(
             GetDrawCalls(window.Compositor),
             static candidate => candidate.Type == Compositor.DrawCallType.Vector).IsSolidRounded);
@@ -3321,6 +3334,57 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(first.TexCoordMax, cached.TexCoordMax);
     }
 
+    [Theory]
+    [InlineData(GpuComputeExecutionPreference.NativeCompute, false)]
+    [InlineData(GpuComputeExecutionPreference.NativeCompute, true)]
+    [InlineData(GpuComputeExecutionPreference.RasterShader, false)]
+    [InlineData(GpuComputeExecutionPreference.RasterShader, true)]
+    public void AtlasPipelinesCompileOnlyForActualRasterRequests(
+        GpuComputeExecutionPreference preference, bool batch)
+    {
+        using var context = new WgpuContext { ComputeExecutionPreference = preference };
+        context.Initialize(null);
+        using var glyphs = new GlyphAtlas(context, atlasSize: 64);
+        using var paths = new PathAtlas(context, atlasSize: 64);
+        // The atlas captures its typed policy at construction, before lazy
+        // compilation; changing the context preference cannot switch its path.
+        context.ComputeExecutionPreference = GpuComputeExecutionPreference.ScalarCpu;
+        paths.RasterizePendingPaths();
+        Assert.Equal(0, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(0, context.CachedDeviceComputePipelineCount);
+        Assert.Equal(0, context.CachedDeviceRenderPipelineCount);
+
+        var font = new TtfFont(BuildMissingGlyphOutlineFont());
+        GlyphInfo glyph;
+        if (batch) glyphs.BeginBatch();
+        try { glyph = glyphs.GetOrCreateGlyph(font, 'A', 8f); }
+        finally { if (batch) glyphs.EndBatch(); }
+        Assert.True(ReadGlyphAtlasCoverage(glyphs.AtlasTexture.ReadPixels(), glyph, 64, 6, 6) > 200);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(preference == GpuComputeExecutionPreference.NativeCompute ? 1 : 0,
+            context.CachedDeviceComputePipelineCount);
+        Assert.Equal(preference == GpuComputeExecutionPreference.RasterShader ? 1 : 0,
+            context.CachedDeviceRenderPipelineCount);
+        GlyphInfo cached = glyphs.GetOrCreateGlyph(font, 'A', 8f);
+        Assert.Equal(glyph.TexCoordMin, cached.TexCoordMin);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+
+        paths.GetOrCreatePath(PrimitivePathGeometry.CreateRectangle(0, 0, 8, 8), 1f);
+        Assert.Equal(1, context.CachedDeviceShaderModuleCount);
+        paths.RasterizePendingPaths();
+        Assert.Contains(paths.AtlasTexture.ReadPixels(), value => value > 200);
+        Assert.Equal(2, context.CachedDeviceShaderModuleCount);
+        int pipelines = context.CachedDeviceComputePipelineCount;
+        Assert.Equal(preference == GpuComputeExecutionPreference.NativeCompute ? 2 : 1, pipelines);
+        paths.RasterizePendingPaths();
+        Assert.Equal(pipelines, context.CachedDeviceComputePipelineCount);
+        paths.Dispose();
+        glyphs.Dispose();
+        Assert.Equal(0, context.CachedDeviceShaderModuleCount);
+        Assert.Equal(0, context.CachedDeviceComputePipelineCount);
+        Assert.Equal(0, context.CachedDeviceRenderPipelineCount);
+    }
+
     [Fact]
     public void GlyphAtlasBatchFlushesBeforeUniformRingWraps()
     {
@@ -3648,17 +3712,17 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         {
             Assert.Equal(8, context.CachedDeviceBindGroupLayoutCount);
             Assert.Equal(6, context.CachedDevicePipelineLayoutCount);
-            Assert.Equal(5, context.CachedDeviceShaderModuleCount);
+            Assert.Equal(3, context.CachedDeviceShaderModuleCount);
             Assert.Equal(8, context.CachedDeviceRenderPipelineCount);
-            Assert.Equal(2, context.CachedDeviceComputePipelineCount);
+            Assert.Equal(0, context.CachedDeviceComputePipelineCount);
 
             first.Dispose();
 
             Assert.Equal(8, context.CachedDeviceBindGroupLayoutCount);
             Assert.Equal(6, context.CachedDevicePipelineLayoutCount);
-            Assert.Equal(5, context.CachedDeviceShaderModuleCount);
+            Assert.Equal(3, context.CachedDeviceShaderModuleCount);
             Assert.Equal(8, context.CachedDeviceRenderPipelineCount);
-            Assert.Equal(2, context.CachedDeviceComputePipelineCount);
+            Assert.Equal(0, context.CachedDeviceComputePipelineCount);
 
             second.Dispose();
 
@@ -5992,6 +6056,23 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         }
     }
 
+    [Theory]
+    [InlineData(2.9f, 2u)]
+    [InlineData(-1f, 0u)]
+    [InlineData(200f, 128u)]
+    public void BoxBlurParamsUseBoundedIntegerRadius(
+        float radius,
+        uint expectedRadius)
+    {
+        ComputeAccelerator.GaussianBlurParams parameters =
+            ComputeAccelerator.GaussianBlurParams.Box(radius);
+
+        Assert.Equal(0f, parameters.Sigma);
+        Assert.Equal(expectedRadius, parameters.Radius);
+        Assert.Equal(1u, parameters.KernelType);
+        Assert.Equal(16, Marshal.SizeOf<ComputeAccelerator.GaussianBlurParams>());
+    }
+
     [Fact]
     public void ComputeAcceleratorCreatesOnlyTheRequestedEffectFamilyAndReusesIt()
     {
@@ -6052,6 +6133,15 @@ fn mainImage(fragCoord: vec2<f32>) -> vec4<f32> {
         Assert.Equal(2, accelerator.CachedEffectPipelineCount);
         Assert.Equal(32UL, accelerator.PersistentEffectParameterBufferBytes);
         Assert.Equal(firstResult, destination.ReadPixels());
+
+        accelerator.ApplyBoxBlur(source, temporary, destination, 1f);
+        byte[] boxResult = destination.ReadPixels();
+
+        Assert.Equal(2, accelerator.CachedEffectShaderCount);
+        Assert.Equal(2, accelerator.CachedEffectPipelineCount);
+        Assert.Equal(32UL, accelerator.PersistentEffectParameterBufferBytes);
+        Assert.Contains(boxResult, static value => value != 0);
+        Assert.NotEqual(firstResult, boxResult);
     }
 
     [Fact]

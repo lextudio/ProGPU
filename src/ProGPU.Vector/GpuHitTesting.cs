@@ -35,7 +35,11 @@ public enum GpuHitTestPrimitiveFlags : uint
 {
     None = 0,
     Visible = 1 << 0,
-    HitTestVisible = 1 << 1
+    HitTestVisible = 1 << 1,
+    /// <summary>Participates in point queries only; incompatible with RegionOnly.</summary>
+    PointOnly = 1 << 2,
+    /// <summary>Participates in rectangle/ellipse region queries only; incompatible with PointOnly.</summary>
+    RegionOnly = 1 << 3
 }
 
 [StructLayout(LayoutKind.Sequential, Size = 128)]
@@ -74,6 +78,10 @@ public readonly struct GpuHitTestPrimitive
         FillRule clipFillRule = FillRule.Nonzero,
         uint clipFlags = 0)
     {
+        const GpuHitTestPrimitiveFlags queryKinds = GpuHitTestPrimitiveFlags.PointOnly | GpuHitTestPrimitiveFlags.RegionOnly;
+        const GpuHitTestPrimitiveFlags knownFlags = queryKinds | GpuHitTestPrimitiveFlags.Visible | GpuHitTestPrimitiveFlags.HitTestVisible;
+        if ((flags & ~knownFlags) != 0 || (flags & queryKinds) == queryKinds)
+            throw new ArgumentOutOfRangeException(nameof(flags));
         Kind = kind;
         Id = id;
         BoundsMin = boundsMin;
@@ -90,6 +98,12 @@ public readonly struct GpuHitTestPrimitive
         ClipFillRule = (uint)clipFillRule;
         ClipFlags = clipFlags;
     }
+
+    /// <summary>Returns the same immutable geometry with explicit input participation.</summary>
+    public GpuHitTestPrimitive WithFlags(GpuHitTestPrimitiveFlags flags) => new(
+        Kind, Id, BoundsMin, BoundsMax, Data0, Data1, Data2,
+        InverseTransform0, InverseTransform1, ZIndex, flags,
+        ClipStartSegment, ClipSegmentCount, (FillRule)ClipFillRule, ClipFlags);
 
     public GpuHitTestPrimitive WithWorldBounds(Vector2 boundsMin, Vector2 boundsMax)
     {
@@ -290,6 +304,10 @@ public readonly struct GpuHitTestPrimitive
         float zIndex = 0f)
     {
         float padding = MathF.Max(0f, (MathF.Abs(strokeThickness) * 0.5f) + MathF.Max(0f, tolerance));
+        // A square cap's diagonal corners extend beyond a radius-padded endpoint
+        // envelope. Only broad-phase bounds grow; the exact cap query is unchanged.
+        if (startCap == LineGeometryCap.Square || endCap == LineGeometryCap.Square)
+            padding *= MathF.Sqrt(2f);
         Vector2 min = Vector2.Min(start, end) - new Vector2(padding);
         Vector2 max = Vector2.Max(start, end) + new Vector2(padding);
         return new GpuHitTestPrimitive(
@@ -992,6 +1010,15 @@ public sealed class GpuHitTestDeviceIndex : IDisposable
     public const int MaxHitResultCount = 256;
 
     private bool _isDisposed;
+    private GpuOrderedHitQueries? _orderedQueries;
+    internal GpuOrderedHitQueries OrderedQueries
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_isDisposed, this);
+            return _orderedQueries ??= new GpuOrderedHitQueries(this);
+        }
+    }
 
     public GpuHitTestDeviceIndex(WgpuContext context, GpuHitTestIndex index)
     {
@@ -1009,6 +1036,17 @@ public sealed class GpuHitTestDeviceIndex : IDisposable
         NodeCount = checked((uint)index.NodeArray.Length);
         PrimitiveIndexCount = checked((uint)index.PrimitiveIndexArray.Length);
         PathSegmentCount = checked((uint)index.PathSegmentArray.Length);
+
+        if (context.HitTestExecutionPath == GpuHitTestExecutionPreference.OrderedStages)
+        {
+            ulong maximum = Math.Min(context.MaxBufferSize, context.ComputeLimits.MaxStorageBufferBindingSize);
+            if (!context.ComputeLimits.AdmitsOrderedHitQuery(PrimitiveIndexCount, context.MaxBufferSize) ||
+                (ulong)NodeCount * (uint)Marshal.SizeOf<GpuHitTestNode>() > maximum ||
+                (ulong)PrimitiveCount * (uint)Marshal.SizeOf<GpuHitTestPrimitive>() > maximum ||
+                (ulong)Math.Max(PathSegmentCount, 1u) * (uint)Marshal.SizeOf<GpuPathSegment>() > maximum ||
+                (ulong)(MaxHitResultCount + 1) * ResultBufferSize > maximum)
+                throw new NotSupportedException("The device limits do not admit this ordered GPU hit-test index.");
+        }
 
         QueryBuffer = new GpuBuffer(context, QueryBufferSize, BufferUsage.Storage | BufferUsage.CopyDst, "GPU Hit Test Query");
         NodeBuffer = new GpuBuffer(
@@ -1085,6 +1123,7 @@ public sealed class GpuHitTestDeviceIndex : IDisposable
             return;
         }
 
+        _orderedQueries?.Dispose();
         QueryBuffer.Dispose();
         NodeBuffer.Dispose();
         PrimitiveIndexBuffer.Dispose();
@@ -1175,11 +1214,19 @@ public static unsafe class GpuHitTestEngine
                 ZIndex = float.NegativeInfinity
             };
 
+            if (context.HitTestExecutionPath == GpuHitTestExecutionPreference.OrderedStages)
+            {
+                Span<byte> orderedBytes = stackalloc byte[ResultBufferSizeBytes];
+                deviceIndex.OrderedQueries.Query(query, false, orderedBytes);
+                result = MemoryMarshal.Read<GpuHitTestResult>(orderedBytes);
+                return result.HasHit;
+            }
+
             deviceIndex.QueryBuffer.WriteSingle(query);
             deviceIndex.ResultBuffer.WriteSingle(initialResult);
 
             var shader = cache.GetOrCreateShader("GpuHitTesting.Query", ShaderSource, "GpuHitTesting.Query");
-            var pipeline = cache.GetOrCreateComputePipeline("GpuHitTesting.Query", shader, "cs_main");
+            var pipeline = cache.GetOrCreateComputePipeline("GpuHitTesting.PointQuery", shader, "cs_point");
             BindGroupLayout* bindGroupLayout = null;
             BindGroup* bindGroup = null;
             CommandEncoder* encoder = null;
@@ -1471,6 +1518,22 @@ public static unsafe class GpuHitTestEngine
         int requestedCount = Math.Min(results.Length, GpuHitTestDeviceIndex.MaxHitResultCount);
         lock (context.RenderLock)
         {
+            if (context.HitTestExecutionPath == GpuHitTestExecutionPreference.OrderedStages)
+            {
+                // At most 257 fixed-size records (8224 bytes), below the shared
+                // 16 KiB stack-readback budget. Publish only after overflow checks.
+                Span<byte> orderedBytes = stackalloc byte[(requestedCount + 1) * ResultBufferSizeBytes];
+                deviceIndex.OrderedQueries.Query(query, true, orderedBytes);
+                var orderedResults = MemoryMarshal.Cast<byte, GpuHitTestResult>(orderedBytes);
+                summary = orderedResults[0];
+                hitCount = 0;
+                while (hitCount < requestedCount && orderedResults[hitCount + 1].HasHit)
+                {
+                    results[hitCount] = orderedResults[hitCount + 1];
+                    hitCount++;
+                }
+                return hitCount > 0;
+            }
             int resultSize = Marshal.SizeOf<GpuHitTestResult>();
             int resultBufferElementCount = requestedCount + 1;
             var initialResult = new GpuHitTestResult
@@ -1490,7 +1553,12 @@ public static unsafe class GpuHitTestEngine
             deviceIndex.ResultListBuffer.Write(initialResults);
 
             var shader = cache.GetOrCreateShader("GpuHitTesting.Query", ShaderSource, "GpuHitTesting.Query");
-            var pipeline = cache.GetOrCreateComputePipeline("GpuHitTesting.Query", shader, "cs_main");
+            bool regionQuery = (query.Flags & QueryModeBoundsFlag) != 0;
+            bool ellipseQuery = (query.Flags & QueryModeEllipseRegionFlag) != 0;
+            var pipeline = cache.GetOrCreateComputePipeline(
+                !regionQuery ? "GpuHitTesting.PointQuery" :
+                    ellipseQuery ? "GpuHitTesting.EllipseQuery" : "GpuHitTesting.BoundsQuery",
+                shader, !regionQuery ? "cs_point" : ellipseQuery ? "cs_ellipse" : "cs_bounds");
             BindGroupLayout* bindGroupLayout = null;
             BindGroup* bindGroup = null;
             CommandEncoder* encoder = null;

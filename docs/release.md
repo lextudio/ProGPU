@@ -421,6 +421,7 @@ pinned in `docs/WINUI_API_PARITY.md`, `docs/SKIASHARP_API_PARITY.md`, and
 ## NuGet Packages
 
 - `ProGPU.Backend`
+- `ProGPU.Backend.Dx12`
 - `ProGPU.Backend.Native`
 - `ProGPU.Backend.Dawn`
 - `ProGPU.Media`
@@ -432,6 +433,7 @@ pinned in `docs/WINUI_API_PARITY.md`, `docs/SKIASHARP_API_PARITY.md`, and
 - `ProGPU.Text.Shaping`
 - `ProGPU.Browser`
 - `ProGPU.DirectX`
+- `ProGPU.Direct2D`
 - `ProGPU.Transpiler`
 - `ProGPU.Compute`
 - `ProGPU.Vector`
@@ -443,6 +445,7 @@ pinned in `docs/WINUI_API_PARITY.md`, `docs/SKIASHARP_API_PARITY.md`, and
 - `ProGPU.Voxel`
 - `ProGPU.Layout`
 - `ProGPU.Virtualization`
+- `ProGPU.Win2D`
 - `ProGPU.WinUI`
 - `ProGPU.Voxel.WinUI`
 - `ProGPU.WinUI.Themes.Fluent`

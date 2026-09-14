@@ -8,6 +8,70 @@ namespace ProGPU.Tests;
 
 public unsafe sealed class BrowserWebGpuApiTests
 {
+    [Theory]
+    [InlineData(0UL)]
+    [InlineData(16UL)]
+    [InlineData(4294967300UL)]
+    [InlineData(9007199254740988UL)]
+    public void IndirectComputeDispatchPreservesHandlesAndExactOffset(ulong offset)
+    {
+        var packets = new List<byte[]>();
+        using var api = new BrowserWebGpuApi(packet => packets.Add(packet.WrittenSpan.ToArray()));
+        var descriptor = new BufferDescriptor { Size = 256, Usage = BufferUsage.Indirect | BufferUsage.CopyDst };
+        var buffer = api.DeviceCreateBuffer(BrowserWebGpuApi.DeviceHandle, &descriptor);
+        var encoder = api.DeviceCreateCommandEncoder(BrowserWebGpuApi.DeviceHandle, null);
+        var pass = api.CommandEncoderBeginComputePass(encoder, null);
+        // The facade forwards offsets, while the actual device validates bounds.
+        IWebGpuApi shared = api;
+        shared.ComputePassEncoderDispatchWorkgroupsIndirect(pass, buffer, offset);
+        api.ComputePassEncoderEnd(pass);
+        var commands = api.CommandEncoderFinish(encoder, null);
+        api.QueueSubmit(BrowserWebGpuApi.QueueHandle, 1, &commands);
+
+        Assert.Single(packets);
+        Assert.Equal(new[] {
+            BrowserGpuOpcode.CreateBuffer, BrowserGpuOpcode.CreateCommandEncoder,
+            BrowserGpuOpcode.BeginComputePass, BrowserGpuOpcode.DispatchWorkgroupsIndirect,
+            BrowserGpuOpcode.EndComputePass, BrowserGpuOpcode.FinishCommandEncoder,
+            BrowserGpuOpcode.Submit
+        }, ReadOpcodes(packets[0]));
+        var reader = new BrowserGpuPacketReader(packets[0]);
+        int indirectCount = 0;
+        while (reader.TryRead(out var command))
+        {
+            if (command.Opcode != BrowserGpuOpcode.DispatchWorkgroupsIndirect) continue;
+            indirectCount++;
+            Assert.Equal(16, command.Payload.Length);
+            Assert.Equal((uint)(nuint)pass, System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(command.Payload));
+            Assert.Equal((uint)(nuint)buffer, System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(command.Payload[4..]));
+            Assert.Equal(offset, System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(command.Payload[8..]));
+        }
+        Assert.Equal(1, indirectCount);
+    }
+
+    [Theory]
+    [InlineData(9007199254740992UL)]
+    [InlineData(ulong.MaxValue)]
+    public void InexactIndirectOffsetDoesNotModifyPendingCommands(ulong offset)
+    {
+        var packets = new List<byte[]>();
+        using var api = new BrowserWebGpuApi(packet => packets.Add(packet.WrittenSpan.ToArray()));
+        var encoder = api.DeviceCreateCommandEncoder(BrowserWebGpuApi.DeviceHandle, null);
+        var pass = api.CommandEncoderBeginComputePass(encoder, null);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            api.ComputePassEncoderDispatchWorkgroupsIndirect(pass, (WgpuBuffer*)123, offset));
+        api.ComputePassEncoderDispatchWorkgroups(pass, 1, 2, 3);
+        api.ComputePassEncoderEnd(pass);
+        var commands = api.CommandEncoderFinish(encoder, null);
+        api.QueueSubmit(BrowserWebGpuApi.QueueHandle, 1, &commands);
+        Assert.Single(packets);
+        Assert.Equal(new[] {
+            BrowserGpuOpcode.CreateCommandEncoder, BrowserGpuOpcode.BeginComputePass,
+            BrowserGpuOpcode.DispatchWorkgroups, BrowserGpuOpcode.EndComputePass,
+            BrowserGpuOpcode.FinishCommandEncoder, BrowserGpuOpcode.Submit
+        }, ReadOpcodes(packets[0]));
+    }
+
     [Fact]
     public void ExternalBrowserContextReportsInitializedForContextBoundResources()
     {

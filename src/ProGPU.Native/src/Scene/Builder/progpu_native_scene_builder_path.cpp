@@ -20,7 +20,8 @@ bool semantic_scene_builder::draw_paths(
     std::span<const progpu_native_scene_path_boolean_node>
         boolean_nodes) noexcept {
     if (paths.empty() || segments.empty() || !finite_rect(bounds) ||
-        !implementation_->valid_state_index(state_resource_index) ||
+        !implementation_->valid_state_index(
+            state_resource_index, true) ||
         (!brush_indices.empty() && brush_indices.size() != paths.size()) ||
         implementation_->resources.size() >=
             PROGPU_NATIVE_SCENE_MAX_RESOURCES ||
@@ -67,10 +68,10 @@ bool semantic_scene_builder::draw_paths(
         }
     }
     try {
-        implementation_->resources.reserve(
-            implementation_->resources.size() + 1U);
-        implementation_->commands.reserve(
-            implementation_->commands.size() + 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->resources, 1U);
+        scene_builder_detail::reserve_append(
+            implementation_->commands, 1U);
         implementation::resource_entry resource{};
         resource.record.struct_size = sizeof(resource.record);
         resource.record.kind = PROGPU_NATIVE_SCENE_RESOURCE_PATH_BATCH;

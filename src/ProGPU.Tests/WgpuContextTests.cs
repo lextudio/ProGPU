@@ -17,6 +17,76 @@ public sealed class WgpuContextLossCollection
 [Collection(WgpuContextLossCollection.Name)]
 public sealed class WgpuContextTests
 {
+    [Theory]
+    [InlineData(false, 7, false, 1)]
+    [InlineData(false, 0, true, 1)]
+    [InlineData(true, 7, true, 8)]
+    [InlineData(true, 0, true, 1)]
+    public unsafe void NativeQueueCompletionNeverUsesTimedBlockingPoll(
+        bool wait, int pendingPolls, bool expected, int expectedCalls)
+    {
+        var state = new QueuePollProbe { PendingPolls = pendingPolls };
+        bool completed = WgpuContext.PollNativeQueueCompletion(
+            (Device*)&state, &PollQueueProbe, wait);
+        Assert.Equal(expected, completed);
+        Assert.Equal(expectedCalls, state.Calls);
+        Assert.Equal(0u, state.WaitFlags);
+    }
+
+    private struct QueuePollProbe
+    {
+        public int PendingPolls;
+        public int Calls;
+        public uint WaitFlags;
+    }
+
+    [System.Runtime.InteropServices.UnmanagedCallersOnly(
+        CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    private static unsafe uint PollQueueProbe(Device* device, uint wait, void* token)
+    {
+        var state = (QueuePollProbe*)device;
+        state->WaitFlags |= wait;
+        return ++state->Calls > state->PendingPolls ? 1u : 0u;
+    }
+
+    [Theory]
+    [InlineData(SurfaceGetCurrentTextureStatus.Timeout)]
+    [InlineData(SurfaceGetCurrentTextureStatus.Outdated)]
+    [InlineData(SurfaceGetCurrentTextureStatus.Lost)]
+    public void RecoverableSurfaceAcquisitionRequestsAnotherFrame(
+        SurfaceGetCurrentTextureStatus status)
+    {
+        using var context = new WgpuContext();
+        Assert.True(context.HandleSurfaceAcquisitionFailure(status));
+        Assert.False(context.IsDeviceLost);
+    }
+
+    [Fact]
+    public void SurfaceDeviceLossIsTerminalAndDoesNotPoisonIndependentContexts()
+    {
+        using var lost = new WgpuContext();
+        using var independent = new WgpuContext();
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.DeviceLost));
+        Assert.True(lost.IsDeviceLost);
+        Assert.False(independent.IsDeviceLost);
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Timeout));
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Outdated));
+        Assert.False(lost.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Lost));
+    }
+
+    [Fact]
+    public void SurfaceAcquisitionDoesNotSilentlyRetryMemoryOrContractFailures()
+    {
+        using var context = new WgpuContext();
+        Assert.Throws<OutOfMemoryException>(() =>
+            context.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.OutOfMemory));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            context.HandleSurfaceAcquisitionFailure(SurfaceGetCurrentTextureStatus.Success));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            context.HandleSurfaceAcquisitionFailure((SurfaceGetCurrentTextureStatus)int.MaxValue));
+        Assert.False(context.IsDeviceLost);
+    }
+
     [Fact]
     public void SilkNativeContextsShareProcessWideRenderLock()
     {
@@ -118,7 +188,7 @@ public sealed class WgpuContextTests
         context.ReportDeviceLost(
             DeviceLostReason.Unknown,
             "synthetic exact-device loss");
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+        WgpuDeviceLostException exception = Assert.Throws<WgpuDeviceLostException>(
             () =>
             {
                 CommandBuffer* command = (CommandBuffer*)1;
@@ -598,6 +668,22 @@ public sealed class WgpuContextTests
         Assert.True(surface.Queue == null);
         Assert.True(surface.Surface == null);
         Assert.False(owner.SharesDeviceWith(surface));
+    }
+
+    [Fact]
+    public unsafe void SharedSurfaceRejectsLostOwnerBeforeAccessingNativeWindow()
+    {
+        using var owner = new WgpuContext();
+        using var surface = new WgpuContext();
+        owner.ReportDeviceLost(DeviceLostReason.Unknown, "Shared owner recovery fixture.");
+        var window = DispatchProxy.Create<IWindow, DefaultDispatchProxy>();
+        var error = Assert.Throws<WgpuDeviceLostException>(() => surface.InitializeSharedDevice(window, owner));
+        Assert.Contains("lost WebGPU device", error.Message);
+        Assert.True(surface.Instance == null);
+        Assert.True(surface.Device == null);
+        Assert.True(surface.Queue == null);
+        Assert.True(surface.Surface == null);
+        Assert.False(surface.IsDeviceLost);
     }
 
     [Fact]

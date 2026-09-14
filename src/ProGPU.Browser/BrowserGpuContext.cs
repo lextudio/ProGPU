@@ -28,7 +28,7 @@ public unsafe sealed class BrowserGpuContext : IDisposable
             throw new PlatformNotSupportedException("The current browser does not expose a usable navigator.gpu device.");
 
         var api = new BrowserWebGpuApi();
-        var context = new WgpuContext();
+        var context = new WgpuContext { ComputeLimits = capabilities.ComputeLimits };
         context.InitializeExternal(
             api,
             BrowserWebGpuApi.DeviceHandle,

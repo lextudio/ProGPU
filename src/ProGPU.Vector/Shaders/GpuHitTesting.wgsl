@@ -1,6 +1,8 @@
 // Algorithm: Traverse the retained BVH, reject bounds, analytically test primitive/path geometry, and keep z-ordered hit records.
-// Time complexity: Average O(log N + K*S), worst-case O(N*S), for N primitives, K candidates, and S path segments.
-// Space complexity: O(H+R) private/output storage for traversal height H (capped at 64) and retained result capacity R.
+// Time complexity: Average O(log N + K*(S+R)), worst-case O(N*(S+R)), for N primitives, K candidates, S segments, and result capacity R.
+// Space complexity: O(H+R) private/output storage, H capped at 64; optional staged execution adds O(M) GPU scratch for M index references.
+// Rectangle edges share four independent vector lanes: constant private state,
+// unchanged inclusive crossings/parallel tolerances, no extra dispatch or storage.
 struct HitTestQuery {
     point: vec2<f32>,
     region_max: vec2<f32>,
@@ -68,8 +70,26 @@ struct HitTestResult {
 @group(0) @binding(4) var<storage, read_write> results: array<HitTestResult>;
 @group(0) @binding(5) var<storage, read> path_segments: array<PathSegment>;
 
+// Internal staged execution only. Original entry points do not access binding 7.
+// The host must retain capacity for every visited primitive-index reference.
+// Header includes an indirect dispatch at byte 16; records preserve BVH order.
+struct HitTestCandidates {
+    count: u32,
+    overflow: u32,
+    pad0: u32,
+    pad1: u32,
+    dispatch_x: u32,
+    dispatch_y: u32,
+    dispatch_z: u32,
+    pad2: u32,
+    records: array<vec2<u32>>,
+};
+@group(0) @binding(7) var<storage, read_write> candidates: HitTestCandidates;
+
 const FLAG_VISIBLE: u32 = 1u;
 const FLAG_HIT_TEST_VISIBLE: u32 = 2u;
+const FLAG_POINT_ONLY: u32 = 4u;
+const FLAG_REGION_ONLY: u32 = 8u;
 const KIND_BOUNDS: u32 = 0u;
 const KIND_RECT_FILL: u32 = 1u;
 const KIND_RECT_STROKE: u32 = 2u;
@@ -597,13 +617,23 @@ fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 {
     return a.x * b.y - a.y * b.x;
 }
 
+// Four independent points share triangle edges, retaining the scalar sign test
+// (including its boundary and degenerate-triangle behavior) without four copies.
+fn points_in_triangle4(px: vec4<f32>, py: vec4<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> vec4<bool> {
+    let ab = b - a;
+    let bc = c - b;
+    let ca = a - c;
+    let d0 = ab.x * (py - vec4<f32>(a.y)) - ab.y * (px - vec4<f32>(a.x));
+    let d1 = bc.x * (py - vec4<f32>(b.y)) - bc.y * (px - vec4<f32>(b.x));
+    let d2 = ca.x * (py - vec4<f32>(c.y)) - ca.y * (px - vec4<f32>(c.x));
+    let zero = vec4<f32>(0.0);
+    let has_neg = (d0 < zero) | (d1 < zero) | (d2 < zero);
+    let has_pos = (d0 > zero) | (d1 > zero) | (d2 > zero);
+    return !(has_neg & has_pos);
+}
+
 fn point_in_triangle(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> bool {
-    let d0 = cross2(b - a, point - a);
-    let d1 = cross2(c - b, point - b);
-    let d2 = cross2(a - c, point - c);
-    let has_neg = d0 < 0.0 || d1 < 0.0 || d2 < 0.0;
-    let has_pos = d0 > 0.0 || d1 > 0.0 || d2 > 0.0;
-    return !(has_neg && has_pos);
+    return points_in_triangle4(vec4<f32>(point.x), vec4<f32>(point.y), a, b, c).x;
 }
 
 fn contains_triangle_cap(point: vec2<f32>, base_center: vec2<f32>, outward: vec2<f32>, half_stroke: f32) -> bool {
@@ -850,26 +880,29 @@ fn distance_squared_to_rect(point: vec2<f32>, rect_min: vec2<f32>, rect_max: vec
     return dot(delta, delta);
 }
 
-fn segments_intersect(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
+// Original segment predicate evaluated for four independent c/d pairs. Keep
+// multiply/subtract order and the two distinct parallel/collinear tolerances.
+fn segments_intersect4(a: vec2<f32>, b: vec2<f32>, cx: vec4<f32>, cy: vec4<f32>, dx: vec4<f32>, dy: vec4<f32>) -> vec4<bool> {
     let ab = b - a;
-    let cd = d - c;
-    let denominator = cross2(ab, cd);
-    let ca = c - a;
-    if (abs(denominator) <= 0.000001) {
-        if (abs(cross2(ca, ab)) > 0.0001) {
-            return false;
-        }
-
-        let ab_min = min(a, b);
-        let ab_max = max(a, b);
-        let cd_min = min(c, d);
-        let cd_max = max(c, d);
-        return intersects_bounds(ab_min, ab_max, cd_min, cd_max);
-    }
-
-    let t = cross2(ca, cd) / denominator;
-    let u = cross2(ca, ab) / denominator;
-    return t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0;
+    let cdx = dx - cx;
+    let cdy = dy - cy;
+    let denominator = ab.x * cdy - ab.y * cdx;
+    let cax = cx - vec4<f32>(a.x);
+    let cay = cy - vec4<f32>(a.y);
+    let ca_cross_ab = cax * ab.y - cay * ab.x;
+    let parallel = abs(denominator) <= vec4<f32>(0.000001);
+    let ab_min = min(a, b);
+    let ab_max = max(a, b);
+    let collinear_hit = !(abs(ca_cross_ab) > vec4<f32>(0.0001)) &
+        (vec4<f32>(ab_max.x) >= min(cx, dx)) & (vec4<f32>(ab_min.x) <= max(cx, dx)) &
+        (vec4<f32>(ab_max.y) >= min(cy, dy)) & (vec4<f32>(ab_min.y) <= max(cy, dy));
+    // WGSL select evaluates both operands; do not divide parallel lanes by zero.
+    let divisor = select(denominator, vec4<f32>(1.0), parallel);
+    let t = (cax * cdy - cay * cdx) / divisor;
+    let u = ca_cross_ab / divisor;
+    let crossing_hit = (t >= vec4<f32>(0.0)) & (t <= vec4<f32>(1.0)) &
+        (u >= vec4<f32>(0.0)) & (u <= vec4<f32>(1.0));
+    return select(crossing_hit, collinear_hit, parallel);
 }
 
 fn segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: vec2<f32>, rect_max: vec2<f32>) -> bool {
@@ -877,14 +910,9 @@ fn segment_intersects_rect(start: vec2<f32>, end: vec2<f32>, rect_min: vec2<f32>
         return true;
     }
 
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    return segments_intersect(start, end, top_left, top_right) ||
-        segments_intersect(start, end, top_right, bottom_right) ||
-        segments_intersect(start, end, bottom_right, bottom_left) ||
-        segments_intersect(start, end, bottom_left, top_left);
+    let cx = vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x);
+    let cy = vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y);
+    return any(segments_intersect4(start, end, cx, cy, cx.yzwx, cy.yzwx));
 }
 
 fn point_in_quad(point: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
@@ -899,14 +927,9 @@ fn quad_intersects_rect(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>, 
         return true;
     }
 
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    if (point_in_quad(top_left, a, b, c, d) ||
-        point_in_quad(top_right, a, b, c, d) ||
-        point_in_quad(bottom_right, a, b, c, d) ||
-        point_in_quad(bottom_left, a, b, c, d)) {
+    let px = vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x);
+    let py = vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y);
+    if (any(points_in_triangle4(px, py, a, b, c) | points_in_triangle4(px, py, a, c, d))) {
         return true;
     }
 
@@ -952,14 +975,9 @@ fn triangle_cap_intersects_rect(center: vec2<f32>, direction: vec2<f32>, half_st
         return true;
     }
 
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    if (point_in_triangle(top_left, a, b, c) ||
-        point_in_triangle(top_right, a, b, c) ||
-        point_in_triangle(bottom_right, a, b, c) ||
-        point_in_triangle(bottom_left, a, b, c)) {
+    let px = vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x);
+    let py = vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y);
+    if (any(points_in_triangle4(px, py, a, b, c))) {
         return true;
     }
 
@@ -1105,76 +1123,65 @@ fn evaluate_arc(segment: PathSegment, t: f32) -> vec2<f32> {
         (local.x * s) + (local.y * c));
 }
 
-struct PathEdgeResult {
-    boundary: bool,
-    crosses: bool,
-    winding_delta: i32,
-};
-
-fn test_path_fill_edge(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>, tolerance: f32) -> PathEdgeResult {
-    var edge: PathEdgeResult;
-    edge.boundary = false;
-    edge.crosses = false;
-    edge.winding_delta = 0;
-
-    if (distance_squared_to_segment(point, start, end) <= tolerance * tolerance) {
-        edge.boundary = true;
-        return edge;
-    }
-
-    let crosses_y = (start.y > point.y) != (end.y > point.y);
-    if (crosses_y) {
-        let intersection_x = ((end.x - start.x) * (point.y - start.y) / (end.y - start.y)) + start.x;
-        edge.crosses = point.x < intersection_x;
-
-        let cross = cross2(end - start, point - start);
-        if (start.y <= point.y) {
-            if (end.y > point.y && cross > 0.0) {
-                edge.winding_delta = 1;
-            }
-        } else if (end.y <= point.y && cross < 0.0) {
-            edge.winding_delta = -1;
-        }
-    }
-
-    return edge;
-}
-
 struct PathFillState {
-    boundary: bool,
-    even_odd: bool,
-    winding: i32,
+    boundary: vec4<bool>,
+    even_odd: vec4<bool>,
+    winding: vec4<i32>,
 };
 
-fn accumulate_path_fill_edge(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>, tolerance: f32, fill_rule: u32, state: PathFillState) -> PathFillState {
+// Four independent query samples share one segment load and curve evaluation.
+// This keeps rectangle corners out of four separately inlined path walkers.
+// Point queries splat one sample and consume lane x; all thresholds, 16/24-step
+// curve sampling, half-open crossing tests and fill rules are unchanged.
+fn accumulate_path_fill_edge(point_x: vec4<f32>, point_y: vec4<f32>, start: vec2<f32>, end: vec2<f32>, tolerance: f32, fill_rule: u32, state: PathFillState) -> PathFillState {
     var next = state;
-    let edge = test_path_fill_edge(point, start, end, tolerance);
-    if (edge.boundary) {
-        next.boundary = true;
-        return next;
+    let segment = end - start;
+    let length_squared = dot(segment, segment);
+    let start_dx = point_x - start.x;
+    let start_dy = point_y - start.y;
+    var distance_squared = start_dx * start_dx + start_dy * start_dy;
+    if (length_squared > 0.00000001) {
+        let t = clamp((start_dx * segment.x + start_dy * segment.y) / length_squared,
+            vec4<f32>(0.0), vec4<f32>(1.0));
+        let dx = point_x - (start.x + segment.x * t);
+        let dy = point_y - (start.y + segment.y * t);
+        distance_squared = dx * dx + dy * dy;
     }
+    let boundary = distance_squared <= vec4<f32>(tolerance * tolerance);
+    next.boundary = next.boundary | boundary;
 
-    if (fill_rule == FILL_RULE_EVEN_ODD) {
-        if (edge.crosses) {
-            next.even_odd = !next.even_odd;
+    // A horizontal edge cannot cross the ray. Avoid division by zero even in
+    // inactive lanes; a boundary lane remains a hit regardless of later edges.
+    if (segment.y != 0.0) {
+        let crosses_y = (vec4<f32>(start.y) > point_y) != (vec4<f32>(end.y) > point_y);
+        let crossing_lanes = crosses_y & !boundary;
+        if (fill_rule == FILL_RULE_EVEN_ODD) {
+            let intersection_x = (segment.x * start_dy / segment.y) + start.x;
+            next.even_odd = next.even_odd != (crossing_lanes & (point_x < intersection_x));
+        } else {
+            let cross = segment.x * start_dy - segment.y * start_dx;
+            let upward = (vec4<f32>(start.y) <= point_y) &
+                (vec4<f32>(end.y) > point_y) & (cross > vec4<f32>(0.0));
+            let downward = (vec4<f32>(start.y) > point_y) &
+                (vec4<f32>(end.y) <= point_y) & (cross < vec4<f32>(0.0));
+            next.winding = next.winding + select(vec4<i32>(0), vec4<i32>(1), crossing_lanes & upward)
+                - select(vec4<i32>(0), vec4<i32>(1), crossing_lanes & downward);
         }
-    } else {
-        next.winding = next.winding + edge.winding_delta;
     }
 
     return next;
 }
 
-fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> bool {
+fn contains_path_fill_samples(point_x: vec4<f32>, point_y: vec4<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> vec4<bool> {
     if (segment_count == 0u || start_segment >= query.path_segment_count) {
-        return false;
+        return vec4<bool>(false);
     }
 
     let end_segment = min(start_segment + segment_count, query.path_segment_count);
     var state: PathFillState;
-    state.boundary = false;
-    state.even_odd = false;
-    state.winding = 0;
+    state.boundary = vec4<bool>(false);
+    state.even_odd = vec4<bool>(false);
+    state.winding = vec4<i32>(0);
 
     var segment_index = start_segment;
     loop {
@@ -1184,7 +1191,7 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
 
         let segment = path_segments[segment_index];
         if (segment.segment_type == SEGMENT_LINE) {
-            state = accumulate_path_fill_edge(point, segment.p0, segment.p1, 0.0001, fill_rule, state);
+            state = accumulate_path_fill_edge(point_x, point_y, segment.p0, segment.p1, 0.0001, fill_rule, state);
         } else if (segment.segment_type == SEGMENT_QUADRATIC ||
             segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) {
             var previous = segment.p0;
@@ -1195,7 +1202,7 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
                 }
 
                 let next_point = evaluate_quadratic_segment(segment, f32(step) / f32(PATH_QUADRATIC_STEPS));
-                state = accumulate_path_fill_edge(point, previous, next_point, 0.0001, fill_rule, state);
+                state = accumulate_path_fill_edge(point_x, point_y, previous, next_point, 0.0001, fill_rule, state);
                 previous = next_point;
                 step = step + 1u;
             }
@@ -1209,7 +1216,7 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
                 }
 
                 let next_point = evaluate_cubic_segment(segment, f32(step) / f32(PATH_CUBIC_STEPS));
-                state = accumulate_path_fill_edge(point, previous, next_point, 0.0001, fill_rule, state);
+                state = accumulate_path_fill_edge(point_x, point_y, previous, next_point, 0.0001, fill_rule, state);
                 previous = next_point;
                 step = step + 1u;
             }
@@ -1222,24 +1229,29 @@ fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_cou
                 }
 
                 let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
-                state = accumulate_path_fill_edge(point, previous, next_point, 0.0001, fill_rule, state);
+                state = accumulate_path_fill_edge(point_x, point_y, previous, next_point, 0.0001, fill_rule, state);
                 previous = next_point;
                 step = step + 1u;
             }
         }
 
-        if (state.boundary) {
-            return true;
+        if (all(state.boundary)) {
+            return state.boundary;
         }
 
         segment_index = segment_index + 1u;
     }
 
     if (fill_rule == FILL_RULE_EVEN_ODD) {
-        return state.even_odd;
+        return state.boundary | state.even_odd;
     }
 
-    return state.winding != 0;
+    return state.boundary | (state.winding != vec4<i32>(0));
+}
+
+fn contains_path_fill_segments(point: vec2<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> bool {
+    return contains_path_fill_samples(vec4<f32>(point.x), vec4<f32>(point.y),
+        start_segment, segment_count, fill_rule).x;
 }
 
 fn contains_path_fill(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
@@ -1412,16 +1424,12 @@ fn path_fill_segments_intersect_ellipse_region(query_center: vec2<f32>, query_in
 }
 
 fn classify_path_fill_rect_intersection_detail_range(rect_min: vec2<f32>, rect_max: vec2<f32>, start_segment: u32, segment_count: u32, fill_rule: u32) -> u32 {
-    let top_left = rect_min;
-    let top_right = vec2<f32>(rect_max.x, rect_min.y);
-    let bottom_right = rect_max;
-    let bottom_left = vec2<f32>(rect_min.x, rect_max.y);
-    let top_left_inside = contains_path_fill_segments(top_left, start_segment, segment_count, fill_rule);
-    let top_right_inside = contains_path_fill_segments(top_right, start_segment, segment_count, fill_rule);
-    let bottom_right_inside = contains_path_fill_segments(bottom_right, start_segment, segment_count, fill_rule);
-    let bottom_left_inside = contains_path_fill_segments(bottom_left, start_segment, segment_count, fill_rule);
+    let corners_inside = contains_path_fill_samples(
+        vec4<f32>(rect_min.x, rect_max.x, rect_max.x, rect_min.x),
+        vec4<f32>(rect_min.y, rect_min.y, rect_max.y, rect_max.y),
+        start_segment, segment_count, fill_rule);
     let path_boundary_intersects_region = path_fill_segments_intersect_rect_range(rect_min, rect_max, start_segment, segment_count);
-    if (top_left_inside && top_right_inside && bottom_right_inside && bottom_left_inside) {
+    if (all(corners_inside)) {
         if (!path_boundary_intersects_region) {
             return INTERSECTION_DETAIL_FULLY_CONTAINS;
         }
@@ -1429,8 +1437,7 @@ fn classify_path_fill_rect_intersection_detail_range(rect_min: vec2<f32>, rect_m
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
-    if (top_left_inside || top_right_inside || bottom_right_inside || bottom_left_inside ||
-        path_boundary_intersects_region) {
+    if (any(corners_inside) || path_boundary_intersects_region) {
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
@@ -1452,11 +1459,14 @@ fn classify_path_fill_ellipse_region_intersection_detail_range(query_center: vec
 
     let boundary_intersects_region = path_fill_segments_intersect_ellipse_region_range(query_center, query_inverse_radii, start_segment, segment_count);
     if (boundary_intersects_region ||
-        contains_path_fill_segments(query_center, start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center + vec2<f32>(radii.x, 0.0), start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center - vec2<f32>(radii.x, 0.0), start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center + vec2<f32>(0.0, radii.y), start_segment, segment_count, fill_rule) ||
-        contains_path_fill_segments(query_center - vec2<f32>(0.0, radii.y), start_segment, segment_count, fill_rule)) {
+        contains_path_fill_segments(query_center, start_segment, segment_count, fill_rule)) {
+        return INTERSECTION_DETAIL_INTERSECTS;
+    }
+    let cardinal_inside = contains_path_fill_samples(
+        vec4<f32>(query_center.x + radii.x, query_center.x - radii.x, query_center.x, query_center.x),
+        vec4<f32>(query_center.y, query_center.y, query_center.y + radii.y, query_center.y - radii.y),
+        start_segment, segment_count, fill_rule);
+    if (any(cardinal_inside)) {
         return INTERSECTION_DETAIL_INTERSECTS;
     }
 
@@ -1647,6 +1657,25 @@ fn point_passes_path_endpoint_caps(
     return true;
 }
 
+// The three stroke query shapes share segment sampling, not hit predicates.
+// Retain the original 1/16/24 pieces, analytic evaluation and endpoint order.
+// Unknown segment types contribute no piece, exactly as the original branches.
+fn path_stroke_sample_count(segment: PathSegment) -> u32 {
+    if (segment.segment_type == SEGMENT_LINE) { return 1u; }
+    if (segment.segment_type == SEGMENT_QUADRATIC || segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) { return PATH_QUADRATIC_STEPS; }
+    if (segment.segment_type == SEGMENT_CUBIC || segment.segment_type == SEGMENT_RATIONAL_CUBIC) { return PATH_CUBIC_STEPS; }
+    if (segment.segment_type == SEGMENT_ARC) { return PATH_ARC_STEPS; }
+    return 0u;
+}
+
+fn path_stroke_sample(segment: PathSegment, step: u32, count: u32) -> vec2<f32> {
+    if (segment.segment_type == SEGMENT_LINE) { return segment.p1; }
+    let t = f32(step) / f32(count);
+    if (segment.segment_type == SEGMENT_QUADRATIC || segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) { return evaluate_quadratic_segment(segment, t); }
+    if (segment.segment_type == SEGMENT_CUBIC || segment.segment_type == SEGMENT_RATIONAL_CUBIC) { return evaluate_cubic_segment(segment, t); }
+    return evaluate_arc(segment, t);
+}
+
 fn contains_path_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
     let start_segment = u32(primitive.data1.x + 0.5);
     let segment_count = u32(primitive.data1.y + 0.5);
@@ -1676,92 +1705,25 @@ fn contains_path_stroke(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
         }
 
         let segment = path_segments[segment_index];
-        if (segment.segment_type == SEGMENT_LINE) {
+        let sample_count = path_stroke_sample_count(segment);
+        var previous = segment.p0;
+        var step = 1u;
+        loop {
+            if (step > sample_count) { break; }
+            let next_point = path_stroke_sample(segment, step, sample_count);
             if (path_stroke_line_hit(
                     point,
-                    segment.p0,
-                    segment.p1,
+                    previous,
+                    next_point,
                     half_stroke,
                     start_cap,
                     end_cap,
-                    segment_index == start_segment,
-                    segment_index + 1u == end_segment)) {
+                    segment_index == start_segment && step == 1u,
+                    segment_index + 1u == end_segment && step == sample_count)) {
                 return true;
             }
-        } else if (segment.segment_type == SEGMENT_QUADRATIC ||
-            segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_QUADRATIC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_quadratic_segment(segment, f32(step) / f32(PATH_QUADRATIC_STEPS));
-                if (path_stroke_line_hit(
-                        point,
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_QUADRATIC_STEPS)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
-        } else if (segment.segment_type == SEGMENT_CUBIC ||
-            segment.segment_type == SEGMENT_RATIONAL_CUBIC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_CUBIC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_cubic_segment(segment, f32(step) / f32(PATH_CUBIC_STEPS));
-                if (path_stroke_line_hit(
-                        point,
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_CUBIC_STEPS)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
-        } else if (segment.segment_type == SEGMENT_ARC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_ARC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
-                if (path_stroke_line_hit(
-                        point,
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_ARC_STEPS)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
+            previous = next_point;
+            step = step + 1u;
         }
 
         segment_index = segment_index + 1u;
@@ -1809,96 +1771,26 @@ fn path_stroke_intersects_rect(rect_min: vec2<f32>, rect_max: vec2<f32>, primiti
         }
 
         let segment = path_segments[segment_index];
-        if (segment.segment_type == SEGMENT_LINE) {
+        let sample_count = path_stroke_sample_count(segment);
+        var previous = segment.p0;
+        var step = 1u;
+        loop {
+            if (step > sample_count) { break; }
+            let next_point = path_stroke_sample(segment, step, sample_count);
             if (path_stroke_piece_intersects_rect(
-                    segment.p0,
-                    segment.p1,
+                    previous,
+                    next_point,
                     half_stroke,
                     start_cap,
                     end_cap,
-                    segment_index == start_segment,
-                    segment_index + 1u == end_segment,
+                    segment_index == start_segment && step == 1u,
+                    segment_index + 1u == end_segment && step == sample_count,
                     rect_min,
                     rect_max)) {
                 return true;
             }
-        } else if (segment.segment_type == SEGMENT_QUADRATIC ||
-            segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_QUADRATIC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_quadratic_segment(segment, f32(step) / f32(PATH_QUADRATIC_STEPS));
-                if (path_stroke_piece_intersects_rect(
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_QUADRATIC_STEPS,
-                        rect_min,
-                        rect_max)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
-        } else if (segment.segment_type == SEGMENT_CUBIC ||
-            segment.segment_type == SEGMENT_RATIONAL_CUBIC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_CUBIC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_cubic_segment(segment, f32(step) / f32(PATH_CUBIC_STEPS));
-                if (path_stroke_piece_intersects_rect(
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_CUBIC_STEPS,
-                        rect_min,
-                        rect_max)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
-        } else if (segment.segment_type == SEGMENT_ARC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_ARC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
-                if (path_stroke_piece_intersects_rect(
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_ARC_STEPS,
-                        rect_min,
-                        rect_max)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
+            previous = next_point;
+            step = step + 1u;
         }
 
         segment_index = segment_index + 1u;
@@ -1946,96 +1838,26 @@ fn path_stroke_intersects_ellipse_region(query_center: vec2<f32>, query_inverse_
         }
 
         let segment = path_segments[segment_index];
-        if (segment.segment_type == SEGMENT_LINE) {
+        let sample_count = path_stroke_sample_count(segment);
+        var previous = segment.p0;
+        var step = 1u;
+        loop {
+            if (step > sample_count) { break; }
+            let next_point = path_stroke_sample(segment, step, sample_count);
             if (path_stroke_piece_intersects_ellipse_region(
-                    segment.p0,
-                    segment.p1,
+                    previous,
+                    next_point,
                     half_stroke,
                     start_cap,
                     end_cap,
-                    segment_index == start_segment,
-                    segment_index + 1u == end_segment,
+                    segment_index == start_segment && step == 1u,
+                    segment_index + 1u == end_segment && step == sample_count,
                     query_center,
                     query_inverse_radii)) {
                 return true;
             }
-        } else if (segment.segment_type == SEGMENT_QUADRATIC ||
-            segment.segment_type == SEGMENT_RATIONAL_QUADRATIC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_QUADRATIC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_quadratic_segment(segment, f32(step) / f32(PATH_QUADRATIC_STEPS));
-                if (path_stroke_piece_intersects_ellipse_region(
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_QUADRATIC_STEPS,
-                        query_center,
-                        query_inverse_radii)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
-        } else if (segment.segment_type == SEGMENT_CUBIC ||
-            segment.segment_type == SEGMENT_RATIONAL_CUBIC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_CUBIC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_cubic_segment(segment, f32(step) / f32(PATH_CUBIC_STEPS));
-                if (path_stroke_piece_intersects_ellipse_region(
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_CUBIC_STEPS,
-                        query_center,
-                        query_inverse_radii)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
-        } else if (segment.segment_type == SEGMENT_ARC) {
-            var previous = segment.p0;
-            var step = 1u;
-            loop {
-                if (step > PATH_ARC_STEPS) {
-                    break;
-                }
-
-                let next_point = evaluate_arc(segment, f32(step) / f32(PATH_ARC_STEPS));
-                if (path_stroke_piece_intersects_ellipse_region(
-                        previous,
-                        next_point,
-                        half_stroke,
-                        start_cap,
-                        end_cap,
-                        segment_index == start_segment && step == 1u,
-                        segment_index + 1u == end_segment && step == PATH_ARC_STEPS,
-                        query_center,
-                        query_inverse_radii)) {
-                    return true;
-                }
-
-                previous = next_point;
-                step = step + 1u;
-            }
+            previous = next_point;
+            step = step + 1u;
         }
 
         segment_index = segment_index + 1u;
@@ -2045,7 +1867,11 @@ fn path_stroke_intersects_ellipse_region(query_center: vec2<f32>, query_inverse_
 }
 
 fn primitive_is_hit_test_visible(primitive: HitTestPrimitive) -> bool {
-    return (primitive.flags & FLAG_VISIBLE) != 0u && (primitive.flags & FLAG_HIT_TEST_VISIBLE) != 0u;
+    let region_query = query_uses_bounds() || query_uses_ellipse_region();
+    let excluded_kind = select(FLAG_REGION_ONLY, FLAG_POINT_ONLY, region_query);
+    return (primitive.flags & FLAG_VISIBLE) != 0u &&
+        (primitive.flags & FLAG_HIT_TEST_VISIBLE) != 0u &&
+        (primitive.flags & excluded_kind) == 0u;
 }
 
 fn primitive_is_axis_aligned(primitive: HitTestPrimitive) -> bool {
@@ -2115,29 +1941,16 @@ fn primitive_can_fully_contain_query_bounds(primitive: HitTestPrimitive) -> bool
 fn primitive_uses_precise_bounds_region_test(primitive: HitTestPrimitive) -> bool {
     return primitive_has_clip(primitive) ||
         (primitive_is_axis_aligned(primitive) &&
-            (primitive.kind == KIND_RECT_FILL ||
-                primitive.kind == KIND_RECT_STROKE ||
-                primitive.kind == KIND_ELLIPSE_FILL ||
-                primitive.kind == KIND_ELLIPSE_STROKE ||
-                primitive.kind == KIND_LINE_STROKE ||
-                primitive.kind == KIND_PATH_FILL ||
-                primitive.kind == KIND_PATH_STROKE));
+            primitive.kind >= KIND_RECT_FILL && primitive.kind <= KIND_PATH_STROKE);
 }
 
 fn primitive_uses_precise_ellipse_region_test(primitive: HitTestPrimitive) -> bool {
     return primitive_has_clip(primitive) ||
         (primitive_is_axis_aligned(primitive) &&
-            (primitive.kind == KIND_BOUNDS ||
-                primitive.kind == KIND_RECT_FILL ||
-                primitive.kind == KIND_RECT_STROKE ||
-                primitive.kind == KIND_ELLIPSE_FILL ||
-                primitive.kind == KIND_ELLIPSE_STROKE ||
-                primitive.kind == KIND_LINE_STROKE ||
-                primitive.kind == KIND_PATH_FILL ||
-                primitive.kind == KIND_PATH_STROKE));
+            primitive.kind <= KIND_PATH_STROKE);
 }
 
-fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u32 {
+fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive, clip_tested: bool) -> u32 {
     let region_min = query_region_min();
     let region_max = query_region_max();
     if (!rect_intersects_ellipse(primitive.bounds_min, primitive.bounds_max, region_min, region_max)) {
@@ -2146,7 +1959,7 @@ fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u
 
     let query_center_for_clip = (region_min + region_max) * 0.5;
     let query_inverse_radii_for_clip = ellipse_inverse_radii_from_bounds(region_min, region_max);
-    if (primitive_clip_intersection_detail_for_ellipse(query_center_for_clip, query_inverse_radii_for_clip, primitive) == INTERSECTION_DETAIL_EMPTY) {
+    if (!clip_tested && primitive_clip_intersection_detail_for_ellipse(query_center_for_clip, query_inverse_radii_for_clip, primitive) == INTERSECTION_DETAIL_EMPTY) {
         return INTERSECTION_DETAIL_EMPTY;
     }
 
@@ -2237,18 +2050,14 @@ fn classify_ellipse_region_intersection_detail(primitive: HitTestPrimitive) -> u
     return INTERSECTION_DETAIL_INTERSECTS;
 }
 
-fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
-    if (query_uses_ellipse_region()) {
-        return classify_ellipse_region_intersection_detail(primitive);
-    }
-
+fn classify_bounds_intersection_detail(primitive: HitTestPrimitive, clip_tested: bool) -> u32 {
     let region_min = query_region_min();
     let region_max = query_region_max();
     if (!intersects_bounds(region_min, region_max, primitive.bounds_min, primitive.bounds_max)) {
         return INTERSECTION_DETAIL_EMPTY;
     }
 
-    if (primitive_clip_intersection_detail_for_bounds(region_min, region_max, primitive) == INTERSECTION_DETAIL_EMPTY) {
+    if (!clip_tested && primitive_clip_intersection_detail_for_bounds(region_min, region_max, primitive) == INTERSECTION_DETAIL_EMPTY) {
         return INTERSECTION_DETAIL_EMPTY;
     }
 
@@ -2303,7 +2112,7 @@ fn classify_bounds_intersection_detail(primitive: HitTestPrimitive) -> u32 {
     return INTERSECTION_DETAIL_INTERSECTS;
 }
 
-fn precise_hit(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
+fn precise_hit(point: vec2<f32>, primitive: HitTestPrimitive, clip_tested: bool) -> bool {
     if (!primitive_is_hit_test_visible(primitive)) {
         return false;
     }
@@ -2312,7 +2121,7 @@ fn precise_hit(point: vec2<f32>, primitive: HitTestPrimitive) -> bool {
         return false;
     }
 
-    if (!point_inside_primitive_clip(point, primitive)) {
+    if (!clip_tested && !point_inside_primitive_clip(point, primitive)) {
         return false;
     }
 
@@ -2427,9 +2236,8 @@ fn record_hit(primitive_index: u32, primitive: HitTestPrimitive, intersection_de
         return;
     }
 
-    let total_count = results[0].hit + 1u;
-    results[0].hit = total_count;
-
+    // List participation is reduced by the invoking traversal/merge. This
+    // helper owns only ordered slots (or the single-owner summary above).
     var stored_count = stored_result_count(capacity);
     let existing_slot = find_stored_hit_slot(primitive.id, stored_count);
     if (existing_slot != 0u) {
@@ -2468,81 +2276,307 @@ fn record_hit(primitive_index: u32, primitive: HitTestPrimitive, intersection_de
     write_hit_result(slot, primitive_index, primitive, intersection_detail);
 }
 
-@compute @workgroup_size(1)
-fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (global_id.x != 0u || query.node_count == 0u || query.primitive_count == 0u || !finite2(query.point) || !finite2(query.region_max)) {
+fn retain_candidate(primitive_index: u32) {
+    if (candidates.count >= arrayLength(&candidates.records)) {
+        candidates.overflow = 1u;
         return;
     }
+    candidates.records[candidates.count] = vec2<u32>(primitive_index, INTERSECTION_DETAIL_EMPTY);
+    candidates.count = candidates.count + 1u;
+}
 
-    var stack: array<u32, 64>;
-    var stack_count = 1u;
-    stack[0] = query.root_node_index;
+// One traversal runs per invocation. Keep its stack invocation-private instead
+// of copying an array through the resumable iterator's inout aggregate: FXC
+// otherwise forces the dynamic stack-push loop to unroll and rejects it.
+// This is not workgroup memory; invocations never share traversal state.
+var<private> query_stack: array<u32, 64>;
 
+struct QueryTraversal {
+    stack_count: u32,
+    node: HitTestNode,
+    local_primitive: u32,
+    in_node: bool,
+    nodes_visited: u32,
+    candidate_count: u32,
+    precise_tests: u32,
+};
+
+fn begin_query_traversal() -> QueryTraversal {
+    var state: QueryTraversal;
+    query_stack[0] = query.root_node_index;
+    state.stack_count = 1u;
+    state.nodes_visited = results[0].nodes_visited;
+    state.candidate_count = results[0].candidate_count;
+    state.precise_tests = results[0].precise_tests;
+    return state;
+}
+
+fn publish_query_counters(state: ptr<function, QueryTraversal>) {
+    results[0].nodes_visited = (*state).nodes_visited;
+    results[0].candidate_count = (*state).candidate_count;
+    results[0].precise_tests = (*state).precise_tests;
+}
+
+fn count_query_candidate(state: ptr<function, QueryTraversal>, primitive: HitTestPrimitive, region_query: bool) {
+    (*state).candidate_count = (*state).candidate_count + 1u;
+    let region_precise = select(0u, 1u, primitive_uses_precise_bounds_region_test(primitive));
+    (*state).precise_tests = (*state).precise_tests + select(1u, region_precise, region_query);
+}
+
+// Both dispatch strategies consume this iterator. It retains original node,
+// local-reference and LIFO child order without making legacy pipelines depend
+// on the optional candidate buffer through an unreachable function argument.
+fn next_query_candidate(state: ptr<function, QueryTraversal>, region_query: bool) -> u32 {
     loop {
-        if (stack_count == 0u) {
-            break;
+        if (!(*state).in_node) {
+            if ((*state).stack_count == 0u) { return 4294967295u; }
+            (*state).stack_count = (*state).stack_count - 1u;
+            let node_index = query_stack[(*state).stack_count];
+            if (node_index >= query.node_count) { continue; }
+            let node = nodes[node_index];
+            (*state).nodes_visited = (*state).nodes_visited + 1u;
+            if (!query_intersects_bounds(node.bounds_min, node.bounds_max)) { continue; }
+            (*state).node = node;
+            (*state).local_primitive = 0u;
+            (*state).in_node = true;
         }
-
-        stack_count = stack_count - 1u;
-        let node_index = stack[stack_count];
-        if (node_index >= query.node_count) {
-            continue;
-        }
-
-        let node = nodes[node_index];
-        results[0].nodes_visited = results[0].nodes_visited + 1u;
-        if (!query_intersects_bounds(node.bounds_min, node.bounds_max)) {
-            continue;
-        }
-
-        var local_primitive = 0u;
         loop {
-            if (local_primitive >= node.primitive_count) {
-                break;
-            }
-
-            let primitive_lookup = node.first_primitive + local_primitive;
+            if ((*state).local_primitive >= (*state).node.primitive_count) { break; }
+            let primitive_lookup = (*state).node.first_primitive + (*state).local_primitive;
+            (*state).local_primitive = (*state).local_primitive + 1u;
             if (primitive_lookup < query.primitive_index_count) {
                 let primitive_index = primitive_indices[primitive_lookup];
                 if (primitive_index < query.primitive_count) {
                     let primitive = primitives[primitive_index];
-                    if (query_uses_bounds()) {
+                    if (region_query) {
                         if (primitive_is_hit_test_visible(primitive) && query_intersects_bounds(primitive.bounds_min, primitive.bounds_max)) {
-                            results[0].candidate_count = results[0].candidate_count + 1u;
-                            if (primitive_uses_precise_bounds_region_test(primitive)) {
-                                results[0].precise_tests = results[0].precise_tests + 1u;
-                            }
-
-                            let intersection_detail = classify_bounds_intersection_detail(primitive);
-                            if (intersection_detail != INTERSECTION_DETAIL_EMPTY) {
-                                record_hit(primitive_index, primitive, intersection_detail);
-                            }
+                            return primitive_index;
                         }
                     } else if (contains_bounds(query.point, primitive.bounds_min, primitive.bounds_max)) {
-                        results[0].candidate_count = results[0].candidate_count + 1u;
-                        results[0].precise_tests = results[0].precise_tests + 1u;
-                        if (precise_hit(query.point, primitive)) {
-                            record_hit(primitive_index, primitive, INTERSECTION_DETAIL_NOT_CALCULATED);
-                        }
+                        return primitive_index;
                     }
                 }
             }
-
-            local_primitive = local_primitive + 1u;
         }
-
+        (*state).in_node = false;
         var child = 0u;
         loop {
-            if (child >= node.child_count) {
+            if (child >= (*state).node.child_count) {
                 break;
             }
 
-            if (stack_count < 64u) {
-                stack[stack_count] = node.first_child + child;
-                stack_count = stack_count + 1u;
+            if ((*state).stack_count < 64u) {
+                query_stack[(*state).stack_count] = (*state).node.first_child + child;
+                (*state).stack_count = (*state).stack_count + 1u;
             }
 
             child = child + 1u;
         }
     }
+    return 4294967295u;
 }
+
+fn query_scene(global_id: vec3<u32>, region_query: bool, ellipse_region: bool) {
+    if (global_id.x != 0u || query.node_count == 0u || query.primitive_count == 0u || !finite2(query.point) || !finite2(query.region_max)) { return; }
+    var traversal = begin_query_traversal();
+    var hit_count = results[0].hit;
+    loop {
+        let primitive_index = next_query_candidate(&traversal, region_query);
+        if (primitive_index == 4294967295u) { break; }
+        let primitive = primitives[primitive_index];
+        count_query_candidate(&traversal, primitive, region_query);
+        var detail = INTERSECTION_DETAIL_EMPTY;
+        if (ellipse_region) {
+            detail = classify_ellipse_region_intersection_detail(primitive, false);
+        } else if (region_query) {
+            detail = classify_bounds_intersection_detail(primitive, false);
+        } else if (precise_hit(query.point, primitive, false)) {
+            detail = INTERSECTION_DETAIL_NOT_CALCULATED;
+        }
+        if (detail != INTERSECTION_DETAIL_EMPTY) {
+            hit_count = hit_count + 1u;
+            record_hit(primitive_index, primitive, detail);
+        }
+    }
+    publish_query_counters(&traversal);
+    if (query_result_capacity() != 0u) { results[0].hit = hit_count; }
+}
+
+// Keep one traversal and exact primitive policy. A constant point specialization
+// lets native shader compilers eliminate other query families before compiling
+// the requested pipeline. Each family preserves the same primitive algorithms.
+@compute @workgroup_size(1)
+fn cs_point(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (query_uses_bounds() || query_uses_ellipse_region()) {
+        return;
+    }
+    query_scene(global_id, false, false);
+}
+
+@compute @workgroup_size(1)
+fn cs_bounds(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (!query_uses_bounds() || query_uses_ellipse_region()) {
+        return;
+    }
+    query_scene(global_id, true, false);
+}
+
+@compute @workgroup_size(1)
+fn cs_ellipse(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (!query_uses_bounds() || !query_uses_ellipse_region()) {
+        return;
+    }
+    query_scene(global_id, true, true);
+}
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    query_scene(global_id, query_uses_bounds(), query_uses_ellipse_region());
+}
+
+// Optional staged query: single-invocation ordered collection, independent
+// 64-lane clip/primitive classification, single-invocation ordered merge.
+// Separate dispatches own storage dependencies; no CPU candidate readback occurs.
+// Geometry, clips and result insertion are shared with the original entrypoints.
+@compute @workgroup_size(1)
+fn cs_collect(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (any(global_id != vec3<u32>(0u))) { return; }
+    candidates.count = 0u;
+    candidates.overflow = 0u;
+    if (query.node_count != 0u && query.primitive_count != 0u && finite2(query.point) && finite2(query.region_max)) {
+        var traversal = begin_query_traversal();
+        loop {
+            let primitive_index = next_query_candidate(&traversal, query_uses_bounds());
+            if (primitive_index == 4294967295u) { break; }
+            count_query_candidate(&traversal, primitives[primitive_index], query_uses_bounds());
+            retain_candidate(primitive_index);
+        }
+        publish_query_counters(&traversal);
+    }
+    candidates.dispatch_x = max(1u, (candidates.count + 63u) / 64u);
+    candidates.dispatch_y = 1u;
+    candidates.dispatch_z = 1u;
+}
+
+fn classify_candidate_clip(index: u32, region_query: bool, ellipse_region: bool) {
+    if (candidates.overflow != 0u || index >= candidates.count) { return; }
+    let primitive = primitives[candidates.records[index].x];
+    var admitted = true;
+    if (ellipse_region) {
+        let region_min = query_region_min();
+        let region_max = query_region_max();
+        admitted = primitive_clip_intersection_detail_for_ellipse(
+            (region_min + region_max) * 0.5,
+            ellipse_inverse_radii_from_bounds(region_min, region_max), primitive) != INTERSECTION_DETAIL_EMPTY;
+    } else if (region_query) {
+        admitted = primitive_clip_intersection_detail_for_bounds(query_region_min(), query_region_max(), primitive) != INTERSECTION_DETAIL_EMPTY;
+    } else {
+        admitted = point_inside_primitive_clip(query.point, primitive);
+    }
+    candidates.records[index].y = select(INTERSECTION_DETAIL_EMPTY, INTERSECTION_DETAIL_NOT_CALCULATED, admitted);
+}
+
+fn classify_candidate(index: u32, kind: u32, region_query: bool, ellipse_region: bool) {
+    if (candidates.overflow != 0u || index >= candidates.count) { return; }
+    if (candidates.records[index].y == INTERSECTION_DETAIL_EMPTY) { return; }
+    let primitive_index = candidates.records[index].x;
+    var primitive = primitives[primitive_index];
+    if (kind < 8u) {
+        if (primitive.kind != kind) { return; }
+    } else if (primitive.kind < 8u) { return; }
+    // Equal for admitted kinds; all unknown kinds share the original default
+    // branch. A constant discriminant lets compilers remove other families.
+    primitive.kind = kind;
+    var detail = INTERSECTION_DETAIL_EMPTY;
+    if (region_query) {
+        if (ellipse_region) {
+            detail = classify_ellipse_region_intersection_detail(primitive, true);
+        } else {
+            detail = classify_bounds_intersection_detail(primitive, true);
+        }
+    } else if (precise_hit(query.point, primitive, true)) {
+        detail = INTERSECTION_DETAIL_NOT_CALCULATED;
+    }
+    candidates.records[index].y = detail;
+}
+
+@compute @workgroup_size(1)
+fn cs_merge(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (any(global_id != vec3<u32>(0u))) { return; }
+    // Reserved failure marker: admitted indices contain fewer than UINT_MAX
+    // references, so no valid summary count can collide. Hosts reject before
+    // publishing any owner result; the ordinary readback carries the failure.
+    if (candidates.overflow != 0u) { results[0].hit = 0xffffffffu; return; }
+    var hit_count = results[0].hit;
+    for (var index = 0u; index < candidates.count; index = index + 1u) {
+        let candidate = candidates.records[index];
+        if (candidate.y != INTERSECTION_DETAIL_EMPTY) {
+            hit_count = hit_count + 1u;
+            record_hit(candidate.x, primitives[candidate.x], candidate.y);
+        }
+    }
+    // Keep the reduction invocation-local. List summary counts participating
+    // primitives (including duplicate owners), not the number of retained slots.
+    if (query_result_capacity() != 0u) { results[0].hit = hit_count; }
+}
+
+@compute @workgroup_size(64)
+fn cs_point_clip(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate_clip(id.x, false, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_clip(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate_clip(id.x, true, false); }
+@compute @workgroup_size(64)
+fn cs_ellipse_clip(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate_clip(id.x, true, true); }
+@compute @workgroup_size(64)
+fn cs_point_bounds(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 0u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_rect_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 1u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_rect_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 2u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_ellipse_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 3u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_ellipse_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 4u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_line_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 5u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_path_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 6u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_path_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 7u, false, false); }
+@compute @workgroup_size(64)
+fn cs_point_other(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 8u, false, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_bounds(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 0u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_rect_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 1u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_rect_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 2u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_ellipse_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 3u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_ellipse_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 4u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_line_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 5u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_path_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 6u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_path_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 7u, true, false); }
+@compute @workgroup_size(64)
+fn cs_bounds_other(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 8u, true, false); }
+@compute @workgroup_size(64)
+fn cs_ellipse_bounds(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 0u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_rect_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 1u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_rect_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 2u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_ellipse_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 3u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_ellipse_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 4u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_line_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 5u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_path_fill(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 6u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_path_stroke(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 7u, true, true); }
+@compute @workgroup_size(64)
+fn cs_ellipse_other(@builtin(global_invocation_id) id: vec3<u32>) { classify_candidate(id.x, 8u, true, true); }

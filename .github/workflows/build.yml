@@ -10,11 +10,17 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: build-${{ github.event.pull_request.head.sha || github.sha }}
+  # LibreWPF stages native runtimes by exact ProGPU commit. Preserve every
+  # artifact-producing run so frequent PR checkpoints cannot invalidate its
+  # downstream package gate while that run is still compiling.
+  cancel-in-progress: false
 
 permissions:
   contents: read
+
+env:
+  PROGPU_QUALIFIED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   system-drawing-contract:
@@ -80,6 +86,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v16
@@ -101,14 +109,57 @@ jobs:
           path: |
             artifacts/progpu-native/browser-evidence/progpu-native-browser-webgpu.png
             artifacts/progpu-native/browser-evidence/progpu-native-browser-contract.json
+            artifacts/progpu-native/browser-evidence/progpu-native-browser-timeout.json
             artifacts/progpu-native/browser-evidence/progpu-native-browser-gallery.png
             artifacts/progpu-native/browser-evidence/progpu-native-browser-gallery.json
           if-no-files-found: warn
+
+  dx12-runtime:
+    name: Windows compiler runtime (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Cache pinned compiler dependency build
+        uses: actions/cache@v5
+        with:
+          path: artifacts/wgpu-native-windows/${{ matrix.rid }}
+          key: progpu-dx12-${{ matrix.rid }}-${{ hashFiles('eng/wgpu-dxc/**', 'eng/progpu-native-wgpu.version.json', 'eng/build-wgpu-native-windows.ps1') }}
+      - name: Build and verify Windows runtime payload
+        shell: pwsh
+        run: |
+          ./eng/test-dx12-runtime-inputs.ps1
+          foreach ($rid in @('win-x64', 'win-arm64', 'linux-x64')) {
+            dotnet msbuild eng/test-dx12-package-targets.proj -p:RuntimeIdentifier=$rid -nologo
+            if ($LASTEXITCODE -ne 0) { throw 'DX12 package asset selection failed.' }
+          }
+          ./eng/build-progpu-dx12-runtime-windows.ps1 -Rid '${{ matrix.rid }}'
+      - name: Upload Windows runtime payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-dx12-runtime-${{ matrix.rid }}
+          path: artifacts/progpu-dx12/package
+          if-no-files-found: error
 
   native-cpp:
     name: Native C++ renderer (${{ matrix.rid }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      PROGPU_NATIVE_MIL_IMAGE_BRUSH_CAPTURE_DIR: ${{ github.workspace }}/artifacts/progpu-native/image-brush-oracle
     strategy:
       fail-fast: false
       matrix:
@@ -130,12 +181,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+
+      - name: Verify Windows compiler dependency input handling
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./eng/test-wgpu-native-windows-inputs.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native compiler build input checks failed.' }
+          ./eng/test-dxc-compiler-inputs.ps1
+
+      - name: Stage pinned redistributable Windows shader compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pin = Get-Content -Raw eng/wgpu-dxc/compiler-package.json | ConvertFrom-Json
+          $archive = Join-Path $env:RUNNER_TEMP "Microsoft.Direct3D.DXC.$($pin.version).nupkg"
+          Invoke-WebRequest -Uri $pin.url -OutFile $archive
+          ./eng/stage-dxc-compiler.ps1 -Rid '${{ matrix.rid }}' -PackagePath $archive -OutputDirectory 'artifacts/dxc-compiler/${{ matrix.rid }}'
+
+      - name: Upload verified Windows compiler artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-dxc-compiler-${{ matrix.rid }}
+          path: artifacts/dxc-compiler/${{ matrix.rid }}
+          if-no-files-found: error
 
       - name: Cache Windows native dependencies
         if: runner.os == 'Windows'
@@ -196,6 +273,45 @@ jobs:
           -Rid "${{ matrix.rid }}"
           -BenchmarkProfile Smoke
 
+      - name: Upload native MIL ImageBrush frames
+        if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64' || matrix.rid == 'win-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-mil-image-brush-${{ matrix.rid }}
+          path: artifacts/progpu-native/image-brush-oracle
+          if-no-files-found: error
+
+      - name: Capture pinned Microsoft DirectX sample oracles
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: |
+          ./eng/progpu-capture-directx-sample-oracle.ps1 -Platform x64 -Sample HelloTriangle -UseWarp
+          ./eng/progpu-capture-directx-sample-oracle.ps1 -Platform x64 -Sample HelloTexture -UseWarp
+
+      - name: Upload DirectX sample differential evidence
+        if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64' || matrix.rid == 'win-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-directx-oracle-${{ matrix.rid }}
+          path: artifacts/progpu-native/directx-oracle
+          if-no-files-found: error
+
+      - name: Upload portable Win2D Canvas evidence
+        if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64' || matrix.rid == 'win-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-win2d-canvas-${{ matrix.rid }}
+          path: artifacts/progpu-native/win2d-oracle
+          if-no-files-found: error
+
+      - name: Upload portable Direct2D WebGPU evidence
+        if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64' || matrix.rid == 'win-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-direct2d-webgpu-${{ matrix.rid }}
+          path: artifacts/progpu-native/direct2d-oracle
+          if-no-files-found: error
+
       - name: Verify exact WebScene provider on Metal
         if: matrix.rid == 'osx-arm64'
         shell: bash
@@ -239,6 +355,148 @@ jobs:
           path: artifacts/progpu-native/symbols/${{ matrix.rid }}
           if-no-files-found: warn
 
+  native-directx-sample-oracle:
+    name: DirectX sample oracle (D3D12/Metal/Vulkan)
+    needs: native-cpp
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+
+      - name: Download platform oracle frames
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-directx-oracle-*
+          path: artifacts/progpu-native/directx-oracle
+          merge-multiple: true
+
+      - name: Compare native D3D12 with ProGPU D3D12, Metal, and Vulkan
+        shell: bash
+        run: |
+          python3 eng/progpu-compare-directx-sample-oracle.py \
+            --reference artifacts/progpu-native/directx-oracle/windows-native/microsoft-d3d12-hello-triangle.ppm \
+            --candidate artifacts/progpu-native/directx-oracle/progpu-d3d12.ppm \
+            --candidate artifacts/progpu-native/directx-oracle/progpu-metal.ppm \
+            --candidate artifacts/progpu-native/directx-oracle/progpu-vulkan.ppm \
+            --output artifacts/progpu-native/directx-oracle/directx-sample-differential.json
+          python3 eng/progpu-compare-directx-sample-oracle.py \
+            --contract "Microsoft D3D12HelloTexture native-to-ProGPU differential" \
+            --reference artifacts/progpu-native/directx-oracle/windows-native/microsoft-d3d12-hello-texture.ppm \
+            --candidate artifacts/progpu-native/directx-oracle/progpu-hello-texture-d3d12.ppm \
+            --candidate artifacts/progpu-native/directx-oracle/progpu-hello-texture-metal.ppm \
+            --candidate artifacts/progpu-native/directx-oracle/progpu-hello-texture-vulkan.ppm \
+            --output artifacts/progpu-native/directx-oracle/directx-hello-texture-differential.json
+
+      - name: Upload DirectX cross-platform differential
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-directx-sample-differential
+          path: artifacts/progpu-native/directx-oracle
+          if-no-files-found: error
+
+  native-win2d-canvas-parity:
+    name: Win2D Canvas parity (D3D12/Metal/Vulkan)
+    needs: native-cpp
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+
+      - name: Download portable Canvas frames
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-win2d-canvas-*
+          path: artifacts/progpu-native/win2d-oracle
+          merge-multiple: true
+
+      - name: Compare D3D12, Metal, and Vulkan Canvas frames
+        shell: bash
+        run: |
+          python3 eng/progpu-compare-win2d-canvas.py \
+            --reference artifacts/progpu-native/win2d-oracle/progpu-win2d-d3d12.ppm \
+            --candidate artifacts/progpu-native/win2d-oracle/progpu-win2d-metal.ppm \
+            --candidate artifacts/progpu-native/win2d-oracle/progpu-win2d-vulkan.ppm \
+            --output artifacts/progpu-native/win2d-oracle/win2d-canvas-differential.json
+
+      - name: Upload Win2D Canvas differential
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-win2d-canvas-differential
+          path: artifacts/progpu-native/win2d-oracle
+          if-no-files-found: error
+
+  native-mil-image-brush-parity:
+    name: Native MIL ImageBrush versus Windows WPF (D3D12/Metal/Vulkan)
+    needs: native-cpp
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-mil-image-brush-*
+          path: artifacts/image-brush-inputs
+      - name: Compare every captured pixel against native WPF
+        shell: pwsh
+        run: |
+          foreach ($rid in @('linux-x64', 'osx-arm64', 'win-x64')) {
+            powershell.exe -NoProfile -Sta -File eng/mil/progpu-wpf-image-brush-oracle.ps1 `
+              -ProGpuCaptureDirectory "artifacts/image-brush-inputs/progpu-mil-image-brush-$rid" `
+              -OutputDirectory "artifacts/image-brush-wpf/$rid"
+            if ($LASTEXITCODE -ne 0) { throw "Native WPF ImageBrush comparison failed: $rid" }
+          }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: progpu-mil-image-brush-wpf-differential
+          path: artifacts/image-brush-wpf
+          if-no-files-found: error
+
+  native-direct2d-webgpu-parity:
+    name: Portable Direct2D COM parity (D3D12/Metal/Vulkan)
+    needs: native-cpp
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+
+      - name: Download portable Direct2D frames
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-direct2d-webgpu-*
+          path: artifacts/progpu-native/direct2d-oracle
+          merge-multiple: true
+
+      - name: Compare D3D12, Metal, and Vulkan Direct2D frames
+        shell: bash
+        run: |
+          python3 eng/progpu-compare-direct2d-webgpu.py \
+            --reference artifacts/progpu-native/direct2d-oracle/progpu-direct2d-d3d12.ppm \
+            --candidate artifacts/progpu-native/direct2d-oracle/progpu-direct2d-metal.ppm \
+            --candidate artifacts/progpu-native/direct2d-oracle/progpu-direct2d-vulkan.ppm \
+            --output artifacts/progpu-native/direct2d-oracle/direct2d-webgpu-differential.json
+
+      - name: Upload portable Direct2D differential
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-direct2d-webgpu-differential
+          path: artifacts/progpu-native/direct2d-oracle
+          if-no-files-found: error
+
   native-cpp-compiler-compat:
     name: Native C++20 compiler compatibility (${{ matrix.compiler }})
     runs-on: ${{ matrix.os }}
@@ -256,6 +514,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Setup .NET
@@ -312,13 +571,15 @@ jobs:
 
   native-package:
     name: Native C++ NuGet package
-    needs: native-cpp
+    needs: [native-cpp, dx12-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -337,10 +598,17 @@ jobs:
           path: artifacts/progpu-native/package
           merge-multiple: true
 
+      - name: Download Windows compiler runtimes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-dx12-runtime-*
+          path: artifacts/progpu-dx12/package
+          merge-multiple: true
+
       - name: Pack and run source-independent consumer
         shell: bash
         run: |
-          version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
           echo "PROGPU_NATIVE_CI_VERSION=${version}" >> "${GITHUB_ENV}"
           output="${GITHUB_WORKSPACE}/artifacts/packages-native/Release"
           dotnet pack src/ProGPU.Backend/ProGPU.Backend.csproj \
@@ -350,6 +618,9 @@ jobs:
             --configuration Release --output "${output}" \
             -p:Version="${version}" -p:PackageVersion="${version}"
           dotnet pack src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj \
+            --configuration Release --output "${output}" \
+            -p:Version="${version}" -p:PackageVersion="${version}"
+          dotnet pack src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj \
             --configuration Release --output "${output}" \
             -p:Version="${version}" -p:PackageVersion="${version}"
           PROGPU_PACKAGE_VERSION="${version}" \
@@ -365,8 +636,60 @@ jobs:
             artifacts/packages-native/Release/*.snupkg
           if-no-files-found: error
 
+  native-dx12-package-consumer:
+    name: Native DX12 package consumer (${{ matrix.rid }})
+    needs: native-package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    env:
+      PROGPU_HIT_TEST_EXECUTION: ordered-stages
+      PROGPU_DX12_SHADER_COMPILER: dxc
+      PROGPU_BACKEND_DIAGNOSTICS: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: progpu-native-package
+          path: artifacts/packages-native/Release
+      - name: Run full packaged system-WARP consumer
+        shell: pwsh
+        run: |
+          $version = "0.1.0-preview.$env:GITHUB_RUN_NUMBER.ci"
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+            --configuration Release --runtime '${{ matrix.rid }}' `
+            -p:ProGpuUseDx12Runtime=true `
+            -p:ProGpuNativePackageSource="$env:GITHUB_WORKSPACE/artifacts/packages-native/Release" `
+            -p:ProGpuNativePackageVersion="$version" -- --software-adapter
+          if ($LASTEXITCODE -ne 0) { throw 'Full DX12 package consumer failed.' }
+      - name: Publish and run full NativeAOT system-WARP consumer
+        shell: pwsh
+        run: |
+          $version = "0.1.0-preview.$env:GITHUB_RUN_NUMBER.ci"
+          $output = "$env:GITHUB_WORKSPACE/artifacts/dx12-consumer-aot"
+          dotnet publish tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+            --configuration Release --runtime '${{ matrix.rid }}' -p:PublishAot=true `
+            -p:ProGpuUseDx12Runtime=true --output $output `
+            -p:ProGpuNativePackageSource="$env:GITHUB_WORKSPACE/artifacts/packages-native/Release" `
+            -p:ProGpuNativePackageVersion="$version"
+          if ($LASTEXITCODE -ne 0) { throw 'DX12 NativeAOT publication failed.' }
+          & "$output/ProGPU.Native.PackageConsumer.exe" --software-adapter
+          if ($LASTEXITCODE -ne 0) { throw 'Full DX12 NativeAOT consumer failed.' }
+
   native-package-consumer:
-    name: Native package consumer (${{ matrix.rid }})
+    name: ${{ matrix.name }}
     needs: native-package
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -376,20 +699,60 @@ jobs:
         include:
           - os: ubuntu-latest
             rid: linux-x64
+            suite: all
+            name: Native package consumer (linux-x64)
           - os: ubuntu-24.04-arm
             rid: linux-arm64
+            suite: all
+            name: Native package consumer (linux-arm64)
           - os: macos-15-intel
             rid: osx-x64
+            suite: all
+            name: Native package consumer (osx-x64)
           - os: macos-26
             rid: osx-arm64
+            suite: all
+            name: Native package consumer (osx-arm64)
           - os: windows-latest
             rid: win-x64
+            suite: core
+            name: Native package consumer (win-x64)
           - os: windows-11-arm
             rid: win-arm64
+            suite: core
+            name: Native package consumer (win-arm64)
+          # Serial cold Windows consumers exceed the job bound even when all
+          # assertions pass. Keep all JIT/AOT processes, split independent cases.
+          - os: windows-latest
+            rid: win-x64
+            suite: drawings
+            name: Native package drawings (win-x64)
+          - os: windows-latest
+            rid: win-x64
+            suite: visuals
+            name: Native package visuals (win-x64)
+          - os: windows-latest
+            rid: win-x64
+            suite: guidelines
+            name: Native package guidelines (win-x64)
+          - os: windows-11-arm
+            rid: win-arm64
+            suite: drawings
+            name: Native package drawings (win-arm64)
+          - os: windows-11-arm
+            rid: win-arm64
+            suite: visuals
+            name: Native package visuals (win-arm64)
+          - os: windows-11-arm
+            rid: win-arm64
+            suite: guidelines
+            name: Native package guidelines (win-arm64)
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -408,22 +771,81 @@ jobs:
           name: progpu-native-package
           path: artifacts/packages-native/Release
 
+      - name: Run ordered-query native package consumer
+        if: matrix.suite == 'all' || matrix.suite == 'core'
+        shell: bash
+        env:
+          PROGPU_HIT_TEST_EXECUTION: ordered-stages
+        run: |
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          consumer_args=()
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            consumer_args=(--software-adapter)
+          fi
+          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+            --configuration Release \
+            -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+            -p:ProGpuNativePackageVersion="${version}" -- "${consumer_args[@]}"
+
       - name: Restore and run package consumer
         shell: bash
         run: |
-          version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          # macOS Bash 3 treats an empty argument array as unset under nounset.
+          set -eo pipefail
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          ./eng/progpu-verify-native-package-scenarios.sh
+          scenarios="$(./eng/progpu-native-package-scenarios.sh '${{ matrix.suite }}')"
           dotnet restore tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
             -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
             -p:ProGpuNativePackageVersion="${version}"
-          dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+          dotnet build tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
             --configuration Release --no-restore \
             -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
             -p:ProGpuNativePackageVersion="${version}"
+          if [[ '${{ matrix.suite }}' == all || '${{ matrix.suite }}' == core ]]; then
+            broad_scene_args=()
+            if [[ '${{ matrix.rid }}' == win-x64 ]]; then
+              # Preserve existing broad-scene admission; the ordered core run
+              # above still renders the full seed on the Windows software adapter.
+              broad_scene_args=(--mil-only)
+            fi
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+              --configuration Release --no-build \
+              -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+              -p:ProGpuNativePackageVersion="${version}" -- "${broad_scene_args[@]}"
+          fi
+          while IFS= read -r scenario; do
+            [[ -n "${scenario}" ]] || continue
+            echo "Independent JIT package scene: ${scenario}"
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+              --configuration Release --no-build \
+              -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+              -p:ProGpuNativePackageVersion="${version}" -- "${scenario}"
+          done <<< "${scenarios}"
+
+      - name: Diagnose Windows path stages after consumer failure
+        if: failure() && runner.os == 'Windows'
+        shell: bash
+        run: |
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          failed=0
+          for probe in --path-coverage-probe --path-vector-probe --path-vector-batched-probe --path-native-layout-probe --path-native-bindings-probe --path-native-submit-probe --native-path-probe --native-cubic-probe; do
+            echo "Independent current-package process: ${probe}"
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
+              --configuration Release --no-build \
+              -p:ProGpuNativePackageSource="${GITHUB_WORKSPACE}/artifacts/packages-native/Release" \
+              -p:ProGpuNativePackageVersion="${version}" -- "${probe}" || failed=1
+          done
+          exit "${failed}"
 
       - name: Publish and run NativeAOT package consumer
         shell: bash
         run: |
-          version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          version="0.1.0-preview.${GITHUB_RUN_NUMBER}.ci"
+          broad_scene_args=()
+          if [[ "${{ matrix.rid }}" == "win-x64" ]]; then
+            broad_scene_args=(--mil-only)
+          fi
           output="${GITHUB_WORKSPACE}/artifacts/progpu-native/package-consumer-aot/${{ matrix.rid }}"
           dotnet publish tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj \
             --configuration Release \
@@ -438,7 +860,15 @@ jobs:
             executable="${executable}.exe"
           fi
           test -x "${executable}"
-          "${executable}"
+          scenarios="$(./eng/progpu-native-package-scenarios.sh '${{ matrix.suite }}')"
+          if [[ '${{ matrix.suite }}' == all || '${{ matrix.suite }}' == core ]]; then
+            "${executable}" "${broad_scene_args[@]}"
+          fi
+          while IFS= read -r scenario; do
+            [[ -n "${scenario}" ]] || continue
+            echo "Independent NativeAOT package scene: ${scenario}"
+            "${executable}" "${scenario}"
+          done <<< "${scenarios}"
 
   avalonia-compositor-contract:
     name: Avalonia retained compositor contract
@@ -449,6 +879,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Setup .NET
@@ -469,6 +900,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Setup .NET
@@ -496,6 +928,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Setup .NET
@@ -712,6 +1145,61 @@ jobs:
             artifacts/avalonia-native-dawn-windows-adorner
           if-no-files-found: warn
 
+  ordered-hit-query-windows:
+    name: Ordered GPU query parity (${{ matrix.rid }})
+    needs: [build-test, native-cpp]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    env:
+      PROGPU_HIT_TEST_EXECUTION: ordered-stages
+      PROGPU_BACKEND_DIAGNOSTICS: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Download independent original-shader Metal reference
+        uses: actions/download-artifact@v8
+        with:
+          name: progpu-ordered-hit-query-osx-arm64
+          path: artifacts/query-reference
+      - name: Download matching C++ runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: progpu-native-runtime-${{ matrix.rid }}
+          path: artifacts/query-native
+      - name: Compare managed and C++ queries on system WARP and default compiler
+        shell: pwsh
+        run: |
+          dotnet build tests/ProGPU.HitQuery.ContractTests --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Query contract build failed.' }
+          $output = Join-Path $env:GITHUB_WORKSPACE 'tests/ProGPU.HitQuery.ContractTests/bin/Release/net10.0'
+          Copy-Item -LiteralPath "artifacts/query-native/runtimes/${{ matrix.rid }}/native/progpu_native.dll" -Destination $output
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- `
+            --software-adapter --require-fxc --staged-only --product --native-product --sparse --large-capacity --admitted-index `
+            --expected-results artifacts/query-reference/progpu-hit-query-native-reference.bin
+          if ($LASTEXITCODE -ne 0) { throw 'System-WARP query parity failed.' }
+
+      - name: Compare automatic FXC product selection with the independent reference
+        shell: pwsh
+        env:
+          PROGPU_HIT_TEST_EXECUTION: auto
+        run: |
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- `
+            --software-adapter --require-automatic-fxc --staged-only --product --native-product --sparse --large-capacity --admitted-index `
+            --expected-results artifacts/query-reference/progpu-hit-query-native-reference.bin
+          if ($LASTEXITCODE -ne 0) { throw 'Automatic system-FXC query parity failed.' }
+
   build-test:
     name: Build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -734,6 +1222,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Install Linux WebGPU dependencies
@@ -767,6 +1256,80 @@ jobs:
         run: |
           dotnet build src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime ${{ matrix.rid }} --no-restore -p:ContinuousIntegrationBuild=true
           dotnet build src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj --configuration Release --runtime ${{ matrix.rid }} --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Run X11 popup server-state contracts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ./eng/progpu-install-linux-packages.sh xvfb xauth libx11-6
+          xvfb-run -a env PROGPU_NATIVE_X11_POPUP_TEST=1 \
+            dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj \
+              --configuration Release --runtime ${{ matrix.rid }} --no-build \
+              --filter "FullyQualifiedName~NativePopupWindowLinuxTests" \
+              --logger "trx;LogFileName=native-x11-popup.trx" \
+              --results-directory artifacts/native-x11-popup
+
+      - name: Upload X11 popup server-state results
+        if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-x11-popup-${{ matrix.rid }}
+          path: artifacts/native-x11-popup
+          if-no-files-found: warn
+
+      - name: Verify browser indirect command transport
+        run: node --experimental-vm-modules eng/progpu-test-browser-indirect-dispatch.mjs
+
+      - name: Compare ordered GPU query stages with original shader
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PROGPU_HIT_TEST_EXECUTION: ordered-stages
+        run: |
+          git fetch --no-tags --depth=1 origin 20bbf7f1f65d15bc05b6e12e17d635ccaefa7162
+          git show 20bbf7f1f65d15bc05b6e12e17d635ccaefa7162:src/ProGPU.Vector/Shaders/GpuHitTesting.wgsl > "$RUNNER_TEMP/progpu-hit-query-reference.wgsl"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release -- \
+            --product --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --product --sparse \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-sparse-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --product --sparse --large-capacity \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-large-reference.bin"
+
+      - name: Compare Dawn ordered GPU queries with the independent reference
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PROGPU_HIT_TEST_EXECUTION: ordered-stages
+        run: |
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --expected-results "$RUNNER_TEMP/progpu-hit-query-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --sparse --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --expected-results "$RUNNER_TEMP/progpu-hit-query-sparse-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --sparse --large-capacity --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --expected-results "$RUNNER_TEMP/progpu-hit-query-large-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --sparse --large-capacity --admitted-index \
+            --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-native-reference.bin"
+
+      - name: Upload ordered query reference
+        if: runner.os != 'Windows' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-ordered-hit-query-${{ matrix.rid }}
+          path: |
+            ${{ runner.temp }}/progpu-hit-query-reference.wgsl
+            ${{ runner.temp }}/progpu-hit-query-reference.bin
+            ${{ runner.temp }}/progpu-hit-query-sparse-reference.bin
+            ${{ runner.temp }}/progpu-hit-query-large-reference.bin
+            ${{ runner.temp }}/progpu-hit-query-native-reference.bin
+          if-no-files-found: warn
 
       - name: Test
         shell: pwsh
@@ -908,12 +1471,13 @@ jobs:
     name: Pack portable packages
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: native-cpp
+    needs: [native-cpp, dx12-runtime]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
           submodules: recursive
 
       - name: Setup .NET
@@ -928,9 +1492,16 @@ jobs:
           path: artifacts/progpu-native/package
           merge-multiple: true
 
+      - name: Download Windows compiler runtimes
+        uses: actions/download-artifact@v8
+        with:
+          pattern: progpu-dx12-runtime-*
+          path: artifacts/progpu-dx12/package
+          merge-multiple: true
+
       - name: Pack shipping packages
         shell: bash
-        run: PROGPU_PACKAGE_GROUP=portable PROGPU_PACKAGE_VERSION=0.1.0-ci.${{ github.run_number }} ./eng/progpu-pack.sh
+        run: PROGPU_PACKAGE_GROUP=portable PROGPU_PACKAGE_VERSION=0.1.0-preview.${{ github.run_number }}.ci ./eng/progpu-pack.sh
 
       - name: Upload NuGet packages
         uses: actions/upload-artifact@v7
@@ -954,6 +1525,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: recursive
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -982,10 +1554,10 @@ jobs:
         shell: bash
         run: |
           PROGPU_PACKAGE_GROUP=mobile \
-          PROGPU_PACKAGE_VERSION=0.1.0-ci.${{ github.run_number }} \
+          PROGPU_PACKAGE_VERSION=0.1.0-preview.${{ github.run_number }}.ci \
           PROGPU_PACKAGE_OUTPUT=artifacts/packages-mobile/Release \
             ./eng/progpu-pack.sh
-          PROGPU_PACKAGE_VERSION=0.1.0-ci.${{ github.run_number }} \
+          PROGPU_PACKAGE_VERSION=0.1.0-preview.${{ github.run_number }}.ci \
           PROGPU_PACKAGE_OUTPUT=artifacts/packages-mobile/Release \
             ./eng/progpu-verify-native-mobile-package.sh
 

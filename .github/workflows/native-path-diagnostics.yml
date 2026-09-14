@@ -1,0 +1,100 @@
+name: Native path diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_run_id:
+        description: Build run containing the package under investigation
+        required: true
+        type: string
+      probe_set:
+        description: Independent owner query, bounded path comparisons, or full path-stage diagnosis
+        type: choice
+        default: all
+        options: [all, lifetime, atlas, raster, encoder, retirement, fence, owner]
+
+permissions:
+  contents: read
+  actions: read
+
+# This deliberately reuses an earlier package. It is diagnostic evidence only,
+# never an artifact-producing Build or replacement current-head consumer gate.
+jobs:
+  windows-path-stage:
+    name: Windows path-stage diagnosis (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Resolve original package provenance
+        id: package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ inputs.package_run_id }}
+        run: |
+          if ($env:PACKAGE_RUN_ID -notmatch '^[0-9]+$') { throw 'Invalid package run ID.' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:PACKAGE_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve package run.' }
+          if ($run.path -ne '.github/workflows/build.yml' -or $run.status -ne 'completed') {
+            throw 'Select a completed Build run; a failed consumer run is allowed for diagnosis.'
+          }
+          $version = "0.1.0-preview.$($run.run_number).ci"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "run_id=$env:PACKAGE_RUN_ID" >> $env:GITHUB_OUTPUT
+          "Package=$version original-head=$($run.head_sha) run=$($run.html_url) conclusion=$($run.conclusion)"
+      - name: Download original native packages
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.package.outputs.run_id }}
+          name: progpu-native-package
+          path: artifacts/path-diagnostic-packages
+      - name: Execute independent cold path-stage probes
+        shell: pwsh
+        env:
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          PROBE_SET: ${{ inputs.probe_set }}
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE 'artifacts/path-diagnostic-packages'
+          Get-ChildItem -LiteralPath $source -Filter '*.nupkg' | Get-FileHash -Algorithm SHA256 | Format-List
+          dotnet build tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+            --configuration Release "-p:ProGpuNativePackageSource=$source" `
+            "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $failed = $false
+          $probes = if ($env:PROBE_SET -eq 'owner') {
+            @('--native-owner-query-probe')
+          } elseif ($env:PROBE_SET -eq 'fence') {
+            @('--path-native-retire-raster-probe', '--path-native-fence-retire-raster-probe', '--native-path-probe', '--native-path-deferred-retirement-probe')
+          } elseif ($env:PROBE_SET -eq 'retirement') {
+            @('--path-native-release-encoding-probe', '--path-native-retire-raster-probe', '--native-path-probe', '--native-path-deferred-retirement-probe', '--native-cubic-probe')
+          } elseif ($env:PROBE_SET -eq 'encoder') {
+            @('--path-native-submit-probe', '--path-native-release-encoder-probe', '--path-native-release-encoding-probe', '--native-path-probe', '--native-cubic-probe')
+          } elseif ($env:PROBE_SET -eq 'raster') {
+            @('--path-native-submit-probe', '--path-native-raster-binding-probe', '--path-native-raster-zero-probe', '--path-native-raster-probe', '--native-path-probe', '--native-cubic-probe')
+          } elseif ($env:PROBE_SET -eq 'atlas') {
+            @('--path-native-submit-probe', '--path-native-atlas-usage-probe', '--path-native-atlas-view-probe', '--path-native-atlas-probe', '--native-path-probe', '--native-cubic-probe')
+          } elseif ($env:PROBE_SET -eq 'lifetime') {
+            @('--path-native-submit-probe', '--path-native-release-buffers-probe', '--path-native-release-command-probe', '--native-path-probe', '--native-cubic-probe')
+          } else {
+            @('--path-coverage-probe', '--path-vector-probe', '--path-vector-batched-probe', '--path-native-layout-probe', '--path-native-bindings-probe', '--path-native-submit-probe', '--path-native-release-probe', '--native-path-probe', '--native-cubic-probe')
+          }
+          foreach ($probe in $probes) {
+            Write-Output "Independent process: $probe"
+            dotnet run --project tests/ProGPU.Native.PackageConsumer/ProGPU.Native.PackageConsumer.csproj `
+              --configuration Release --no-build "-p:ProGpuNativePackageSource=$source" `
+              "-p:ProGpuNativePackageVersion=$env:PACKAGE_VERSION" -- $probe
+            Write-Output "Probe $probe exit=$LASTEXITCODE"
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { exit 1 }
