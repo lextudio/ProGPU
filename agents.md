@@ -1516,3 +1516,10 @@ Zero-list queries return their topmost owner in summary; list queries return
 owners in ordered records and counters in summary. Assert participation, counts,
 owner identity and primitive index in the correct location. Do not change shader
 semantics or weaken queries to satisfy a fixture that confuses those modes.
+
+The non-Dawn process render guard must remain valid through late client cleanup
+registered before first native use. Preserve recursive and cross-context
+serialization while keeping engine/device/resource teardown explicit. Test both
+concurrent nested entry and an actual process-exit callback; a normal in-process
+scope test cannot detect function-static destructor ordering. Managed rendering
+uses its existing static monitor and has no matching native destructor change.

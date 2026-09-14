@@ -2157,7 +2157,8 @@ bool empty_combined_clips_preserve_original_fill_and_scope() {
                 const auto mask = read_value<progpu_native_scene_layer_vector_mask>(stream, resource.payload_offset);
                 PROGPU_REQUIRE(survives && mask.path_count == 1U && mask.segment_count == 4U && mask.boolean_node_count == 0U);
                 const auto path = read_value<progpu_native_scene_clip_path>(stream, resource.auxiliary_offset);
-                PROGPU_REQUIRE(path.fill_rule == (fill == 0U ? PROGPU_NATIVE_FILL_RULE_EVEN_ODD : PROGPU_NATIVE_FILL_RULE_NON_ZERO));
+                PROGPU_REQUIRE(path.fill_rule == static_cast<std::uint32_t>(
+                    fill == 0U ? PROGPU_NATIVE_FILL_RULE_EVEN_ODD : PROGPU_NATIVE_FILL_RULE_NON_ZERO));
                 found_mask = true;
             }
             if (resource.kind != PROGPU_NATIVE_SCENE_RESOURCE_HIT_TEST_INDEX) continue;

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <new>
 
 namespace progpu::native::webgpu {
 
@@ -74,8 +76,15 @@ private:
 // lock cycle. Dawn and browser providers own independent synchronization.
 #if !defined(PROGPU_NATIVE_DAWN_ABI)
 inline std::recursive_mutex& process_render_mutex() noexcept {
-    static std::recursive_mutex mutex;
-    return mutex;
+    // Client cleanup may have been registered before the first renderer call,
+    // so it can legitimately run after ordinary function-static destruction.
+    // Keep only the synchronization primitive alive through process teardown.
+    // Static byte storage avoids a heap allocation and has no destructor; the
+    // guarded pointer initialization still provides thread-safe construction.
+    // Engine/device/resource ownership is unaffected and must still be released.
+    alignas(std::recursive_mutex) static std::byte storage[sizeof(std::recursive_mutex)];
+    static auto* const mutex = new (storage) std::recursive_mutex;
+    return *mutex;
 }
 #endif
 

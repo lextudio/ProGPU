@@ -1446,6 +1446,18 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME progpu_native_com_tests COMMAND progpu_native_com_tests)
     set_tests_properties(progpu_native_com_tests PROPERTIES TIMEOUT 60)
 
+    find_package(Threads REQUIRED)
+    add_executable(progpu_native_process_synchronization_tests
+        tests/progpu_native_process_synchronization_tests.cpp)
+    target_compile_features(progpu_native_process_synchronization_tests PRIVATE cxx_std_20)
+    target_include_directories(progpu_native_process_synchronization_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Backend")
+    target_link_libraries(progpu_native_process_synchronization_tests PRIVATE Threads::Threads)
+    progpu_native_enable_warnings(progpu_native_process_synchronization_tests)
+    progpu_native_enable_sanitizers(progpu_native_process_synchronization_tests)
+    add_test(NAME progpu_native_process_synchronization_tests COMMAND progpu_native_process_synchronization_tests)
+    set_tests_properties(progpu_native_process_synchronization_tests PROPERTIES TIMEOUT 60)
+
     add_executable(progpu_native_direct2d_header_tests
         tests/progpu_native_direct2d_header_tests.cpp)
     target_compile_features(
