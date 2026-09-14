@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using ProGPU.Backend;
 using ProGPU.Backend.Dawn;
+using ProGPU.Backend.Native;
 using ProGPU.Vector;
 using Silk.NET.WebGPU;
 
@@ -15,6 +16,9 @@ internal static unsafe class Program
     private static void Main(string[] args)
     {
         bool stagedOnly = args.Contains("--staged-only");
+        bool admittedIndex = args.Contains("--admitted-index");
+        if (args.Contains("--native-product") && !admittedIndex)
+            throw new ArgumentException("Native product comparison requires --admitted-index; raw unknown-kind controls are not valid native scene records.");
         bool traceStages = args.Contains("--trace-stages");
         string? expectedPath = Option("--expected-results");
         string? referencePath = Option("--write-reference");
@@ -30,6 +34,9 @@ internal static unsafe class Program
         using var ownedContext = useDawn ? null : new WgpuContext { ForceFallbackAdapter = args.Contains("--software-adapter") };
         var context = dawn?.Context ?? ownedContext!;
         if (ownedContext != null) context.Initialize(null);
+        if (args.Contains("--require-fxc") && context.SelectedDx12ShaderCompiler != WgpuDx12ShaderCompiler.Fxc)
+            throw new InvalidOperationException("This qualification requires the actual FXC compiler; another compiler is not an equivalent pass.");
+        Console.WriteLine($"Query policy: {context.HitTestExecutionPath}; adapter={context.AdapterName}; architecture={RuntimeInformation.ProcessArchitecture}.");
         using var cache = new RenderPipelineCache(context);
         var shader = cache.GetOrCreateShader("HitQueryStages", ShaderResource.Load(typeof(GpuHitTestEngine), "GpuHitTesting.wgsl"));
         var referenceShader = referenceShaderPath == null ? shader :
@@ -47,6 +54,8 @@ internal static unsafe class Program
             new() { P0 = min, P1 = max, SegmentType = 99 },
             new() { P0 = new(5), P1 = new(5), SegmentType = 0 }
         ];
+        if (admittedIndex)
+            pathSegments[6] = new() { P0 = min, P1 = max, SegmentType = 0 };
         // Interleave families at identical depth, reuse owner ids, and exceed a
         // single workgroup. This detects reordering by family and list truncation.
         for (int i = 0; i < 160; i++)
@@ -63,7 +72,8 @@ internal static unsafe class Program
                 6 => GpuHitTestPrimitive.PathFill(owner, min, new(25), 0, 3, i % 2 == 0 ? FillRule.Nonzero : FillRule.EvenOdd, Matrix4x4.Identity),
                 7 => GpuHitTestPrimitive.PathStroke(owner, new(-5), new(25), (uint)(i % 8), 1, 3, 0,
                     (LineGeometryCap)((i / 9) % 4), (LineGeometryCap)((i / 9 + 1) % 4), Matrix4x4.CreateRotationZ(i % 2 == 0 ? 0.1f : 0)),
-                _ => new GpuHitTestPrimitive((GpuHitTestPrimitiveKind)8, owner, min, max, new(0, 0, 20, 20), default, default, new(1, 0, 0, 0), new(0, 1, 0, 0), 0)
+                _ => admittedIndex ? GpuHitTestPrimitive.Bounds(owner, min, max)
+                    : new GpuHitTestPrimitive((GpuHitTestPrimitiveKind)8, owner, min, max, new(0, 0, 20, 20), default, default, new(1, 0, 0, 0), new(0, 1, 0, 0), 0)
             };
             shape = new(shape.Kind, shape.Id, shape.BoundsMin, shape.BoundsMax, shape.Data0, shape.Data1, shape.Data2,
                 shape.InverseTransform0, shape.InverseTransform1, i % 3 == 0 ? 0 : i % 5, shape.Flags);
@@ -74,6 +84,18 @@ internal static unsafe class Program
             shapes.Add(shape);
         }
         bool sparse = args.Contains("--sparse");
+        bool largeCapacity = args.Contains("--large-capacity");
+        int resultSlots = largeCapacity ? 257 : 17;
+        if (largeCapacity)
+        {
+            // More distinct overlapping owners than the public maximum, plus
+            // higher/lower/equal-depth duplicates: exercise a full ordered list,
+            // replacement and rejection, not merely a large empty allocation.
+            for (int i = 0; i < 320; i++)
+                shapes.Add(GpuHitTestPrimitive.Bounds(1000 + i, min, max, zIndex: i % 7));
+            for (int i = 0; i < 320; i++)
+                shapes.Add(GpuHitTestPrimitive.Bounds(1000 + i, min, max, zIndex: i % 3 == 0 ? 9 : i % 3 == 1 ? -1 : i % 7));
+        }
         if (sparse)
         {
             // Retain root-local coverage as well as spatially separated children;
@@ -92,9 +114,29 @@ internal static unsafe class Program
         if (sparse) points = [.. points, new(110), new(310, 410), new(810, 710), new(500, 900)];
         using var productIndex = args.Contains("--product") ? new GpuHitTestDeviceIndex(context, index) : null;
         using var productCache = productIndex == null ? null : new RenderPipelineCache(context);
+        if (args.Contains("--native-product") && useDawn)
+            throw new ArgumentException("The native product probe currently requires the wgpu-native device; use the independent Dawn reference file.");
+        using var nativeProduct = args.Contains("--native-product") ? new NativeCompositor(context, TextureFormat.Rgba8Unorm) : null;
+        if (nativeProduct != null)
+        {
+            // Same packed index contract as GpuPictureNativeSceneCompiler,
+            // installed through the actual C++ scene/index ownership path.
+            byte[] storage = new byte[checked(4096 + index.Primitives.Count * sizeof(GpuHitTestPrimitive) +
+                index.Nodes.Count * sizeof(GpuHitTestNode) + index.PrimitiveIndices.Count * sizeof(uint) +
+                index.PathSegments.Count * sizeof(GpuPathSegment))];
+            var builder = new NativeSceneStreamBuilder(storage, 817, 1, 0, 1);
+            if (!builder.TryAddHitTestIndexResource(1, 1,
+                    MemoryMarshal.Cast<GpuHitTestPrimitive, NativeGpuHitTestPrimitive>(index.PrimitiveSpan),
+                    MemoryMarshal.Cast<GpuHitTestNode, NativeGpuHitTestNode>(index.NodeSpan), index.PrimitiveIndexSpan,
+                    MemoryMarshal.Cast<GpuPathSegment, NativePathSegment>(index.PathSegmentSpan), out _) ||
+                !builder.TryBuild(out var stream))
+                throw new InvalidOperationException("Could not construct native product query index.");
+            nativeProduct.UpdateScene(stream);
+        }
         if (productIndex != null && context.HitTestExecutionPath != GpuHitTestExecutionPreference.OrderedStages)
             throw new ArgumentException("Product-stage comparison requires PROGPU_HIT_TEST_EXECUTION=ordered-stages.");
         int productComparisons = 0;
+        int nativeComparisons = 0;
         int candidateCapacity = Option("--candidate-capacity") is { } candidateValue
             ? int.Parse(candidateValue, CultureInfo.InvariantCulture) : index.PrimitiveIndices.Count;
         if (candidateCapacity < 1 || candidateCapacity > index.PrimitiveIndices.Count)
@@ -114,7 +156,7 @@ internal static unsafe class Program
         using var indices = Buffer<uint>(context, index.PrimitiveIndexSpan);
         using var primitives = Buffer<GpuHitTestPrimitive>(context, index.PrimitiveSpan);
         using var segments = Buffer<GpuPathSegment>(context, index.PathSegmentSpan);
-        using var output = Buffer<GpuHitTestResult>(context, new GpuHitTestResult[17]);
+        using var output = Buffer<GpuHitTestResult>(context, new GpuHitTestResult[resultSlots]);
         using var scratch = new GpuBuffer(context, checked((uint)(32 + candidateCapacity * 8)),
             BufferUsage.Storage | BufferUsage.CopySrc);
         // Storage writes and indirect reads cannot share a compute usage scope.
@@ -141,8 +183,9 @@ internal static unsafe class Program
         {
             int compared = 0;
             int mismatches = 0;
+            int fullCapacityQueries = 0;
             foreach (uint mode in new uint[] { 0, 0x80000000, 0xc0000000 })
-            foreach (uint capacity in new uint[] { 0, 1, 4, 16 })
+            foreach (uint capacity in largeCapacity ? new uint[] { 0, 1, 4, 16, 256 } : new uint[] { 0, 1, 4, 16 })
             foreach (Vector2 point in points)
             {
                 var query = new GpuHitTestQuery {
@@ -154,6 +197,16 @@ internal static unsafe class Program
                 string modeName = mode == 0 ? "point" : mode == 0x80000000 ? "bounds" : "ellipse";
                 byte[]? reference = stagedOnly ? null : Execute(false, modeName);
                 byte[] staged = Execute(true, modeName);
+                if (capacity == 256 && MemoryMarshal.Cast<byte, GpuHitTestResult>(staged)[256].HasHit)
+                    fullCapacityQueries++;
+                if (nativeProduct != null)
+                {
+                    ReadOnlySpan<byte> oracle = expectedResults != null
+                        ? expectedResults.AsSpan(checked(compared * staged.Length), staged.Length)
+                        : reference ?? throw new InvalidOperationException("Native product queries require an independent reference.");
+                    CheckNativeProduct(mode, capacity, point, oracle);
+                    nativeComparisons++;
+                }
                 if (productIndex != null && (capacity != 0 || mode == 0))
                 {
                     ReadOnlySpan<byte> oracle = expectedResults != null
@@ -186,7 +239,9 @@ internal static unsafe class Program
                 if (traceStages) Console.WriteLine($"matched {compared}: {modeName}, capacity={capacity}, point={point}");
             }
             if (mismatches != 0) throw new InvalidOperationException($"{mismatches} ordered queries differed.");
-            if (expectedResults != null && expectedResults.Length != compared * 17 * sizeof(GpuHitTestResult))
+            if (largeCapacity && fullCapacityQueries == 0)
+                throw new InvalidOperationException("Large-capacity fixture never filled all 256 result entries.");
+            if (expectedResults != null && expectedResults.Length != compared * resultSlots * sizeof(GpuHitTestResult))
                 throw new InvalidOperationException("Independent reference has unexpected trailing records.");
             if (referencePath != null)
             {
@@ -195,7 +250,9 @@ internal static unsafe class Program
                 referenceResults.CopyTo(referenceFile);
             }
             Console.WriteLine($"Hit query stages: {compared} complete query records matched byte-for-byte; compiler={context.SelectedDx12ShaderCompiler?.ToString() ?? "not-D3D12"}.");
+            if (largeCapacity) Console.WriteLine($"Full 256-result lists: {fullCapacityQueries}; slots checked per query: {resultSlots}.");
             if (productIndex != null) Console.WriteLine($"Product ordered queries: {productComparisons} public query results matched the reference.");
+            if (nativeProduct != null) Console.WriteLine($"Native product queries: {nativeComparisons} public query results matched the reference.");
         }
         finally
         {
@@ -207,7 +264,7 @@ internal static unsafe class Program
 
         byte[] Execute(bool staged, string modeName)
         {
-            var initial = new GpuHitTestResult[17];
+            var initial = new GpuHitTestResult[resultSlots];
             for (int i = 0; i < initial.Length; i++)
                 initial[i] = new() { Id = -1, PrimitiveIndex = uint.MaxValue, ZIndex = -float.MaxValue };
             output.Write<GpuHitTestResult>(initial);
@@ -262,6 +319,36 @@ internal static unsafe class Program
                     context.Api.CommandEncoderRelease(encoder);
                     var nextEncoderDescriptor = new CommandEncoderDescriptor();
                     encoder = context.Api.DeviceCreateCommandEncoder(context.Device, &nextEncoderDescriptor);
+                }
+            }
+        }
+
+        void CheckNativeProduct(uint mode, uint capacity, Vector2 point, ReadOnlySpan<byte> oracleBytes)
+        {
+            var oracle = MemoryMarshal.Cast<byte, NativeGpuHitTestResult>(oracleBytes);
+            var query = mode == 0 ? NativeGpuHitTestQuery.PointQuery(point, (int)capacity)
+                : mode == 0x80000000u ? NativeGpuHitTestQuery.BoundsQuery(point, point + new Vector2(3), (int)capacity)
+                : NativeGpuHitTestQuery.EllipseQuery(point, point + new Vector2(3), (int)capacity);
+            var token = nativeProduct!.BeginGpuHitTest(query, 817, 1);
+            var actual = new NativeGpuHitTestResult[resultSlots - 1];
+            var sentinel = new NativeGpuHitTestResult { Hit = 42, Id = -1234567 };
+            actual.AsSpan().Fill(sentinel);
+            int count = nativeProduct.WaitGpuHitTest(token, actual, out var summary);
+            int expectedCount = 0;
+            while (expectedCount < capacity && oracle[expectedCount + 1].HasHit) expectedCount++;
+            if (count != expectedCount) throw new InvalidOperationException($"Native product count differs: {count} versus {expectedCount}.");
+            RequireEqual(oracle[0], summary);
+            for (int i = 0; i < actual.Length; i++)
+                RequireEqual(i < count ? oracle[i + 1] : sentinel, actual[i]);
+
+            static void RequireEqual(NativeGpuHitTestResult expected, NativeGpuHitTestResult actual)
+            {
+                var expectedBytes = MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref expected, 1));
+                var actualBytes = MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref actual, 1));
+                if (!expectedBytes.SequenceEqual(actualBytes))
+                {
+                    ReportDifference(expectedBytes, actualBytes);
+                    throw new InvalidOperationException("Native product result differs from the independent GPU reference.");
                 }
             }
         }

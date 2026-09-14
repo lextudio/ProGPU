@@ -1137,6 +1137,51 @@ jobs:
             artifacts/avalonia-native-dawn-windows-adorner
           if-no-files-found: warn
 
+  ordered-hit-query-windows:
+    name: Ordered GPU query parity (${{ matrix.rid }})
+    needs: [build-test, native-cpp]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+    env:
+      PROGPU_HIT_TEST_EXECUTION: ordered-stages
+      PROGPU_BACKEND_DIAGNOSTICS: 1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PROGPU_QUALIFIED_COMMIT }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Download independent original-shader Metal reference
+        uses: actions/download-artifact@v8
+        with:
+          name: progpu-ordered-hit-query-osx-arm64
+          path: artifacts/query-reference
+      - name: Download matching C++ runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: progpu-native-runtime-${{ matrix.rid }}
+          path: artifacts/query-native
+      - name: Compare managed and C++ queries on system WARP and default compiler
+        shell: pwsh
+        run: |
+          dotnet build tests/ProGPU.HitQuery.ContractTests --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Query contract build failed.' }
+          $output = Join-Path $env:GITHUB_WORKSPACE 'tests/ProGPU.HitQuery.ContractTests/bin/Release/net10.0'
+          Copy-Item -LiteralPath "artifacts/query-native/runtimes/${{ matrix.rid }}/native/progpu_native.dll" -Destination $output
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- `
+            --software-adapter --require-fxc --staged-only --product --native-product --sparse --large-capacity --admitted-index `
+            --expected-results artifacts/query-reference/progpu-hit-query-native-reference.bin
+          if ($LASTEXITCODE -ne 0) { throw 'System-WARP query parity failed.' }
+
   build-test:
     name: Build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -1231,6 +1276,9 @@ jobs:
           dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
             --product --sparse \
             --write-reference "$RUNNER_TEMP/progpu-hit-query-sparse-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --product --sparse --large-capacity \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-large-reference.bin"
 
       - name: Compare Dawn ordered GPU queries with the independent reference
         if: runner.os == 'macOS'
@@ -1244,6 +1292,13 @@ jobs:
           dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
             --dawn --product --sparse --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
             --expected-results "$RUNNER_TEMP/progpu-hit-query-sparse-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --sparse --large-capacity --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --expected-results "$RUNNER_TEMP/progpu-hit-query-large-reference.bin"
+          dotnet run --project tests/ProGPU.HitQuery.ContractTests --configuration Release --no-build -- \
+            --dawn --product --sparse --large-capacity --admitted-index \
+            --reference-shader "$RUNNER_TEMP/progpu-hit-query-reference.wgsl" \
+            --write-reference "$RUNNER_TEMP/progpu-hit-query-native-reference.bin"
 
       - name: Upload ordered query reference
         if: runner.os != 'Windows' && always()
@@ -1254,6 +1309,8 @@ jobs:
             ${{ runner.temp }}/progpu-hit-query-reference.wgsl
             ${{ runner.temp }}/progpu-hit-query-reference.bin
             ${{ runner.temp }}/progpu-hit-query-sparse-reference.bin
+            ${{ runner.temp }}/progpu-hit-query-large-reference.bin
+            ${{ runner.temp }}/progpu-hit-query-native-reference.bin
           if-no-files-found: warn
 
       - name: Test

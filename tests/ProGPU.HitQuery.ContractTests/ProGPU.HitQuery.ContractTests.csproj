@@ -10,5 +10,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/ProGPU.Vector/ProGPU.Vector.csproj" />
     <ProjectReference Include="../../src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj" />
+    <ProjectReference Include="../../src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj" />
   </ItemGroup>
 </Project>

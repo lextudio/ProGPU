@@ -1,5 +1,12 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Full-capacity GPU query qualification must actually fill 256 ordered entries,
+retain duplicate/tie order and compare every raw result/counter/unused slot.
+Native scene probes use independently referenced admitted inputs; preserve the
+separate raw unknown-kind controls rather than weakening scene validation.
+Exercise both product readers, including untouched caller tails. Passing ordered
+queries is not automatic-policy or full application/package qualification.
+
 Native glyph raster identity is independent of positioned scene revisions.
 Reuse only owned exact outline/segment bytes, DPI and live atlas generation;
 placement/paint changes still upload current instances. Keep intrinsic byte

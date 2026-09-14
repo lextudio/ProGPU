@@ -282,6 +282,89 @@ This connection changes no font/layout, clip geometry, owner identity, ordering,
 sampling quality or source input policy. It shares original ProGPU traversal and
 predicates; the cross-engine and WebGPU research decisions above remain applicable.
 
+## Full-capacity paired query qualification — 2026-09-14
+
+Acceptance remains **ProGPU.Wpf.ShowcaseApp** pointer/region selection through
+the presented native owner index. This checkpoint closes a missing regression
+fixture, not automatic-selection or application admission.
+
+`--large-capacity` adds 320 distinct overlapping owners and 320 higher, lower
+and equal-depth duplicates to the existing mixed-shape fixture. Combined with
+`--sparse`, it retains root-local references and separated multi-level subtrees.
+The five capacities are 0, 1, 4, 16 and 256, with all **257 output records**
+compared byte-for-byte, including counters, ordering, duplicate retention and
+unused slots. At least one query must actually fill the 256-entry list.
+There are 210 queries; 23 fill the entire list in the qualified reference.
+
+`--admitted-index` constructs a separate native-scene-admissible fixture: its
+otherwise unknown primitive and segment controls are bounds and line records.
+The original raw-shader unknown-kind fixture is unchanged and still runs.
+This is a different input/reference, never normalization of returned output or
+relaxation of native scene validation. `--native-product` requires this input and
+installs it using the existing `GpuPictureNativeSceneCompiler` packed index
+contract and `NativeSceneStreamBuilder`, then executes actual C++ queries.
+Every summary and returned record is compared exactly; caller tail sentinels
+must remain untouched. The existing full package consumer separately retains
+owner-map/generation/repeated-map lifetime coverage.
+
+New coverage shares the original ProGPU fixture, canonical shader and product
+APIs. No production geometry, shader, dispatch preference or result reader has
+changed. Both managed and native product calls are exercised, rather than treating
+the standalone stage dispatcher as a substitute for either implementation.
+Fixture preparation is bounded O(N) host work and O(N + R) host storage; retained
+GPU algorithm and resource complexity are unchanged. Per-query test readbacks
+and comparisons are diagnostics, not an application hot-path implementation.
+
+Evidence:
+
+- Original `20bbf7f1` shader through Dawn Metal versus current ordered shader:
+  all 210 full buffers and 182 managed public queries match, for both raw and
+  native-admissible inputs.
+- Current wgpu-native Metal: 210 complete buffers, 182 managed queries and 210
+  C++ product queries match the independent native-admissible Dawn reference.
+- Windows x64 running in the ARM64 Windows 11 Parallels VM, default FXC and
+  system WARP: the same 210/182/210 comparisons pass, including all 23 full lists.
+  Native DLL comes from CI run `34800231224`, commit `5a4cc291`, SHA-256
+  `4f710c54a3a97b287bd4c4f3ea469120ecdbeeae3984385fc57220745087e9447`.
+  The stock wgpu DLL hash is
+  `4971fce5b4d93fc10b65d01cbcc57f9f35ad1bc479e654737974e4ad2e265be6`.
+  This is an explicitly staged diagnostic graph, not an unchanged NuGet consumer.
+- Native ARM64 in the same VM also passes all 210/182/210 comparisons and 23
+  full lists, with `--require-fxc` checking the selected compiler. Its matching
+  CI native DLL SHA-256 is
+  `574767a342cc5b59b67665e2e27a8ebb0e1f223b377e1264d12b10cc6d09fa12`.
+  The original 168-query sparse fixture also still matches its earlier independent
+  reference, including all 140 managed product queries. Release builds have no
+  warnings/errors; workflow lint and documentation checks pass.
+- Independent native-admissible reference SHA-256:
+  `ba0a01e4d409f5570fbc62f5b8e22334a5facf4a289c0e0af2fb0925ef0071c3`.
+  Raw unknown-kind large reference SHA-256:
+  `e814fa67212ee3dd5f131b8cb785ec3d470fb90196fb4072cdfb1b968f899d39`.
+
+CI preserves the existing default/native/package gates. Linux and Metal add the
+large raw differential; Dawn also emits the independent admitted reference.
+Separate Windows x64/ARM64 jobs consume that exact run's reference and native
+runtime, require actual FXC, and compare both product implementations. These jobs
+do not select DXC, redistribute WARP, waive counters or change process defaults
+outside their explicit ordered-query environment.
+
+The preceding default-path diagnosis remains unresolved: CI run `34800231224`
+completed the ordered package consumers but its default Windows x64 ellipse
+readback reached the job deadline; ARM64 failed after bounds submission. In the
+local VM, a direct six-binding single-rectangle ellipse probe compiled under
+FXC then exited with `0xC0000005`. The identical shader returned correct full
+records on Metal. An isolated one-result insertion specialization still crashed
+and was **not** included in production. This evidence does not establish a
+missing synchronization barrier: the query has one invocation, and the
+[WGSL program-order contract](https://www.w3.org/TR/WGSL/#program-order)
+orders its own memory operations. The precise compiler/runtime fault is not yet
+isolated. VM configuration, system libraries and execution policy were unchanged.
+
+Maximum result-list coverage is not maximum device-buffer/dispatch capacity.
+Final CI, matched latency/residency, native source/package/Showcase qualification,
+and a separately reviewed automatic-selection decision remain required. No
+dependency pins or merges advance on this checkpoint.
+
 ## Research and design decisions
 
 The cross-engine research matrix in
