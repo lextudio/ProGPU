@@ -5,6 +5,15 @@ public interface IPortableWindowStateSource
     bool TryGetPortableWindowState(out PortableWindowState state);
 }
 
+/// <summary>
+/// Source-owned top-level window state updated from a native host move.
+/// Coordinates are desktop logical positions, not framebuffer pixels.
+/// </summary>
+public interface IPortableWindowLocationSink
+{
+    void OnPortableWindowLocationChanged(double left, double top);
+}
+
 public sealed class PortableWindowState
 {
     public bool HasTitle { get; set; }
@@ -48,6 +57,17 @@ public sealed class PortableWindowState
     public bool HasTop { get; set; }
 
     public double Top { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="StartupLocation"/> carries the source window's first-show policy.
+    /// </summary>
+    public bool HasStartupLocation { get; set; }
+
+    /// <summary>
+    /// Source startup location: 0 = manual, 1 = center screen, 2 = center owner.
+    /// Hosts apply this only before the first native show, after final client sizing.
+    /// </summary>
+    public int StartupLocation { get; set; }
 
     public bool HasWindowState { get; set; }
 
