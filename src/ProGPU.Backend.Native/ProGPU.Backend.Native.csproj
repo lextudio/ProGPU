@@ -9,6 +9,8 @@
     <PackageDescription>Typed zero-copy .NET host, native runtimes and C++20 headers with matching ProGPU.Native.Sdk archives for the isolated wgpu-native and provider-resolved Dawn renderers.</PackageDescription>
     <PackageTags>progpu;native;c++;webgpu;renderer;interop</PackageTags>
     <ProGpuNativeRuntimeRoot Condition="'$(ProGpuNativeRuntimeRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\progpu-native\package</ProGpuNativeRuntimeRoot>
+    <!-- Local Windows feed builds intentionally ship only the two Windows RIDs. -->
+    <ProGpuNativePackageWindowsOnly Condition="'$(ProGpuNativePackageWindowsOnly)' == ''">false</ProGpuNativePackageWindowsOnly>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\ProGPU.Native.Sdk\ProGPU.Native.Sdk.csproj" Private="false" />

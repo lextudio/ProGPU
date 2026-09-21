@@ -29,7 +29,13 @@ $Libclang = Join-Path $Root "artifacts/progpu-dx12/libclang/$Rid"
 $env:LIBCLANG_PATH = $Libclang
 $Inputs = Get-Content -Raw (Join-Path $PSScriptRoot 'wgpu-dxc/build-inputs.json') | ConvertFrom-Json
 $Toolchain = "$($Inputs.rustVersion)-$Triple"
-& rustup toolchain install $Toolchain --profile minimal --target $Triple
+$RustupArguments = @('toolchain', 'install', $Toolchain, '--profile', 'minimal', '--target', $Triple)
+if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ine $Architecture) {
+    # Windows x64 emulation can run the target toolchain on ARM64, but rustup
+    # requires this explicit acknowledgement for a non-host installation.
+    $RustupArguments += '--force-non-host'
+}
+& rustup @RustupArguments
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Rust toolchain installation failed.' }
 $Cargo = (& rustup which --toolchain $Toolchain cargo | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Cargo was not found.' }

@@ -11,7 +11,7 @@ cp -R "${repo_root}/eng/fixtures/drawing-extension-package-consumer/." "${consum
 project="${consumer_root}/DrawingExtension.PackageConsumer.csproj"
 export NUGET_PACKAGES="${consumer_root}/packages"
 
-dotnet restore "${project}" --source "${package_output}" --source https://api.nuget.org/v3/index.json \
+dotnet restore "${project}" \
   "-p:ProGpuPackageVersion=${package_version}" --verbosity minimal
 dotnet build "${project}" -c "${configuration}" --no-restore "-p:ProGpuPackageVersion=${package_version}" --verbosity minimal
 arguments=()
