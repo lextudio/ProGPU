@@ -94,7 +94,13 @@ Copy-Item (Join-Path $SourceDir "ffi/webgpu-headers/webgpu.h") $IncludeDir -Forc
 Copy-Item (Join-Path $SourceDir "ffi/wgpu.h") $IncludeDir -Force
 Copy-Item $WgpuDll (Join-Path $RuntimeDir "wgpu_native.dll") -Force
 
-$VsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+$VsWhere = @(
+    (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"),
+    'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if (-not $VsWhere) {
+    throw "Visual Studio Installer's vswhere.exe was not found."
+}
 $VsInstall = (& $VsWhere -latest -products * -requires $ToolComponent -property installationPath | Select-Object -First 1)
 if (-not $VsInstall) {
     throw "Visual Studio C++ build tools were not found."

@@ -32,8 +32,6 @@ common_properties=(
 )
 
 "${dotnet}" restore "${project}" \
-  --source "${package_output}" \
-  --source "https://api.nuget.org/v3/index.json" \
   "${common_properties[@]}" \
   --verbosity minimal
 "${dotnet}" build "${project}" \

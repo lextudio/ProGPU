@@ -150,7 +150,9 @@ option(PROGPU_NATIVE_ENABLE_SANITIZERS
 
 function(progpu_native_enable_warnings target_name)
     if(MSVC)
-        target_compile_options(${target_name} PRIVATE /W4 /WX)
+        # Several native sources deliberately use standard C++ exceptions.  MSVC
+        # otherwise emits C4530, which /WX turns into a build failure.
+        target_compile_options(${target_name} PRIVATE /W4 /WX /EHsc)
     else()
         target_compile_options(${target_name} PRIVATE
             -Wall -Wextra -Wpedantic -Werror)

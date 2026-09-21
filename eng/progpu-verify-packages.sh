@@ -134,16 +134,21 @@ for package_id in "${selected_package_ids[@]}"; do
   fi
 
   if [[ "${package_id}" == "ProGPU.Backend.Native" ]]; then
-    for native_entry in \
-      runtimes/linux-x64/native/libprogpu_native.so \
-      runtimes/linux-arm64/native/libprogpu_native.so \
-      runtimes/osx-x64/native/libprogpu_native.dylib \
-      runtimes/osx-arm64/native/libprogpu_native.dylib \
+    native_entries=(
       runtimes/win-x64/native/progpu_native.dll \
       runtimes/win-x64/native/progpu_native_direct2d.dll \
       runtimes/win-arm64/native/progpu_native.dll \
       runtimes/win-arm64/native/progpu_native_direct2d.dll \
-      build/native/include/progpu_native.h; do
+      build/native/include/progpu_native.h)
+    if [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" != "1" ]]; then
+      native_entries=(
+        runtimes/linux-x64/native/libprogpu_native.so
+        runtimes/linux-arm64/native/libprogpu_native.so
+        runtimes/osx-x64/native/libprogpu_native.dylib
+        runtimes/osx-arm64/native/libprogpu_native.dylib
+        "${native_entries[@]}")
+    fi
+    for native_entry in "${native_entries[@]}"; do
       if ! unzip -Z1 "${package}" | grep -Fx "${native_entry}" >/dev/null; then
         echo "${package_id} is missing ${native_entry}." >&2
         exit 1
