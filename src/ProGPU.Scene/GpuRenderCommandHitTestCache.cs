@@ -2241,7 +2241,23 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
         }
 
         if (requireExact)
+        {
+            // The shared cache turns a failed exact compilation into false for
+            // non-source callers. An exact empty result clips all descendants;
+            // it is not a reason to substitute the path's bounds.
+            var (records, segments) = PathAtlas.CompilePath(
+                clipPath,
+                out _,
+                out _,
+                out _,
+                out _);
+            if (records.Length == 0 || segments.Length == 0)
+            {
+                _clipStack.Push(ClipState.Empty);
+                return;
+            }
             throw new NotSupportedException("Source geometry clip encoding cannot fall back to its bounds.");
+        }
         _clipStack.Push(
             _clipStack.TryPeek(out ClipState inherited)
                 ? inherited.WithBounds(clipMin, clipMax)

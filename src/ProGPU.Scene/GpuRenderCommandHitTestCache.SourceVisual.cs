@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Text;
 using ProGPU.Vector;
 
 namespace ProGPU.Scene;
@@ -132,7 +133,42 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder
             _clipStack.Push(ClipState.Empty);
             return;
         }
-        PushGeometryClip(new RenderCommand { Path = geometry }, transform, requireExact: true);
+        try
+        {
+            PushGeometryClip(new RenderCommand { Path = geometry }, transform, requireExact: true);
+        }
+        catch (NotSupportedException exception)
+        {
+            throw new NotSupportedException(
+                $"Source geometry clipping requires exact encoding. {DescribeGeometry(geometry, transform)}",
+                exception);
+        }
+    }
+
+    private static string DescribeGeometry(PathGeometry geometry, Matrix4x4 transform)
+    {
+        var description = new StringBuilder()
+            .Append("combined=").Append(geometry.IsCombined)
+            .Append(", fillRule=").Append(geometry.FillRule)
+            .Append(", figures=").Append(geometry.Figures.Count)
+            .Append(", transform=").Append(transform);
+
+        for (int figureIndex = 0; figureIndex < geometry.Figures.Count; figureIndex++)
+        {
+            var figure = geometry.Figures[figureIndex];
+            description.Append(", figure[").Append(figureIndex)
+                .Append("]={closed:").Append(figure.IsClosed)
+                .Append(", filled:").Append(figure.IsFilled)
+                .Append(", segments:");
+            for (int segmentIndex = 0; segmentIndex < figure.Segments.Count; segmentIndex++)
+            {
+                if (segmentIndex != 0) description.Append('|');
+                description.Append(figure.Segments[segmentIndex].GetType().Name);
+            }
+            description.Append("}");
+        }
+
+        return description.ToString();
     }
 
     private void CaptureSourceChildren(Visual visual, Matrix4x4 transform, int depth)

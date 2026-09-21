@@ -327,6 +327,45 @@ public sealed class SourceVisualHitTestTests
         Assert.Equal(0, clipped.RenderCalls);
     }
 
+    [Fact]
+    public void EmptyCombinedSourceGeometryClipSuppressesInputWithoutBoundsFallback()
+    {
+        PathGeometry Triangle(Vector2 start, Vector2 second, Vector2 third)
+        {
+            var path = new PathGeometry();
+            var figure = new PathFigure(start, isClosed: true);
+            figure.Segments.Add(new LineSegment(second));
+            figure.Segments.Add(new LineSegment(third));
+            path.Figures.Add(figure);
+            return path;
+        }
+
+        var emptyIntersection = new PathGeometry
+        {
+            IsCombined = true,
+            Op = (int)PathBooleanOperation.Intersect,
+            PathA = Triangle(new Vector2(0, 0), new Vector2(20, 0), new Vector2(0, 20)),
+            PathB = Triangle(new Vector2(20, 20), new Vector2(20, 0), new Vector2(0, 20))
+        };
+        var root = new SourceVisual();
+        var clipped = new SourceVisual { HitTestId = 701, GeometryClip = emptyIntersection };
+        clipped.SourceHitTestCommands.DrawRectangle(
+            new SolidColorBrush(Vector4.One), null, new Rect(0, 0, 20, 20));
+        root.AddChild(clipped);
+        var sibling = new SourceVisual { HitTestId = 702 };
+        sibling.SourceHitTestCommands.DrawRectangle(
+            new SolidColorBrush(Vector4.One), null, new Rect(30, 0, 10, 10));
+        root.AddChild(sibling);
+
+        using var current = WgpuContext.PushCurrent(HeadlessWindow.Shared.Context);
+        using var capture = new GpuRenderCommandHitTestCacheBuilder();
+        capture.AddSourceVisual(root, Matrix4x4.Identity);
+
+        var hit = Assert.Single(capture.BuildIndex().Primitives);
+        Assert.Equal(702, hit.Id);
+        Assert.Equal(0u, hit.ClipSegmentCount);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
