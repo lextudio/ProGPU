@@ -165,7 +165,9 @@ progpu_cad_package_ids=(
   ProGPU.Vector
   ProGPU.Text
   ProGPU.Compute
+  ProGPU.Media
   ProGPU.Scene
+  ProGPU.Media.Scene
   ProGPU.SkiaSharp
   ACadSharp.ProGPU
   ProGPU.CAD
@@ -179,7 +181,9 @@ progpu_cad_package_projects=(
   src/ProGPU.Vector/ProGPU.Vector.csproj
   src/ProGPU.Text/ProGPU.Text.csproj
   src/ProGPU.Compute/ProGPU.Compute.csproj
+  src/ProGPU.Media/ProGPU.Media.csproj
   src/ProGPU.Scene/ProGPU.Scene.csproj
+  src/ProGPU.Media.Scene/ProGPU.Media.Scene.csproj
   src/SkiaSharp/SkiaSharp.csproj
   external/ACadSharp/src/ACadSharp/ACadSharp.csproj
   src/ProGPU.CAD/ProGPU.CAD.csproj
@@ -271,6 +275,64 @@ progpu_drawing_runtime_package_purposes=(
   "Drawing runtime closure: retained compositor scene."
   "Drawing runtime closure: SkiaSharp compatibility surface."
   "Drawing runtime closure: portable System.Drawing.Common implementation."
+)
+
+# Exact local-package closure consumed by OpenDevelop's macOS distribution.
+#
+# This deliberately excludes the Windows-only native/DX packages from the
+# general `portable` group.  Those packages validate native payloads for every
+# desktop RID, which is correct for a cross-platform ProGPU release but makes a
+# macOS-only OpenDevelop package depend on Windows staging that it neither
+# ships nor uses.  Keep this list topologically ordered: it must be sufficient
+# for a clean NuGet restore using only the freshly built local feed.
+progpu_opendevelop_macos_package_ids=(
+  ProGPU.Backend
+  ProGPU.Text.Shaping
+  ProGPU.Transpiler
+  ProGPU.WinRT
+  ProGPU.Vector
+  ProGPU.Text
+  ProGPU.Compute
+  ProGPU.Media
+  ProGPU.Scene
+  ProGPU.Media.Scene
+  ProGPU.SkiaSharp
+  ProGPU.System.Drawing.Common
+  ProGPU.Layout
+  ProGPU.Virtualization
+  ProGPU.WinUI
+  ProGPU.Xaml
+  ProGPU.Xaml.Roslyn
+  ProGPU.Xaml.SourceGenerator
+  ProGPU.Xaml.Workspaces
+  ProGPU.WinUI.Themes.Fluent
+  ProGPU.WinUI.Designer
+  LibreWPF.Interop
+)
+
+progpu_opendevelop_macos_package_projects=(
+  src/ProGPU.Backend/ProGPU.Backend.csproj
+  src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
+  src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
+  src/ProGPU.WinRT/ProGPU.WinRT.csproj
+  src/ProGPU.Vector/ProGPU.Vector.csproj
+  src/ProGPU.Text/ProGPU.Text.csproj
+  src/ProGPU.Compute/ProGPU.Compute.csproj
+  src/ProGPU.Media/ProGPU.Media.csproj
+  src/ProGPU.Scene/ProGPU.Scene.csproj
+  src/ProGPU.Media.Scene/ProGPU.Media.Scene.csproj
+  src/SkiaSharp/SkiaSharp.csproj
+  src/System.Drawing.Common/System.Drawing.Common.csproj
+  src/ProGPU.Layout/ProGPU.Layout.csproj
+  src/ProGPU.Virtualization/ProGPU.Virtualization.csproj
+  src/ProGPU.WinUI/ProGPU.WinUI.csproj
+  src/ProGPU.Xaml/ProGPU.Xaml.csproj
+  src/ProGPU.Xaml.Roslyn/ProGPU.Xaml.Roslyn.csproj
+  src/ProGPU.Xaml.SourceGenerator/ProGPU.Xaml.SourceGenerator.csproj
+  src/ProGPU.Xaml.Workspaces/ProGPU.Xaml.Workspaces.csproj
+  src/ProGPU.WinUI.Themes.Fluent/ProGPU.WinUI.Themes.Fluent.csproj
+  src/ProGPU.WinUI.Designer/ProGPU.WinUI.Designer.csproj
+  src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj
 )
 
 progpu_mobile_package_ids=(
