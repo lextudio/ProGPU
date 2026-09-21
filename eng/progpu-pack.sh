@@ -102,6 +102,11 @@ for index in "${!selected_package_ids[@]}"; do
       -p:GeneratePackageOnBuild=false
     )
   fi
+  if [[ "${package_id}" == "ProGPU.Backend.Native" && "${package_group}" == "opendevelop-macos" ]]; then
+    # The macOS release feed needs the managed/native backend package, while
+    # Windows-only Direct2D staging is intentionally not part of this lane.
+    pack_arguments+=(-p:ProGpuNativeSkipRuntimeValidation=true)
+  fi
 
   "${dotnet}" pack "${repo_root}/${project}" "${pack_arguments[@]}"
 

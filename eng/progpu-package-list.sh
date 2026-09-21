@@ -287,6 +287,7 @@ progpu_drawing_runtime_package_purposes=(
 # for a clean NuGet restore using only the freshly built local feed.
 progpu_opendevelop_macos_package_ids=(
   ProGPU.Backend
+  ProGPU.Backend.Native
   ProGPU.Text.Shaping
   ProGPU.Transpiler
   ProGPU.WinRT
@@ -312,6 +313,7 @@ progpu_opendevelop_macos_package_ids=(
 
 progpu_opendevelop_macos_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
+  src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
   src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
   src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
   src/ProGPU.WinRT/ProGPU.WinRT.csproj
