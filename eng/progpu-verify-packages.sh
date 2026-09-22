@@ -140,6 +140,13 @@ for package_id in "${selected_package_ids[@]}"; do
       runtimes/win-arm64/native/progpu_native.dll \
       runtimes/win-arm64/native/progpu_native_direct2d.dll \
       build/native/include/progpu_native.h)
+    if [[ "${package_group}" == "opendevelop-macos" ]]; then
+      # Matches progpu-pack.sh: the macOS release lane intentionally omits Windows-only Direct2D.
+      native_entries=(
+        runtimes/win-x64/native/progpu_native.dll \
+        runtimes/win-arm64/native/progpu_native.dll \
+        build/native/include/progpu_native.h)
+    fi
     if [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" != "1" ]]; then
       native_entries=(
         runtimes/linux-x64/native/libprogpu_native.so
