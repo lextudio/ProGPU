@@ -62,10 +62,26 @@ for index in "${!selected_package_ids[@]}"; do
     "${package_output}/${package_id}.${package_version}.nupkg" \
     "${package_output}/${package_id}.${package_version}.snupkg"
 
+  # Pin AnyCPU rather than relying on the default. Every package here carries its managed
+  # assembly in a RID-NEUTRAL lib/<tfm> folder and ships no runtimes/<rid> tree at all, so an
+  # architecture-stamped assembly has no correct copy to fall back to: it loads on exactly one
+  # architecture and fails everywhere else with "Could not load file or assembly 'X' ... The
+  # system cannot find the file specified" - naming a file that is sitting in the output folder,
+  # because the CLR does not JIT around a wrong-architecture managed assembly.
+  #
+  # A clean `dotnet pack` already produces AnyCPU; this is about what happens when it is NOT
+  # clean. Every project here also has bin/x64 and bin/ARM64 outputs from the LibreWPF graph
+  # builds, and an ambient Platform/PlatformTarget - inherited from a parent build, an exported
+  # variable, or a nested invocation - silently redirects pack to one of those. That is how
+  # ProGPU.DirectX shipped arm64 and seven others shipped x64 in the same feed, while
+  # ProGPU.Backend in the same run was correct. PlatformTarget is the one that actually stamps
+  # the PE machine field; Platform is set too so the output path cannot drift either.
   pack_arguments=(
     --configuration "${configuration}" \
     --output "${package_output}" \
     --verbosity minimal \
+    -p:Platform=AnyCPU \
+    -p:PlatformTarget=AnyCPU \
     -p:ContinuousIntegrationBuild=true \
     -p:Version="${package_version}" \
     -p:PackageVersion="${package_version}"

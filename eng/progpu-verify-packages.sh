@@ -199,4 +199,41 @@ while IFS= read -r -d '' artifact; do
   fi
 done < <(find "${package_output}" -maxdepth 1 -type f \( -name "*.${package_version}.nupkg" -o -name "*.${package_version}.snupkg" \) -print0)
 
+# Every managed assembly in lib/<tfm> must be AnyCPU. These packages ship no runtimes/<rid> tree,
+# so an architecture-stamped assembly has no correct copy to fall back to: it fails to load on
+# every other architecture, reported as "Could not load file or assembly 'X' ... The system cannot
+# find the file specified" for a file that is present, because the CLR does not JIT around a
+# wrong-architecture managed assembly. Pack pins AnyCPU, but an ambient Platform inherited from a
+# parent build has defeated that before - ProGPU.DirectX shipped arm64 and seven others x64 in one
+# feed - and the symptom only surfaces in a consumer on the other architecture, long afterwards.
+# Fail here, where the cause is still visible.
+arch_scratch="$(mktemp -d)"
+trap 'rm -rf "${arch_scratch}"' EXIT
+arch_offenders=0
+for index in "${!selected_package_ids[@]}"; do
+  package_id="${selected_package_ids[$index]}"
+  package="${package_output}/${package_id}.${package_version}.nupkg"
+  [[ -f "${package}" ]] || continue
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    probe="${arch_scratch}/probe.dll"
+    unzip -p "${package}" "${entry}" > "${probe}" 2>/dev/null || continue
+    [[ -s "${probe}" ]] || continue
+    pe_offset="$(od -An -tu4 -j 60 -N 4 "${probe}" 2>/dev/null | tr -d ' ')"
+    [[ "${pe_offset}" =~ ^[0-9]+$ ]] || continue
+    machine="$(od -An -tx2 -j $((pe_offset + 4)) -N 2 "${probe}" 2>/dev/null | tr -d ' ')"
+    # 0x014c is both AnyCPU and x86, and is the only acceptable value in a RID-neutral folder.
+    if [[ -n "${machine}" && "${machine}" != "014c" ]]; then
+      echo "${package_id}: ${entry} is architecture-stamped (machine 0x${machine}); lib/ must be AnyCPU." >&2
+      arch_offenders=$((arch_offenders + 1))
+    fi
+  done < <(unzip -Z1 "${package}" 2>/dev/null | grep -E '^lib/[^/]+/.*\.dll$' || true)
+done
+if [[ "${arch_offenders}" -gt 0 ]]; then
+  echo "${arch_offenders} RID-neutral assemblies are architecture-stamped. Pack from a clean" >&2
+  echo "environment with no inherited Platform/PlatformTarget, or remove the projects' bin/x64" >&2
+  echo "and bin/ARM64 outputs first." >&2
+  exit 1
+fi
+
 echo "Verified ${#selected_package_ids[@]} ProGPU ${package_group} packages and symbol packages for ${package_version}."
