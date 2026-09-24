@@ -31,6 +31,19 @@ public class Bitmap : Image, IProGpuContextTextureLeaseSource
     private TextureLifetime? _textureLifetime;
     private readonly DrawingContext _recordedContext = new();
     private readonly object _textureLifetimeLock = new();
+
+    // Bitmaps currently backed by a GPU texture. A texture is bound to the context current when it
+    // was materialized - often a window's context - and that context can be disposed while the
+    // Bitmap lives on (a cached icon outliving the first of many transient forms). Once the context
+    // is gone its textures cannot be read back, so the pixels are snapshotted to the CPU while the
+    // device is still alive and the texture is recreated on demand in whatever context needs it.
+    private static readonly List<WeakReference<Bitmap>> s_textureBackedBitmaps = [];
+    private static int s_textureBackedRegistrationsSincePrune;
+
+    static Bitmap()
+    {
+        WgpuContext.Disposing += OnWgpuContextDisposing;
+    }
     private int _width;
     private int _height;
     private PixelFormat _pixelFormat = PixelFormat.Format32bppArgb;
@@ -686,7 +699,74 @@ public class Bitmap : Image, IProGpuContextTextureLeaseSource
         texture.WritePixels(pixels);
         texture.AlphaMode = _cpuAlphaMode;
         _textureLifetime = new TextureLifetime(texture);
+        RegisterTextureBackedBitmap(this);
         return texture;
+    }
+
+    private static void RegisterTextureBackedBitmap(Bitmap bitmap)
+    {
+        lock (s_textureBackedBitmaps)
+        {
+            if (++s_textureBackedRegistrationsSincePrune >= 256)
+            {
+                s_textureBackedRegistrationsSincePrune = 0;
+                s_textureBackedBitmaps.RemoveAll(static entry => !entry.TryGetTarget(out _));
+            }
+
+            s_textureBackedBitmaps.Add(new WeakReference<Bitmap>(bitmap));
+        }
+    }
+
+    private static void OnWgpuContextDisposing(WgpuContext context)
+    {
+        List<Bitmap> affected = [];
+        lock (s_textureBackedBitmaps)
+        {
+            for (int i = s_textureBackedBitmaps.Count - 1; i >= 0; i--)
+            {
+                if (!s_textureBackedBitmaps[i].TryGetTarget(out Bitmap? bitmap))
+                {
+                    s_textureBackedBitmaps.RemoveAt(i);
+                    continue;
+                }
+
+                affected.Add(bitmap);
+            }
+        }
+
+        foreach (Bitmap bitmap in affected)
+        {
+            bitmap.DetachFromDisposingContext(context);
+        }
+    }
+
+    /// <summary>Keeps this bitmap's pixels when <paramref name="context"/>, which owns its texture,
+    /// is disposed: flush pending drawing, snapshot the texture to the CPU and retire it.</summary>
+    private void DetachFromDisposingContext(WgpuContext context)
+    {
+        lock (_textureLifetimeLock)
+        {
+            if (_isDisposed
+                || _textureLifetime is not { Texture.IsDisposed: false } current
+                || !ReferenceEquals(current.Texture.Context, context))
+            {
+                return;
+            }
+
+            try
+            {
+                FlushCore(requiredContext: null);
+                SnapshotTexturePixelsCore(current.Texture);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+            {
+                // A device already lost cannot be read back; the bitmap keeps whatever CPU pixels
+                // it has rather than failing the context's disposal.
+            }
+
+            RetireTextureLifetime(current);
+            _textureLifetime = null;
+        }
     }
 
     private byte[] GetOrCreateCpuPixelsCore()
