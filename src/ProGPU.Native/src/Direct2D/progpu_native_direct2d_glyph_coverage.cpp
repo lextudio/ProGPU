@@ -476,7 +476,8 @@ com::result prepare_original_path_coverage(std::span<const progpu_native_path_se
                 while(h>1.-t||!fits(t,h)){h*=.5;if(h<1./1048576.)return com::false_result;}
                 t+=h;const double u=1.-t;
                 const auto next=source_curve_point(source_weighted_points(p,{u*u*u,3.*u*u*t,3.*u*t*t,t*t*t}));
-                if(!append(previous,next))return com::false_result;previous=next;
+                if (!append(previous, next)) return com::false_result;
+                previous = next;
             }
         }
         if(open||path.min_x>=path.max_x||path.min_y>=path.max_y||

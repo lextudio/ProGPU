@@ -1799,11 +1799,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         # CTest process budget includes their cumulative cold pipeline work.
         set(_progpu_native_direct2d_webgpu_test_timeout 180)
         if(WIN32)
-            # Cold D3D12 pipeline compilation exceeds five minutes on both
-            # Windows ARM64 WARP CI and the Parallels validation adapter. Keep
-            # the full graphics matrix and its assertions, with a bounded
-            # allowance for compilation rather than skipping slow adapters.
-            set(_progpu_native_direct2d_webgpu_test_timeout 900)
+            # The expanded original glyph/shader matrix reaches its final
+            # Direct2D/stroke families after 832 seconds on hosted ARM64 WARP.
+            # Bound the complete aggregate at twenty minutes, including cold
+            # D3D12 compilation; every frame deadline and assertion is unchanged.
+            # This process allowance is not a rendering-performance contract.
+            set(_progpu_native_direct2d_webgpu_test_timeout 1200)
         endif()
         set_tests_properties(
             progpu_native_direct2d_webgpu_tests PROPERTIES

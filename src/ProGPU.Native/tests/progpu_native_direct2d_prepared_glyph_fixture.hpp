@@ -7,6 +7,7 @@
 #include "progpu_native_hint_fault_fixture.hpp"
 #include "progpu_native_direct2d_source_coverage_reference.hpp"
 #include "progpu_native_direct2d_original_glyph_reference.hpp"
+#include <cstdio>
 
 namespace progpu::native::direct2d::tests {
 
@@ -391,6 +392,32 @@ void verify_prepared_glyph_coverage_pixels(Render render, Require require)
         }
         const auto first = render(retained, retained_header), repeated = render(retained, retained_header);
         const auto& original = half_opacity ? original_layer : original_shear;
+        std::uint64_t source_hash = 14695981039346656037ULL;
+        for (const auto byte : retained) {
+            source_hash ^= std::to_integer<std::uint8_t>(byte);
+            source_hash *= 1099511628211ULL;
+        }
+        std::fprintf(stderr, "Original sheared coverage: half=%u reverse=%u source=%016llx bytes=%zu\n",
+            unsigned(half_opacity), unsigned(reverse_contours),
+            static_cast<unsigned long long>(source_hash), retained.size());
+        const auto diagnose = [&](const auto& actual, const char* pass) {
+            std::size_t differences = 0U;
+            for (std::size_t offset = 0U; offset < std::min(actual.size(), original.size()); ++offset) {
+                if (actual[offset] == original[offset]) continue;
+                if (differences < 16U) {
+                    std::fprintf(stderr, "Original sheared coverage %s: pixel=(%zu,%zu) channel=%zu actual=%u expected=%u\n",
+                        pass, (offset / 4U) % 64U, offset / (64U * 4U), offset % 4U,
+                        unsigned(actual[offset]), unsigned(original[offset]));
+                }
+                ++differences;
+            }
+            if (differences != 0U || actual.size() != original.size()) {
+                std::fprintf(stderr, "Original sheared coverage %s: differences=%zu actualBytes=%zu expectedBytes=%zu\n",
+                    pass, differences, actual.size(), original.size());
+            }
+        };
+        diagnose(first, "cold");
+        diagnose(repeated, "warm");
         require(first == original && repeated == original,
             "both windings, opacity layers and cold/warm frames retain every original sheared source pixel");
     }
