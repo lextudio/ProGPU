@@ -2487,7 +2487,9 @@ endif()
 
 if(NOT EMSCRIPTEN)
     if(TARGET progpu_native_edit_icu)
-        install(TARGETS progpu_native_edit_icu ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+        # The receipt owns these exact archived bytes. TARGETS installation
+        # reruns ranlib on Apple and changes the archive-index timestamp.
+        install(FILES "$<TARGET_FILE:progpu_native_edit_icu>" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
         install(FILES "$<TARGET_FILE_DIR:progpu_native_edit_icu>/progpu-native-edit-word-dependency.json"
             DESTINATION "${CMAKE_INSTALL_LIBDIR}")
         install(FILES "${PROGPU_NATIVE_EDIT_WORD_ICU_NOTICES}"

@@ -628,6 +628,13 @@ can require them explicitly with `ProGpuNativeRequireEditWordIcu=true`. Both
 producer workflow opt-in and the existing full six-RID stock/Dawn package gates
 remain necessary; these hooks do not themselves qualify or stage a release.
 
+Regular CMake installation copies the already archived ICU file byte-for-byte,
+as it does the prepared font dependency. Installing it as an archive target
+caused Apple's install-time `ranlib` to rewrite its index timestamp, invalidating
+the exact producer receipt despite unchanged object data. The SDK retains the
+original archive hash and all identity checks; installation must not reindex
+the file or rewrite the receipt to bless a changed payload.
+
 The dependency helper's 19 CPU-only tests pass using synthetic archives, not a
 real ICU build. They cover all six actual object-format/RID identities, modified
 source/header/data/notices, added include inputs, changed configured source paths,
