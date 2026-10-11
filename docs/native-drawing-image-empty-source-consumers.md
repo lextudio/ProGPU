@@ -16,7 +16,13 @@ bounds cannot overwrite an active empty witness.
 
 A real native cache-sampler scene contains the DrawingImage in the cached
 visual's render-data. Its independently authored white rectangle supplies the
-nonempty cache bounds. The known-empty drawing stays childless and has no
+nonempty cache bounds. The shader receiver has a separate original white
+rectangle and supplies its own positive bounds. Compilation supplies an explicit
+unit-DPI physical frame, with a fresh request serial for each independent
+compile and one shared serial for its native size/copy calls. Missing receiver
+bounds and the legacy context-free compile overload remain rejected. These
+receiver inputs never supply bounds for the sampled DrawingImage.
+The known-empty drawing stays childless and has no
 fabricated content extent. Cases retain its deletion edge, update its generation
 without paint, update the selected cache, reject a late failing transaction and
 an uninitialized candidate, preserve complete compiled bytes on rejection, reject
@@ -30,7 +36,10 @@ claim original Microsoft behavior for this private ownership API. Native raw,
 provider pixel, actual-source reference and downstream application controls
 remain separate required gates.
 
-Status: source authored only. No build, syntax check, test, verifier, probe,
-CI dispatch, native/GPU execution or VM action was performed for this change.
-An exact complete successful producer Build and final source/package execution
-remain required before runtime qualification or dependency staging.
+Status: the complete ownership fixture, including both missing-frame controls,
+passes in the source-referenced .NET consumer through both real local osx-arm64
+native libraries. The broader local consumer reaches the independent hinted-font
+controls, which require the optional isolated font dependency absent from that
+local build. This is not source-independent package or pixel qualification.
+An exact complete successful producer Build and final packaged JIT/NativeAOT
+execution remain required before dependency staging or release.

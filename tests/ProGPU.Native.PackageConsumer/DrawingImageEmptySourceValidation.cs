@@ -87,6 +87,27 @@ internal static class DrawingImageEmptySourceValidation
     private static void ValidateRetainedCacheClosure(NativeMilBackend backend)
     {
         using var channel = new NativeMilChannel(backend);
+        ulong requestSerial = 0;
+        NativeMilCompiledScene Compile()
+        {
+            // Each independent compile has a fresh request identity. The two
+            // native sizing/copy calls within CompileScene share that identity.
+            var request = new NativeMilSceneBuildRequest(Target, 0xD1E0, 1,
+                MonotonicTimeNanoseconds: 0, RequestSerial: ++requestSerial,
+                DpiScaleX: 1, DpiScaleY: 1);
+            NativeMilStatefulCompiledScene scene = channel.CompileScene(request);
+            Check(scene.BuildResult.RequestSerial == request.RequestSerial && scene.Stream.Length != 0,
+                "native compiler did not publish the requested physical frame");
+            return new NativeMilCompiledScene(scene.Stream, scene.Metrics);
+        }
+
+        void CheckUnchangedScene(NativeMilCompiledScene before)
+        {
+            NativeMilCompiledScene after = Compile();
+            Check(after.Metrics == before.Metrics && after.Stream.AsSpan().SequenceEqual(before.Stream),
+                "unchanged or rejected candidate changed the complete native scene");
+        }
+
         channel.Apply(CreateCacheScene().WrittenSpan);
         // These are explicit CPU fixture inputs, not inferred device limits or
         // a host policy claim. There is no device creation in this consumer.
@@ -95,15 +116,22 @@ internal static class DrawingImageEmptySourceValidation
         // The white rectangle really supplies these nonempty source bounds;
         // the distinct DrawingImage below supplies no source geometry.
         channel.SetVisualCacheBounds(CacheVisual, new NativeMilRect(0, 0, 8, 8));
-        NativeMilCompiledScene nullScene = Compile(channel);
+        // The shader receiver has its own original white rectangle. Its input
+        // frame is independent of the sampled cache and cannot be inferred
+        // from that cache's bounds, even while the DrawingImage is null.
+        Reject(() => Compile(), NativeMilStatus.UnsupportedCommand);
+        channel.SetVisualCacheBounds(Root, new NativeMilRect(0, 0, 8, 8));
+        // Bounds alone do not provide the original physical capture basis.
+        Reject(() => channel.CompileScene(Target, 0xD1E0, 1), NativeMilStatus.UnsupportedCommand);
+        NativeMilCompiledScene nullScene = Compile();
         byte[] originalNullBytes = nullScene.Stream.ToArray();
 
         channel.SetDrawingImageEmptySource(Image, EmptyDrawing);
-        NativeMilCompiledScene emptyScene = Compile(channel);
+        NativeMilCompiledScene emptyScene = Compile();
         byte[] originalEmptyBytes = emptyScene.Stream.ToArray();
         Check(!emptyScene.Stream.AsSpan().SequenceEqual(nullScene.Stream),
             "known-empty owner did not participate in retained cache identity");
-        CheckUnchangedScene(channel, emptyScene);
+        CheckUnchangedScene(emptyScene);
 
         ulong imageGeneration = channel.GetResourceGeneration(Image);
         ulong drawingGeneration = channel.GetResourceGeneration(EmptyDrawing);
@@ -119,45 +147,45 @@ internal static class DrawingImageEmptySourceValidation
             "late failed candidate partially published a cache/source revision");
         Reject(() => channel.SetDrawingImageEmptySource(Image, MissingDrawing), NativeMilStatus.InvalidHandle);
         Check(channel.GetResourceGeneration(Image) == imageGeneration, "failed witness candidate replaced prior ownership");
-        CheckUnchangedScene(channel, emptyScene);
+        CheckUnchangedScene(emptyScene);
 
         // A nonpainting drawing update must still revise the cache closure.
         update.Clear();
         update.SetDrawingGroup(EmptyDrawing, new NativeMilDrawingGroup(Opacity: 0.5), []);
         channel.Apply(update.WrittenSpan);
-        NativeMilCompiledScene revisedEmpty = Compile(channel);
+        NativeMilCompiledScene revisedEmpty = Compile();
         Check(channel.GetResourceGeneration(Image) == imageGeneration &&
             channel.GetResourceGeneration(EmptyDrawing) != drawingGeneration &&
             !revisedEmpty.Stream.AsSpan().SequenceEqual(emptyScene.Stream),
             "empty child generation was hidden behind canonical drawing zero");
-        CheckUnchangedScene(channel, revisedEmpty);
+        CheckUnchangedScene(revisedEmpty);
 
         update.Clear();
         update.SetBitmapCache(Cache, new NativeMilBitmapCache(RenderAtScale: 2));
         channel.Apply(update.WrittenSpan);
-        NativeMilCompiledScene resized = Compile(channel);
+        NativeMilCompiledScene resized = Compile();
         Check(channel.GetResourceGeneration(Cache) != cacheGeneration &&
             !resized.Stream.AsSpan().SequenceEqual(revisedEmpty.Stream),
             "selected cache revision was omitted from retained compilation");
-        CheckUnchangedScene(channel, resized);
+        CheckUnchangedScene(resized);
 
         update.Clear();
         update.SetDrawingGroup(EmptyDrawing, new NativeMilDrawingGroup(Opacity: 1), [EmptyDrawing]);
         Reject(() => channel.Apply(update.WrittenSpan), NativeMilStatus.InvalidGraph);
-        CheckUnchangedScene(channel, resized);
+        CheckUnchangedScene(resized);
 
         // Initialized typed video is deliberately unsupported by this shader
         // capture family. Empty paint must not bypass descendant preflight.
         update.Clear();
         update.SetDrawingGroup(EmptyDrawing, new NativeMilDrawingGroup(Opacity: 0), [Video]);
         channel.Apply(update.WrittenSpan);
-        Reject(() => Compile(channel), NativeMilStatus.UnsupportedCommand);
+        Reject(() => Compile(), NativeMilStatus.UnsupportedCommand);
         Check(emptyScene.Stream.AsSpan().SequenceEqual(originalEmptyBytes),
             "failed scene compilation mutated an already published snapshot");
         update.Clear();
         update.SetDrawingGroup(EmptyDrawing, new NativeMilDrawingGroup(Opacity: 1), []);
         channel.Apply(update.WrittenSpan);
-        _ = Compile(channel);
+        _ = Compile();
 
         // Refill through canonical publication, then return to the exact
         // source-known empty witness. The positive pixels stay native-owned;
@@ -166,24 +194,24 @@ internal static class DrawingImageEmptySourceValidation
         update.SetDrawingImage(Image, PositiveDrawing);
         channel.Apply(update.WrittenSpan);
         channel.SetDrawingImageBounds(Image, new NativeMilRect(0, 0, 4, 4));
-        NativeMilCompiledScene positive = Compile(channel);
+        NativeMilCompiledScene positive = Compile();
         Reject(() => channel.SetDrawingImageEmptySource(Image, EmptyDrawing), NativeMilStatus.InvalidArgument);
-        CheckUnchangedScene(channel, positive);
+        CheckUnchangedScene(positive);
         update.Clear();
         update.SetDrawingImage(Image, 0);
         channel.Apply(update.WrittenSpan);
         channel.SetDrawingImageEmptySource(Image, EmptyDrawing);
-        NativeMilCompiledScene restored = Compile(channel);
+        NativeMilCompiledScene restored = Compile();
         Check(!restored.Stream.AsSpan().SequenceEqual(positive.Stream), "positive-to-empty transition reused stale scene");
         Reject(() => channel.SetDrawingImageBounds(Image, new NativeMilRect(0, 0, 4, 4)),
             NativeMilStatus.InvalidArgument);
-        CheckUnchangedScene(channel, restored);
+        CheckUnchangedScene(restored);
 
         update.Clear();
         update.SetDrawingImage(Image, 0);
         update.DeleteResource(EmptyDrawing, NativeMilResourceType.DrawingGroup);
         channel.Apply(update.WrittenSpan);
-        _ = Compile(channel);
+        _ = Compile();
         Check(channel.ResourceCount == count - 1, "cleared witness kept a dead drawing owner");
         channel.Dispose();
         Check(nullScene.Stream.AsSpan().SequenceEqual(originalNullBytes) &&
@@ -254,20 +282,6 @@ internal static class DrawingImageEmptySourceValidation
         for (int i = 0; i < words.Length; i++)
             BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(i * sizeof(uint)), words[i]);
         return bytes;
-    }
-
-    private static NativeMilCompiledScene Compile(NativeMilChannel channel)
-    {
-        NativeMilCompiledScene scene = channel.CompileScene(Target, 0xD1E0, 1);
-        Check(scene.Stream.Length != 0, "native compiler published an empty stream");
-        return scene;
-    }
-
-    private static void CheckUnchangedScene(NativeMilChannel channel, NativeMilCompiledScene before)
-    {
-        NativeMilCompiledScene after = Compile(channel);
-        Check(after.Metrics == before.Metrics && after.Stream.AsSpan().SequenceEqual(before.Stream),
-            "unchanged or rejected candidate changed the complete native scene");
     }
 
     private static void Reject(Action action, NativeMilStatus expected)
