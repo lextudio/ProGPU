@@ -169,8 +169,8 @@ bool semantic_scene_builder_source_coverage_is_owned_and_atomic() {
         command.payload_size != sizeof(progpu_native_scene_draw_brushes) + sizeof(brush) + sizeof(frame) ||
         std::memcmp(bytes.data() + frame_offset, &original_frame, sizeof(frame)) != 0 ||
         std::memcmp(bytes.data() + resource.auxiliary_offset, original_vertices.data(), sizeof(vertices)) != 0) return false;
-    std::vector<std::byte> unaligned(bytes.size() + 1U);
-    std::memcpy(unaligned.data() + 1U, bytes.data(), bytes.size());
+    std::vector<std::byte> unaligned(1U);
+    unaligned.insert(unaligned.end(), bytes.begin(), bytes.end());
     if (scene::validate(unaligned.data() + 1U, bytes.size()).status != PROGPU_NATIVE_STATUS_SUCCESS) return false;
     for (unsigned variant = 0U; variant < 16U; ++variant) {
         frame = original_frame; vertices = original_vertices; mesh = original_mesh;
@@ -244,7 +244,8 @@ bool semantic_scene_builder_source_paths_are_owned_and_atomic() {
     if(command.kind!=PROGPU_NATIVE_SCENE_COMMAND_DRAW_SOURCE_PATH||
         std::memcmp(bytes.data()+frame_offset,&original_frame,sizeof(frame))||
         std::memcmp(bytes.data()+resource.auxiliary_offset,original_segments.data(),sizeof(segments)))return false;
-    std::vector<std::byte> unaligned(bytes.size()+1U);std::memcpy(unaligned.data()+1U,bytes.data(),bytes.size());
+    std::vector<std::byte> unaligned(1U);
+    unaligned.insert(unaligned.end(),bytes.begin(),bytes.end());
     if(scene::validate(unaligned.data()+1U,bytes.size()).status!=PROGPU_NATIVE_STATUS_SUCCESS)return false;
     for(unsigned variant=0;variant<19;++variant){
         frame=original_frame;path=original_path;segments=original_segments;
