@@ -201,30 +201,32 @@ fn add_crossing(
 // other side, including at an original endpoint. Signed products and their
 // difference fit i32: coordinates are at most 16383, deltas at most 32766.
 // Other mappings retain the ordinary floating-point intersection below.
-fn add_exact_line_crossing(
+fn add_line_crossing(
     winding: ptr<function, WindingRow>,
     samples: SampleRow,
     sampleY: f32,
     a: vec2<f32>,
     b: vec2<f32>,
-    direction: i32) -> bool {
+    direction: i32) {
     let qa = a * 16.0;
     let qb = b * 16.0;
     let qy = sampleY * 16.0;
     let qlow = samples.low * 16.0;
     let qhigh = samples.high * 16.0;
-    if (any(abs(qa) > vec2<f32>(16383.0)) ||
-        any(abs(qb) > vec2<f32>(16383.0)) || abs(qy) > 16383.0 ||
-        any(abs(qlow) > vec4<f32>(16383.0)) ||
-        any(abs(qhigh) > vec4<f32>(16383.0))) { return false; }
-    let ia = vec2<i32>(qa);
-    let ib = vec2<i32>(qb);
-    let iy = i32(qy);
-    let low = vec4<i32>(qlow);
-    let high = vec4<i32>(qhigh);
-    if (any(qa != vec2<f32>(ia)) || any(qb != vec2<f32>(ib)) ||
-        qy != f32(iy) || any(qlow != vec4<f32>(low)) ||
-        any(qhigh != vec4<f32>(high))) { return false; }
+    let rangeAdmitted = all(abs(qa) <= vec2<f32>(16383.0)) &&
+        all(abs(qb) <= vec2<f32>(16383.0)) && abs(qy) <= 16383.0 &&
+        all(abs(qlow) <= vec4<f32>(16383.0)) &&
+        all(abs(qhigh) <= vec4<f32>(16383.0));
+    // Bound the candidate integer arithmetic even for an unadmitted mapping.
+    // The original coordinates still decide admission and the floating result.
+    let ia = vec2<i32>(clamp(qa, vec2<f32>(-16383.0), vec2<f32>(16383.0)));
+    let ib = vec2<i32>(clamp(qb, vec2<f32>(-16383.0), vec2<f32>(16383.0)));
+    let iy = i32(clamp(qy, -16383.0, 16383.0));
+    let low = vec4<i32>(clamp(qlow, vec4<f32>(-16383.0), vec4<f32>(16383.0)));
+    let high = vec4<i32>(clamp(qhigh, vec4<f32>(-16383.0), vec4<f32>(16383.0)));
+    let exactAdmitted = rangeAdmitted && all(qa == vec2<f32>(ia)) &&
+        all(qb == vec2<f32>(ib)) && qy == f32(iy) &&
+        all(qlow == vec4<f32>(low)) && all(qhigh == vec4<f32>(high));
     let delta = ib - ia;
     let left = vec4<i32>(delta.x * (iy - ia.y));
     let rightLow = vec4<i32>(delta.y) * (low - vec4<i32>(ia.x));
@@ -235,9 +237,14 @@ fn add_exact_line_crossing(
         crossesLow = left > rightLow;
         crossesHigh = left > rightHigh;
     }
-    (*winding).low += select(vec4<i32>(0), vec4<i32>(direction), crossesLow);
-    (*winding).high += select(vec4<i32>(0), vec4<i32>(direction), crossesHigh);
-    return true;
+    // Keep admission in the selected result, not an early-return branch.
+    // The latter faults in the ARM64 DX12/WARP ordinary Boolean pipeline.
+    let t = (sampleY - a.y) / (b.y - a.y);
+    let intersectX = a.x + t * (b.x - a.x);
+    let lowCrossing = select(samples.low < vec4<f32>(intersectX), crossesLow, exactAdmitted);
+    let highCrossing = select(samples.high < vec4<f32>(intersectX), crossesHigh, exactAdmitted);
+    (*winding).low += select(vec4<i32>(0), vec4<i32>(direction), lowCrossing);
+    (*winding).high += select(vec4<i32>(0), vec4<i32>(direction), highCrossing);
 }
 
 fn winding_is_inside(winding: i32, fill_rule: u32) -> bool {
@@ -374,21 +381,11 @@ fn row_winding_impl(
             }
             if (A.y <= sampleY) {
                 if (B.y > sampleY) {
-                    if (add_exact_line_crossing(&winding, samplePositionsX, sampleY, A, B, 1)) {
-                        continue;
-                    }
-                    let t = (sampleY - A.y) / (B.y - A.y);
-                    let intersectX = A.x + t * (B.x - A.x);
-                    add_crossing(&winding, samplePositionsX, intersectX, 1);
+                    add_line_crossing(&winding, samplePositionsX, sampleY, A, B, 1);
                 }
             } else {
                 if (B.y <= sampleY) {
-                    if (add_exact_line_crossing(&winding, samplePositionsX, sampleY, A, B, -1)) {
-                        continue;
-                    }
-                    let t = (sampleY - A.y) / (B.y - A.y);
-                    let intersectX = A.x + t * (B.x - A.x);
-                    add_crossing(&winding, samplePositionsX, intersectX, -1);
+                    add_line_crossing(&winding, samplePositionsX, sampleY, A, B, -1);
                 }
             }
         } else if (seg.segmentType == 1u) {

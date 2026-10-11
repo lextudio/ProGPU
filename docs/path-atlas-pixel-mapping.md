@@ -108,6 +108,26 @@ can move the intersection across that sample. Four-lane integer arithmetic adds
 constant work and no storage, dispatch, submission or managed/native crossing.
 This is a precision fix; it makes no performance claim.
 
+The exact and ordinary line crossings are selected as values after the original
+range and lattice checks. Do not reintroduce an admission early return inside
+the segment loop: the ARM64 D3D12/DXC WARP ordinary Boolean pipeline faults with
+that control flow. Candidate integer coordinates are clamped solely to keep
+unselected arithmetic bounded; admission still compares every original endpoint
+and row sample, and the ordinary result uses the original floating coordinates.
+Strict crossings, half-open Y intervals, curves, Boolean programs, signed winding
+and all eight sample lanes remain unchanged. The canonical common shader is used
+by managed rendering and both native providers, with no new dispatch or storage.
+
+The regression was reproduced with the original seven-uniform retained MIL batch
+and an independent raw WebGPU dispatch. The repaired DXC output matches all
+174,080 bytes from the unchanged FXC control. Forty additional combinations of
+sample grids 1–8, fractional phases and independent axis scales also match all
+6,963,200 bytes across original FXC, repaired FXC and repaired DXC. These controls
+preserve the original captured batch separately. The local Windows source
+consumer completes the retained scene and original ownership/query assertions;
+its dependency-free diagnostic build omits the unrelated inline-font preflight
+and does not qualify packages. Complete producer and package CI remains required.
+
 Both native provider fixtures include 14 original/reversed line cases on cold
 and warm frames. Their independent rational scanline oracle sorts intersections
 and fills sample spans. It covers negative endpoints, the signed-product limit,
