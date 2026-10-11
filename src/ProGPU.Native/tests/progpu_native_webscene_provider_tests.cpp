@@ -3993,7 +3993,8 @@ int main(int argc, char** argv) {
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require_original_glyph);
+        }, require_original_glyph, progpu::native::tests::diagnose_unorm_mask_precision(
+            reference_api, device, queue, sampler_readback, require, 112867.0F / 113984.0F));
     progpu::native::direct2d::tests::verify_variable_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {

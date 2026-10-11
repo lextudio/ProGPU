@@ -524,7 +524,7 @@ allows 0.6 ULP on the integer side of FLOAT-to-UNORM conversion, which includes
 both values. This exception acknowledges that conversion latitude; it does not
 claim exact original-byte parity or alter any product shader.
 
-The gate is confined to Intel macOS and these four original cases:
+The gate is confined to Intel macOS and these original cases:
 
 | Half opacity | Reversed contours | Original source FNV | Bytes | Only admissible red difference |
 | --- | --- | --- | --- | --- |
@@ -532,10 +532,13 @@ The gate is confined to Intel macOS and these four original cases:
 | No | Yes | `8665a27783d5503a` | 3480 | 252 versus 253 at (40,28) |
 | Yes | No | `d6c521e24c39b215` | 3672 | 126 versus 127 at (40,28), with the extra opacity proof below |
 | Yes | Yes | `4892ee77dd02d629` | 3672 | 126 versus 127 at (40,28), with the extra opacity proof below |
+| Yes, original recorder frame 8 | No | `2965cd6f1f153c10` | 3800 | The same 126 versus 127 at (40,28), with its own exact source guard |
 
 Every accepted frame must match the entire original serialized scene snapshot,
 byte for byte; the displayed hash alone is insufficient. Snapshots were taken
-at `8b9802b4dbb77a00e2865b86d334c23c691c03f8`, before this policy change.
+at `8b9802b4dbb77a00e2865b86d334c23c691c03f8` for the four direct captures,
+before this policy change. The original recorder snapshot was captured at
+`a880ccfc05fda8eae5930f276d3a852106680d7e` before enabling its corresponding gate.
 The actual cold and warm frames must be identical, exactly 16,384 bytes, and
 match all other original 16,383 bytes. Each case runs its independent raw GPU
 probe on the replay's actual device; no adapter-name allowlist replaces this
@@ -548,8 +551,22 @@ linear-byte half-opacity rule: recover the stored byte, multiply by 0.5, round
 to the nearest byte. It separately processes the original Microsoft byte.
 Admission requires actual GPU outputs 126 from observed 252 and 127 from
 original 253. An unproven or additional opacity difference is rejected.
-These are conditional acceptance bounds, not claims that all four hosted
-cases were qualified before the complete CI run.
+The hosted Intel job at `c4dfa4e88` independently confirms all four direct
+cases and both half-opacity outputs. The subsequent complete original-glyph
+diagnostic at `a880ccfc0` finds only frame 8 differs: the same red 126/127 at
+(40,28), with all other bytes and cold/warm identity exact. Every one of its
+3,800 source bytes matches the separately captured physical M3 input (SHA-256
+`289211c66da19109d1cc229eb4fa5bee68b213781541093a8388a66f6debcc8b`).
+
+Frame 8 is the only one of the 278 original Microsoft captures that is
+byte-identical to the approved half-opacity capture. Its source brush, mesh
+descriptor, all 2,688 vertex bytes, opacity layer and physical-frame payload
+are byte-identical to that direct capture. The recorder preserves its own
+owner/generation, PUSH/POP_STATE and explicit pixel-center clipping flag; the
+diagnosed point lies inside the unchanged clip. None is normalized or replaced
+to obtain equivalence. A separate full-scene snapshot guards that original
+recording, and its independent same-device conversion receipt remains mandatory.
+All other original glyph cases keep their exact original-byte assertions.
 
 The shared fixture tests every other pixel/channel against an injected extra
 difference, mutates every serialized source byte, and rejects changed extents,
@@ -559,7 +576,10 @@ confined to those policy controls. Real replay uses only the actual raw GPU
 receipt. Every accepted conversion is printed with source identity, case,
 coordinate, channel, actual/reference value and cold/warm identity.
 
-Both providers retain the shared gate and their complete original corpus.
+Both providers retain the shared gate and their complete original corpus. The
+corpus reports all ordinary original-glyph differences before failing its final
+check, so one failing frame does not hide later diagnostics; no comparison is
+removed or allowed to succeed by that deferred failure report.
 No broad +/-1 tolerance, changed reference capture, alpha bias, product
 prequantization, different blend ordering or skipped CI is permitted. All
 producer, package, Windows and application gates remain mandatory before

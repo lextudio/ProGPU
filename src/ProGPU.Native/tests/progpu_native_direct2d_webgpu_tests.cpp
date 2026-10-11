@@ -2471,7 +2471,7 @@ int main(int argc, char** argv)
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require_original_glyph);
+        }, require_original_glyph, diagnose_mask_precision(gpu, 112867.0F / 113984.0F));
     progpu::native::direct2d::tests::verify_variable_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {

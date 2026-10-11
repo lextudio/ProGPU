@@ -22,11 +22,17 @@ struct source_unorm_observation final {
 namespace progpu::native::direct2d::tests {
 
 enum class sheared_pixel_match { rejected, exact, approved_conversion };
+#if defined(__APPLE__) && defined(__x86_64__)
+inline constexpr bool sheared_exception_platform = true;
+#else
+inline constexpr bool sheared_exception_platform = false;
+#endif
 
 inline sheared_pixel_match compare_original_sheared_pixels(
     std::span<const std::byte> scene, bool half, bool reverse,
     std::span<const std::uint8_t> cold, std::span<const std::uint8_t> warm,
-    const progpu::native::tests::source_unorm_observation& observed, bool eligible_platform)
+    const progpu::native::tests::source_unorm_observation& observed, bool eligible_platform,
+    bool original_recorder = false)
 {
     static const std::array originals{original_sheared_glyph_coverage_pixels(false),
         original_sheared_glyph_coverage_pixels(true)};
@@ -35,7 +41,9 @@ inline sheared_pixel_match compare_original_sheared_pixels(
         !std::equal(cold.begin(), cold.end(), warm.begin())) return sheared_pixel_match::rejected;
     if (std::equal(cold.begin(), cold.end(), original.begin())) return sheared_pixel_match::exact;
     if (!eligible_platform) return sheared_pixel_match::rejected;
-    const auto source = original_sheared_source_scene(half, reverse);
+    if (original_recorder && (!half || reverse)) return sheared_pixel_match::rejected;
+    const auto source = original_recorder ? original_recorded_sheared_source_scene()
+        : original_sheared_source_scene(half, reverse);
     if (scene.size() != source.size() || !std::equal(scene.begin(), scene.end(), source.begin()))
         return sheared_pixel_match::rejected;
 
@@ -67,20 +75,38 @@ void verify_sheared_unorm_exception_controls(Require require)
     const source_unorm_observation diagnosed{112867.0F / 113984.0F, 112867.0F / 113984.0F,
         253.0F, 252U, 252U, 252U, 253U, 126U, 127U, true};
     constexpr std::size_t offset = (28U * 64U + 40U) * 4U;
-    for (const bool half : {false, true}) for (const bool reverse : {false, true}) {
-        const auto source = original_sheared_source_scene(half, reverse);
+    const auto direct = original_sheared_source_scene(true, false);
+    const auto recorded = original_recorded_sheared_source_scene();
+    // Independently retained source receipts: all brush, mesh, vertex, opacity
+    // and physical-frame bytes are identical. The original recorder additionally
+    // owns PUSH/POP_STATE and the explicit pixel-center clip flag.
+    for (const auto& range : std::array<std::array<std::size_t, 3U>, 5U>{{
+            {480U, 608U, 256U}, {736U, 864U, 128U}, {864U, 992U, 2688U},
+            {3552U, 3680U, 64U}, {3616U, 3744U, 56U}}}) {
+        const auto first = direct.subspan(range[0], range[2]);
+        const auto second = recorded.subspan(range[1], range[2]);
+        require(std::equal(first.begin(), first.end(), second.begin()),
+            "original recorder and direct capture retain identical source coverage and half-opacity inputs");
+    }
+    for (unsigned variant = 0U; variant < 5U; ++variant) {
+        const bool recorder = variant == 4U, half = variant >= 2U;
+        const bool reverse = (variant & 1U) != 0U;
+        const auto source = recorder ? original_recorded_sheared_source_scene()
+            : original_sheared_source_scene(half, reverse);
         const auto original = original_sheared_glyph_coverage_pixels(half);
         auto altered = original;
         altered[offset] = half ? 126U : 252U;
         const auto matches = [&](const auto& scene, const auto& cold, const auto& warm, const auto& proof) {
-            return compare_original_sheared_pixels(scene, half, reverse, cold, warm, proof, true);
+            return compare_original_sheared_pixels(scene, half, reverse, cold, warm, proof, true, recorder);
         };
         require(matches(source, original, original, source_unorm_observation{}) == sheared_pixel_match::exact,
             "unchanged original bytes require no conversion exception");
         require(matches(source, altered, altered, diagnosed) == sheared_pixel_match::approved_conversion,
             "the sole diagnosed conversion is within the owner-approved boundary");
-        require(compare_original_sheared_pixels(source, half, reverse, altered, altered, diagnosed, false) ==
+        require(compare_original_sheared_pixels(source, half, reverse, altered, altered, diagnosed, false, recorder) ==
             sheared_pixel_match::rejected, "the exception is confined to Intel macOS");
+        require(compare_original_sheared_pixels(source, half, reverse, altered, altered, diagnosed, true, !recorder) ==
+            sheared_pixel_match::rejected, "original recorder and direct capture retain distinct exact source owners");
         require(matches(source, altered, altered, source_unorm_observation{}) == sheared_pixel_match::rejected &&
             matches(source, altered, original, diagnosed) == sheared_pixel_match::rejected,
             "missing GPU evidence or a cold/warm change cannot inherit the exception");
