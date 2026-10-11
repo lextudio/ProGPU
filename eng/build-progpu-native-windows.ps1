@@ -326,8 +326,9 @@ if ($CurrentArchitecture -eq $RunnableArchitecture) {
         $NativeProviderEvidence = Join-Path $SampleDirectory "progpu-native-provider.txt"
         $NativeFont = Join-Path $RepoRoot "src/ProGPU.Fonts.Inter/Fonts/Inter-Medium.ttf"
         & $NativeSample $NativeSampleOutput $NativeProviderEvidence $NativeFont
-        if ($LASTEXITCODE -ne 0) {
-            throw "The D3D12 native renderer backend sample failed."
+        $NativeSampleExitCode = $LASTEXITCODE
+        if ($NativeSampleExitCode -ne 0) {
+            throw "The D3D12 native renderer backend sample failed with process exit code $NativeSampleExitCode."
         }
         $NativeProviderReport = Get-Content $NativeProviderEvidence -Raw
         $IsParallelsDisplayAdapter =
