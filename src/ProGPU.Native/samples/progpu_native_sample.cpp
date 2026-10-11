@@ -127,7 +127,8 @@ bool request_device(
     WGPUInstance instance,
     WGPUAdapter& adapter,
     WGPUDevice& device,
-    WGPUQueue& queue) {
+    WGPUQueue& queue,
+    const std::string& adapter_filter) {
     std::cerr << "[ProGPUNative] enumerating platform adapters."
               << std::endl;
     WGPUInstanceEnumerateAdapterOptions adapter_options{};
@@ -153,10 +154,28 @@ bool request_device(
         std::cerr << "WebGPU adapter enumeration failed.\n";
         return false;
     }
-    adapter = adapters[0];
-    for (std::size_t index = 1U; index < written; ++index) {
-        wgpuAdapterRelease(adapters[index]);
+    std::size_t selected = 0U;
+    if (!adapter_filter.empty()) {
+        selected = written;
+        for (std::size_t index = 0U; index < written; ++index) {
+            if (adapters[index] == nullptr) continue;
+            WGPUAdapterProperties properties{};
+            wgpuAdapterGetProperties(adapters[index], &properties);
+            if (properties.name != nullptr && adapter_filter == properties.name) {
+                selected = index;
+                break;
+            }
+        }
     }
+    for (std::size_t index = 0U; index < written; ++index) {
+        if (index != selected && adapters[index] != nullptr) wgpuAdapterRelease(adapters[index]);
+    }
+    if (selected == written) {
+        std::cerr << "Requested native sample adapter was not found: '"
+                  << adapter_filter << "'.\n";
+        return false;
+    }
+    adapter = adapters[selected];
 
     WGPUDeviceDescriptor descriptor{};
     descriptor.label = "ProGPU native sample device";
@@ -639,6 +658,7 @@ int main(int argc, char** argv) {
         : "progpu-native-sample.ppm";
     const std::string evidence_path = argc > 2 ? argv[2] : std::string{};
     const std::string font_path = argc > 3 ? argv[3] : std::string{};
+    const std::string adapter_filter = argc > 4 ? argv[4] : std::string{};
 
     WGPUInstanceExtras extras{};
     extras.chain.sType = static_cast<WGPUSType>(WGPUSType_InstanceExtras);
@@ -658,7 +678,7 @@ int main(int argc, char** argv) {
     WGPUAdapter adapter = nullptr;
     WGPUDevice device = nullptr;
     WGPUQueue queue = nullptr;
-    if (!request_device(instance, adapter, device, queue)) {
+    if (!request_device(instance, adapter, device, queue, adapter_filter)) {
         wgpuInstanceRelease(instance);
         return EXIT_FAILURE;
     }

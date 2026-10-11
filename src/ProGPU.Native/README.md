@@ -832,6 +832,14 @@ the executable's optional third argument can select another local SFNT/TTC
 face. Third-party headers remain under ignored `artifacts/`; no upstream
 implementation is vendored into ProGPU.
 
+For a device-specific reproduction, the optional fourth argument selects an
+exact adapter name from the platform's enumeration. An unavailable name fails;
+omitting it retains the original first-adapter selection. For example, on
+Windows, pass `output.ppm provider.txt font.ttf "Microsoft Basic Render Driver"`
+to exercise that software adapter with the same scene and pixel checks. The
+provider receipt records the actual selected device; this does not replace a
+required hardware run.
+
 Build the same C++ renderer as WebAssembly and execute it against a real
 `navigator.gpu` device in Chromium:
 

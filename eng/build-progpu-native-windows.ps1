@@ -325,9 +325,24 @@ if ($CurrentArchitecture -eq $RunnableArchitecture) {
         $NativeSampleOutput = Join-Path $SampleDirectory "progpu-native-sample.ppm"
         $NativeProviderEvidence = Join-Path $SampleDirectory "progpu-native-provider.txt"
         $NativeFont = Join-Path $RepoRoot "src/ProGPU.Fonts.Inter/Fonts/Inter-Medium.ttf"
+        $NativeSampleStartedAt = Get-Date
         & $NativeSample $NativeSampleOutput $NativeProviderEvidence $NativeFont
         $NativeSampleExitCode = $LASTEXITCODE
         if ($NativeSampleExitCode -ne 0) {
+            # Read only this invocation's existing OS fault records. Diagnostics
+            # must neither change process policy nor replace the original failure.
+            try {
+                Get-WinEvent -FilterHashtable @{
+                    LogName = "Application"
+                    Id = 1000, 1001
+                    StartTime = $NativeSampleStartedAt
+                } -ErrorAction Stop |
+                    Where-Object { $_.Properties.Value -contains "progpu_native_sample.exe" } |
+                    Select-Object -First 3 -ExpandProperty Message |
+                    ForEach-Object { Write-Host $_ }
+            } catch {
+                Write-Host "Native sample fault records unavailable: $($_.Exception.Message)"
+            }
             throw "The D3D12 native renderer backend sample failed. Process exit code: $NativeSampleExitCode."
         }
         $NativeProviderReport = Get-Content $NativeProviderEvidence -Raw
