@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <PackageDescription>Exact-version static C++ SDK archives and original private dependency receipts/notices for ProGPU.Backend.Native.</PackageDescription>
+    <PackageTags>progpu;native;c++;sdk</PackageTags>
+    <ProGpuNativeRuntimeRoot Condition="'$(ProGpuNativeRuntimeRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\progpu-native\package</ProGpuNativeRuntimeRoot>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Preserve the original runtime-root-relative paths, including extensionless
+         notices. The runtime libraries stay in ProGPU.Backend.Native. -->
+    <None Include="$(ProGpuNativeRuntimeRoot)\**\*"
+          Exclude="$(ProGpuNativeRuntimeRoot)\runtimes\*\native\*.dll;$(ProGpuNativeRuntimeRoot)\runtimes\*\native\*.dylib;$(ProGpuNativeRuntimeRoot)\runtimes\*\native\*.so"
+          Pack="true" PackagePath="" Visible="false" />
+  </ItemGroup>
+  <Import Project="../../eng/ProGPU.Native.PackageValidation.targets" />
+  <Import Project="../../eng/ProGPU.Native.SdkVersion.targets" />
+</Project>

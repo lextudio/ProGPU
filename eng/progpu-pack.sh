@@ -10,7 +10,7 @@ if [[ ! -x "${dotnet}" ]]; then
 fi
 
 configuration="${PROGPU_CONFIGURATION:-Release}"
-package_version="${PROGPU_PACKAGE_VERSION:-0.1.0-preview.66}"
+package_version="${PROGPU_PACKAGE_VERSION:-0.1.0-preview.67}"
 package_output="${PROGPU_PACKAGE_OUTPUT:-${repo_root}/artifacts/packages/${configuration}}"
 package_group="${PROGPU_PACKAGE_GROUP:-all}"
 
@@ -68,6 +68,7 @@ for index in "${!selected_package_ids[@]}"; do
   )
   if [[ "${package_id}" == "ProGPU.Xaml.SourceGenerator" ||
         "${package_id}" == "ProGPU.Backend.Dx12" ||
+        "${package_id}" == "ProGPU.Native.Sdk" ||
         "${package_id}" == "ProGPU.BinaryCompatibility" ]]; then
     pack_arguments+=(-p:IncludeSymbols=false)
   else

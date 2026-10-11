@@ -29,7 +29,8 @@ class NativeRuntimePackageTests(unittest.TestCase):
             expected = {}
             for rid in RIDS:
                 for relative in ("licenses/edit-word-icu/LICENSE", "licenses/freetype/LICENSE.TXT",
-                                 "sdk/progpu-native-edit-word-dependency.json", "sdk/fixture.a"):
+                                 "sdk/progpu-native-edit-word-dependency.json", "sdk/fixture.a",
+                                 "libprogpu_native.so", "libprogpu_native.dylib", "progpu_native.dll"):
                     name = f"runtimes/{rid}/native/{relative}"
                     data = f"Synthetic packaging-only control: {name}\n".encode()
                     path = runtime / name
@@ -44,30 +45,75 @@ class NativeRuntimePackageTests(unittest.TestCase):
             for name, value in {
                 "TargetFramework": "net10.0", "PackageId": "ProGPU.Native.Runtime.PackContract",
                 "PackageVersion": "1.0.0", "IsPackable": "true", "IncludeBuildOutput": "false",
-                "SuppressDependenciesWhenPacking": "true", "EnableDefaultItems": "false",
+                "SuppressDependenciesWhenPacking": "false", "EnableDefaultItems": "false",
                 "NuGetAudit": "false", "ProGpuNativeRuntimeRoot": str(runtime),
             }.items():
                 ET.SubElement(properties, name).text = value
             ET.SubElement(project, "ItemGroup").append(items[0])
+            sdk_reference = source.find("./ItemGroup/ProjectReference[@Include='..\\ProGPU.Native.Sdk\\ProGPU.Native.Sdk.csproj']")
+            self.assertIsNotNone(sdk_reference)
+            # Preserve the real project/reference metadata while keeping restore
+            # outputs inside this fixture instead of changing the product's obj.
+            sdk_source = ROOT / "src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj"
+            sdk_copy = ET.parse(sdk_source)
+            for imported in sdk_copy.findall("./Import"):
+                imported.set("Project", str((sdk_source.parent / imported.get("Project")).resolve()))
+            sdk_copy_path = root / "sdk-project/ProGPU.Native.Sdk.csproj"
+            sdk_copy_path.parent.mkdir()
+            sdk_copy.write(sdk_copy_path, encoding="utf-8", xml_declaration=True)
+            sdk_reference.set("Include", str(sdk_copy_path))
+            project.find("ItemGroup").append(sdk_reference)
             project_path = root / "RuntimePack.csproj"
             ET.ElementTree(project).write(project_path, encoding="utf-8", xml_declaration=True)
             for arguments in (["restore", str(project_path), "--ignore-failed-sources"],
                               ["pack", str(project_path), "--no-build", "--output", str(root / "output")]):
-                result = subprocess.run(["dotnet", *arguments], cwd=root, text=True,
+                result = subprocess.run(["dotnet", *arguments, "-p:PackageVersion=1.0.0"], cwd=root, text=True,
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stdout)
             with zipfile.ZipFile(root / "output/ProGPU.Native.Runtime.PackContract.1.0.0.nupkg") as archive:
                 actual = [name for name in archive.namelist() if name.startswith("runtimes/")]
-                self.assertCountEqual(actual, expected)
-                for name, data in expected.items():
+                runtime_expected = {k: v for k, v in expected.items() if "/native/sdk/" not in k}
+                self.assertCountEqual(actual, runtime_expected)
+                for name, data in runtime_expected.items():
                     self.assertEqual(archive.read(name), data, name)
+                nuspec = ET.fromstring(archive.read("ProGPU.Native.Runtime.PackContract.nuspec"))
+                dependencies = nuspec.findall(".//{*}dependency")
+                self.assertTrue(any(d.get("id") == "ProGPU.Native.Sdk" and d.get("version") == "1.0.0"
+                                    for d in dependencies), "The actual source reference must become a NuGet dependency")
+
+            sdk = ET.parse(ROOT / "src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj")
+            sdk_items = [item for item in sdk.findall("./ItemGroup/None")
+                         if item.get("Include") == "$(ProGpuNativeRuntimeRoot)\\**\\*"]
+            self.assertEqual(len(sdk_items), 1)
+            group = project.find("ItemGroup")
+            group.remove(items[0])
+            group.remove(sdk_reference)
+            properties.find("SuppressDependenciesWhenPacking").text = "true"
+            group.append(sdk_items[0])
+            properties.find("PackageId").text = "ProGPU.Native.Sdk.PackContract"
+            ET.SubElement(project, "Import", Project=str(ROOT / "eng/ProGPU.Native.SdkVersion.targets"))
+            ET.ElementTree(project).write(project_path, encoding="utf-8", xml_declaration=True)
+            result = subprocess.run(["dotnet", "pack", str(project_path), "--no-build", "--output",
+                                     str(root / "output")], cwd=root, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            with zipfile.ZipFile(root / "output/ProGPU.Native.Sdk.PackContract.1.0.0.nupkg") as archive:
+                actual = [name for name in archive.namelist() if name.startswith("runtimes/")]
+                sdk_expected = {k: v for k, v in expected.items()
+                                if "/native/sdk/" in k or "/native/licenses/" in k}
+                self.assertCountEqual(actual, sdk_expected)
+                for name, data in sdk_expected.items():
+                    self.assertEqual(archive.read(name), data, name)
+                self.assertEqual(archive.read("build/native/ProGPUNativeSdkVersion.txt").decode().strip(), "1.0.0")
+            self.assertEqual(set(runtime_expected) | set(sdk_expected), set(expected))
 
             # Also exercise the exact production admission target. Missing
             # runtimes must fail before NuGet creates even a local package.
             missing = root / "missing-payload"
             missing.mkdir()
             properties.find("ProGpuNativeRuntimeRoot").text = str(missing)
-            target = source.find("./Target[@Name='ValidateProGpuNativePackageRuntimes']")
+            validation = ET.parse(ROOT / "eng/ProGPU.Native.PackageValidation.targets")
+            target = validation.find("./Target[@Name='ValidateProGpuNativePackageRuntimes']")
             self.assertIsNotNone(target)
             project.append(target)
             ET.SubElement(project.find("ItemGroup"), "None", Include=str(project_path),

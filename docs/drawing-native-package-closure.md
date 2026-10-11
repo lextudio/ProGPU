@@ -1,8 +1,9 @@
 # Drawing native package closure
 
 `ProGPU.System.Drawing.Common` references `ProGPU.Backend.Native`; the native
-backend in turn references `ProGPU.Backend.Dawn` and `ProGPU.Backend`. The focused
-`drawing-runtime` package registry includes all three, in dependency order,
+backend in turn references `ProGPU.Backend.Dawn`, `ProGPU.Backend` and the matching
+`ProGPU.Native.Sdk` static-archive package. The focused
+`drawing-runtime` package registry includes all four, in dependency order,
 alongside the existing drawing dependencies. All packages use the same requested
 source version.
 

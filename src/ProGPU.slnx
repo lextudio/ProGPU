@@ -4,6 +4,7 @@
   <Project Path="ProGPU.Backend/ProGPU.Backend.csproj" />
   <Project Path="ProGPU.Backend.Tests/ProGPU.Backend.Tests.csproj" />
   <Project Path="ProGPU.Backend.Native/ProGPU.Backend.Native.csproj" />
+  <Project Path="ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj" />
   <Project Path="ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj" />
   <Project Path="ProGPU.Media/ProGPU.Media.csproj" />
   <Project Path="ProGPU.Media.Editing/ProGPU.Media.Editing.csproj" />

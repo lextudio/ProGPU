@@ -33,6 +33,30 @@ if(EXISTS "${_progpu_native_root}/build/native/include")
         "${_progpu_native_root}/runtimes/${_progpu_native_rid}/native/sdk")
     set(_progpu_native_runtime_dir
         "${_progpu_native_root}/runtimes/${_progpu_native_rid}/native")
+    # The NuGet runtime and static SDK have one exact version. NuGet restores the
+    # SDK dependency beside the runtime package; manual extraction supplies its
+    # root explicitly. A regular CMake install below keeps its existing layout.
+    file(READ "${_progpu_native_root}/build/native/ProGPUNativeSdkVersion.txt"
+        _progpu_native_sdk_version)
+    string(STRIP "${_progpu_native_sdk_version}" _progpu_native_sdk_version)
+    if(NOT _progpu_native_sdk_version MATCHES "^[0-9A-Za-z][0-9A-Za-z.+-]*$")
+        message(FATAL_ERROR "Invalid ProGPU native SDK package version")
+    endif()
+    if(DEFINED PROGPU_NATIVE_SDK_ROOT AND NOT PROGPU_NATIVE_SDK_ROOT STREQUAL "")
+        get_filename_component(_progpu_native_sdk_root "${PROGPU_NATIVE_SDK_ROOT}" ABSOLUTE)
+    else()
+        string(TOLOWER "${_progpu_native_sdk_version}" _progpu_native_sdk_cache_version)
+        get_filename_component(_progpu_native_sdk_root
+            "${_progpu_native_root}/../../progpu.native.sdk/${_progpu_native_sdk_cache_version}" ABSOLUTE)
+    endif()
+    file(READ "${_progpu_native_sdk_root}/build/native/ProGPUNativeSdkVersion.txt"
+        _progpu_native_sdk_actual_version)
+    string(STRIP "${_progpu_native_sdk_actual_version}" _progpu_native_sdk_actual_version)
+    if(NOT _progpu_native_sdk_actual_version STREQUAL _progpu_native_sdk_version)
+        message(FATAL_ERROR "ProGPU native runtime and static SDK package versions must match exactly")
+    endif()
+    set(_progpu_native_library_dir
+        "${_progpu_native_sdk_root}/runtimes/${_progpu_native_rid}/native/sdk")
 else()
     set(_progpu_native_include "${_progpu_native_root}/include")
     set(_progpu_native_library_dir "${_progpu_native_root}/lib")
@@ -135,3 +159,7 @@ unset(_progpu_native_arch)
 unset(_progpu_native_rid)
 unset(_progpu_native_prefix)
 unset(_progpu_native_suffix)
+unset(_progpu_native_sdk_root)
+unset(_progpu_native_sdk_version)
+unset(_progpu_native_sdk_actual_version)
+unset(_progpu_native_sdk_cache_version)

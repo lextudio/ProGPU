@@ -5,6 +5,7 @@
 progpu_portable_package_ids=(
   ProGPU.Backend
   ProGPU.GameEngine
+  ProGPU.Native.Sdk
   ProGPU.Backend.Native
   ProGPU.Backend.Dx12
   ProGPU.Backend.Dawn
@@ -62,6 +63,7 @@ progpu_portable_package_ids=(
 progpu_portable_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
   src/ProGPU.GameEngine/ProGPU.GameEngine.csproj
+  src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
   src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
@@ -119,6 +121,7 @@ progpu_portable_package_projects=(
 progpu_portable_package_purposes=(
   "WebGPU device, swapchain, Silk.NET windowing, and platform backend services."
   "Reusable bounded game rendering, scene, and procedural material infrastructure."
+  "Exact-version static C++ SDK archives with original private dependency receipts and notices."
   "Experimental typed .NET host plus validated x64/arm64 desktop runtimes for the ProGPU C++ WebGPU renderer."
   "Optional pinned Windows x64/arm64 DXC-capable WebGPU and shader compiler runtime assets."
   "Exact-ABI Dawn shared texture memory and cross-queue fence extensions."
@@ -260,6 +263,7 @@ progpu_avalonia_runtime_package_purposes=(
 progpu_drawing_runtime_package_ids=(
   ProGPU.Backend
   ProGPU.Backend.Dawn
+  ProGPU.Native.Sdk
   ProGPU.Backend.Native
   ProGPU.Text.Shaping
   ProGPU.Transpiler
@@ -275,6 +279,7 @@ progpu_drawing_runtime_package_ids=(
 progpu_drawing_runtime_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
+  src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
   src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
   src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
@@ -290,6 +295,7 @@ progpu_drawing_runtime_package_projects=(
 progpu_drawing_runtime_package_purposes=(
   "Drawing runtime closure: WebGPU device and platform backend."
   "Drawing runtime closure: typed Dawn native presentation and shared-resource interop."
+  "Drawing runtime closure: exact-version static native SDK archives and dependency receipts."
   "Drawing runtime closure: typed native drawing/text host and validated desktop runtimes."
   "Drawing runtime closure: AOT-safe OpenType shaping."
   "Drawing runtime closure: shader/source transformation."

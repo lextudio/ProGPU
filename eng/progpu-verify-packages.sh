@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${repo_root}/eng/progpu-package-list.sh"
 
-package_version="${PROGPU_PACKAGE_VERSION:-0.1.0-preview.66}"
+package_version="${PROGPU_PACKAGE_VERSION:-0.1.0-preview.67}"
 package_output="${PROGPU_PACKAGE_OUTPUT:-${repo_root}/artifacts/packages/Release}"
 package_group="${PROGPU_PACKAGE_GROUP:-all}"
 
@@ -119,6 +119,11 @@ for package_id in "${selected_package_ids[@]}"; do
         exit 1
       fi
     done
+  elif [[ "${package_id}" == "ProGPU.Native.Sdk" ]]; then
+    if [[ -f "${symbols}" ]]; then
+      echo "Static-SDK-assets-only package must not produce an empty symbol package: ${symbols}" >&2
+      exit 1
+    fi
   elif [[ "${package_id}" == "ProGPU.Backend.Dx12" ]]; then
     if [[ -f "${symbols}" ]]; then
       echo "Native-assets-only package must not produce an empty symbol package: ${symbols}" >&2
@@ -192,3 +197,5 @@ while IFS= read -r -d '' artifact; do
 done < <(find "${package_output}" -maxdepth 1 -type f \( -name "*.${package_version}.nupkg" -o -name "*.${package_version}.snupkg" \) -print0)
 
 echo "Verified ${#selected_package_ids[@]} ProGPU ${package_group} packages and symbol packages for ${package_version}."
+
+python3 "${repo_root}/eng/progpu-verify-package-sizes.py" "${package_output}"

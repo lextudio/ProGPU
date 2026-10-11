@@ -6,6 +6,7 @@ package_version="${PROGPU_PACKAGE_VERSION:?PROGPU_PACKAGE_VERSION is required}"
 package_output="${PROGPU_PACKAGE_OUTPUT:-${repo_root}/artifacts/packages-native/Release}"
 package="${package_output}/ProGPU.Backend.Native.${package_version}.nupkg"
 dawn_package="${package_output}/ProGPU.Backend.Dawn.${package_version}.nupkg"
+sdk_package="${package_output}/ProGPU.Native.Sdk.${package_version}.nupkg"
 
 if [[ ! -f "${package}" ]]; then
   echo "Native backend package is missing: ${package}" >&2
@@ -21,7 +22,15 @@ if ! unzip -p "${package}" '*.nuspec' |
   exit 1
 fi
 
+if [[ ! -f "${sdk_package}" ]] || ! unzip -p "${package}" '*.nuspec' |
+    grep -Fq 'id="ProGPU.Native.Sdk"'; then
+  echo "The native backend requires its matching ProGPU.Native.Sdk package." >&2
+  exit 1
+fi
+python3 "${repo_root}/eng/progpu-verify-package-sizes.py" "${package_output}"
+
 required_entries=(
+  build/native/ProGPUNativeSdkVersion.txt
   runtimes/linux-x64/native/libprogpu_native.so
   runtimes/linux-x64/native/libprogpu_native_dawn.so
   runtimes/linux-arm64/native/libprogpu_native.so
@@ -84,7 +93,11 @@ for rid in linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64 win-arm64; do
   esac
 done
 for entry in "${required_entries[@]}"; do
-  if ! unzip -Z1 "${package}" | grep -Fx "${entry}" >/dev/null; then
+  entry_package="${package}"
+  if [[ "${entry}" == */native/sdk/* ]]; then
+    entry_package="${sdk_package}"
+  fi
+  if ! unzip -Z1 "${entry_package}" | grep -Fx "${entry}" >/dev/null; then
     echo "Native backend package is missing ${entry}." >&2
     exit 1
   fi
@@ -162,13 +175,15 @@ cleanup_native_consumer() {
 }
 trap 'cleanup_consumer_packages; cleanup_native_consumer' EXIT
 unzip -q "${package}" -d "${native_consumer_root}/package"
+unzip -q "${sdk_package}" -d "${native_consumer_root}/sdk"
 python3 "${repo_root}/eng/progpu-edit-word-icu-dependency.py" verify-package \
-  --package-root "${native_consumer_root}/package" --require
+  --package-root "${native_consumer_root}/sdk" --require
 cmake -S "${repo_root}/tests/ProGPU.Native.CppPackageConsumer" \
   -B "${native_consumer_root}/build" \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DProGPUNative_DIR="${native_consumer_root}/package/build/native/cmake"
+  -DProGPUNative_DIR="${native_consumer_root}/package/build/native/cmake" \
+  -DPROGPU_NATIVE_SDK_ROOT="${native_consumer_root}/sdk"
 cmake --build "${native_consumer_root}/build" --parallel
 "${native_consumer_root}/build/progpu_native_cpp_package_consumer"
 

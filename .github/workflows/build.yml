@@ -885,6 +885,10 @@ jobs:
             -p:Version="${version}" -p:PackageVersion="${version}" \
             -p:ProGpuIncludeDawnSystemWarp=true \
             -p:ProGpuDawnSystemWarpPayloadRoot="${GITHUB_WORKSPACE}/artifacts/dawn-system-warp/payload"
+          dotnet pack src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj \
+            --configuration Release --output "${output}" \
+            -p:Version="${version}" -p:PackageVersion="${version}" -p:ProGpuNativeRequireFontHinting=true \
+            -p:ProGpuNativeRequireEditWordIcu=true
           dotnet pack src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj \
             --configuration Release --output "${output}" \
             -p:Version="${version}" -p:PackageVersion="${version}" -p:ProGpuNativeRequireFontHinting=true \
@@ -1600,7 +1604,10 @@ jobs:
 
       - name: Verify native NuGet runtime paths and pre-package rejection
         if: runner.os == 'Linux'
-        run: python3 eng/test-native-runtime-package.py
+        run: |
+          python3 eng/test-native-runtime-package.py
+          python3 eng/test-package-sizes.py
+          python3 eng/test-native-sdk-cmake.py
 
       # Catch consumer source errors before native packaging; the independent
       # package-consumer jobs still build and execute against actual packages.

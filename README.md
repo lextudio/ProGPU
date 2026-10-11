@@ -56,6 +56,7 @@ Choose the area closest to your application to find the relevant packages.
 | `ProGPU.GameEngine` | Reusable bounded game rendering, scene, and procedural material infrastructure. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.GameEngine.svg)](https://www.nuget.org/packages/ProGPU.GameEngine/) |
 | `ProGPU.Backend.Dx12` | Optional pinned Windows x64/ARM64 DXC-capable WebGPU and compiler assets, with explicit RID/compiler selection. See [runtime packaging](docs/native-dx12-runtime-package.md). | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Dx12.svg)](https://www.nuget.org/packages/ProGPU.Backend.Dx12/) |
 | `ProGPU.Backend.Native` | Experimental typed .NET host and desktop x64/arm64 runtimes for the parallel C++ renderer, including isolated wgpu-native and provider-resolved Dawn binaries. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Native.svg)](https://www.nuget.org/packages/ProGPU.Backend.Native/) |
+| `ProGPU.Native.Sdk` | Exact-version static C++ SDK archives, private dependency receipts and original notices restored with the native backend. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Native.Sdk.svg)](https://www.nuget.org/packages/ProGPU.Native.Sdk/) |
 | `ProGPU.Backend.Dawn` | Typed Dawn native presentation, shared texture memory, and cross-queue fence services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Dawn.svg)](https://www.nuget.org/packages/ProGPU.Backend.Dawn/) |
 | `ProGPU.Browser` | Batched .NET WebAssembly dispatcher and `navigator.gpu` browser host services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Browser.svg)](https://www.nuget.org/packages/ProGPU.Browser/) |
 | `ProGPU.DirectX` | Direct3D-style facade and shader-oriented API surface implemented on ProGPU/WebGPU. Direct2D/Win2D use the separate [native-interop and portable Canvas plan](docs/DIRECT2D_WIN2D_COMPATIBILITY.md). | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.DirectX.svg)](https://www.nuget.org/packages/ProGPU.DirectX/) |
@@ -164,7 +165,7 @@ See the [standalone DCS workplace and embedding guide](docs/hmi-dcs-workplace.md
 Local package build:
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.66 ./eng/progpu-pack.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.67 ./eng/progpu-pack.sh
 ```
 
 Pack both Avalonia integration lanes after the portable ProGPU runtime packages:
@@ -437,7 +438,7 @@ Without these headers, `Auto` uses the ordinary OffscreenCanvas worker when avai
 Local publishing reads the API key from `NUGET_API_KEY` without storing it in the repository:
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.66 ./eng/progpu-publish.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.67 ./eng/progpu-publish.sh
 ```
 
 The release workflow validates docs, restores, builds, tests, packs `.nupkg`/`.snupkg` artifacts, and can publish to NuGet.org when `NUGET_API_KEY` is configured. See [docs/release.md](docs/release.md).
@@ -487,8 +488,8 @@ two NuGet package IDs and are distinguished by their package versions:
 
 | Avalonia | Rendering package | Silk.NET package |
 | --- | --- | --- |
-| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.66` | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.66` |
-| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.66` | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.66` |
+| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.67` | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.67` |
+| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.67` | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.67` |
 
 The Avalonia 12 artifacts are built from
 `src/ProGPU.Avalonia.Rendering` and `src/ProGPU.Avalonia.SilkNet`. The Avalonia
@@ -500,11 +501,11 @@ projects, which source-link the shared implementation and define
 Install the Avalonia 12 packages with:
 
 ```bash
-dotnet add package ProGPU.Avalonia.Rendering --version 12.1.1-preview.66
-dotnet add package ProGPU.Avalonia.SilkNet --version 12.1.1-preview.66
+dotnet add package ProGPU.Avalonia.Rendering --version 12.1.1-preview.67
+dotnet add package ProGPU.Avalonia.SilkNet --version 12.1.1-preview.67
 ```
 
-For Avalonia 11, use the same package IDs with `11.3.20-preview.66` and pin all
+For Avalonia 11, use the same package IDs with `11.3.20-preview.67` and pin all
 Avalonia packages to `11.3.20`. Configure the application with
 `UseSilkNet().UseProGpu()` before starting the desktop lifetime. Complete
 startup, API-lease, local packaging, and package-only validation instructions

@@ -1,0 +1,10 @@
+<Project>
+  <Target Name="IncludeProGpuNativeSdkPackageVersion" BeforeTargets="_GetPackageFiles">
+    <WriteLinesToFile File="$(IntermediateOutputPath)ProGPUNativeSdkVersion.txt"
+                      Lines="$(PackageVersion)" Overwrite="true" />
+    <ItemGroup>
+      <None Include="$(IntermediateOutputPath)ProGPUNativeSdkVersion.txt"
+            Pack="true" PackagePath="build/native/" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

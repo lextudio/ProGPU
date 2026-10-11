@@ -6,11 +6,12 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
     <IsPackable>true</IsPackable>
-    <PackageDescription>Typed zero-copy .NET host plus standalone C++20 SDK for the isolated wgpu-native and provider-resolved Dawn ProGPU renderers.</PackageDescription>
+    <PackageDescription>Typed zero-copy .NET host, native runtimes and C++20 headers with matching ProGPU.Native.Sdk archives for the isolated wgpu-native and provider-resolved Dawn renderers.</PackageDescription>
     <PackageTags>progpu;native;c++;webgpu;renderer;interop</PackageTags>
     <ProGpuNativeRuntimeRoot Condition="'$(ProGpuNativeRuntimeRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\progpu-native\package</ProGpuNativeRuntimeRoot>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\ProGPU.Native.Sdk\ProGPU.Native.Sdk.csproj" Private="false" />
     <ProjectReference Include="..\ProGPU.Backend\ProGPU.Backend.csproj" />
     <ProjectReference Include="..\ProGPU.Backend.Dawn\ProGPU.Backend.Dawn.csproj" />
   </ItemGroup>
@@ -21,6 +22,7 @@
     <!-- NuGet already appends the relative glob path. A filename-shaped
          PackagePath misclassifies extensionless notices as directories. -->
     <None Include="$(ProGpuNativeRuntimeRoot)\**\*"
+          Exclude="$(ProGpuNativeRuntimeRoot)\runtimes\*\native\sdk\**\*"
           Pack="true"
           PackagePath=""
           Visible="false" />
@@ -45,57 +47,6 @@
     <None Include="..\..\eng\native-edit-word-icu.json" Pack="true"
           PackagePath="build\native\cmake\ProGPUNativeEditWordPin.json" Visible="false" />
   </ItemGroup>
-  <Target Name="ValidateProGpuNativePackageRuntimes"
-          BeforeTargets="GenerateNuspec"
-          Condition="'$(ProGpuNativeSkipRuntimeValidation)' != 'true'">
-    <PropertyGroup>
-      <_ProGpuFontRequiredArg Condition="'$(ProGpuNativeRequireFontHinting)' == 'true'">--require</_ProGpuFontRequiredArg>
-      <ProGpuNativePython Condition="'$(ProGpuNativePython)' == '' and '$(OS)' == 'Windows_NT'">python</ProGpuNativePython>
-      <ProGpuNativePython Condition="'$(ProGpuNativePython)' == ''">python3</ProGpuNativePython>
-      <_ProGpuFontVerifier>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '../../eng/progpu-verify-freetype.py'))</_ProGpuFontVerifier>
-      <_ProGpuFontRuntimeRoot>$([MSBuild]::NormalizePath('$(ProGpuNativeRuntimeRoot)'))</_ProGpuFontRuntimeRoot>
-      <_ProGpuEditWordRequiredArg Condition="'$(ProGpuNativeRequireEditWordIcu)' == 'true'">--require</_ProGpuEditWordRequiredArg>
-      <_ProGpuEditWordVerifier>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '../../eng/progpu-edit-word-icu-dependency.py'))</_ProGpuEditWordVerifier>
-    </PropertyGroup>
-    <ItemGroup>
-      <_ProGpuFontAssets Include="$(ProGpuNativeRuntimeRoot)/runtimes/*/native/sdk/progpu-native-font-dependency.json;
-                                 $(ProGpuNativeRuntimeRoot)/runtimes/*/native/sdk/*progpu_native_freetype*;
-                                 $(ProGpuNativeRuntimeRoot)/runtimes/*/native/licenses/freetype/**/*" />
-      <_ProGpuEditWordAssets Include="$(ProGpuNativeRuntimeRoot)/runtimes/*/native/sdk/progpu-native-edit-word-dependency.json;
-                                     $(ProGpuNativeRuntimeRoot)/runtimes/*/native/sdk/*progpu_native_edit_icu*;
-                                     $(ProGpuNativeRuntimeRoot)/runtimes/*/native/licenses/edit-word-icu/**/*" />
-    </ItemGroup>
-    <Exec Condition="'$(ProGpuNativeRequireFontHinting)' == 'true' or '@(_ProGpuFontAssets)' != ''"
-          Command="&quot;$(ProGpuNativePython)&quot; &quot;$(_ProGpuFontVerifier)&quot; --package-root &quot;$(_ProGpuFontRuntimeRoot)&quot; $(_ProGpuFontRequiredArg)" />
-    <Exec Condition="'$(ProGpuNativeRequireEditWordIcu)' == 'true' or '@(_ProGpuEditWordAssets)' != ''"
-          Command="&quot;$(ProGpuNativePython)&quot; &quot;$(_ProGpuEditWordVerifier)&quot; verify-package --package-root &quot;$(_ProGpuFontRuntimeRoot)&quot; $(_ProGpuEditWordRequiredArg)" />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\linux-x64\native\libprogpu_native.so')"
-           Text="The linux-x64 ProGPU native runtime has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\linux-arm64\native\libprogpu_native.so')"
-           Text="The linux-arm64 ProGPU native runtime has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\osx-x64\native\libprogpu_native.dylib')"
-           Text="The osx-x64 ProGPU native runtime has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\osx-arm64\native\libprogpu_native.dylib')"
-           Text="The osx-arm64 ProGPU native runtime has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\win-x64\native\progpu_native.dll')"
-           Text="The win-x64 ProGPU native runtime has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\win-arm64\native\progpu_native.dll')"
-           Text="The win-arm64 ProGPU native runtime has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\linux-x64\native\libprogpu_native_dawn.so')"
-           Text="The linux-x64 ProGPU Dawn adapter has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\linux-arm64\native\libprogpu_native_dawn.so')"
-           Text="The linux-arm64 ProGPU Dawn adapter has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\osx-x64\native\libprogpu_native_dawn.dylib')"
-           Text="The osx-x64 ProGPU Dawn adapter has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\osx-arm64\native\libprogpu_native_dawn.dylib')"
-           Text="The osx-arm64 ProGPU Dawn adapter has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\win-x64\native\progpu_native_dawn.dll')"
-           Text="The win-x64 ProGPU Dawn adapter has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\win-arm64\native\progpu_native_dawn.dll')"
-           Text="The win-arm64 ProGPU Dawn adapter has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\win-x64\native\progpu_native_direct2d.dll')"
-           Text="The win-x64 ProGPU Direct2D COM provider has not been staged." />
-    <Error Condition="!Exists('$(ProGpuNativeRuntimeRoot)\runtimes\win-arm64\native\progpu_native_direct2d.dll')"
-           Text="The win-arm64 ProGPU Direct2D COM provider has not been staged." />
-  </Target>
+  <Import Project="../../eng/ProGPU.Native.PackageValidation.targets" />
+  <Import Project="../../eng/ProGPU.Native.SdkVersion.targets" />
 </Project>

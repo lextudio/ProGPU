@@ -5,10 +5,19 @@ The release workflow does not pack samples, tests, diagnostic tools, or framewor
 It also builds the separately versioned Avalonia 11 and 12 integration packages
 from `scripts/progpu-package-list.sh`.
 
-## Preview.66 integration scope
+## Preview.67 integration scope
 
-The coordinated release uses ProGPU `0.1.0-preview.66`, Avalonia integration
-versions `12.1.1-preview.66` and `11.3.20-preview.66`, and matching LibreWPF and
+Preview.66 publication stopped when its native package exceeded NuGet's 250 MiB
+request limit. Its immutable tag and nine already-published package versions
+remain preserved; it is not a complete coordinated release. Preview.67 separates
+static SDK archives into `ProGPU.Native.Sdk`, keeps original runtime/SDK bytes,
+receipts and notices, and checks every package and symbol size before upload.
+See [publication recovery](https://github.com/wieslawsoltes/ProGPU/issues/369).
+The [native SDK package contract](native-sdk-packages.md) describes restoration,
+manual CMake extraction and the unchanged qualification requirements.
+
+The coordinated release uses ProGPU `0.1.0-preview.67`, Avalonia integration
+versions `12.1.1-preview.67` and `11.3.20-preview.67`, and matching LibreWPF and
 LibreWinForms previews. The package manifests, project defaults and consumer
 examples advance together so newly built integration packages do not reuse an
 already published version or depend on an older ProGPU package set.
@@ -448,6 +457,7 @@ pinned in `docs/WINUI_API_PARITY.md`, `docs/SKIASHARP_API_PARITY.md`, and
 - `ProGPU.GameEngine`
 - `ProGPU.Backend.Dx12`
 - `ProGPU.Backend.Native`
+- `ProGPU.Native.Sdk`
 - `ProGPU.Backend.Dawn`
 - `ProGPU.Media`
 - `ProGPU.Media.Editing`
@@ -520,19 +530,19 @@ no shader or C ABI change.
 
 ## Avalonia Integration Packages
 
-- `ProGPU.Avalonia.Rendering` `12.1.1-preview.66`
-- `ProGPU.Avalonia.SilkNet` `12.1.1-preview.66`
-- `ProGPU.Avalonia.Rendering` `11.3.20-preview.66`
-- `ProGPU.Avalonia.SilkNet` `11.3.20-preview.66`
+- `ProGPU.Avalonia.Rendering` `12.1.1-preview.67`
+- `ProGPU.Avalonia.SilkNet` `12.1.1-preview.67`
+- `ProGPU.Avalonia.Rendering` `11.3.20-preview.67`
+- `ProGPU.Avalonia.SilkNet` `11.3.20-preview.67`
 
 These packages are packed on the portable runner and published after the
-`0.1.0-preview.66` runtime package set so their exact ProGPU dependencies are
+`0.1.0-preview.67` runtime package set so their exact ProGPU dependencies are
 available first.
 
 ## Local Package Build
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.66 ./eng/progpu-pack.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.67 ./eng/progpu-pack.sh
 PROGPU_PACKAGE_OUTPUT=artifacts/packages-avalonia/Release ./scripts/progpu-pack.sh
 ```
 
@@ -550,7 +560,7 @@ release workflow combines and re-verifies both outputs before publishing.
 ```bash
 read -rsp "NuGet API key: " NUGET_API_KEY
 export NUGET_API_KEY
-PROGPU_PACKAGE_VERSION=0.1.0-preview.66 ./eng/progpu-publish.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.67 ./eng/progpu-publish.sh
 ./scripts/progpu-publish.sh
 unset NUGET_API_KEY
 ```
@@ -568,7 +578,7 @@ feed.
 - `Release` validates and packs portable packages and the Avalonia integration lanes on Linux, packs mobile packages on macOS, verifies the combined runtime dependency closure, publishes runtime packages followed by Avalonia packages, and creates a tag-driven GitHub Release.
 
 Manual releases use `workflow_dispatch` with a package version. Tag releases use tags named `v*`,
-for example `v0.1.0-preview.66`.
+for example `v0.1.0-preview.67`.
 
 ## NuGet Publishing
 

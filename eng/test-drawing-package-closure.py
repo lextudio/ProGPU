@@ -59,6 +59,11 @@ class DrawingPackageClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ProGPU.System.Drawing.Common.*ProGPU.Backend.Native"):
             verify_source_closure(packages)
 
+    def test_missing_static_sdk_dependency_is_rejected(self):
+        packages = [entry for entry in drawing_packages() if entry[0] != "ProGPU.Native.Sdk"]
+        with self.assertRaisesRegex(ValueError, "ProGPU.Backend.Native.*ProGPU.Native.Sdk"):
+            verify_source_closure(packages)
+
     def test_missing_dawn_dependency_is_rejected(self):
         packages = [entry for entry in drawing_packages() if entry[0] != "ProGPU.Backend.Dawn"]
         with self.assertRaisesRegex(ValueError, "ProGPU.Backend.Native.*ProGPU.Backend.Dawn"):
@@ -68,7 +73,9 @@ class DrawingPackageClosureTests(unittest.TestCase):
         packages = drawing_packages()
         native = next(index for index, entry in enumerate(packages) if entry[0] == "ProGPU.Backend.Native")
         dawn = next(index for index, entry in enumerate(packages) if entry[0] == "ProGPU.Backend.Dawn")
-        packages[native], packages[dawn] = packages[dawn], packages[native]
+        dawn_package = packages.pop(dawn)
+        native = next(index for index, entry in enumerate(packages) if entry[0] == "ProGPU.Backend.Native")
+        packages.insert(native + 1, dawn_package)
         with self.assertRaisesRegex(ValueError, "ProGPU.Backend.Native.*ProGPU.Backend.Dawn"):
             verify_source_closure(packages)
 
