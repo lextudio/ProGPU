@@ -328,7 +328,7 @@ if ($CurrentArchitecture -eq $RunnableArchitecture) {
         & $NativeSample $NativeSampleOutput $NativeProviderEvidence $NativeFont
         $NativeSampleExitCode = $LASTEXITCODE
         if ($NativeSampleExitCode -ne 0) {
-            throw "The D3D12 native renderer backend sample failed with process exit code $NativeSampleExitCode."
+            throw "The D3D12 native renderer backend sample failed. Process exit code: $NativeSampleExitCode."
         }
         $NativeProviderReport = Get-Content $NativeProviderEvidence -Raw
         $IsParallelsDisplayAdapter =
