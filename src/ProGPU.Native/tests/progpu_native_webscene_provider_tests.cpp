@@ -3981,36 +3981,45 @@ int main(int argc, char** argv) {
             return render_retained_scene(false, stream, header.generation, 1U, header.scene_id,
                 1U, header.command_count, nullptr, &metrics);
         }, require);
+    bool original_glyph_pixels_match = true;
+    const auto require_original_glyph = [&](bool condition, const char* message) {
+        if (std::strcmp(message, "prepared glyph matches every original Microsoft DrawGlyphRun pixel") == 0) {
+            original_glyph_pixels_match = original_glyph_pixels_match && condition;
+            return; // Report the complete original corpus, then fail below.
+        }
+        require(condition, message);
+    };
     progpu::native::direct2d::tests::verify_prepared_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_variable_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_cff_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_sideways_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_variable_sideways_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_cff_contour_origin_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_retained_scene(reference, stream, header.generation, 1U, header.scene_id, draws, header.command_count, nullptr, &metrics);
-        }, require);
+        }, require_original_glyph);
+    require(original_glyph_pixels_match, "complete original Microsoft glyph corpus must match every pixel");
     report_retained_cost();
     report_phase("retained glyph frames complete");
     for (auto* picture_engine : picture_engines) progpu_native_engine_destroy(picture_engine);

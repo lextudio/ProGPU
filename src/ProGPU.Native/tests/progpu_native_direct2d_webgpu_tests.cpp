@@ -2458,42 +2458,51 @@ int main(int argc, char** argv)
             return render_scene(gpu, engine, nullptr, 1U, header.command_count, 1U,
                 stream, header.scene_id, header.generation, &metrics);
         }, require);
+    bool original_glyph_pixels_match = true;
+    const auto require_original_glyph = [&](bool condition, const char* message) {
+        if (std::strcmp(message, "prepared glyph matches every original Microsoft DrawGlyphRun pixel") == 0) {
+            original_glyph_pixels_match = original_glyph_pixels_match && condition;
+            return; // Report the complete original corpus, then fail below.
+        }
+        require(condition, message);
+    };
     progpu::native::direct2d::tests::verify_prepared_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_variable_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_cff_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_sideways_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_variable_sideways_glyph_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require);
+        }, require_original_glyph);
     progpu::native::direct2d::tests::verify_cff_contour_origin_pixels(
         [&](bool reference, const auto& stream, const progpu_native_scene_header& header,
             std::uint32_t draws, progpu_native_scene_frame_metrics& metrics) {
             return render_scene(gpu, reference ? prepared_reference_engine : engine, nullptr,
                 draws, header.command_count, 1U, stream, header.scene_id, header.generation, &metrics);
-        }, require);
+        }, require_original_glyph);
+    require(original_glyph_pixels_match, "complete original Microsoft glyph corpus must match every pixel");
     progpu_native_engine_destroy(prepared_reference_engine);
     phase("per-axis picture pixels passed");
     auto* shader_reference_engine = create_engine(gpu);

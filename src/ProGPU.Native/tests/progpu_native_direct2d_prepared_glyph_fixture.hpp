@@ -84,7 +84,34 @@ std::vector<std::uint8_t> verify_original_glyph_frame(Render render, Require req
         require(warm_metrics.vertex_upload_bytes == 0U && warm_metrics.index_upload_bytes == 0U &&
             warm_metrics.coverage_staging_bytes == 0U, "glyph and geometry warm replay have zero retained uploads");
     }
-    require(images[0] == original_glyph_coverage_pixels(original_frame),
+    const auto original = original_glyph_coverage_pixels(original_frame);
+    if (images[0] != original) {
+        std::uint64_t source_hash = 14695981039346656037ULL;
+        for (const auto byte : scenes[0]) {
+            source_hash ^= std::to_integer<std::uint8_t>(byte);
+            source_hash *= 1099511628211ULL;
+        }
+        std::size_t differences{};
+        for (std::size_t offset = 0U; offset < std::min(images[0].size(), original.size()); ++offset) {
+            if (images[0][offset] == original[offset]) continue;
+            if (differences < 32U)
+                std::fprintf(stderr, "Original glyph mismatch: frame=%u source=%016llx "
+                    "cold+warm pixel=(%zu,%zu) channel=%zu actual=%u expected=%u\n", original_frame,
+                    static_cast<unsigned long long>(source_hash), (offset / 4U) % 64U,
+                    offset / (64U * 4U), offset % 4U, unsigned(images[0][offset]), unsigned(original[offset]));
+            ++differences;
+        }
+        std::fprintf(stderr, "Original glyph mismatch summary: frame=%u source=%016llx sourceBytes=%zu "
+            "differences=%zu actualBytes=%zu expectedBytes=%zu\n", original_frame,
+            static_cast<unsigned long long>(source_hash), scenes[0].size(), differences,
+            images[0].size(), original.size());
+        // Preserve the exact failed input for independent geometry/conversion
+        // diagnosis. No source repair or reference substitution is performed.
+        std::fprintf(stderr, "Original glyph failed source: frame=%u hex=", original_frame);
+        for (const auto byte : scenes[0]) std::fprintf(stderr, "%02x", std::to_integer<unsigned>(byte));
+        std::fprintf(stderr, "\n");
+    }
+    require(images[0] == original,
         "prepared glyph matches every original Microsoft DrawGlyphRun pixel");
     require(images[1] == images[2], "independent and prepared geometry match every pixel under one fill policy");
     return std::move(images[0]);
