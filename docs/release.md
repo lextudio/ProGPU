@@ -5,6 +5,30 @@ The release workflow does not pack samples, tests, diagnostic tools, or framewor
 It also builds the separately versioned Avalonia 11 and 12 integration packages
 from `scripts/progpu-package-list.sh`.
 
+## Preview.66 integration scope
+
+The coordinated release uses ProGPU `0.1.0-preview.66`, Avalonia integration
+versions `12.1.1-preview.66` and `11.3.20-preview.66`, and matching LibreWPF and
+LibreWinForms previews. The package manifests, project defaults and consumer
+examples advance together so newly built integration packages do not reuse an
+already published version or depend on an older ProGPU package set.
+
+The integration retains the original pending PR commits and includes repairs to
+physical glyph/source-path coverage, retained rendering and shader ownership,
+text source generations, Direct2D state, and desktop window/input lifetimes.
+The legacy RaymarchingPrimitives and StarNest sample presets are removed from
+the current tree. Published history is preserved under the owner's explicit
+exception; [historical provenance cleanup](https://github.com/wieslawsoltes/ProGPU/issues/362)
+is tracked separately.
+
+[Release tracking](https://github.com/wieslawsoltes/ProGPU/issues/361) records the
+exact successful producer and consumer runs, release commits and remaining work.
+Local software-adapter glyph results do not qualify every hardware driver,
+Display text policy, popup interaction, or complete source application. Existing
+unsupported rendering/input families retain their explicit admission gates;
+the companion LibreWPF and LibreWinForms packages require the same qualified
+ProGPU source and native runtime closure.
+
 ProGPU.CAD now resolves documented legacy `POLYLINE` entity default widths and
 per-vertex segment overrides into the existing exact constant-width retained
 stroke when every actual segment is uniform. Analytic bulges, affine bounds,
@@ -496,19 +520,19 @@ no shader or C ABI change.
 
 ## Avalonia Integration Packages
 
-- `ProGPU.Avalonia.Rendering` `12.1.1-preview.63`
-- `ProGPU.Avalonia.SilkNet` `12.1.1-preview.63`
-- `ProGPU.Avalonia.Rendering` `11.3.20-preview.63`
-- `ProGPU.Avalonia.SilkNet` `11.3.20-preview.63`
+- `ProGPU.Avalonia.Rendering` `12.1.1-preview.66`
+- `ProGPU.Avalonia.SilkNet` `12.1.1-preview.66`
+- `ProGPU.Avalonia.Rendering` `11.3.20-preview.66`
+- `ProGPU.Avalonia.SilkNet` `11.3.20-preview.66`
 
 These packages are packed on the portable runner and published after the
-`0.1.0-preview.63` runtime package set so their exact ProGPU dependencies are
+`0.1.0-preview.66` runtime package set so their exact ProGPU dependencies are
 available first.
 
 ## Local Package Build
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.63 ./eng/progpu-pack.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.66 ./eng/progpu-pack.sh
 PROGPU_PACKAGE_OUTPUT=artifacts/packages-avalonia/Release ./scripts/progpu-pack.sh
 ```
 
@@ -526,7 +550,7 @@ release workflow combines and re-verifies both outputs before publishing.
 ```bash
 read -rsp "NuGet API key: " NUGET_API_KEY
 export NUGET_API_KEY
-PROGPU_PACKAGE_VERSION=0.1.0-preview.63 ./eng/progpu-publish.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.66 ./eng/progpu-publish.sh
 ./scripts/progpu-publish.sh
 unset NUGET_API_KEY
 ```
@@ -544,7 +568,7 @@ feed.
 - `Release` validates and packs portable packages and the Avalonia integration lanes on Linux, packs mobile packages on macOS, verifies the combined runtime dependency closure, publishes runtime packages followed by Avalonia packages, and creates a tag-driven GitHub Release.
 
 Manual releases use `workflow_dispatch` with a package version. Tag releases use tags named `v*`,
-for example `v0.1.0-preview.63`.
+for example `v0.1.0-preview.66`.
 
 ## NuGet Publishing
 
