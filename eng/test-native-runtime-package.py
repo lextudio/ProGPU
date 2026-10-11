@@ -17,6 +17,37 @@ RIDS = ("linux-x64", "linux-arm64", "osx-x64", "osx-arm64", "win-x64", "win-arm6
 class NativeRuntimePackageTests(unittest.TestCase):
     maxDiff = None
 
+    def test_webscene_private_feed_covers_the_actual_source_dependency_graph(self):
+        source = (ROOT / "eng/progpu-verify-native-webscene-provider.sh").read_text()
+        commands = source[source.index("managed_package_projects=("):
+                          source.index('NUGET_PACKAGES="${managed_package_cache}" dotnet restore')]
+        # Execute the actual packaging commands with a recorder. This checks the
+        # private feed's source closure without qualifying a runtime or renderer.
+        script = '''set -euo pipefail
+repo_root="$1"
+managed_packages=/unused
+managed_package_version=0.0.0-package-list-control
+dotnet() { [[ "$1" == pack ]]; printf '%s\\n' "$2"; }
+''' + commands
+        result = subprocess.run(["bash", "-c", script, "webscene-feed-control", str(ROOT)],
+                                check=True, text=True, capture_output=True)
+        projects = [Path(path).resolve() for path in result.stdout.splitlines()]
+        self.assertEqual(len(projects), len(set(projects)))
+        native = ROOT / "src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj"
+        sdk = ROOT / "src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj"
+        self.assertIn(native, projects)
+
+        def verify_closure(feed):
+            for project in feed:
+                for reference in ET.parse(project).findall("./ItemGroup/ProjectReference"):
+                    dependency = (project.parent / reference.attrib["Include"].replace("\\", "/")).resolve()
+                    if dependency not in feed:
+                        raise ValueError(f"{project.stem}: missing private-feed dependency {dependency.stem}")
+
+        verify_closure(set(projects))
+        with self.assertRaisesRegex(ValueError, "ProGPU.Backend.Native.*ProGPU.Native.Sdk"):
+            verify_closure(set(projects) - {sdk})
+
     def test_pack_preserves_exact_paths_and_bytes_including_extensionless_notices(self):
         source = ET.parse(ROOT / "src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj")
         items = [item for item in source.findall("./ItemGroup/None")

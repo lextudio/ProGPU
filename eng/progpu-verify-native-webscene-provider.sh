@@ -200,11 +200,13 @@ for project in "${managed_package_projects[@]}"; do
     -p:Version="${managed_package_version}" \
     -p:PackageVersion="${managed_package_version}"
 done
-dotnet pack "${repo_root}/src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj" \
-  --configuration Release --output "${managed_packages}" \
-  -p:Version="${managed_package_version}" \
-  -p:PackageVersion="${managed_package_version}" \
-  -p:ProGpuNativeSkipRuntimeValidation=true
+for project in ProGPU.Native.Sdk ProGPU.Backend.Native; do
+  dotnet pack "${repo_root}/src/${project}/${project}.csproj" \
+    --configuration Release --output "${managed_packages}" \
+    -p:Version="${managed_package_version}" \
+    -p:PackageVersion="${managed_package_version}" \
+    -p:ProGpuNativeSkipRuntimeValidation=true
+done
 NUGET_PACKAGES="${managed_package_cache}" dotnet restore \
   "${repo_root}/src/ProGPU.Native.ManagedSample/ProGPU.Native.ManagedSample.csproj" \
   --no-cache \
