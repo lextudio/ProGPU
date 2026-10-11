@@ -12,7 +12,7 @@ namespace progpu::native::tests {
 // attachment separates texture normalization from the UNORM blend operation.
 template<class Readback, class Require>
 void diagnose_unorm_mask_precision(sampler_reference_api api, WGPUDevice device,
-    WGPUQueue queue, Readback readback, Require require) {
+    WGPUQueue queue, Readback readback, Require require, float original_source_alpha = -1.0F) {
     static constexpr char shader[] = R"(
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var source_sampler: sampler;
@@ -23,6 +23,7 @@ void diagnose_unorm_mask_precision(sampler_reference_api api, WGPUDevice device,
     return vec4(-1.0, -1.0, 0.0, 1.0);
 }
 fn values(position: vec2<f32>) -> vec4<f32> {
+    if (parameters.w == 1.0) { return vec4(parameters.z); }
     let sampled = textureSample(source, source_sampler, position / vec2(256.0, 1.0)).r;
     let loaded = textureLoad(source, vec2<i32>(position), 0).r;
     return vec4(sampled, loaded, sampled * parameters.x, loaded * parameters.x);
@@ -31,26 +32,34 @@ fn values(position: vec2<f32>) -> vec4<f32> {
     return values(position.xy);
 }
 fn alpha(position: vec2<f32>) -> f32 {
+    if (parameters.w == 1.0) { return parameters.z; }
     let observed = values(position);
     if (parameters.y == 1.0) { return observed.w; }
     if (parameters.y == 2.0) { return f32(u32(position.x)) / 255.0 * parameters.x; }
     return observed.z;
 }
 @fragment fn blend(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return vec4(0.0, 0.0, 0.0, alpha(position.xy));
+    return vec4(select(0.0, 1.0, parameters.w == 1.0), 0.0, 0.0, alpha(position.xy));
 }
 @fragment fn manual(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return vec4(vec3(1.0 - alpha(position.xy)), 1.0);
+    let a = alpha(position.xy);
+    return vec4(vec3(select(1.0 - a, a, parameters.w == 1.0)), 1.0);
+}
+@fragment fn premultiplied(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let a = alpha(position.xy);
+    return vec4(a, 0.0, 0.0, a);
 }
 @fragment fn output_values(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let a = alpha(position.xy);
-    let value = 1.0 - a;
+    let value = select(1.0 - a, a, parameters.w == 1.0);
     let byte = floor(value * 255.0 + 0.5);
     return vec4(value, byte / 255.0, byte, a);
 }
 @fragment fn quantized(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     var bytes = (1.0 - alpha(position.xy)) * 255.0;
-    if (parameters.y == 3.0) {
+    if (parameters.w == 1.0) {
+        bytes = alpha(position.xy) * 255.0;
+    } else if (parameters.y == 3.0) {
         bytes = 255.0 - f32(u32(position.x)) * parameters.x;
     }
     return vec4(vec3(floor(bytes + 0.5) / 255.0), 1.0);
@@ -109,11 +118,12 @@ fn alpha(position: vec2<f32>) -> f32 {
     std::array<std::uint8_t, 256U> ramp{};
     for (std::size_t i = 0U; i < ramp.size(); ++i) ramp[i] = static_cast<std::uint8_t>(i);
     api.QueueWriteTexture(queue, &upload, ramp.data(), ramp.size(), &pitch, &texture.size);
-    std::array<float, 4U> parameters{0.37F * 0.61F, 0, 0, 0};
+    const bool source_coverage = original_source_alpha >= 0.0F;
+    std::array<float, 4U> parameters{0.37F * 0.61F, 0, original_source_alpha, source_coverage ? 1.F : 0.F};
     std::array<float, 1024U> observed{};
     std::array<float, 1024U> output_values{};
-    std::array<std::array<std::uint8_t, 256U>, 8U> blended{};
-    for (unsigned variant = 0U; variant < 8U; ++variant) {
+    std::array<std::array<std::uint8_t, 256U>, 9U> blended{};
+    for (unsigned variant = 0U; variant < (source_coverage ? 9U : 8U); ++variant) {
         const bool floating = variant == 0U || variant == 5U;
         parameters[1] = variant >= 1U && variant <= 3U ? static_cast<float>(variant - 1U) : 0.0F;
         if (variant == 7U) parameters[1] = 3.0F;
@@ -126,13 +136,14 @@ fn alpha(position: vec2<f32>) -> f32 {
         WGPUBlendState blend{};
         blend.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
         blend.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+        if (variant == 8U) blend.color.srcFactor = WGPUBlendFactor_One;
         WGPUColorTargetState color{};
         color.format = texture.format;
         color.writeMask = WGPUColorWriteMask_All;
-        color.blend = variant >= 1U && variant <= 3U ? &blend : nullptr;
+        color.blend = (variant >= 1U && variant <= 3U) || variant == 8U ? &blend : nullptr;
         WGPUFragmentState fragment{};
         fragment.module = module;
-        fragment.entryPoint = text(variant == 0U ? "measure" : variant == 4U ? "manual" :
+        fragment.entryPoint = text(variant == 8U ? "premultiplied" : variant == 0U ? "measure" : variant == 4U ? "manual" :
             variant == 5U ? "output_values" : variant >= 6U ? "quantized" : "blend");
         fragment.targetCount = 1U;
         fragment.targets = &color;
@@ -165,7 +176,7 @@ fn alpha(position: vec2<f32>) -> f32 {
         attachment.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
         attachment.loadOp = WGPULoadOp_Clear;
         attachment.storeOp = WGPUStoreOp_Store;
-        attachment.clearValue = {1, 1, 1, 1};
+        attachment.clearValue = source_coverage ? WGPUColor{0, 0, 0, 1} : WGPUColor{1, 1, 1, 1};
         WGPURenderPassDescriptor pass_descriptor{};
         pass_descriptor.colorAttachmentCount = 1U;
         pass_descriptor.colorAttachments = &attachment;
@@ -206,7 +217,14 @@ fn alpha(position: vec2<f32>) -> f32 {
         api.TextureRelease(target);
     }
     std::array<unsigned, 8U> differences{};
+    if (source_coverage) {
+        std::fprintf(stderr, "Original source coverage format diagnostic: alpha=%.9g float=%.9g "
+            "straight=%u direct=%u premultiplied=%u quantized=%u shaderByte=%.9g\n",
+            original_source_alpha, output_values[0], blended[1][0], blended[4][0],
+            blended[8][0], blended[6][0], output_values[2]);
+    }
     for (unsigned value = 0U; value < 256U; ++value) {
+        if (source_coverage) break;
         const auto scalar = static_cast<unsigned>(std::floor(255.0 - value * static_cast<double>(parameters[0]) + 0.5));
         bool different = false;
         for (const unsigned variant : {1U, 2U, 3U, 4U, 6U, 7U}) {
@@ -223,7 +241,7 @@ fn alpha(position: vec2<f32>) -> f32 {
             output_values[value * 4U + 1U], output_values[value * 4U + 2U],
             blended[6][value], blended[7][value], scalar);
     }
-    std::fprintf(stderr, "UNORM mask numeric ramp mismatches/256: blendSample=%u blendLoad=%u blendExact=%u "
+    if (!source_coverage) std::fprintf(stderr, "UNORM mask numeric ramp mismatches/256: blendSample=%u blendLoad=%u blendExact=%u "
         "manualSample=%u quantizedSample=%u quantizedExact=%u\n", differences[1], differences[2],
         differences[3], differences[4], differences[6], differences[7]);
     std::fflush(stderr);
