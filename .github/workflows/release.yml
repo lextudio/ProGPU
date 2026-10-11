@@ -89,6 +89,8 @@ jobs:
             clang-tools \
             cmake \
             ninja-build \
+            gnupg \
+            fonts-dejavu-core \
             libvulkan1 \
             mesa-vulkan-drivers \
             libx11-xcb1 \
@@ -103,12 +105,77 @@ jobs:
 
       - name: Install macOS native build tools
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: brew install ninja gnupg
 
       - name: Verify generated C# native contract
         if: matrix.rid == 'linux-x64'
         shell: bash
         run: ./eng/progpu-verify-native-contract.sh
+
+      - name: Build signed isolated font dependency
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          font_workspace="$(mktemp -d "${RUNNER_TEMP}/progpu-freetype.XXXXXXXX")"
+          font_workspace="$(cd "$font_workspace" && pwd -P)"
+          echo "PROGPU_FREETYPE_WORKSPACE=$font_workspace" >> "$GITHUB_ENV"
+          if [[ '${{ runner.os }}' == 'macOS' ]]; then
+            test_font='/System/Library/Fonts/Supplemental/Arial.ttf'
+          else
+            test_font='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+          fi
+          python3 ./eng/progpu-prepare-freetype.py \
+            --workspace "$font_workspace" --rid '${{ matrix.rid }}' --cc clang --cxx clang++ \
+            --test-font "$test_font"
+
+      - name: Build signed isolated font dependency on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fontWorkspace = Join-Path $env:RUNNER_TEMP ('progpu-freetype.' + [Guid]::NewGuid().ToString('N'))
+          "PROGPU_FREETYPE_WORKSPACE=$fontWorkspace" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ./eng/progpu-prepare-freetype-windows.ps1 -Rid '${{ matrix.rid }}' -Workspace $fontWorkspace
+
+      - name: Upload verified font dependency and original notices
+        uses: actions/upload-artifact@v7
+        with:
+          name: progpu-freetype-${{ matrix.rid }}
+          path: ${{ env.PROGPU_FREETYPE_WORKSPACE }}/install
+          if-no-files-found: error
+
+      - name: Fetch exact owned EDIT dictionary source
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tempfile, urllib.request
+          pin = json.loads(pathlib.Path('eng/native-edit-word-icu.json').read_text())
+          workspace = pathlib.Path(tempfile.mkdtemp(prefix='progpu-edit-icu.', dir=os.environ['RUNNER_TEMP'])).resolve()
+          archive = workspace / 'icu-sources.tgz'
+          with urllib.request.urlopen(pin['sourceUrl']) as source, archive.open('xb') as output:
+              while chunk := source.read(1024 * 1024):
+                  output.write(chunk)
+          with archive.open('rb') as source:
+              actual = hashlib.file_digest(source, 'sha256').hexdigest()
+          if actual != pin['sourceSha256']:
+              raise SystemExit('Owned EDIT dictionary source differs from the reviewed pin')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'PROGPU_EDIT_WORD_ICU_ARCHIVE={archive}\n')
+          PY
+
+      - name: Fetch exact owned EDIT dictionary source on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pin = Get-Content -Raw eng/native-edit-word-icu.json | ConvertFrom-Json
+          $workspace = Join-Path $env:RUNNER_TEMP ('progpu-edit-icu.' + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $workspace | Out-Null
+          $archive = Join-Path $workspace 'icu-sources.tgz'
+          Invoke-WebRequest -Uri $pin.sourceUrl -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sourceSha256) {
+            throw 'Owned EDIT dictionary source differs from the reviewed pin.'
+          }
+          "PROGPU_EDIT_WORD_ICU_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build and integration-test native renderer
         if: runner.os != 'Windows'
@@ -117,8 +184,8 @@ jobs:
           PROGPU_NATIVE_RUN_DAWN_HEADER_CONTRACT: 1
           PROGPU_NATIVE_ENABLE_CPP_MODULES: ${{ matrix.rid == 'linux-x64' && 'ON' || '' }}
         run: |
-          ./eng/build-progpu-native.sh
-          ./eng/progpu-stage-native-runtime.sh
+          ./eng/build-progpu-native.sh --font-manifest "$PROGPU_FREETYPE_WORKSPACE/install/progpu-freetype.json" --edit-word-icu-archive "$PROGPU_EDIT_WORD_ICU_ARCHIVE"
+          ./eng/progpu-stage-native-runtime.sh --font-manifest "$PROGPU_FREETYPE_WORKSPACE/install/progpu-freetype.json" --edit-word-icu-archive "$PROGPU_EDIT_WORD_ICU_ARCHIVE"
 
       - name: Build and integration-test native renderer on Windows
         if: runner.os == 'Windows'
@@ -127,6 +194,8 @@ jobs:
           ./eng/build-progpu-native-windows.ps1
           -Rid "${{ matrix.rid }}"
           -BenchmarkProfile Smoke
+          -FontManifest "${{ env.PROGPU_FREETYPE_WORKSPACE }}/install/progpu-freetype.json"
+          -EditWordIcuArchive "${{ env.PROGPU_EDIT_WORD_ICU_ARCHIVE }}"
 
       - name: Verify exact WebScene provider on Metal
         if: matrix.rid == 'osx-arm64'

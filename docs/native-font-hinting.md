@@ -206,6 +206,14 @@ FreeType lookup or foreign source patch is added. All six native CI jobs now pas
 their own producer receipt explicitly into ordinary product builds; original
 CTest, sanitizer, GPU, sample and package gates remain unchanged.
 
+The six release-runtime jobs use the same signed font preparation and exact
+owned ICU source preparation as Build. Both receipts are passed explicitly to
+product compilation and runtime staging on every platform, with the original
+notices retained. A successful dependency-free local build cannot supply these
+release payloads: the existing package consumers require the real private font
+and EDIT dependencies. Workflow syntax and source-referenced consumer checks
+do not replace complete release package qualification.
+
 Both renderer contexts retain a lazy private `hinted_font_cache`. The internal
 capture helper selects the exact immutable primary/fallback source under the
 existing context use lease; no ordinary shaping call allocates a hinted face.

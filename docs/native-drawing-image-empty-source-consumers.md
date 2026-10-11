@@ -39,7 +39,10 @@ remain separate required gates.
 Status: the complete ownership fixture, including both missing-frame controls,
 passes in the source-referenced .NET consumer through both real local osx-arm64
 native libraries. The broader local consumer reaches the independent hinted-font
-controls, which require the optional isolated font dependency absent from that
-local build. This is not source-independent package or pixel qualification.
+controls; after preparing and linking the exact signed font and pinned ICU
+dependencies, the full consumer and all ten focused MIL scenarios pass. The
+two EDIT selectors also pass against the same real local libraries explicitly
+copied to their required runtime paths. These runs use project references,
+so they are not source-independent package qualification.
 An exact complete successful producer Build and final packaged JIT/NativeAOT
 execution remain required before dependency staging or release.
