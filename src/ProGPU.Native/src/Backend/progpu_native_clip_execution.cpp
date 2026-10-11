@@ -911,7 +911,10 @@ bool rebuild_vector_clip_chain(
                 !has_only_linear_segments,
             .ordinary = !path_uniforms.empty() && has_inline_path_operation &&
                 !has_inline_signed_winding,
-            .inline_signed = !path_uniforms.empty() && has_inline_signed_winding,
+            .inline_signed = !path_uniforms.empty() && has_inline_signed_winding &&
+                !has_only_linear_segments,
+            .linear_winding = !path_uniforms.empty() && has_inline_signed_winding &&
+                has_only_linear_segments,
             .split_leaf = has_work(split_leaf_uniforms),
             .split_boolean = !coverage_combine_uniforms.empty(),
             .split_signed = has_work(split_signed_leaf_uniforms) ||
@@ -1066,7 +1069,9 @@ bool rebuild_vector_clip_chain(
                 temporary.bind_group,
                 path_uniforms.size(),
                 has_inline_signed_winding
-                    ? engine.path_raster_pipeline
+                    ? has_only_linear_segments
+                        ? engine.path_raster_linear_winding_pipeline
+                        : engine.path_raster_pipeline
                     : has_inline_path_operation
                         ? engine.path_raster_ordinary_pipeline
                         : has_only_linear_segments

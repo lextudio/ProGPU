@@ -112,6 +112,7 @@ bool create_path_resources(progpu_native_engine& engine) {
         engine.path_raster_pipeline != nullptr ||
         engine.path_raster_single_path_pipeline != nullptr ||
         engine.path_raster_linear_path_pipeline != nullptr ||
+        engine.path_raster_linear_winding_pipeline != nullptr ||
         engine.path_raster_ordinary_pipeline != nullptr ||
         engine.path_split_leaf_pipeline != nullptr ||
         engine.path_split_signed_leaf_pipeline != nullptr ||
@@ -302,6 +303,10 @@ bool ensure_path_raster_pipelines(
             engine.path_raster_pipeline, engine.path_raster_shader,
             path_rasterizer_wgsl, path_rasterizer_wgsl_size,
             "cs_main", "ProGPU native signed path raster pipeline")) &&
+        (!required.linear_winding || ensure(
+            engine.path_raster_linear_winding_pipeline, engine.path_raster_shader,
+            path_rasterizer_wgsl, path_rasterizer_wgsl_size,
+            "cs_main_linear_winding", "ProGPU native linear winding raster pipeline")) &&
         (!required.split_leaf || ensure(
             engine.path_split_leaf_pipeline, engine.path_raster_shader,
             path_rasterizer_wgsl, path_rasterizer_wgsl_size,

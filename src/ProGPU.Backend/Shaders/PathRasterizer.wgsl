@@ -1,9 +1,9 @@
 // Algorithm: Convert analytic path winding or bounded postfix predicates into supersampled R8 coverage, with phased mask combination for driver-sensitive overlaps; a proven linear-only entry shares the exact winding/sample/packing math without compiling curve solvers.
 // Time complexity: O(A*(S+N)) per texel for A supersamples, S segment visits, and N bounded postfix instructions.
 // Space complexity: O(1) private storage for single/linear paths, O(D) expression-stack storage for D<=16; split mask programs retain two u32 words per leaf texel. Linear admission additionally reads S segment kinds once per four-texel word, with O(1) state.
-// The managed PathAtlas retains this bounded inline evaluator for compatibility.
-// ProGPU.Native recognizes the signed program flag before dispatch and uses the
-// staged leaf/evaluate/pack pipelines instead.
+// Managed PathAtlas uses the ordinary predicate entry. Native signed programs
+// retain their existing inline/staged policy; proven all-line inline batches
+// use the separate linear-winding entry with the same signed semantics.
 fn combine_winding_predicate_lanes(
     windingA: vec4<i32>,
     windingB: vec4<i32>,
@@ -37,14 +37,15 @@ fn combine_winding_predicates(
             pathOpKind));
 }
 
-fn signed_winding_program_row_coverage_mask(
+fn signed_winding_program_row_coverage_mask_impl(
     pixelX: f32,
     sampleY: f32,
     sampleGrid: u32,
     scaleX: f32,
     pathIndex: u32,
     programIndex: u32,
-    encodedProgramCount: u32) -> u32 {
+    encodedProgramCount: u32,
+    linearOnly: bool) -> u32 {
     var stack: array<WindingRow, 16>;
     var stackCount = 0u;
     let programCount = encodedProgramCount & BOOLEAN_TOKEN_VALUE_MASK;
@@ -88,12 +89,12 @@ fn signed_winding_program_row_coverage_mask(
             if (token != BOOLEAN_EMPTY_TOKEN) {
                 let record = pathRecords[
                     pathIndex + (token & BOOLEAN_LEAF_INDEX_MASK)];
-                winding = row_winding(
+                winding = row_winding_impl(
                     pixelX,
                     sampleY,
                     sampleGrid,
                     scaleX,
-                    record);
+                    record, linearOnly);
                 if ((token & WINDING_LEAF_TOKEN_FLAG) == 0u) {
                     winding = winding_fill_predicate(
                         winding,
@@ -108,7 +109,16 @@ fn signed_winding_program_row_coverage_mask(
     if (stackCount != 1u) {
         return 0u;
     }
-    return winding_row_coverage_mask(stack[0], sampleGrid, 1u);
+    // The original outer Nonzero group retains signed magnitude, including
+    // even values. Match the staged evaluator's nonzero predicate.
+    return winding_row_coverage_mask(stack[0], sampleGrid, 0u);
+}
+
+fn signed_winding_program_row_coverage_mask(
+    pixelX: f32, sampleY: f32, sampleGrid: u32, scaleX: f32,
+    pathIndex: u32, programIndex: u32, encodedProgramCount: u32) -> u32 {
+    return signed_winding_program_row_coverage_mask_impl(pixelX, sampleY,
+        sampleGrid, scaleX, pathIndex, programIndex, encodedProgramCount, false);
 }
 
 // A proven single-path batch additionally avoids compiling any Boolean program
@@ -189,7 +199,7 @@ fn ordinary_path_coverage_byte(x: u32, y: u32, uniforms: PathUniforms) -> u32 {
     return min(255u, u32(round(f32(coveredSamples) * sampleWeight * 255.0)));
 }
 
-fn path_coverage_byte(x: u32, y: u32, uniforms: PathUniforms) -> u32 {
+fn path_coverage_byte_impl(x: u32, y: u32, uniforms: PathUniforms, linearOnly: bool) -> u32 {
     let pathIndex = uniforms.pathIndex;
     let record = pathRecords[pathIndex];
 
@@ -206,40 +216,40 @@ fn path_coverage_byte(x: u32, y: u32, uniforms: PathUniforms) -> u32 {
         if ((uniforms.pathOpKind & BOOLEAN_PROGRAM_FLAG) != 0u) {
             if ((uniforms.pathOpKind &
                     SIGNED_WINDING_PROGRAM_FLAG) != 0u) {
-                combinedMask = signed_winding_program_row_coverage_mask(
+                combinedMask = signed_winding_program_row_coverage_mask_impl(
                     px,
                     samplePathY,
                     sampleGrid,
                     uniforms.scaleX,
                     pathIndex,
                     uniforms.pathIndexB,
-                    uniforms.pathOpKind);
+                    uniforms.pathOpKind, linearOnly);
             } else {
-                combinedMask = boolean_program_row_coverage_mask(
+                combinedMask = boolean_program_row_coverage_mask_impl(
                     px,
                     samplePathY,
                     sampleGrid,
                     uniforms.scaleX,
                     pathIndex,
                     uniforms.pathIndexB,
-                    uniforms.pathOpKind);
+                    uniforms.pathOpKind, linearOnly);
             }
         } else {
-            let maskA = row_coverage_mask(
+            let maskA = row_coverage_mask_impl(
                 px,
                 samplePathY,
                 sampleGrid,
                 uniforms.scaleX,
-                record);
+                record, linearOnly);
             combinedMask = maskA;
             if (uniforms.pathOpKind != 0u) {
                 let recordB = pathRecords[uniforms.pathIndexB];
-                let maskB = row_coverage_mask(
+                let maskB = row_coverage_mask_impl(
                     px,
                     samplePathY,
                     sampleGrid,
                     uniforms.scaleX,
-                    recordB);
+                    recordB, linearOnly);
                 combinedMask = combine_coverage_masks(
                     maskA,
                     maskB,
@@ -250,6 +260,10 @@ fn path_coverage_byte(x: u32, y: u32, uniforms: PathUniforms) -> u32 {
         coveredSamples = coveredSamples + countOneBits(combinedMask & validMask);
     }
     return min(255u, u32(round(f32(coveredSamples) * sampleWeight * 255.0)));
+}
+
+fn path_coverage_byte(x: u32, y: u32, uniforms: PathUniforms) -> u32 {
+    return path_coverage_byte_impl(x, y, uniforms, false);
 }
 
 fn path_sample_mask(x: u32, y: u32, uniforms: PathUniforms) -> vec2<u32> {
@@ -296,6 +310,33 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
+    coverageOutput[uniforms.outputOffsetWords + y * uniforms.outputRowWords + wordX] = coverageWord;
+}
+
+// This is a separate signed/Boolean specialization, not the single-path entry.
+// The host proves the complete uploaded segment inventory is linear. The raw
+// shader independently rejects a later curve or unknown kind before any write.
+@compute @workgroup_size(16, 16)
+fn cs_main_linear_winding(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let uniforms = pathUniforms[global_id.z];
+    let wordX = global_id.x;
+    let y = global_id.y;
+    let firstX = wordX * 4u;
+    if (firstX >= uniforms.width || y >= uniforms.height) {
+        return;
+    }
+    for (var index = 0u; index < arrayLength(&segments); index++) {
+        if (segments[index].segmentType != 0u) {
+            return;
+        }
+    }
+    var coverageWord = 0u;
+    for (var lane = 0u; lane < 4u; lane++) {
+        let x = firstX + lane;
+        if (x < uniforms.width) {
+            coverageWord |= path_coverage_byte_impl(x, y, uniforms, true) << (lane * 8u);
+        }
+    }
     coverageOutput[uniforms.outputOffsetWords + y * uniforms.outputRowWords + wordX] = coverageWord;
 }
 

@@ -83,6 +83,17 @@ internal static class Program
             areas: [-36, 100, -100],
             coverage: [false, false, false, true]);
 
+        Require(
+            Dump("sixteen-clockwise-contours", Group(Enumerable.Range(0, 16)
+                .Select(_ => Rectangle(0, 0, 10, 10, clockwise: true)).ToArray()), probes),
+            areas: Enumerable.Repeat(100.0, 16).ToArray(),
+            coverage: [true, true, false, true]);
+        Require(
+            Dump("sixteen-counter-clockwise-contours", Group(Enumerable.Range(0, 16)
+                .Select(_ => Rectangle(0, 0, 10, 10, clockwise: false)).ToArray()), probes),
+            areas: Enumerable.Repeat(-100.0, 16).ToArray(),
+            coverage: [true, true, false, true]);
+
         Console.WriteLine("WPF Nonzero/CombinedGeometry oracle passed.");
     }
 

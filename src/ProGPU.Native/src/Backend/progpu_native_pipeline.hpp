@@ -64,6 +64,7 @@ struct path_raster_pipeline_requirements {
     bool single_path = false;
     bool ordinary = false;
     bool inline_signed = false;
+    bool linear_winding = false;
     bool split_leaf = false;
     bool split_boolean = false;
     bool split_signed = false;

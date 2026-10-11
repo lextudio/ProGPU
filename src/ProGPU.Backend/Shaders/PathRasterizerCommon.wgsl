@@ -741,16 +741,23 @@ fn winding_row_coverage_mask(
     return covered;
 }
 
-fn row_coverage_mask(
+fn row_coverage_mask_impl(
     pixelX: f32,
     sampleY: f32,
     sampleGrid: u32,
     scaleX: f32,
-    record: PathRecord) -> u32 {
+    record: PathRecord,
+    linearOnly: bool) -> u32 {
     return winding_row_coverage_mask(
-        row_winding(pixelX, sampleY, sampleGrid, scaleX, record),
+        row_winding_impl(pixelX, sampleY, sampleGrid, scaleX, record, linearOnly),
         sampleGrid,
         record.fillRule);
+}
+
+fn row_coverage_mask(
+    pixelX: f32, sampleY: f32, sampleGrid: u32,
+    scaleX: f32, record: PathRecord) -> u32 {
+    return row_coverage_mask_impl(pixelX, sampleY, sampleGrid, scaleX, record, false);
 }
 
 fn combine_coverage_masks(maskA: u32, maskB: u32, pathOpKind: u32) -> u32 {
@@ -764,14 +771,15 @@ fn combine_coverage_masks(maskA: u32, maskB: u32, pathOpKind: u32) -> u32 {
     }
 }
 
-fn boolean_program_row_coverage_mask(
+fn boolean_program_row_coverage_mask_impl(
     pixelX: f32,
     sampleY: f32,
     sampleGrid: u32,
     scaleX: f32,
     pathIndex: u32,
     programIndex: u32,
-    encodedProgramCount: u32) -> u32 {
+    encodedProgramCount: u32,
+    linearOnly: bool) -> u32 {
     var stack: array<u32, 16>;
     var stackCount = 0u;
     let programCount = encodedProgramCount & ~BOOLEAN_PROGRAM_FLAG;
@@ -799,12 +807,12 @@ fn boolean_program_row_coverage_mask(
             var mask = 0u;
             if (token != BOOLEAN_EMPTY_TOKEN) {
                 let record = pathRecords[pathIndex + token];
-                mask = row_coverage_mask(
+                mask = row_coverage_mask_impl(
                     pixelX,
                     sampleY,
                     sampleGrid,
                     scaleX,
-                    record);
+                    record, linearOnly);
             }
             stack[stackCount] = mask;
             stackCount = stackCount + 1u;
@@ -812,6 +820,13 @@ fn boolean_program_row_coverage_mask(
     }
 
     return select(0u, stack[0], stackCount == 1u);
+}
+
+fn boolean_program_row_coverage_mask(
+    pixelX: f32, sampleY: f32, sampleGrid: u32, scaleX: f32,
+    pathIndex: u32, programIndex: u32, encodedProgramCount: u32) -> u32 {
+    return boolean_program_row_coverage_mask_impl(pixelX, sampleY, sampleGrid,
+        scaleX, pathIndex, programIndex, encodedProgramCount, false);
 }
 
 fn winding_fill_predicate(

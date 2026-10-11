@@ -1,5 +1,14 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Native inline signed-winding batches may select the separate linear kernel only
+after validating the complete original source segment inventory as lines. Keep
+the raw whole-inventory rejection, original signed/Boolean operations, sample
+math, four-pixel packing and lazy engine ownership in both providers and retained
+clips. This does not relax the single-path operation-zero gate or change curved
+and staged policy. Final signed sums use Nonzero, including even magnitudes;
+preserve independent region and original Microsoft WPF controls. See
+docs/single-path-raster-pipeline.md; a local sample is not package qualification.
+
 Aliased retained lines pad only their raster quads and clip the original flat
 endpoint interval in the shared fragment shader. Preserve single-owner fan edges
 and one-sample aliased path cache identity; do not change source geometry or

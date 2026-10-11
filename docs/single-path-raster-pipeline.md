@@ -37,20 +37,20 @@ ordinary/doubled/degenerate figures, both fill rules, four sample grids and two
 placements/scales. It checks row padding, intercase guards, partial-word tails,
 overdispatch and rejected operation kinds. Two actual-atlas sequences cover
 simple-first and Boolean-first compilation, mixed batches, retention and disposal.
-The lightweight Windows executable links these three original test bodies and
-three additional linear-path bodies, requiring all six to execute without
+The lightweight Windows executable links these three original test bodies,
+three additional linear-path bodies and the signed-linear regression, requiring all seven to execute without
 skip/discovery substitutions. Windows CI
 executes them in independent processes, each still bounded by 120 seconds. Every
 case has an exact execution marker and its own logs; a final receipt requires all
-six successes. The default executable mode executes all six together.
+seven successes. The default executable mode executes all seven together.
 
 ## Proven linear-path batches
 
 `cs_main_linear_path` shares ProGPU's original winding, sample-grid, fill-rule,
 scale, phase and packing implementation from commit
 `77eaecc49f1b1194fb6f63e9ac3000646f703643`. A constant admission parameter removes
-curve solvers from this entry's reachable program; ordinary and signed/Boolean
-entries continue to use the complete original segment evaluator. No external
+curve solvers from this entry's reachable program; the general ordinary and
+signed/Boolean entries retain the complete original segment evaluator. No external
 implementation text is included and no curves are approximated by straight edges.
 
 Managed preparation checks every admitted request's segment kinds and operation
@@ -58,7 +58,8 @@ before choosing the linear pipeline. Both native providers perform the same
 kind classification during their existing full source-segment validation loops,
 for both geometry frames and retained vector clips. Native selection is
 conservative: even an unused curved source segment keeps the full kernel.
-Any Boolean operation keeps the existing Boolean/signed dispatch. A first item,
+This single-path entry excludes every Boolean operation. The separate signed
+linear entry described below preserves signed/Boolean dispatch semantics. A first item,
 bounding rectangle, geometry name or endpoint pair cannot establish admission.
 
 The raw linear GPU entry also rejects every non-line/unknown kind, nonzero
@@ -112,6 +113,77 @@ GPU differentials, native path/clip/Boolean package coverage for both providers,
 and representative matched startup/performance evidence. Existing native package
 selectors, independent cases, exact image inventories and process deadlines stay
 intact. The native WPF resize/idle failure is not declared fixed by this change.
+
+## Proven linear signed-winding batches
+
+The native `cs_main_linear_winding` entry specializes the original ProGPU
+`PathRasterizer.wgsl` and `PathRasterizerCommon.wgsl` from
+`ac25d7c8c8fdeb7cf8967d83f3e8f50850fd4287`. It propagates the existing constant
+linear admission parameter through ordinary, Boolean and signed row evaluation.
+Every original line crossing, sample, scale, phase, postfix operation and packed
+output remains GPU work. No external implementation source was used.
+
+Both native providers select it only when the existing complete source-segment
+validation finds exclusively line segments and the actual inline batch contains
+a signed program. A later unused curve closes admission. Geometry frames and
+retained vector clips use the same rule, lazy engine-owned pipeline and normal
+engine teardown. The raw shader independently checks the entire bound segment
+inventory before writing output; native bindings expose the actual source byte
+extent rather than buffer allocation capacity. Ordinary mixed requests in that
+same batch retain their own original operation. Curved signed batches still use
+the general kernel; existing staged policy, leaf/evaluate/pack pipelines and
+single-path operation-zero gate are unchanged.
+
+Managed applicability was audited in `PathAtlas`: it emits ordinary Boolean
+predicates and selects `cs_main_ordinary`, not the native signed-program format.
+Its ordinary/single/linear dispatch therefore remains unchanged. It and both
+native providers consume the same canonical shader resources. The linked managed
+raw GPU regression exercises the new signed entry directly without inventing a
+second signed source transport.
+
+Host classification adds no pass or allocation: it reuses the existing O(S)
+source validation. Raw admission adds O(S) kind reads per four-pixel output word;
+raster work remains O(A*(S+N)) per pixel for A samples, S segment visits and N
+bounded postfix instructions, with O(D) private stack storage for D <= 16. There
+is at most one additional lazy pipeline per engine. Workgroups remain 16 by 16;
+bindings, uploads, submissions, retained identities, completion deadlines,
+adapter/compiler defaults, ABI and fallback policy do not change.
+
+The independent region regression exposed an existing final-predicate error in
+the general signed evaluator: it interpreted a nonzero outer group's signed sum
+as EvenOdd. The shared final predicate now tests Nonzero, matching the staged
+evaluator. Even signed magnitudes such as 16 must remain filled. The original
+Microsoft WPF oracle confirms this for sixteen clockwise and sixteen
+counterclockwise contours, while preserving its original cancellation and
+CombinedGeometry cases. No source contour or expected pixel was changed to
+accommodate the correction.
+
+`LinearWindingRasterPipelineTests` checks 1,040 cases against independent source
+region formulas: all five binary Boolean operations, signed sums and negation,
+cancellation, raw versus predicate even-odd contours, empty tokens, depth 16,
+four sample grids, fractional phase/scale, five widths, complete output words
+and untouched row/intercase padding. Six appended unused curve/unknown kinds
+must leave the entire output untouched. The standalone `linear-winding` case
+accepts explicit `fallback` or `reference` modes for software-adapter or general
+kernel comparison; normal CI retains all six previous cases and adds the new
+case with the same independent 120-second process bound.
+
+Local Windows ARM64 D3D12/automatic-FXC evidence on Microsoft Basic Render Driver:
+all 1,040 cases and six rejection controls pass, as does the unchanged complete
+native sample with its original scene, font and pixel checks (67.323 seconds).
+The prior general shader crashed on the exact captured original GPU inputs;
+all four line-specialized captured buffers, including their untouched tails,
+match the original Metal general shader byte-for-byte (94,720 bytes each).
+Physical M3 Metal also passes all 1,040 regions through both the specialized
+and general signed entries, and all 49 native tests across both provider aggregates. Its complete original native sample
+remains byte-identical (SHA-256
+`d746b309d74ce695640cba22b0cfa7372ec8dab8b468ce38c2930154b2a7e5d7`).
+
+These are local source and sample results, not whole-producer/package or complete
+Windows qualification. The preexisting software-adapter GPU hit-query deferral
+remains explicit in the original sample. Curved signed programs, forced execution
+policies, Windows x64/ARM64 CI, final packages and source applications retain their
+own gates. The separate Intel macOS exact UNORM mismatch remains unresolved.
 
 ## Architecture research
 

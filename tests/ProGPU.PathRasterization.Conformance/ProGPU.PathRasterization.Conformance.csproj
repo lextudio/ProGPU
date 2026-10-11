@@ -12,5 +12,6 @@
     <PackageReference Include="xunit" />
     <Compile Include="../../src/ProGPU.Tests/SinglePathRasterPipelineTests.cs" Link="SinglePathRasterPipelineTests.cs" />
     <Compile Include="../../src/ProGPU.Tests/LinearPathRasterPipelineTests.cs" Link="LinearPathRasterPipelineTests.cs" />
+    <Compile Include="../../src/ProGPU.Tests/LinearWindingRasterPipelineTests.cs" Link="LinearWindingRasterPipelineTests.cs" />
   </ItemGroup>
 </Project>

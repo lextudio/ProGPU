@@ -95,6 +95,7 @@ struct progpu_native_engine {
     WGPUComputePipeline path_raster_pipeline = nullptr;
     WGPUComputePipeline path_raster_single_path_pipeline = nullptr;
     WGPUComputePipeline path_raster_linear_path_pipeline = nullptr;
+    WGPUComputePipeline path_raster_linear_winding_pipeline = nullptr;
     WGPUComputePipeline path_raster_ordinary_pipeline = nullptr;
     WGPUComputePipeline path_split_leaf_pipeline = nullptr;
     WGPUComputePipeline path_split_signed_leaf_pipeline = nullptr;
@@ -630,6 +631,7 @@ struct progpu_native_engine {
             {path_raster_pipeline, "path_signed"},
             {path_raster_single_path_pipeline, "path_single"},
             {path_raster_linear_path_pipeline, "path_linear"},
+            {path_raster_linear_winding_pipeline, "path_linear_winding"},
             {path_raster_ordinary_pipeline, "path_boolean"},
             {path_split_leaf_pipeline, "path_split_leaf"},
             {path_split_signed_leaf_pipeline, "path_signed_leaf"},
@@ -2085,6 +2087,9 @@ struct progpu_native_engine {
         }
         if (path_raster_linear_path_pipeline != nullptr) {
             wgpuComputePipelineRelease(path_raster_linear_path_pipeline);
+        }
+        if (path_raster_linear_winding_pipeline != nullptr) {
+            wgpuComputePipelineRelease(path_raster_linear_winding_pipeline);
         }
         if (path_split_leaf_pipeline != nullptr) {
             wgpuComputePipelineRelease(path_split_leaf_pipeline);
