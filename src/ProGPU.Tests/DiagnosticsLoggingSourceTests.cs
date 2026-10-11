@@ -239,7 +239,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("export LD_LIBRARY_PATH=\"${native_root}:${native_rid_root}:${headless_native_root}:${headless_native_rid_root}:${LD_LIBRARY_PATH:-}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet test src/ProGPU.Tests/ProGPU.Tests.csproj --configuration Release --runtime linux-x64 --no-build --verbosity normal --filter \"FullyQualifiedName!~ShapingContractsTests\"", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet test src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj --configuration Release --runtime linux-x64 --no-build --verbosity normal", workflow, StringComparison.Ordinal);
-        Assert.Contains("needs: [portable, native-package-consumer, native-dx12-package-consumer, mobile]", workflow, StringComparison.Ordinal);
+        Assert.Contains("needs: [source, portable, native-package-consumer, native-dx12-package-consumer, mobile]", workflow, StringComparison.Ordinal);
         Assert.Contains("uses: actions/download-artifact@v8", workflow, StringComparison.Ordinal);
         Assert.Contains("PROGPU_PACKAGE_GROUP=all ./eng/progpu-verify-packages.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet nuget push \"${package}\"", workflow, StringComparison.Ordinal);
@@ -248,7 +248,7 @@ public class DiagnosticsLoggingSourceTests
         Assert.Contains("GH_TOKEN: ${{ github.token }}", workflow, StringComparison.Ordinal);
         Assert.Contains("if [[ \"${PROGPU_PACKAGE_VERSION}\" == *-* ]]", workflow, StringComparison.Ordinal);
         Assert.Contains("release_args+=(--prerelease)", workflow, StringComparison.Ordinal);
-        Assert.Contains("gh release create \"${GITHUB_REF_NAME}\"", workflow, StringComparison.Ordinal);
+        Assert.Contains("gh release create \"v${PROGPU_PACKAGE_VERSION}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("--title \"ProGPU ${{ env.PROGPU_PACKAGE_VERSION }}\"", workflow, StringComparison.Ordinal);
         Assert.Contains("--generate-notes", workflow, StringComparison.Ordinal);
         Assert.Contains("--verify-tag", workflow, StringComparison.Ordinal);
