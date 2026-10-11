@@ -7177,6 +7177,10 @@ public class NativeRendererInteropTests
             ".github", "workflows", "release.yml"));
         string packageProject = File.ReadAllText(FindRepoFile(
             "src", "ProGPU.Backend.Native", "ProGPU.Backend.Native.csproj"));
+        string sdkPackageProject = File.ReadAllText(FindRepoFile(
+            "src", "ProGPU.Native.Sdk", "ProGPU.Native.Sdk.csproj"));
+        string packageValidation = File.ReadAllText(FindRepoFile(
+            "eng", "ProGPU.Native.PackageValidation.targets"));
         string dawnHeaderPath = FindRepoFile(
             "src", "ProGPU.Native", "include", "progpu_native_dawn.h");
         string nativeBuild = File.ReadAllText(FindRepoFile(
@@ -7226,8 +7230,16 @@ public class NativeRendererInteropTests
             verifier,
             StringComparison.Ordinal);
         Assert.Contains(
-            "progpu_native_dawn",
+            "<Import Project=\"../../eng/ProGPU.Native.PackageValidation.targets\" />",
             packageProject,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "<Import Project=\"../../eng/ProGPU.Native.PackageValidation.targets\" />",
+            sdkPackageProject,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "progpu_native_dawn",
+            packageValidation,
             StringComparison.Ordinal);
         Assert.Contains(
             @"..\ProGPU.Native\include\*",
