@@ -2300,6 +2300,16 @@ Keep pixel-oracle and first-frame tests: a non-null cached texture or a compiled
 mask is not proof that pending outer coverage survived. Do not widen pixel
 tolerances to hide differences in overlap, alpha or antialias coverage.
 
+The owner approved one bounded Intel macOS release exception on 2026-10-11
+(#363): the original sheared-glyph red 252/253 FLOAT-to-UNORM conversion at
+(40,28), including its independently verified stored-byte half-opacity result.
+Keep original Microsoft captures and exact serialized scene guards, same-device
+raw conversion evidence, every other byte/channel, both windings and identical
+cold/warm frames. Reject altered source bytes, other differences or missing
+evidence; log each accepted conversion. This does not authorize general pixel
+tolerances, product rounding changes or skipped producer/package/application CI.
+See docs/direct2d-prepared-original-glyphs.md, approved conversion exception.
+
 Native semantic builder append preflights must preserve geometric capacity growth
 before publishing related records. Never restore exact size-plus-one reserve
 calls or remove atomic allocation preflights. Keep overflow/failure and complete

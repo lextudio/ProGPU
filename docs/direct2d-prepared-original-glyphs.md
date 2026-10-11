@@ -504,3 +504,63 @@ No validation is executed at this checkpoint: all compile, source, original
 Windows, GPU, package and platform gates remain deferred to the final integrated
 tip. This is a reusable source ownership/recording connection, not an application
 or numerical parity result.
+
+## Approved conversion exception (2026-10-11)
+
+The repository owner approved the bounded Intel macOS release exception in
+[#363](https://github.com/wieslawsoltes/ProGPU/issues/363). On the hosted Apple
+Paravirtual Metal device, the original full-opacity sheared capture differs
+only at (40,28), red 252 instead of Microsoft's 253, in both cold and warm
+frames. The original source scene is 3,480 bytes, FNV `a348801418647002`.
+Physical M3 stores 253. Original Microsoft pixel captures remain unchanged.
+
+The original snapped coverage is `112867 / 113984`, approximately
+`252.501096645` on the byte scale. The independent same-device raw GPU probe
+measures the unchanged float and separately renders direct RGBA8 output,
+straight-alpha blending, premultiplied blending and explicit diagnostic byte
+conversion. The hosted device gives 252 for the first three and 253 for the
+last. [Direct3D 11.3 section 3.2.3.6](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.6%20FLOAT%20-%3E%20UNORM)
+allows 0.6 ULP on the integer side of FLOAT-to-UNORM conversion, which includes
+both values. This exception acknowledges that conversion latitude; it does not
+claim exact original-byte parity or alter any product shader.
+
+The gate is confined to Intel macOS and these four original cases:
+
+| Half opacity | Reversed contours | Original source FNV | Bytes | Only admissible red difference |
+| --- | --- | --- | --- | --- |
+| No | No | `a348801418647002` | 3480 | 252 versus 253 at (40,28) |
+| No | Yes | `8665a27783d5503a` | 3480 | 252 versus 253 at (40,28) |
+| Yes | No | `d6c521e24c39b215` | 3672 | 126 versus 127 at (40,28), with the extra opacity proof below |
+| Yes | Yes | `4892ee77dd02d629` | 3672 | 126 versus 127 at (40,28), with the extra opacity proof below |
+
+Every accepted frame must match the entire original serialized scene snapshot,
+byte for byte; the displayed hash alone is insufficient. Snapshots were taken
+at `8b9802b4dbb77a00e2865b86d334c23c691c03f8`, before this policy change.
+The actual cold and warm frames must be identical, exactly 16,384 bytes, and
+match all other original 16,383 bytes. Each case runs its independent raw GPU
+probe on the replay's actual device; no adapter-name allowlist replaces this
+evidence. All 256 probe samples must agree. The full-opacity proof requires
+the exact source float and the exact four observed conversion outputs above.
+
+For the half-opacity cases, the probe additionally samples the actual stored
+conversion byte through an independent R8 texture and applies the original
+linear-byte half-opacity rule: recover the stored byte, multiply by 0.5, round
+to the nearest byte. It separately processes the original Microsoft byte.
+Admission requires actual GPU outputs 126 from observed 252 and 127 from
+original 253. An unproven or additional opacity difference is rejected.
+These are conditional acceptance bounds, not claims that all four hosted
+cases were qualified before the complete CI run.
+
+The shared fixture tests every other pixel/channel against an injected extra
+difference, mutates every serialized source byte, and rejects changed extents,
+cold/warm disagreement, moved coordinates, different output values, ineligible
+platforms and each missing/inconsistent evidence field. Synthetic evidence is
+confined to those policy controls. Real replay uses only the actual raw GPU
+receipt. Every accepted conversion is printed with source identity, case,
+coordinate, channel, actual/reference value and cold/warm identity.
+
+Both providers retain the shared gate and their complete original corpus.
+No broad +/-1 tolerance, changed reference capture, alpha bias, product
+prequantization, different blend ordering or skipped CI is permitted. All
+producer, package, Windows and application gates remain mandatory before
+merging or releasing.

@@ -2205,14 +2205,15 @@ void verify_explicit_target_storage_clear(const gpu_context& gpu, progpu_native_
         }, require);
 }
 
-void diagnose_mask_precision(const gpu_context& gpu, float original_source_alpha = -1.0F)
+progpu::native::tests::source_unorm_observation diagnose_mask_precision(
+    const gpu_context& gpu, float original_source_alpha = -1.0F)
 {
     const progpu::native::tests::sampler_reference_api api{
 #define PROGPU_LOAD_UNORM_PROC(name) wgpu##name,
         PROGPU_SAMPLER_REFERENCE_PROCS(PROGPU_LOAD_UNORM_PROC)
 #undef PROGPU_LOAD_UNORM_PROC
     };
-    progpu::native::tests::diagnose_unorm_mask_precision(api, gpu.device, gpu.queue,
+    return progpu::native::tests::diagnose_unorm_mask_precision(api, gpu.device, gpu.queue,
         [&](WGPUBuffer buffer, std::size_t size) {
             map_request mapped{};
             wgpuBufferMapAsync(buffer, WGPUMapMode_Read, 0U, size, on_buffer_mapped, &mapped);
@@ -2443,15 +2444,8 @@ int main(int argc, char** argv)
         [&](const auto& stream, const progpu_native_scene_header& header) {
             return render_scene(gpu, engine, nullptr, 1U, header.command_count, 1U,
                 stream, header.scene_id, header.generation);
-        }, [&](bool condition, const char* message) {
-            if (!condition) {
-                // Exact rational coverage at original pixel (40,28), derived
-                // from its three captured corners after the source 8-bit snap.
-                // Observe format/blend stages independently; never replace the
-                // original scene, byte reference, or failed assertion.
-                diagnose_mask_precision(gpu, 112867.0F / 113984.0F);
-            }
-            require(condition, message);
+        }, require, [&] {
+            return diagnose_mask_precision(gpu, 112867.0F / 113984.0F);
         });
     progpu::native::direct2d::tests::verify_filled_path_projection_pixels(
         [&](const auto& stream, const progpu_native_scene_header& header, float dpi,

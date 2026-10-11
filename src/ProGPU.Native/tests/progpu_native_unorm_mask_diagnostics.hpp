@@ -1,17 +1,18 @@
 #pragma once
 
 #include "progpu_native_shader_sampler_gpu_reference.hpp"
+#include "progpu_native_sheared_unorm_exception.hpp"
 #include <cmath>
 #include <cstring>
 
 namespace progpu::native::tests {
 
-// Independent raw GPU observation, not a replacement oracle. Preserve every
-// original scene pixel/counter assertion after reporting the numeric stages.
+// Independent raw GPU observation, not a replacement oracle. Its returned
+// evidence can authorize only the explicitly bounded owner-approved #363 case.
 // The authored R8 ramp visits every byte at its exact texel center. A float
 // attachment separates texture normalization from the UNORM blend operation.
 template<class Readback, class Require>
-void diagnose_unorm_mask_precision(sampler_reference_api api, WGPUDevice device,
+source_unorm_observation diagnose_unorm_mask_precision(sampler_reference_api api, WGPUDevice device,
     WGPUQueue queue, Readback readback, Require require, float original_source_alpha = -1.0F) {
     static constexpr char shader[] = R"(
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -63,6 +64,14 @@ fn alpha(position: vec2<f32>) -> f32 {
         bytes = 255.0 - f32(u32(position.x)) * parameters.x;
     }
     return vec4(vec3(floor(bytes + 0.5) / 255.0), 1.0);
+}
+@fragment fn half_stored() -> @location(0) vec4<f32> {
+    // Independent stored-byte/half-opacity control. The input index is the
+    // actual preceding raw GPU conversion, or its original Microsoft byte.
+    let stored = textureSampleLevel(source, source_sampler,
+        vec2((parameters.z + 0.5) / 256.0, 0.5), 0.0).r;
+    let byte = floor(stored * 255.0 + 0.5);
+    return vec4(floor(byte * 0.5 + 0.5) / 255.0, 0.0, 0.0, 1.0);
 }
 )";
 #if defined(PROGPU_SAMPLER_REFERENCE_DAWN)
@@ -122,11 +131,12 @@ fn alpha(position: vec2<f32>) -> f32 {
     std::array<float, 4U> parameters{0.37F * 0.61F, 0, original_source_alpha, source_coverage ? 1.F : 0.F};
     std::array<float, 1024U> observed{};
     std::array<float, 1024U> output_values{};
-    std::array<std::array<std::uint8_t, 256U>, 9U> blended{};
-    for (unsigned variant = 0U; variant < (source_coverage ? 9U : 8U); ++variant) {
+    std::array<std::array<std::uint8_t, 256U>, 11U> blended{};
+    for (unsigned variant = 0U; variant < (source_coverage ? 11U : 8U); ++variant) {
         const bool floating = variant == 0U || variant == 5U;
         parameters[1] = variant >= 1U && variant <= 3U ? static_cast<float>(variant - 1U) : 0.0F;
         if (variant == 7U) parameters[1] = 3.0F;
+        if (variant >= 9U) parameters[2] = variant == 9U ? float(blended[4][0]) : output_values[2];
         api.QueueWriteBuffer(queue, uniform, 0U, parameters.data(), sizeof(parameters));
         texture.format = floating ? WGPUTextureFormat_RGBA32Float : WGPUTextureFormat_RGBA8Unorm;
         texture.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
@@ -143,7 +153,7 @@ fn alpha(position: vec2<f32>) -> f32 {
         color.blend = (variant >= 1U && variant <= 3U) || variant == 8U ? &blend : nullptr;
         WGPUFragmentState fragment{};
         fragment.module = module;
-        fragment.entryPoint = text(variant == 8U ? "premultiplied" : variant == 0U ? "measure" : variant == 4U ? "manual" :
+        fragment.entryPoint = text(variant >= 9U ? "half_stored" : variant == 8U ? "premultiplied" : variant == 0U ? "measure" : variant == 4U ? "manual" :
             variant == 5U ? "output_values" : variant >= 6U ? "quantized" : "blend");
         fragment.targetCount = 1U;
         fragment.targets = &color;
@@ -217,11 +227,23 @@ fn alpha(position: vec2<f32>) -> f32 {
         api.TextureRelease(target);
     }
     std::array<unsigned, 8U> differences{};
+    source_unorm_observation result{};
     if (source_coverage) {
+        result = {original_source_alpha, output_values[0], output_values[2], blended[1][0],
+            blended[4][0], blended[8][0], blended[6][0], blended[9][0], blended[10][0], true};
+        for (std::size_t i = 0U; i < ramp.size(); ++i) {
+            for (std::size_t channel = 0U; channel < 4U; ++channel)
+                result.uniform = result.uniform && observed[i * 4U + channel] == original_source_alpha &&
+                    output_values[i * 4U + channel] == output_values[channel];
+            for (const unsigned variant : {1U, 2U, 3U, 4U, 6U, 7U, 8U, 9U, 10U})
+                result.uniform = result.uniform && blended[variant][i] == blended[variant][0];
+        }
         std::fprintf(stderr, "Original source coverage format diagnostic: alpha=%.9g float=%.9g "
-            "straight=%u direct=%u premultiplied=%u quantized=%u shaderByte=%.9g\n",
+            "straight=%u direct=%u premultiplied=%u quantized=%u shaderByte=%.9g "
+            "halfObserved=%u halfReference=%u uniform=%u\n",
             original_source_alpha, output_values[0], blended[1][0], blended[4][0],
-            blended[8][0], blended[6][0], output_values[2]);
+            blended[8][0], blended[6][0], output_values[2],
+            result.half_observed, result.half_reference, unsigned(result.uniform));
     }
     for (unsigned value = 0U; value < 256U; ++value) {
         if (source_coverage) break;
@@ -251,6 +273,7 @@ fn alpha(position: vec2<f32>) -> f32 {
     api.TextureViewRelease(source_view);
     api.TextureRelease(source);
     api.ShaderModuleRelease(module);
+    return result;
 }
 
 } // namespace progpu::native::tests

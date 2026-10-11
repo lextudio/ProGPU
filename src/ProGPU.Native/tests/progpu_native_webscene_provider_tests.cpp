@@ -65,6 +65,7 @@
 #include <webgpu.h>
 #define PROGPU_SAMPLER_REFERENCE_DAWN
 #include "progpu_native_shader_sampler_gpu_reference.hpp"
+#include "progpu_native_unorm_mask_diagnostics.hpp"
 #undef PROGPU_SAMPLER_REFERENCE_DAWN
 
 #include <IOSurface/IOSurface.h>
@@ -3678,24 +3679,11 @@ int main(int argc, char** argv) {
             progpu_native_layer_metrics& layers, progpu_native_scene_frame_metrics& frame) {
             return render_retained_scene(reference, stream, generation, 1U, 0x9493U, 1U, 3U, &layers, &frame);
         }, require);
-    {
-    std::array<std::array<progpu_native_engine*, 2U>, 2U> sampler_engines{};
-    std::array<progpu_native_engine*, 2U> capture_engines{};
-    const auto create_sampler_engine = [&](bool four_load, bool capture) {
-        auto options = engine_options;
-        options.flags = four_load ? PROGPU_NATIVE_ENGINE_IMAGE_EXPLICIT_SHADER_SAMPLING : 0U;
-        if (capture) options.target_format = PROGPU_NATIVE_TEXTURE_FORMAT_RGBA8_UNORM;
-        progpu_native_engine* selected{};
-        require(progpu_native_dawn_engine_create(&options, &selected) == PROGPU_NATIVE_STATUS_SUCCESS && selected,
-            "sampler policy Dawn engine creation failed");
-        return selected;
-    };
     const progpu::native::tests::sampler_reference_api reference_api{
 #define PROGPU_LOAD_SAMPLER_PROC(name) resolve<WGPUProc##name>(api, provider, "wgpu" #name),
         PROGPU_SAMPLER_REFERENCE_PROCS(PROGPU_LOAD_SAMPLER_PROC)
 #undef PROGPU_LOAD_SAMPLER_PROC
     };
-    progpu::native::tests::shader_sampler_gpu_reference raw_sampler(reference_api, device, queue);
     const auto sampler_readback = [&](WGPUBuffer buffer, std::size_t size) {
         struct mapping_request {
             std::mutex mutex;
@@ -3726,6 +3714,19 @@ int main(int argc, char** argv) {
         resolve<WGPUProcBufferUnmap>(api, provider, "wgpuBufferUnmap")(buffer);
         return result;
     };
+    {
+    std::array<std::array<progpu_native_engine*, 2U>, 2U> sampler_engines{};
+    std::array<progpu_native_engine*, 2U> capture_engines{};
+    const auto create_sampler_engine = [&](bool four_load, bool capture) {
+        auto options = engine_options;
+        options.flags = four_load ? PROGPU_NATIVE_ENGINE_IMAGE_EXPLICIT_SHADER_SAMPLING : 0U;
+        if (capture) options.target_format = PROGPU_NATIVE_TEXTURE_FORMAT_RGBA8_UNORM;
+        progpu_native_engine* selected{};
+        require(progpu_native_dawn_engine_create(&options, &selected) == PROGPU_NATIVE_STATUS_SUCCESS && selected,
+            "sampler policy Dawn engine creation failed");
+        return selected;
+    };
+    progpu::native::tests::shader_sampler_gpu_reference raw_sampler(reference_api, device, queue);
     progpu::native::tests::verify_original_shader_sampler_pixels(
         [&](bool reference, const auto& stream, std::uint64_t generation, std::uint64_t submissions,
             std::uint32_t commands, std::uint32_t target_extent,
@@ -3965,7 +3966,10 @@ int main(int argc, char** argv) {
     progpu::native::direct2d::tests::verify_prepared_glyph_coverage_pixels(
         [&](const auto& stream, const progpu_native_scene_header& header) {
             return render_retained_scene(false, stream, header.generation, 1U, header.scene_id, 1U, header.command_count);
-        }, require);
+        }, require, [&] {
+            return progpu::native::tests::diagnose_unorm_mask_precision(reference_api, device, queue,
+                sampler_readback, require, 112867.0F / 113984.0F);
+        });
     progpu::native::direct2d::tests::verify_filled_path_projection_pixels(
         [&](const auto& stream, const progpu_native_scene_header& header, float dpi,
             const progpu_native_scene_presentation& presentation) {

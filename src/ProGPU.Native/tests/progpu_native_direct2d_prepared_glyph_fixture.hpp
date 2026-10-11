@@ -7,6 +7,7 @@
 #include "progpu_native_hint_fault_fixture.hpp"
 #include "progpu_native_direct2d_source_coverage_reference.hpp"
 #include "progpu_native_direct2d_original_glyph_reference.hpp"
+#include "progpu_native_sheared_unorm_exception.hpp"
 #include <cstdio>
 
 namespace progpu::native::direct2d::tests {
@@ -294,9 +295,10 @@ void verify_prepared_glyph_pixels(Render render, Require require)
 // Explicit preparation seam only: ordinary recorder selection remains gated.
 // Original Windows source receipts independently fix these fractional edge
 // values. They catch confusing mesh color blend numbering with layer blending.
-template<class Render, class Require>
-void verify_prepared_glyph_coverage_pixels(Render render, Require require)
+template<class Render, class Require, class ObserveConversion>
+void verify_prepared_glyph_coverage_pixels(Render render, Require require, ObserveConversion observe_conversion)
 {
+    verify_sheared_unorm_exception_controls(require);
     std::vector<std::byte> bytes;
     progpu_native_scene_header header{};
     {
@@ -345,6 +347,7 @@ void verify_prepared_glyph_coverage_pixels(Render render, Require require)
     const auto original_layer = original_sheared_glyph_coverage_pixels(true);
     require(original_shear.size() == 64U*64U*4U && original_layer.size() == original_shear.size(),
         "original sheared source receipt extent");
+    bool all_sheared_frames_valid = true;
     for (const bool half_opacity : {false, true}) for (const bool reverse_contours : {false, true}) {
         std::vector<std::byte> retained;
         progpu_native_scene_header retained_header{};
@@ -418,9 +421,27 @@ void verify_prepared_glyph_coverage_pixels(Render render, Require require)
         };
         diagnose(first, "cold");
         diagnose(repeated, "warm");
-        require(first == original && repeated == original,
-            "both windings, opacity layers and cold/warm frames retain every original sheared source pixel");
+        // Run the same-device independent conversion probe for each original
+        // source case. Exact original frames need no exception; mismatches must
+        // satisfy the complete immutable-source and causal-conversion boundary.
+        const auto observation = observe_conversion();
+#if defined(__APPLE__) && defined(__x86_64__)
+        constexpr bool eligible_platform = true;
+#else
+        constexpr bool eligible_platform = false;
+#endif
+        const auto matched = compare_original_sheared_pixels(retained, half_opacity,
+            reverse_contours, first, repeated, observation, eligible_platform);
+        if (matched == sheared_pixel_match::approved_conversion) {
+            std::fprintf(stderr, "Approved #363 UNORM conversion: half=%u reverse=%u source=%016llx "
+                "cold+warm pixel=(40,28) channel=0 actual=%u expected=%u otherBytes=16383 exact\n",
+                unsigned(half_opacity), unsigned(reverse_contours), static_cast<unsigned long long>(source_hash),
+                half_opacity ? 126U : 252U, half_opacity ? 127U : 253U);
+        }
+        all_sheared_frames_valid = all_sheared_frames_valid && matched != sheared_pixel_match::rejected;
     }
+    require(all_sheared_frames_valid,
+        "original sheared source pixels or explicitly diagnosed #363 conversion, both windings/layers/cold/warm");
     // Whole-path source controls retain original overlapping/physical bounds;
     // they must not become separately composited glyph coverage triangles.
     for (const std::uint32_t original_frame : {4U, 12U, 19U, 20U, 43U, 44U}) {
