@@ -154,9 +154,9 @@ cmake --build "${build_dir}" \
   --parallel
 
 mkdir -p "${sample_dir}"
-evidence="${sample_dir}/progpu-native-webscene-provider.txt"
-ctest --test-dir "${build_dir}" -C Release --output-on-failure --verbose \
-  -R '^progpu_native_webscene_provider_tests$' | tee "${evidence}"
+python3 "${repo_root}/eng/progpu-webscene-timeout-diagnostics.py" \
+  --build-dir "${build_dir}" --sample-dir "${sample_dir}" \
+  --provider "${provider_library}"
 capture_source="${build_dir}/progpu-native-webscene-provider.ppm"
 capture="${sample_dir}/progpu-native-webscene-provider.ppm"
 if [[ ! -s "${capture_source}" ]]; then
