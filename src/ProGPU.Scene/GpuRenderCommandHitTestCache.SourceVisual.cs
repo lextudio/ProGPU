@@ -132,13 +132,50 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder
     {
         if (geometry == null)
             throw new NotSupportedException("Source geometry clipping requires an actual path.");
-        if (!IsFiniteInvertibleAffine2D(transform) ||
-            (!geometry.IsCombined && geometry.Figures.Count == 0))
+        if (!IsFiniteInvertibleAffine2D(transform))
         {
             _clipStack.Push(ClipState.Empty);
             return;
         }
-        PushGeometryClip(new RenderCommand { Path = geometry }, transform, requireExact: true);
+        PathGeometry clipPath = geometry.CreateTransformed(transform);
+        if (_clipStack.TryPeek(out ClipState inherited) && inherited.HasPath && inherited.Path != null)
+        {
+            clipPath = new PathGeometry
+            {
+                IsCombined = true, PathA = inherited.Path, PathB = clipPath,
+                Op = IntersectPathOperation, FillRule = FillRule.Nonzero
+            };
+        }
+
+        // The shared compiler owns both coverage and its physical bounds. Missing
+        // conservative source bounds alone do not distinguish empty from failure.
+        if (!TryCompileHitTestPath(clipPath, out var compiled, out bool isEmpty))
+        {
+            // CreateTransformed's general-purpose compatibility behavior can
+            // omit an unavailable operand/segment. An empty source proof must
+            // also cover the original input, before that transformation.
+            if (!isEmpty || !PathAtlas.HasCompleteHitTestPathDefinition(geometry))
+                throw new NotSupportedException("Source geometry clip encoding requires available exact coverage.");
+            _clipStack.Push(ClipState.Empty);
+            return;
+        }
+
+        Vector2 min = compiled.Min, max = compiled.Max;
+        if (!float.IsFinite(min.X) || !float.IsFinite(min.Y) || !float.IsFinite(max.X) || !float.IsFinite(max.Y))
+            throw new NotSupportedException("Source geometry clip encoding requires finite physical bounds.");
+        if (_clipStack.TryPeek(out inherited))
+        {
+            min = Vector2.Max(min, inherited.Min);
+            max = Vector2.Min(max, inherited.Max);
+        }
+        if (max.X <= min.X || max.Y <= min.Y)
+        {
+            if (!PathAtlas.HasCompleteHitTestPathDefinition(geometry))
+                throw new NotSupportedException("Empty source clipping requires the complete original geometry.");
+            _clipStack.Push(ClipState.Empty);
+        }
+        else
+            _clipStack.Push(new ClipState(min, max, compiled.StartSegment, compiled.SegmentCount, compiled.FillRule, clipPath, HasPath: true));
     }
 
     private void CaptureSourceChildren(Visual visual, Matrix4x4 transform, int depth)
