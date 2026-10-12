@@ -68,19 +68,8 @@ control lifetime/editing, inline objects, anchored blocks and tables remain sepa
 | `ProGPU.Virtualization` | Virtualization helpers for large retained visual and item surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Virtualization.svg)](https://www.nuget.org/packages/ProGPU.Virtualization/) |
 | `ProGPU.Win2D` | Portable source-compatible Win2D Canvas core rendered by the retained native C++ WebGPU engine. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Win2D.svg)](https://www.nuget.org/packages/ProGPU.Win2D/) |
 | `ProGPU.WinUI` | WinUI-shaped controls and app model implemented on ProGPU. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.svg)](https://www.nuget.org/packages/ProGPU.WinUI/) |
-| `ProGPU.WinUI.Themes.Fluent` | Source-generated unchanged WinUI Fluent theme resources and inspectable XAML content. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Themes.Fluent.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Themes.Fluent/) |
+| `ProGPU.WinUI.Themes.Fluent` | Compiled unchanged WinUI Fluent theme resources and inspectable XAML content. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Themes.Fluent.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Themes.Fluent/) |
 | `ProGPU.WinUI.Charts` | Chart controls and chart rendering primitives for the WinUI-shaped layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Charts.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Charts/) |
-| `ProGPU.WinUI.Designer` | Designer/editor controls and diagnostics for ProGPU WinUI surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Designer.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Designer/) |
-
-### XAML compiler and tooling
-
-| Package | Purpose | NuGet |
-| --- | --- | --- |
-| `ProGPU.Xaml` | Framework-neutral XAML syntax, schema, diagnostics, and compiler contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.svg)](https://www.nuget.org/packages/ProGPU.Xaml/) |
-| `ProGPU.Xaml.Roslyn` | Roslyn symbol type system and structured C# emitter for the XAML compiler. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Roslyn.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Roslyn/) |
-| `ProGPU.Xaml.SourceGenerator` | Incremental XAML source generator plus transitive MSBuild integration. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.SourceGenerator.svg)](https://www.nuget.org/packages/ProGPU.Xaml.SourceGenerator/) |
-| `ProGPU.Xaml.Workspaces` | Roslyn Workspace editing, formatting, and bidirectional XAML services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Workspaces.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Workspaces/) |
-| `ProGPU.Xaml.Cli` | Standalone XAML compiler and Roslyn/MSBuild workspace command-line tool. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Cli.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Cli/) |
 
 ### Framework integrations and compatibility
 
@@ -689,7 +678,7 @@ Page navigation keeps stable ownership boundaries:
 - Replacing `NavigationView.Content` changes only the `SplitView` content child. The pane and all menu-item visuals remain parented, preserving their layout, theme resources, and cached layer.
 - `SplitView` removes and inserts only the child that changed instead of clearing and rebuilding both children.
 - Reparenting a dependency-object subtree recursively reapplies theme state only when the resolved theme or theme family actually changes. Moving a cached page between parents with the same theme therefore performs an O(H) ancestor-context comparison for tree height H instead of O(N) invalidation over the page subtree.
-- System-font discovery and TextMate grammar loading use one shared background warm-up. Font menu controls are created only when the dropdown is opened. A code editor renders the same source as plain themed runs while grammar loading is pending, then retokenizes on the UI dispatcher with the shared theme grammar. Page activation therefore performs neither a synchronous filesystem font scan nor per-editor grammar initialization.
+- System-font discovery uses shared background warm-up. Font menu controls are created only when the dropdown is opened. Markdown code blocks use the normal themed rich-text renderer.
 
 Large indexed pages remain virtual from source to pixels. `ItemsControl` retains an `IList` source rather than eagerly copying and boxing every item. Attaching a 65,535-glyph source is O(1) time and storage; `UniformVirtualizingGridPanel` realizes and binds only V visible/overscan items in O(V), reuses its recycler-index buffer, and does not allocate a binding closure on each viewport update. Selection and syntax-highlight changes rebind the V active containers in place instead of recycling, reparenting, and remeasuring them. Scrollbar z-order uses an in-parent reorder that invalidates pixels but not layout. The glyph browser represents indices through a read-only computed list, so it allocates neither a 65,535-entry source array nor an internal duplicate. `FontIcon` records the cached raw outline with a public `DrawPath` transform, preserving line, quadratic, cubic, and arc segments without allocating a transformed path per cell or render.
 

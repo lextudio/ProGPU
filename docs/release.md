@@ -71,7 +71,7 @@ System Trace captures preserve the checksum. Managed allocation falls from
 +0.16%, with zero target Metal resources, submissions, waits, spills, potential
 hangs, hang risks, or command-buffer errors. The Release validation includes
 the 110-test `SkCanvasStateTests` suite, 3,809 core tests, 240 headless tests,
-Avalonia and Silk.NET contract lanes, all 307 XAML tests, and the official
+Avalonia and Silk.NET contract lanes, and the official
 SkiaSharp metadata gate at 4,222/4,222 with zero missing declarations. Detailed
 research, complexity, rejected experiments, and profiler evidence are recorded
 in `docs/AVALONIA_SKIA_RETAINED_COMMAND_STREAM_RESEARCH.md`.
@@ -79,14 +79,13 @@ in `docs/AVALONIA_SKIA_RETAINED_COMMAND_STREAM_RESEARCH.md`.
 ## Compatibility and continuation
 
 WinUI remains at 4,952 exact of 16,579 official declarations with 11,627
-remaining, and the XAML compiler remains pre-MVP. SkiaSharp's official metadata
+remaining. SkiaSharp's official metadata
 ledger remains closed at 4,222/4,222 with zero missing. The compatibility
 profile continues to accept stable SkiaSharp 2.x through 4.151.1 and
 Avalonia.Skia 11.x through 12.1.1 without rewriting consumer assemblies. Its
 limits and clean-room provenance remain recorded in
 `docs/PROGPU_BINARY_ASSEMBLY_COMPATIBILITY.md`; detailed continuation work is
-pinned in `docs/WINUI_API_PARITY.md`, `docs/SKIASHARP_API_PARITY.md`, and
-`docs/xaml-compiler/ROADMAP.md`.
+pinned in `docs/WINUI_API_PARITY.md` and `docs/SKIASHARP_API_PARITY.md`.
 
 ## NuGet Packages
 
@@ -119,12 +118,6 @@ pinned in `docs/WINUI_API_PARITY.md`, `docs/SKIASHARP_API_PARITY.md`, and
 - `ProGPU.WinUI`
 - `ProGPU.WinUI.Themes.Fluent`
 - `ProGPU.WinUI.Charts`
-- `ProGPU.WinUI.Designer`
-- `ProGPU.Xaml`
-- `ProGPU.Xaml.Roslyn`
-- `ProGPU.Xaml.SourceGenerator`
-- `ProGPU.Xaml.Workspaces`
-- `ProGPU.Xaml.Cli`
 - `ProGPU.Avalonia`
 - `ProGPU.Uno`
 - `ProGPU.Dxf`

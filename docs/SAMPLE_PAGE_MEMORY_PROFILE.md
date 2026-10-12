@@ -29,7 +29,6 @@ collection measurements improved.
 | Typography & Scripts | 345.18 MiB | 82.16 MiB | **-76.2%** | 10.2 KiB | 0.9 KiB | 0.036 ms | 0.017 ms |
 | Text & Documents | 472.28 MiB | 189.27 MiB | **-59.9%** | 4,128.4 KiB | 189.3 KiB | 41.728 ms | 2.037 ms |
 | Font Glyph Browser | 60.85 MiB | 31.26 MiB | **-48.6%** | 104.9 KiB | 37.4 KiB | 2.491 ms | 0.732 ms |
-| Visual Designer | 81.26 MiB | 46.57 MiB | **-42.7%** | 129.5 KiB | 95.3 KiB | 1.906 ms | 1.872 ms |
 | LOL/s Benchmark | 65.83 MiB | 36.80 MiB | **-44.1%** | 1,994.6 KiB | 28.9 KiB | 2.999 ms | 1.881 ms |
 
 ## Measurement method
@@ -192,7 +191,6 @@ average are the regression gates.
 | Typography & Scripts | 345.18 | 82.16 | -76.2% | 10.2 | 0.9 | 0.036 | 0.017 |
 | Vector Shapes | 50.67 | 20.74 | -59.1% | 7.5 | 1.0 | 0.013 | 0.011 |
 | Virtualization Controls | 55.09 | 26.69 | -51.5% | 22.9 | 1.1 | 0.016 | 0.018 |
-| Visual Designer | 81.26 | 46.57 | -42.7% | 129.5 | 95.3 | 1.906 | 1.872 |
 | WPF Shim Showcase | 57.22 | 21.27 | -62.8% | 13.9 | 1.0 | 0.031 | 0.011 |
 | Wrap Panel | 49.78 | 19.79 | -60.2% | 9.2 | 0.9 | 0.014 | 0.012 |
 

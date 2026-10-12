@@ -1808,7 +1808,7 @@ traces exported zero target command-buffer submissions and zero
 
 The focused path suite passes 93/93 and tightens the packed-detach ceiling to
 192 managed bytes for both small and 256-segment paths. Core passes
-3,242/3,242, headless passes 225/225, and the XAML compiler passes 307/307.
+3,242/3,242 and headless passes 225/225.
 Official API metadata remains 4,222/4,222 required with zero missing; docs and
 package manifests pass. Distributions, profiler target results, and research
 are retained under
@@ -1875,8 +1875,7 @@ startup/JIT noise and is not treated as a memory improvement.
 Focused canvas/state tests pass 111/111, including active-clip replay, bitmap
 flush rebasing, nested save counts, zero-allocation warm cycling, and a cold
 allocation ceiling that rejects duplicate clip-command storage. The complete
-core suite passes 3,249/3,249, headless passes 225/225, and the XAML compiler
-passes 307/307.
+core suite passes 3,249/3,249 and headless passes 225/225.
 Official API metadata remains 4,222/4,222 required with zero missing and 998
 documented extensions; shader-resource, docs, and package-manifest gates pass.
 Compact distributions and profiler summaries are retained under
@@ -2006,7 +2005,7 @@ reference clearing, compact snapshot construction, and retained-array
 allocation.
 
 The complete core suite passes 3,268/3,268, headless passes 225/225, Avalonia
-renderer contracts pass 86/86, and the XAML compiler suite passes. The unchanged
+renderer contracts pass 86/86. The unchanged
 Avalonia.Skia 12.0.5 source project builds with zero warnings and errors. The
 official API gate remains `reference=4222`, `matching=4222`, `missing=0`, and
 `extra=998`; documentation and package-manifest gates pass. Distributions,

@@ -33,26 +33,6 @@ public sealed class WinUiAnimationObjectModelTests
     {
     }
 
-    private sealed class ContextMarkupExtension : MarkupExtension
-    {
-        public object? SeenTarget { get; private set; }
-        public object? SeenRoot { get; private set; }
-        public ProvideValueTargetProperty? SeenProperty { get; private set; }
-        public Uri? SeenBaseUri { get; private set; }
-
-        protected override object? ProvideValue(IXamlServiceProvider serviceProvider)
-        {
-            var target = Assert.IsAssignableFrom<IProvideValueTarget>(serviceProvider.GetService(typeof(IProvideValueTarget)));
-            var root = Assert.IsAssignableFrom<IRootObjectProvider>(serviceProvider.GetService(typeof(IRootObjectProvider)));
-            var uri = Assert.IsAssignableFrom<IUriContext>(serviceProvider.GetService(typeof(IUriContext)));
-            SeenTarget = target.TargetObject;
-            SeenProperty = Assert.IsType<ProvideValueTargetProperty>(target.TargetProperty);
-            SeenRoot = root.RootObject;
-            SeenBaseUri = uri.BaseUri;
-            return "provided";
-        }
-    }
-
     private sealed class RecordingCommand : ICommand
     {
         public event EventHandler? CanExecuteChanged { add { } remove { } }
@@ -69,30 +49,6 @@ public sealed class WinUiAnimationObjectModelTests
     private sealed class MediaSource :
         global::Windows.Media.Playback.IMediaPlaybackSource
     {
-    }
-
-    [Fact]
-    public void MarkupExtensionRuntimeSuppliesTypedTargetAndRootServices()
-    {
-        var extension = new ContextMarkupExtension();
-        var target = new TextBlock();
-        var root = new Grid();
-
-        var result = ProGPU.Xaml.Runtime.WinUiMarkupExtensionRuntime.Evaluate<string>(
-            extension,
-            target,
-            typeof(TextBlock),
-            nameof(TextBlock.Text),
-            root,
-            "Pages/MarkupExtension.xaml");
-
-        Assert.Equal("provided", result);
-        Assert.Same(target, extension.SeenTarget);
-        Assert.Same(root, extension.SeenRoot);
-        Assert.Equal(typeof(TextBlock), extension.SeenProperty!.Type);
-        Assert.Equal(nameof(TextBlock.Text), extension.SeenProperty.Name);
-        Assert.Equal("Pages/MarkupExtension.xaml", extension.SeenBaseUri!.OriginalString);
-        Assert.False(extension.SeenBaseUri.IsAbsoluteUri);
     }
 
     [Fact]

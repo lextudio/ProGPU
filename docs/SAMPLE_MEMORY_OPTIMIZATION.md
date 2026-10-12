@@ -88,7 +88,7 @@ tools/profile-sample-memory.sh artifacts/memory-optimization/baseline-winui
 
 The highest retained pages are text- or tooling-heavy: Text & Documents (192.10 MiB),
 Typography & Scripts (87.07 MiB), Text Shaping Lab (79.58 MiB), GPU Charting (76.07 MiB),
-LOL/s (74.94 MiB), Inter Typeface (69.04 MiB), and Visual Designer (64.91 MiB). The ordinary
+LOL/s (74.94 MiB) and Inter Typeface (69.04 MiB). The ordinary
 page floor is approximately 22–26 MiB retained managed memory. Text & Documents also retains
 118.8 MiB on the large object heap and 27.7 MiB of fragmentation, so it remains the primary
 WinUI follow-up after the Avalonia outlier is corrected.
@@ -1474,7 +1474,6 @@ Artifacts:
 - `ProGPU.Tests.Headless`: **198 passed**, 0 failed.
 - Focused bidi coverage: **140 passed**, including 32,768 exhaustive ASCII pair
   comparisons; all **5/5** affected headless text pages pass.
-- `ProGPU.Xaml.Tests`: **249 passed**, 0 failed.
 - Avalonia ProGPU unit tests: **66 passed**, 0 failed.
 - Avalonia ProGPU render tests: **1 passed**, 0 failed.
 - Avalonia SkiaShim render tests: **2 passed**, 0 failed.

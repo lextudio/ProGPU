@@ -19,9 +19,6 @@ using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.HotReload;
-#if !PROGPU_SAMPLES_MOBILE
-using ProGPU.WinUI.Designer;
-#endif
 using Button = Microsoft.UI.Xaml.Controls.Button;
 using StackPanel = Microsoft.UI.Xaml.Controls.StackPanel;
 using Window = Microsoft.UI.Xaml.Window;
@@ -44,7 +41,6 @@ public static unsafe class MainWindowController
 
         SampleFontLoader.EnsureLoaded();
 #if !PROGPU_SAMPLES_MOBILE
-        VirtualizedCodeEditor.WarmUpSyntaxHighlighting();
         MarkdownParser.WarmUp();
 #endif
 
@@ -90,7 +86,6 @@ public static unsafe class MainWindowController
 
         SampleFontLoader.EnsureLoaded("[ProGPU.Samples.Embedded]");
 #if !PROGPU_SAMPLES_MOBILE
-        VirtualizedCodeEditor.WarmUpSyntaxHighlighting();
         MarkdownParser.WarmUp();
 #endif
 
@@ -328,22 +323,10 @@ public static unsafe class MainWindowController
         var ratingControlItem = PageItem("Rating Control", "⭐", RatingControlPage.Create);
         var passwordBoxItem = PageItem("Password Box", "🔒", PasswordBoxPage.Create);
         var dxfViewerItem = PageItem("DXF CAD Viewer", "📐", DxfViewerPage.Create);
-#if !PROGPU_SAMPLES_MOBILE
-        var visualDesignerItem = PageItem("Visual Designer", "📐", VisualDesignerPage.Create);
-#endif
         var pictureCachingItem = PageItem("Picture Caching", "🖼️", PictureShowcasePage.Create);
         var fontGlyphBrowserItem = PageItem("Font Glyph Browser", "🔤", FontGlyphBrowserPage.Create);
         var mesh3DViewerItem = PageItem("3D Mesh Viewer", "🧊", Mesh3DViewerPage.Create);
         var shaderToyPlaygroundItem = PageItem("ShaderToy Playground", "🔮", ShaderToyPlaygroundPage.Create);
-        var xamlWelcomeItem = PageItem("Compiled XAML", "✦", XamlCompilerWelcomePage.Create);
-        var xamlBindingsItem = PageItem("XAML Bindings", "⇄", XamlCompilerBindingsPage.Create);
-        var xamlFunctionsItem = PageItem("XAML Functions", "ƒ", XamlCompilerFunctionsPage.Create);
-        var xamlResourcesItem = PageItem("XAML Resources", "◆", XamlCompilerResourcesPage.Create);
-        var xamlLayoutItem = PageItem("XAML Layout", "▦", XamlCompilerLayoutPage.Create);
-        var xamlMarkupItem = PageItem("Markup Syntax", "{}", XamlCompilerMarkupPage.Create);
-#if !PROGPU_SAMPLES_MOBILE
-        var xamlPlaygroundItem = PageItem("XAML Playground", "</>", XamlPlaygroundPage.Create);
-#endif
 
         var wrapPanelItem = PageItem("Wrap Panel", "🔲", WrapPanelPage.Create);
         var dockPanelItem = PageItem("Dock Panel", "🪟", DockPanelPage.Create);
@@ -404,21 +387,9 @@ public static unsafe class MainWindowController
         AppState._navigationView.MenuItems.Add(ratingControlItem);
         AppState._navigationView.MenuItems.Add(passwordBoxItem);
         AppState._navigationView.MenuItems.Add(dxfViewerItem);
-#if !PROGPU_SAMPLES_MOBILE
-        AppState._navigationView.MenuItems.Add(visualDesignerItem);
-#endif
         AppState._navigationView.MenuItems.Add(pictureCachingItem);
         AppState._navigationView.MenuItems.Add(mesh3DViewerItem);
         AppState._navigationView.MenuItems.Add(shaderToyPlaygroundItem);
-        AppState._navigationView.MenuItems.Add(xamlWelcomeItem);
-        AppState._navigationView.MenuItems.Add(xamlBindingsItem);
-        AppState._navigationView.MenuItems.Add(xamlFunctionsItem);
-        AppState._navigationView.MenuItems.Add(xamlResourcesItem);
-        AppState._navigationView.MenuItems.Add(xamlLayoutItem);
-        AppState._navigationView.MenuItems.Add(xamlMarkupItem);
-#if !PROGPU_SAMPLES_MOBILE
-        AppState._navigationView.MenuItems.Add(xamlPlaygroundItem);
-#endif
 
         NavigationViewItem? activeNativeResourcePageItem = null;
         AppState._navigationView.SelectionChanged += (s, e) =>

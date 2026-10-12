@@ -4,47 +4,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>ProGPU.WinUI.Themes.Fluent</PackageId>
-    <Description>Source-generated WinUI Fluent theme resources for ProGPU.</Description>
-    <PackageTags>ProGPU;WinUI;XAML;Fluent;Theme</PackageTags>
+    <Description>Compiled WinUI Fluent theme resources for ProGPU.</Description>
+    <PackageTags>ProGPU;WinUI;Fluent;Theme</PackageTags>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)generated</CompilerGeneratedFilesOutputPath>
-    <ProGpuXamlEnabled>true</ProGpuXamlEnabled>
-    <ProGpuXamlFramework>WinUI</ProGpuXamlFramework>
-    <ProGpuXamlStrict>true</ProGpuXamlStrict>
-    <ProGpuXamlEmitHotReloadHooks>true</ProGpuXamlEmitHotReloadHooks>
-    <ProGpuXamlEmitSourceComments>true</ProGpuXamlEmitSourceComments>
-    <ProGpuXamlStaticResourceForwardReferenceMode>Reorder</ProGpuXamlStaticResourceForwardReferenceMode>
   </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\ProGPU.WinRT\ProGPU.WinRT.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
-    <!-- The generator executes on the build host, not the application's target RID. -->
-    <ProjectReference Include="..\ProGPU.Xaml.SourceGenerator\ProGPU.Xaml.SourceGenerator.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <AdditionalFiles Include="..\..\external\microsoft-ui-xaml\src\dxaml\xcp\dxaml\themes\generic.xaml"
-                     Link="Themes\Generic.xaml"
-                     ProGpuXamlCompile="true"
-                     ProGpuXamlLogicalPath="ProGPU.WinUI.Themes.Fluent/Themes/Generic.xaml" />
     <None Include="..\..\external\microsoft-ui-xaml\src\dxaml\xcp\dxaml\themes\generic.xaml"
-          Link="Themes\Generic.xaml"
-          Pack="true"
+          Link="Themes\Generic.xaml" Pack="true"
           PackagePath="contentFiles\any\any\Themes\Generic.xaml" />
-    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="ProGpuXamlCompile" />
-    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="ProGpuXamlLogicalPath" />
-    <CompilerVisibleProperty Include="ProGpuXamlEnabled" />
-    <CompilerVisibleProperty Include="ProGpuXamlFramework" />
-    <CompilerVisibleProperty Include="ProGpuXamlStrict" />
-    <CompilerVisibleProperty Include="ProGpuXamlEmitHotReloadHooks" />
-    <CompilerVisibleProperty Include="ProGpuXamlEmitSourceComments" />
-    <CompilerVisibleProperty Include="ProGpuXamlStaticResourceForwardReferenceMode" />
-    <Analyzer Include="..\ProGPU.Xaml\bin\$(Configuration)\netstandard2.0\ProGPU.Xaml.dll" />
-    <Analyzer Include="..\ProGPU.Xaml.Roslyn\bin\$(Configuration)\netstandard2.0\ProGPU.Xaml.Roslyn.dll" />
+    <None Include="Microsoft-LICENSE.txt" Pack="true" PackagePath="licenses/Microsoft-Fluent-LICENSE.txt" />
   </ItemGroup>
 </Project>

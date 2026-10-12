@@ -101,7 +101,6 @@ public sealed partial class MainPage : Page
                 "Markdown" => ProGpu::ProGPU.Samples.MarkdownPage.Create(),
                 "Glyphs" => ProGpu::ProGPU.Samples.FontGlyphBrowserPage.Create(),
                 "DataGrid" => ProGpu::ProGPU.Samples.DataVirtualizationPage.Create(),
-                "Designer" => ProGpu::ProGPU.Samples.VisualDesignerPage.Create(),
                 _ => ProGpu::ProGPU.Samples.ChartShowcasePage.Create()
             };
 

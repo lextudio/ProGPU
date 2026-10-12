@@ -62,8 +62,7 @@ for index in "${!selected_package_ids[@]}"; do
     -p:Version="${package_version}" \
     -p:PackageVersion="${package_version}"
   )
-  if [[ "${package_id}" == "ProGPU.Xaml.SourceGenerator" ||
-        "${package_id}" == "ProGPU.Backend.Dx12" ||
+  if [[ "${package_id}" == "ProGPU.Backend.Dx12" ||
         "${package_id}" == "ProGPU.Native.Sdk" ||
         "${package_id}" == "ProGPU.BinaryCompatibility" ]]; then
     pack_arguments+=(-p:IncludeSymbols=false)
@@ -82,10 +81,6 @@ PROGPU_PACKAGE_GROUP="${package_group}" \
   "${repo_root}/eng/progpu-verify-packages.sh"
 
 if [[ "${package_group}" == "portable" || "${package_group}" == "all" ]]; then
-  PROGPU_CONFIGURATION="${configuration}" \
-  PROGPU_PACKAGE_VERSION="${package_version}" \
-  PROGPU_PACKAGE_OUTPUT="${package_output}" \
-    "${repo_root}/eng/progpu-verify-xaml-package-consumer.sh"
   PROGPU_CONFIGURATION="${configuration}" \
   PROGPU_PACKAGE_VERSION="${package_version}" \
   PROGPU_PACKAGE_OUTPUT="${package_output}" \

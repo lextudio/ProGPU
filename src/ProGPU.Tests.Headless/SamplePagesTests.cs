@@ -5,7 +5,6 @@ using ProGPU.Layout;
 using ProGPU.Vector;
 using ProGPU.Scene;
 using ProGPU.Text;
-using ProGPU.WinUI.Designer;
 using Microsoft.UI.Xaml;
 using Windows.Storage;
 using Microsoft.UI.Xaml.Controls;
@@ -81,122 +80,6 @@ public class SamplePagesTests : IDisposable
         AppState.GenerateLogItems();
     }
 
-    [Fact]
-    public async Task Test_XamlPlayground_LivePreviewRequiresPermissionAndPublishesAcceptedProgram()
-    {
-        var root = Assert.IsType<Microsoft.UI.Xaml.Controls.StackPanel>(
-            XamlPlaygroundPage.Create());
-        var pivot = Assert.Single(root.Children.OfType<Pivot>());
-        var livePreviewItem = Assert.Single(
-            pivot.Items,
-            item => Equals(item.Header, "Live Preview"));
-        var generatedItem = Assert.Single(
-            pivot.Items,
-            item => Equals(item.Header, "Generated C#"));
-        var generated = Assert.IsType<TextBox>(
-            generatedItem.Content);
-        var panel = Assert.IsType<Microsoft.UI.Xaml.Controls.StackPanel>(
-            livePreviewItem.Content);
-        var status = Assert.IsType<TextBlock>(panel.Children[0]);
-        var permission = Assert.IsType<Button>(panel.Children[1]);
-        var previewHost = Assert.IsType<ContentControl>(
-            panel.Children[2]);
-
-        Assert.Contains("disabled", status.Text);
-        Assert.NotNull(previewHost.Content);
-
-        var onClick = typeof(Button).GetMethod(
-            "OnClick",
-            System.Reflection.BindingFlags.NonPublic |
-            System.Reflection.BindingFlags.Instance);
-        Assert.NotNull(onClick);
-        onClick.Invoke(permission, null);
-
-        for (var attempt = 0;
-             attempt < 400 &&
-             !status.Text.Contains(
-                 "Preview updated",
-                 StringComparison.Ordinal) &&
-             !status.Text.Contains(
-                 "failed",
-                 StringComparison.OrdinalIgnoreCase);
-             attempt++)
-        {
-            Microsoft.UI.Xaml.UIThread.RunPending();
-            await Task.Delay(25);
-        }
-
-        var inspectionStatus = root.Children
-            .OfType<TextBlock>()
-            .Last();
-        Assert.True(
-            status.Text.Contains(
-                "Preview updated",
-                StringComparison.Ordinal),
-            "Preview status: " + status.Text +
-            Environment.NewLine +
-            "Inspection status: " + inspectionStatus.Text +
-            Environment.NewLine +
-            "Generated:" + Environment.NewLine +
-            generated.Text);
-        Assert.Equal(
-            "ProGPU.Samples.Playground.Document",
-            Assert.IsAssignableFrom<FrameworkElement>(
-                previewHost.Content).GetType().FullName);
-        Assert.Contains(
-            "Project watch protocol 1.0",
-            root.Children.OfType<TextBlock>().Last().Text,
-            StringComparison.Ordinal);
-
-        var editor = root.Children
-            .OfType<TextBox>()
-            .First();
-        var initialPreview = previewHost.Content;
-        editor.Text = editor.Text.Replace(
-            "Hello from the XAML playground",
-            "Edited through project watch protocol 1.0",
-            StringComparison.Ordinal);
-        for (var attempt = 0;
-             attempt < 400 &&
-             ReferenceEquals(initialPreview, previewHost.Content);
-             attempt++)
-        {
-            Microsoft.UI.Xaml.UIThread.RunPending();
-            await Task.Delay(25);
-        }
-
-        Assert.NotSame(initialPreview, previewHost.Content);
-        Assert.Equal(
-            "ProGPU.Samples.Playground.Document",
-            Assert.IsAssignableFrom<FrameworkElement>(
-                previewHost.Content).GetType().FullName);
-
-        var acceptedPreview = previewHost.Content;
-        editor.Text = editor.Text.Replace(
-            "ProGPU.Samples.Playground.Document",
-            "ProGPU.Samples.Playground.ChangedTarget",
-            StringComparison.Ordinal);
-        for (var attempt = 0;
-             attempt < 400 &&
-             !status.Text.Contains(
-                 "last good",
-                 StringComparison.OrdinalIgnoreCase);
-             attempt++)
-        {
-            Microsoft.UI.Xaml.UIThread.RunPending();
-            await Task.Delay(25);
-        }
-
-        Assert.Same(acceptedPreview, previewHost.Content);
-        Assert.Contains(
-            "last good",
-            status.Text,
-            StringComparison.OrdinalIgnoreCase);
-
-        onClick.Invoke(permission, null);
-        Assert.Contains("disabled", status.Text);
-    }
-
     private void RunPageTest(
         FrameworkElement page,
         string pageName,
@@ -248,12 +131,6 @@ public class SamplePagesTests : IDisposable
     public void Test_BasicInputPage_Renders()
     {
         RunPageTest(BasicInputPage.Create(), "Basic Input");
-    }
-
-    [Fact]
-    public void Test_VisualDesignerPage_Renders()
-    {
-        RunPageTest(VisualDesignerPage.Create(), "Visual Designer");
     }
 
     [Fact]
@@ -633,7 +510,7 @@ public class SamplePagesTests : IDisposable
     }
 
     [Fact]
-    public async Task Test_MarkdownPage_RepeatedActivation_RemainsResponsiveAndHighlighted()
+    public async Task Test_MarkdownPage_RepeatedActivation_RemainsResponsiveAndDisplaysCode()
     {
         EnsureFontsAndStateLoaded();
         await FontApi.WarmUpSystemFontsAsync();
@@ -642,18 +519,20 @@ public class SamplePagesTests : IDisposable
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        static VirtualizedCodeEditor? FindCodeEditor(Visual visual)
+        static RichTextBlock? FindCodeBlock(Visual visual)
         {
-            if (visual is VirtualizedCodeEditor editor)
+            if (visual is RichTextBlock codeBlock &&
+                codeBlock.Inlines.OfType<Run>().Any(run =>
+                    run.Text.Contains("public void RenderFrame", StringComparison.Ordinal)))
             {
-                return editor;
+                return codeBlock;
             }
 
             if (visual is ContainerVisual container)
             {
                 foreach (var child in container.Children)
                 {
-                    var match = FindCodeEditor(child);
+                    var match = FindCodeBlock(child);
                     if (match != null)
                     {
                         return match;
@@ -704,8 +583,8 @@ public class SamplePagesTests : IDisposable
             stopwatch.Stop();
 
             var allocatedBytes = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
-            var editor = FindCodeEditor(window.Content!);
-            Assert.NotNull(editor);
+            var codeBlock = FindCodeBlock(window.Content!);
+            Assert.NotNull(codeBlock);
             Console.WriteLine(
                 $"[MARKDOWN_REPEAT] iteration={iteration + 1} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2} " +
                 $"allocatedBytes={allocatedBytes}");
@@ -716,8 +595,8 @@ public class SamplePagesTests : IDisposable
                 allocatedBytes < 128L * 1024L * 1024L,
                 $"Markdown activation {iteration + 1} allocated {allocatedBytes:N0} bytes.");
 
-            Assert.True(editor.IsSyntaxHighlightingReady);
-            Assert.True(editor.SyntaxTokenRunCount > 6);
+            Assert.Contains(codeBlock.Inlines.OfType<Run>(), run =>
+                run.Text.Contains("public void RenderFrame", StringComparison.Ordinal));
 
             window.Content = null;
             ProGPU.Samples.UIThread.RunPending();

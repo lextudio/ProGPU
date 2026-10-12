@@ -1,3 +1,0 @@
-<Project>
-  <Import Project="..\buildTransitive\ProGPU.Xaml.SourceGenerator.props" />
-</Project>

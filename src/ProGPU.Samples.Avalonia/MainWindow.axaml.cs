@@ -54,7 +54,6 @@ public partial class MainWindow : global::Avalonia.Controls.Window
             "Markdown" => ItemMarkdown,
             "Glyphs" => ItemGlyphs,
             "DataGrid" => ItemDataGrid,
-            "Designer" => ItemDesigner,
             "MediaPlayer" => ItemMediaPlayer,
             "VideoEditor" => ItemVideoEditor,
             _ => throw new InvalidOperationException(
@@ -129,7 +128,6 @@ public partial class MainWindow : global::Avalonia.Controls.Window
                 "Markdown" => MarkdownPage.Create(),
                 "Glyphs" => FontGlyphBrowserPage.Create(),
                 "DataGrid" => DataVirtualizationPage.Create(),
-                "Designer" => VisualDesignerPage.Create(),
                 "MediaPlayer" => MediaPlayerPage.Create(),
                 "VideoEditor" => NonLinearVideoEditorPage.Create(),
                 _ => throw new InvalidOperationException(

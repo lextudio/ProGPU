@@ -15,7 +15,6 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="DocumentFormat.OpenXml" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
     <PackageReference Include="WebGPUSharp" />
   </ItemGroup>
 
@@ -68,9 +67,6 @@
     <ProjectReference Include="..\ProGPU.Text.Shaping\ProGPU.Text.Shaping.csproj" />
     <ProjectReference Include="$(ProGpuWpfInteropProject)" />
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
-    <ProjectReference Include="..\ProGPU.WinUI.Designer\ProGPU.WinUI.Designer.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Themes.Fluent\ProGPU.WinUI.Themes.Fluent.csproj" />
-    <ProjectReference Include="..\ProGPU.Xaml.Workspaces\ProGPU.Xaml.Workspaces.csproj" />
-    <ProjectReference Include="..\ProGPU.Xaml.Roslyn\ProGPU.Xaml.Roslyn.csproj" />
   </ItemGroup>
 </Project>

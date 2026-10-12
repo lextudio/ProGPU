@@ -87,21 +87,7 @@ for package_id in "${selected_package_ids[@]}"; do
     echo "Expected package was not produced: ${package}" >&2
     exit 1
   fi
-  if [[ "${package_id}" == "ProGPU.Xaml.SourceGenerator" ]]; then
-    if [[ -f "${symbols}" ]]; then
-      echo "Analyzer-only package must not produce an empty symbol package: ${symbols}" >&2
-      exit 1
-    fi
-    for analyzer_pdb in \
-      ProGPU.Xaml.SourceGenerator.pdb \
-      ProGPU.Xaml.pdb \
-      ProGPU.Xaml.Roslyn.pdb; do
-      if ! unzip -Z1 "${package}" | grep -Fx "analyzers/dotnet/cs/${analyzer_pdb}" >/dev/null; then
-        echo "${package_id} is missing analyzer symbols ${analyzer_pdb}." >&2
-        exit 1
-      fi
-    done
-  elif [[ "${package_id}" == "ProGPU.BinaryCompatibility" ]]; then
+  if [[ "${package_id}" == "ProGPU.BinaryCompatibility" ]]; then
     if [[ -f "${symbols}" ]]; then
       echo "Asset-only package must not produce a symbol package: ${symbols}" >&2
       exit 1
