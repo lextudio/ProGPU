@@ -14,6 +14,10 @@ jobs:
         with:
           fetch-depth: 64
           persist-credentials: false
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Export source-only changes from the retained build workspace
         shell: bash
         run: |

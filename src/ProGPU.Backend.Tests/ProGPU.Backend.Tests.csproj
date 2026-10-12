@@ -12,6 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ProGPU.Backend\ProGPU.Backend.csproj" />
-    <ProjectReference Include="..\ProGPU.Wpf.Interop\ProGPU.Wpf.Interop.csproj" />
+    <ProjectReference Include="$(ProGpuWpfInteropProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
   </ItemGroup>
 </Project>

@@ -6,8 +6,9 @@ configuration="${CONFIGURATION:-Release}"
 contract_version="${PROGPU_SYSTEM_DRAWING_CONTRACT_VERSION:-10.0.11}"
 target_framework="net10.0"
 contract_project="${repo_root}/eng/SystemDrawing.ApiCompat/SystemDrawing.ApiCompat.csproj"
-implementation_project="${repo_root}/src/System.Drawing.Common/System.Drawing.Common.csproj"
-implementation="${repo_root}/src/System.Drawing.Common/bin/${configuration}/${target_framework}/System.Drawing.Common.dll"
+drawing_root="${LibreWinFormsSourceRoot:-${repo_root}/external/LibreWinForms}/src/ProGPU.Drawing"
+implementation_project="${drawing_root}/System.Drawing.Common/System.Drawing.Common.csproj"
+implementation="${drawing_root}/System.Drawing.Common/bin/${configuration}/${target_framework}/System.Drawing.Common.dll"
 suppression_file="${repo_root}/eng/SystemDrawing.ApiCompat/CompatibilitySuppressions.xml"
 artifact_root="${repo_root}/artifacts/system-drawing-api-compat"
 report="${artifact_root}/current.txt"
@@ -40,7 +41,7 @@ dotnet tool restore
 dotnet restore "${contract_project}" --locked-mode
 
 if [[ "${skip_build}" -eq 0 ]]; then
-  dotnet build "${implementation_project}" --configuration "${configuration}" --nologo
+  dotnet build "${implementation_project}" --configuration "${configuration}" --nologo -p:ProGpuSourceRoot="${repo_root}/"
 fi
 
 if [[ ! -f "${implementation}" ]]; then

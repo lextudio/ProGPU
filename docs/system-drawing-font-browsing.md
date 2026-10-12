@@ -29,7 +29,7 @@ browsing while remaining available to ordinary callers and unfiltered queries.
 
 This is an original metadata change to ProGPU's existing implementation, not a
 port of another converter. The exact nine-property ordering is observable in
-[`GetFontPropsSorted` in the pinned upstream tests](https://github.com/dotnet/winforms/blob/b8acee9d29af0ed4c9049cea5f05f80570ecf3b0/src/System.Drawing.Common/tests/System/Drawing/FontConverterTests.cs#L83).
+[`GetFontPropsSorted` in the pinned upstream tests](https://github.com/dotnet/winforms/blob/b8acee9d29af0ed4c9049cea5f05f80570ecf3b0/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/FontConverterTests.cs#L83).
 The public [browsability contract](https://learn.microsoft.com/en-us/dotnet/api/system.componentmodel.browsableattribute?view=net-10.0)
 defines visibility separately from API accessibility, and
 [`TypeConverter.GetProperties`](https://learn.microsoft.com/en-us/dotnet/api/system.componentmodel.typeconverter.getproperties?view=net-10.0)

@@ -2,6 +2,7 @@
 """Check the real drawing package source graph without building or staging runtimes."""
 
 from pathlib import Path
+import os
 import subprocess
 import unittest
 import xml.etree.ElementTree as ET
@@ -27,7 +28,12 @@ def verify_source_closure(packages):
     seen = set()
     ids = set()
     for package_id, relative_project in packages:
-        project = (ROOT / relative_project).resolve()
+        project = ROOT / relative_project
+        for repository, property_name in (("LibreWPF", "LibreWpfSourceRoot"), ("LibreWinForms", "LibreWinFormsSourceRoot")):
+            prefix = f"external/{repository}/"
+            if relative_project.startswith(prefix) and os.environ.get(property_name):
+                project = Path(os.environ[property_name]) / relative_project[len(prefix):]
+        project = project.resolve()
         if project in seen or package_id in ids:
             raise ValueError(f"Duplicate drawing package: {package_id}")
         document = ET.parse(project)
@@ -37,7 +43,10 @@ def verify_source_closure(packages):
         # Include conditional source references as well. This group owns the
         # default source closure; it must not omit a potentially shipped package.
         for reference in document.findall("./ItemGroup/ProjectReference"):
-            dependency = (project.parent / reference.attrib["Include"].replace("\\", "/")).resolve()
+            source = reference.attrib["Include"].replace("\\", "/").replace("$(ProGpuSourceRoot)", str(ROOT) + "/")
+            if "$(" in source:
+                raise ValueError(f"Unresolved drawing source dependency: {source}")
+            dependency = (project.parent / source).resolve()
             if dependency not in seen:
                 raise ValueError(f"{package_id} dependency must appear earlier: {dependency.stem}")
         seen.add(project)

@@ -135,8 +135,8 @@ public class DiagnosticsLoggingSourceTests
     public void WpfShimProjectsUseInRepoStrongNameKey()
     {
         string directoryBuildProps = ReadSource("Directory.Build.props");
-        string windowsBaseProject = ReadSource("src", "WindowsBase", "WindowsBase.csproj");
-        string presentationCoreProject = ReadSource("src", "PresentationCore", "PresentationCore.csproj");
+        string windowsBaseProject = ReadSource("external", "LibreWPF", "src", "ProGPU.Compatibility", "WindowsBase", "WindowsBase.csproj");
+        string presentationCoreProject = ReadSource("external", "LibreWPF", "src", "ProGPU.Compatibility", "PresentationCore", "PresentationCore.csproj");
 
         Assert.Contains("<ProGPUStrongNameKeyFile>$(MSBuildThisFileDirectory)eng/ProGPU.snk</ProGPUStrongNameKeyFile>", directoryBuildProps, StringComparison.Ordinal);
         Assert.Contains("<VersionPrefix Condition=\"'$(VersionPrefix)' == ''\">0.1.0</VersionPrefix>", directoryBuildProps, StringComparison.Ordinal);
@@ -260,8 +260,7 @@ public class DiagnosticsLoggingSourceTests
         string project = ReadSource("src", "ProGPU.Tests.Headless", "ProGPU.Tests.Headless.csproj");
         string resources = ReadSource("src", "ProGPU.Tests.Headless", "ToolboxResourceType.resx");
         string toolboxBitmapAttribute = ReadSource(
-            "src",
-            "System.Drawing.Common",
+            "external", "LibreWinForms", "src", "ProGPU.Drawing", "System.Drawing.Common",
             "System",
             "Drawing",
             "ToolboxBitmapAttribute.cs");
@@ -476,8 +475,8 @@ public class DiagnosticsLoggingSourceTests
         string source = ReadSource("src", "ProGPU.Backend", "WgpuContext.cs");
         string gpuHitTesting = ReadSource("src", "ProGPU.Vector", "GpuHitTesting.cs");
         string pathOps = ReadSource("src", "ProGPU.Vector", "PathOpGeometrySolver.cs");
-        string presentationCoreGpuProvider = ReadSource("src", "PresentationCore", "GpuProvider.cs");
-        string systemDrawingGpuProvider = ReadSource("src", "System.Drawing.Common", "GpuProvider.cs");
+        string presentationCoreGpuProvider = ReadSource("external", "LibreWPF", "src", "ProGPU.Compatibility", "PresentationCore", "GpuProvider.cs");
+        string systemDrawingGpuProvider = ReadSource("external", "LibreWinForms", "src", "ProGPU.Drawing", "System.Drawing.Common", "GpuProvider.cs");
         string skiaSharp = ReadSource("src", "SkiaSharp", "SkiaSharp.cs");
         string avaloniaHost = ReadSource("src", "ProGPU.Avalonia", "ProGpuHostControl.cs");
         string avaloniaGpuDevicePool = ReadSource(

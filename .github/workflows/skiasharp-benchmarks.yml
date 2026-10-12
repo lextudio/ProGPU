@@ -32,6 +32,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:

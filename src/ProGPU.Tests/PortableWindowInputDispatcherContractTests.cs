@@ -50,7 +50,7 @@ public sealed class PortableWindowInputDispatcherContractTests
             directory = directory.Parent)
         {
             string candidate = Path.Combine(directory.FullName,
-                "src", "ProGPU.Wpf.Interop", "ProGPU.Wpf.Interop.csproj");
+                "external", "LibreWPF", "src", "ProGPU.Wpf.Interop", "ProGPU.Wpf.Interop.csproj");
             if (File.Exists(candidate)) return candidate;
         }
 

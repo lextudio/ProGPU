@@ -46,8 +46,8 @@
              Link="Android\AndroidMediaCodecOverlayPlanner.cs" />
     <Compile Include="..\ProGPU.iOS\IosIndirectScrollPolicy.cs"
              Link="iOS\IosIndirectScrollPolicy.cs" />
-    <ProjectReference Include="..\WindowsBase\WindowsBase.csproj" />
-    <ProjectReference Include="..\PresentationCore\PresentationCore.csproj" />
+    <ProjectReference Include="$(ProGpuWindowsBaseProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
+    <ProjectReference Include="$(ProGpuPresentationCoreProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
     <ProjectReference Include="..\ProGPU.Avalonia\ProGPU.Avalonia.csproj" />
     <ProjectReference Include="..\ProGPU.Backend.Native\ProGPU.Backend.Native.csproj" />
     <ProjectReference Include="..\ProGPU.DirectX\ProGPU.DirectX.csproj" />
@@ -66,7 +66,7 @@
     <ProjectReference Include="..\ProGPU.Browser\ProGPU.Browser.csproj" />
     <ProjectReference Include="..\ProGPU.Tests.Headless\ProGPU.Tests.Headless.csproj" />
     <ProjectReference Include="..\ProGPU.Text.Shaping\ProGPU.Text.Shaping.csproj" />
-    <ProjectReference Include="..\ProGPU.Wpf.Interop\ProGPU.Wpf.Interop.csproj" />
+    <ProjectReference Include="$(ProGpuWpfInteropProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Designer\ProGPU.WinUI.Designer.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Themes.Fluent\ProGPU.WinUI.Themes.Fluent.csproj" />

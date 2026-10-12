@@ -77,9 +77,10 @@ if pathlib.Path(args[0]).name == "ProGPU.SampleMemoryProfiler.dll":
     if not valid:
         print("synthetic EOF finalization failure")
     sys.exit(0 if valid else 29)
-assert args[:6] == ["test", "src/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj",
+assert args[:6] == ["test", "external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj",
                      "--configuration", "Release", "--verbosity", "normal"], args
-assert len(args) == 12, args
+assert len(args) == 13, args
+assert args[-1] == "-p:ProGpuSourceRoot=" + os.environ["STUB_PROGPU_ROOT"] + os.sep, args
 settings = pathlib.Path(args[args.index("--settings") + 1])
 values = {node.tag: node.text for node in ET.parse(settings).findall("./RunConfiguration/EnvironmentVariables/*")}
 assert len(values) == 2
@@ -138,6 +139,7 @@ class DrawingTraceTests(unittest.TestCase):
         unrelated = output / "testhost-caller.nettrace"
         unrelated.write_bytes(b"caller-owned")
         environment = os.environ | {"STUB_EXIT": str(exit_code), "STUB_TRACE": "1" if trace else "0",
+                                    "STUB_PROGPU_ROOT": str(SCRIPT.parent.parent),
                                     "STUB_REQUIRED_METHODS": json.dumps(required_methods)} | (extra or {})
         launch = [sys.executable, str(SCRIPT)]
         if fault:

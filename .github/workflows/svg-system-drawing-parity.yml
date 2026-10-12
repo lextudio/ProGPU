@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - src/System.Drawing.Common/**
+      - eng/framework-sources.json
       - src/ProGPU.Backend/**
       - src/ProGPU.Scene/**
       - src/ProGPU.Text/**
@@ -27,7 +27,7 @@ on:
     branches:
       - main
     paths:
-      - src/System.Drawing.Common/**
+      - eng/framework-sources.json
       - src/ProGPU.Backend/**
       - src/ProGPU.Scene/**
       - src/ProGPU.Text/**
@@ -82,6 +82,10 @@ jobs:
     steps:
       - name: Checkout ProGPU
         uses: actions/checkout@v7
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Checkout pinned SVG.NET and recursive fixtures
         uses: actions/checkout@v7
         with:
@@ -133,6 +137,10 @@ jobs:
     steps:
       - name: Checkout ProGPU
         uses: actions/checkout@v7
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Exercise verifier rejection controls
         run: python3 -m unittest discover -s eng/tests -p test_svg_recursion_reference.py -v
       - name: Download this run's native and portable receipts
@@ -161,6 +169,10 @@ jobs:
       - name: Checkout ProGPU
         uses: actions/checkout@v7
 
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Checkout pinned Svg.Skia corpora
         uses: actions/checkout@v7
         with:
@@ -235,6 +247,10 @@ jobs:
       - name: Checkout ProGPU
         uses: actions/checkout@v7
 
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Checkout pinned Svg.Skia corpora
         uses: actions/checkout@v7
         with:

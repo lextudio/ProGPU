@@ -84,7 +84,8 @@ for index in "${!selected_package_ids[@]}"; do
     )
   fi
 
-  "${dotnet}" pack "${repo_root}/${project}" "${pack_arguments[@]}"
+  "${dotnet}" pack "$(progpu_resolve_project "${project}")" "${pack_arguments[@]}" \
+    -p:ProGpuSourceRoot="${repo_root}/"
 
 done
 

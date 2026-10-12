@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "repositories": {
+    "LibreWPF": "eb08b7188b3cff1a3129d1d17c307823f08a1479",
+    "LibreWinForms": "e5e62c82c8452193f7ad0a0af7d2b093a3eb2319"
+  }
+}

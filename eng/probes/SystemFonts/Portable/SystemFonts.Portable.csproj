@@ -7,6 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Program.cs" Link="Program.cs" />
-    <ProjectReference Include="../../../../src/System.Drawing.Common/System.Drawing.Common.csproj" />
+    <ProjectReference Include="$(ProGpuDrawingProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
   </ItemGroup>
 </Project>

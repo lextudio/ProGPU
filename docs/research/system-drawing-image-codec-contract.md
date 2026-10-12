@@ -10,7 +10,7 @@ This slice restores the source-compatible managed descriptor and save surface us
 - `Image.Save` codec/parameter overloads and `GetEncoderParameterList`; and
 - functional managed PNG, BMP, and JPEG encoding, including integral JPEG quality selection.
 
-The authoritative API shapes and managed ownership behavior come from the upstream files under `src/System.Drawing.Common/src/System/Drawing/Imaging` and `src/System.Drawing.Common/src/System/Drawing/Image.cs` in the LibreWinForms source tree. ProGPU changes only the platform seam: GDI+ codec discovery and native encoder calls become an explicit managed codec registry and typed CPU encoders.
+The authoritative API shapes and managed ownership behavior come from the upstream files under `external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/src/System/Drawing/Imaging` and `external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/src/System/Drawing/Image.cs` in the LibreWinForms source tree. ProGPU changes only the platform seam: GDI+ codec discovery and native encoder calls become an explicit managed codec registry and typed CPU encoders.
 
 ## Capability registry
 

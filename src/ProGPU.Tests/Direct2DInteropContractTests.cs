@@ -664,8 +664,12 @@ public sealed class Direct2DInteropContractTests
             project,
             StringComparison.Ordinal);
         Assert.Contains(
-            "ProGPU.Wpf.Interop.csproj",
+            "<ProjectReference Include=\"$(ProGpuWpfInteropProject)\"",
             project,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "<ProGpuWpfInteropProject>$(LibreWpfSourceRoot)src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj</ProGpuWpfInteropProject>",
+            ReadRepoFile("eng", "ProGPU.FrameworkProjects.props"),
             StringComparison.Ordinal);
         Assert.Contains(
             "[LibraryImport(",

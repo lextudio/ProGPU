@@ -22,6 +22,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
