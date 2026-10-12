@@ -159,6 +159,21 @@ public unsafe interface IWebGpuExternalSurfaceApi
 }
 
 /// <summary>
+/// Optional presentation policy for an external surface owner. The owner selects
+/// from its actual surface capabilities and returns the mode it configured.
+/// Providers implementing only <see cref="IWebGpuExternalSurfaceApi"/> retain
+/// their existing configuration policy.
+/// </summary>
+public unsafe interface IWebGpuExternalSurfacePresentationApi : IWebGpuExternalSurfaceApi
+{
+    PresentMode ConfigureExternalSurface(
+        Surface* surface,
+        uint width,
+        uint height,
+        bool vsync);
+}
+
+/// <summary>
 /// Owns the instance, adapter, device, and queue behind an externally created
 /// native <see cref="IWebGpuApi"/> implementation.
 /// </summary>

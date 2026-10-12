@@ -296,7 +296,8 @@ public sealed unsafe partial class DawnGpuContext
                 this,
                 surface,
                 format,
-                alphaMode);
+                alphaMode,
+                capabilities.PresentModes);
         }
         catch
         {
@@ -385,11 +386,18 @@ public sealed unsafe partial class DawnGpuContext
                 throw new NotSupportedException(
                     "Dawn could not query native surface capabilities.");
             }
+            if (capabilities.PresentModeCount == 0 || capabilities.PresentModes == null)
+            {
+                throw new NotSupportedException(
+                    "The Dawn surface advertises no presentation modes.");
+            }
 
             var formats = new W.TextureFormat[
                 checked((int)capabilities.FormatCount)];
             var alphaModes = new W.CompositeAlphaMode[
                 checked((int)capabilities.AlphaModeCount)];
+            var presentModes = new W.PresentMode[
+                checked((int)capabilities.PresentModeCount)];
             for (int index = 0; index < formats.Length; index++)
             {
                 formats[index] = capabilities.Formats[index];
@@ -397,6 +405,10 @@ public sealed unsafe partial class DawnGpuContext
             for (int index = 0; index < alphaModes.Length; index++)
             {
                 alphaModes[index] = capabilities.AlphaModes[index];
+            }
+            for (int index = 0; index < presentModes.Length; index++)
+            {
+                presentModes[index] = capabilities.PresentModes[index];
             }
             if ((capabilities.Usages &
                  W.TextureUsage.RenderAttachment) == 0)
@@ -406,7 +418,8 @@ public sealed unsafe partial class DawnGpuContext
             }
             return new NativeSurfaceCapabilities(
                 formats,
-                alphaModes);
+                alphaModes,
+                presentModes);
         }
         finally
         {
@@ -501,7 +514,8 @@ public sealed unsafe partial class DawnGpuContext
 
     internal readonly record struct NativeSurfaceCapabilities(
         W.TextureFormat[] Formats,
-        W.CompositeAlphaMode[] AlphaModes);
+        W.CompositeAlphaMode[] AlphaModes,
+        W.PresentMode[] PresentModes);
 }
 
 /// <summary>
@@ -519,6 +533,9 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
     private SurfaceHandle _surface;
     private readonly W.TextureFormat _format;
     private readonly W.CompositeAlphaMode _alphaMode;
+    private readonly W.PresentMode _vsyncPresentMode;
+    private readonly W.PresentMode _uncappedPresentMode;
+    private W.PresentMode _presentMode;
     private uint _width;
     private uint _height;
     private bool _configured;
@@ -528,8 +545,12 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
         DawnGpuContext owner,
         SurfaceHandle surface,
         W.TextureFormat format,
-        W.CompositeAlphaMode alphaMode)
+        W.CompositeAlphaMode alphaMode,
+        ReadOnlySpan<W.PresentMode> presentModes)
     {
+        _vsyncPresentMode = DawnSurfacePresentModePolicy.Select(true, presentModes);
+        _uncappedPresentMode = DawnSurfacePresentModePolicy.Select(false, presentModes);
+        _presentMode = _vsyncPresentMode;
         _owner = owner;
         _ownerLifetime = owner.AcquireLifetimeLease();
         _surface = surface;
@@ -544,6 +565,11 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
         _alphaMode == W.CompositeAlphaMode.Premultiplied;
 
     public bool IsDeviceLost => _owner.Context.IsDeviceLost;
+
+    public SW.PresentMode? ConfiguredPresentMode =>
+        _configured && !IsDeviceLost && _surface != SurfaceHandle.Null
+            ? DawnSurfacePresentModePolicy.ToSilk(_presentMode)
+            : null;
 
     internal SW.Surface* SilkSurface =>
         (SW.Surface*)_surface.GetAddress();
@@ -569,7 +595,7 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
                 throw new InvalidOperationException(
                     "The Dawn presentation device is lost.");
             }
-            ConfigureIfNeeded(width, height);
+            ConfigureIfNeeded(width, height, _presentMode);
             SurfaceTextureFFI acquired = default;
             _surface.GetCurrentTexture(ref acquired);
             if (acquired.Status is
@@ -580,7 +606,7 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
                 {
                     acquired.Texture.Release();
                 }
-                Configure(width, height);
+                Configure(width, height, _presentMode);
                 acquired = default;
                 _surface.GetCurrentTexture(ref acquired);
             }
@@ -655,6 +681,11 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
 
     internal void ConfigureExternal(uint width, uint height)
     {
+        ConfigureExternal(width, height, vsync: true);
+    }
+
+    internal SW.PresentMode ConfigureExternal(uint width, uint height, bool vsync)
+    {
         if (width == 0 || height == 0)
         {
             throw new ArgumentOutOfRangeException(
@@ -666,7 +697,8 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
             ObjectDisposedException.ThrowIf(
                 _surface == SurfaceHandle.Null,
                 this);
-            ConfigureIfNeeded(width, height);
+            ConfigureIfNeeded(width, height, vsync ? _vsyncPresentMode : _uncappedPresentMode);
+            return DawnSurfacePresentModePolicy.ToSilk(_presentMode);
         }
     }
 
@@ -735,17 +767,18 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
             _ => SW.SurfaceGetCurrentTextureStatus.Lost
         };
 
-    private void ConfigureIfNeeded(uint width, uint height)
+    private void ConfigureIfNeeded(uint width, uint height, W.PresentMode presentMode)
     {
         if (!_configured ||
             _width != width ||
-            _height != height)
+            _height != height ||
+            _presentMode != presentMode)
         {
-            Configure(width, height);
+            Configure(width, height, presentMode);
         }
     }
 
-    private void Configure(uint width, uint height)
+    private void Configure(uint width, uint height, W.PresentMode presentMode)
     {
         if (_owner.Context.IsDeviceLost)
         {
@@ -759,7 +792,7 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
             Usage = W.TextureUsage.RenderAttachment,
             Width = width,
             Height = height,
-            PresentMode = W.PresentMode.Fifo,
+            PresentMode = presentMode,
             AlphaMode = _alphaMode
         };
         _configured = false;
@@ -771,6 +804,7 @@ public sealed unsafe class DawnNativePresentationSurface : IDisposable
         }
         _width = width;
         _height = height;
+        _presentMode = presentMode;
         _configured = true;
     }
 

@@ -789,7 +789,18 @@ public unsafe class WgpuContext : IDisposable
     private CompositeAlphaMode _cachedCompositeAlphaMode;
     private PresentMode _cachedVsyncPresentMode;
     private PresentMode _cachedUncappedPresentMode;
+    private PresentMode? _configuredPresentMode;
     private bool _vsync = false;
+
+    /// <summary>
+    /// The mode selected by the current configured surface owner, or null when
+    /// unconfigured or when the provider does not report its presentation policy.
+    /// A VSync request alone does not establish a configured presentation mode.
+    /// </summary>
+    public PresentMode? ConfiguredPresentMode =>
+        _isSurfaceConfigured && !IsDeviceLost && !_isDisposed
+            ? _configuredPresentMode
+            : null;
 
     public bool VSync
     {
@@ -2099,16 +2110,26 @@ public unsafe class WgpuContext : IDisposable
             uint configuredWidth = Math.Max(1u, width);
             uint configuredHeight = Math.Max(1u, height);
             _isSurfaceConfigured = false;
-            externalSurface.ConfigureExternalSurface(
-                Surface,
-                configuredWidth,
-                configuredHeight);
+            PresentMode? configuredPresentMode = null;
+            if (externalSurface is IWebGpuExternalSurfacePresentationApi presentation)
+            {
+                configuredPresentMode = presentation.ConfigureExternalSurface(
+                    Surface, configuredWidth, configuredHeight, _vsync);
+            }
+            else
+            {
+                externalSurface.ConfigureExternalSurface(
+                    Surface,
+                    configuredWidth,
+                    configuredHeight);
+            }
             if (IsDeviceLost)
             {
                 return false;
             }
             _lastWidth = configuredWidth;
             _lastHeight = configuredHeight;
+            _configuredPresentMode = configuredPresentMode;
             _isSurfaceConfigured = true;
             _hasSurfaceConfigurationCapabilities = true;
             SurfaceConfigurationCount++;
@@ -2118,6 +2139,7 @@ public unsafe class WgpuContext : IDisposable
         {
             _lastWidth = Math.Max(1, width);
             _lastHeight = Math.Max(1, height);
+            _configuredPresentMode = null;
             _isSurfaceConfigured = true;
             return true;
         }
@@ -2239,6 +2261,7 @@ public unsafe class WgpuContext : IDisposable
         SwapChainFormat = swapChainFormat;
         _lastWidth = config.Width;
         _lastHeight = config.Height;
+        _configuredPresentMode = presentMode;
         _isSurfaceConfigured = true;
         double elapsedMilliseconds = Stopwatch.GetElapsedTime(configurationStart).TotalMilliseconds;
         SurfaceConfigurationCount++;
