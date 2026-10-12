@@ -48,7 +48,7 @@ public static unsafe class MainWindowController
         MarkdownParser.WarmUp();
 #endif
 
-        ObjModels.EnsureSamplesExist("models");
+        ObjModels.EnsureSamplesExist(ObjModels.SampleDirectory);
 
         BuildSceneGraph();
         AttachPointerTracking();

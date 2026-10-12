@@ -48,6 +48,52 @@
   </ItemGroup>
 
   <!--
+    The SDK's default executable-relative install name exceeds the reserved
+    Mach-O load-command space in the packaged Intel Onigwrap library. Its
+    shorter rpath identity uses the SDK's existing MonoBundle search path.
+    Let the normal SDK task reidentify its private copy; never modify the
+    original NuGet asset or skip library relocation/signing.
+  -->
+  <Target Name="ProGpuSetOnigwrapBundleIdentity"
+          BeforeTargets="_ComputeDynamicLibrariesToReidentify"
+          Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <ItemGroup>
+      <_FileNativeReference Update="@(_FileNativeReference)"
+                            Condition="'%(_FileNativeReference.Filename)' == 'libonigwrap' And '%(_FileNativeReference.Extension)' == '.dylib' And '%(_FileNativeReference.Kind)' == 'Dynamic' And '%(_FileNativeReference.DynamicLibraryId)' == '' And '%(_FileNativeReference.ReidentifiedPath)' == ''">
+        <DynamicLibraryId>@rpath/libonigwrap.dylib</DynamicLibraryId>
+        <ProGpuOnigwrapBundleIdentity>true</ProGpuOnigwrapBundleIdentity>
+      </_FileNativeReference>
+    </ItemGroup>
+  </Target>
+
+  <!-- The SDK's timestamp check does not include DynamicLibraryId metadata.
+       Invalidate only its owned copy when this project changes. Keep the SDK's
+       common native directory: the native linker resolves -l names through its
+       ordered search paths. Publish the stamp only after relocation succeeds. -->
+  <Target Name="ProGpuInvalidateOnigwrapBundleIdentity"
+          BeforeTargets="_InstallNameTool"
+          DependsOnTargets="_ComputeDynamicLibrariesToReidentify"
+          Inputs="$(MSBuildProjectFullPath)"
+          Outputs="$(_IntermediateNativeLibraryDir)/progpu-onigwrap-rpath.stamp"
+          Condition="'$(TargetFramework)' == 'net10.0-macos'">
+    <ItemGroup>
+      <_ProGpuOnigwrapToReidentify Include="@(_DynamicLibraryToReidentify)"
+                                  Condition="'%(_DynamicLibraryToReidentify.ProGpuOnigwrapBundleIdentity)' == 'true'" />
+    </ItemGroup>
+    <Delete Files="@(_ProGpuOnigwrapToReidentify->'%(ReidentifiedPath)')" />
+    <PropertyGroup>
+      <_ProGpuOnigwrapIdentityInvalidated>true</_ProGpuOnigwrapIdentityInvalidated>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="ProGpuRecordOnigwrapBundleIdentity"
+          AfterTargets="_InstallNameTool"
+          Condition="'$(_ProGpuOnigwrapIdentityInvalidated)' == 'true'">
+    <WriteLinesToFile File="$(_IntermediateNativeLibraryDir)/progpu-onigwrap-rpath.stamp"
+                      Lines="@rpath/libonigwrap.dylib" Overwrite="true" />
+  </Target>
+
+  <!--
     Package-provided macOS dylibs are already deployment binaries. Re-stripping
     them fails on Xcode 26 when their indirect symbol tables retain imports.
     Keep prebuilt dylibs intact while still stripping the NativeAOT executable.
