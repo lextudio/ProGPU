@@ -253,6 +253,17 @@ public interface IPathHitTestCompilationCache
         out float localMinY,
         out float localMaxX,
         out float localMaxY);
+
+    // An older provider's false result does not prove empty coverage.
+    bool TryGetCompiledHitTestPath(
+        PathGeometry path, out GpuPathRecord[] records, out GpuPathSegment[] segments,
+        out float localMinX, out float localMinY, out float localMaxX, out float localMaxY,
+        out bool isEmpty)
+    {
+        isEmpty = false;
+        return TryGetCompiledHitTestPath(path, out records, out segments,
+            out localMinX, out localMinY, out localMaxX, out localMaxY);
+    }
 }
 
 public unsafe class PathAtlas : IDisposable
@@ -1234,6 +1245,13 @@ public unsafe class PathAtlas : IDisposable
         out float localMinY,
         out float localMaxX,
         out float localMaxY)
+        => TryGetCompiledHitTestPath(path, out records, out segments,
+            out localMinX, out localMinY, out localMaxX, out localMaxY, out _);
+
+    public bool TryGetCompiledHitTestPath(
+        PathGeometry path, out GpuPathRecord[] records, out GpuPathSegment[] segments,
+        out float localMinX, out float localMinY, out float localMaxX, out float localMaxY,
+        out bool isEmpty)
     {
         if (_isDisposed) throw new ObjectDisposedException(nameof(PathAtlas));
         ArgumentNullException.ThrowIfNull(path);
@@ -1250,12 +1268,15 @@ public unsafe class PathAtlas : IDisposable
             localMinY = cached.LocalMinY;
             localMaxX = cached.LocalMaxX;
             localMaxY = cached.LocalMaxY;
+            isEmpty = cached.IsEmpty;
             return segments.Length != 0;
         }
 
+        isEmpty = false;
         try
         {
             (records, segments) = CompilePath(path, out localMinX, out localMinY, out localMaxX, out localMaxY);
+            isEmpty = records.Length == 0 && segments.Length == 0 && HasCompleteHitTestPathDefinition(path);
         }
         catch (InvalidOperationException)
         {
@@ -1277,8 +1298,47 @@ public unsafe class PathAtlas : IDisposable
                 localMinX,
                 localMinY,
                 localMaxX,
-                localMaxY));
+                localMaxY,
+                isEmpty));
         return segments.Length != 0;
+    }
+
+    // Empty arrays can also mean an unavailable operand or an unhandled segment.
+    // Validate the complete original inventory only when proving an empty result;
+    // the compilation cache retains that proof beside the existing immutable data.
+    internal static bool HasCompleteHitTestPathDefinition(PathGeometry path)
+    {
+        int budget = 1 << 20;
+        try { return Validate(path, 0, ref budget); }
+        catch (InvalidOperationException) { return false; }
+        catch (NotSupportedException) { return false; }
+        catch (ArgumentException) { return false; }
+
+        static bool Finite(Vector2 point) => float.IsFinite(point.X) && float.IsFinite(point.Y);
+        static bool Validate(PathGeometry path, int depth, ref int budget)
+        {
+            if (depth > 64 || --budget < 0 || (path.FillRule != FillRule.Nonzero && path.FillRule != FillRule.EvenOdd))
+                return false;
+            if (path.IsCombined)
+                return path.Op is >= 0 and <= 4 && path.PathA is { } a && path.PathB is { } b &&
+                    Validate(a, depth + 1, ref budget) && Validate(b, depth + 1, ref budget);
+            var (figures, segments, _) = CompileStrokeQuery(path);
+            budget -= figures.Length + segments.Length;
+            if (budget < 0) return false;
+            foreach (var figure in figures)
+                if (!Finite(figure.Start)) return false;
+            foreach (var segment in segments)
+            {
+                if (!Finite(segment.P0) || !Finite(segment.P1) || !Finite(segment.P2) || !Finite(segment.P3))
+                    return false;
+                if (segment.SegmentType == 3 &&
+                    (!float.IsFinite(BitConverter.UInt32BitsToSingle(segment.Pad0)) ||
+                     !float.IsFinite(BitConverter.UInt32BitsToSingle(segment.Pad1)) ||
+                     !float.IsFinite(BitConverter.UInt32BitsToSingle(segment.Pad2))))
+                    return false;
+            }
+            return true;
+        }
     }
 
     private bool TryGetCompiledFillPath(
@@ -1765,7 +1825,8 @@ public unsafe class PathAtlas : IDisposable
         float LocalMinX,
         float LocalMinY,
         float LocalMaxX,
-        float LocalMaxY);
+        float LocalMaxY,
+        bool IsEmpty = false);
 
     private readonly record struct PendingRasterization(
         PathInfo Info,

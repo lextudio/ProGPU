@@ -831,8 +831,12 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
     }
 
     private bool TryCompileHitTestPath(PathGeometry path, out CompiledHitTestPath compiledPath)
+        => TryCompileHitTestPath(path, out compiledPath, out _);
+
+    private bool TryCompileHitTestPath(PathGeometry path, out CompiledHitTestPath compiledPath, out bool isEmpty)
     {
         compiledPath = default;
+        isEmpty = false;
         GpuPathRecord[] records;
         GpuPathSegment[] segments;
         float minX;
@@ -850,7 +854,8 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
                         out minX,
                         out minY,
                         out maxX,
-                        out maxY))
+                        out maxY,
+                        out isEmpty))
                 {
                     return false;
                 }
@@ -872,6 +877,7 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
 
         if (records.Length == 0 || segments.Length == 0)
         {
+            isEmpty = records.Length == 0 && segments.Length == 0 && PathAtlas.HasCompleteHitTestPathDefinition(path);
             return false;
         }
 
@@ -2219,12 +2225,10 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
         _clipStack.Push(new ClipState(clipMin, clipMax));
     }
 
-    private void PushGeometryClip(RenderCommand command, Matrix4x4 activeTransform, bool requireExact = false)
+    private void PushGeometryClip(RenderCommand command, Matrix4x4 activeTransform)
     {
         if (command.Path == null || !command.Path.TryGetBounds(out Vector2 min, out Vector2 max))
         {
-            if (requireExact)
-                throw new NotSupportedException("Source geometry clipping requires available path bounds and coverage.");
             _clipStack.Push(_clipStack.TryPeek(out ClipState active) ? active : ClipState.Unbounded);
             return;
         }
@@ -2264,8 +2268,6 @@ public sealed partial class GpuRenderCommandHitTestCacheBuilder : IDisposable
             return;
         }
 
-        if (requireExact)
-            throw new NotSupportedException("Source geometry clip encoding cannot fall back to its bounds.");
         _clipStack.Push(
             _clipStack.TryPeek(out ClipState inherited)
                 ? inherited.WithBounds(clipMin, clipMax)
