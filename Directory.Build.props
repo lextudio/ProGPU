@@ -21,7 +21,6 @@
     <IsPackable Condition="'$(IsPackable)' == ''">false</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Native.Sdk'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Backend'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.GameEngine'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Backend.Dawn'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Browser'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.DirectX'">true</IsPackable>
@@ -41,8 +40,6 @@
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.iOS'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Scene'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Scene.Native'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Voxel'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Voxel.WinUI'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Layout'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Media'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Media.Editing'">true</IsPackable>
@@ -58,8 +55,6 @@
     <IsPackable Condition="'$(MSBuildProjectName)' == 'Avalonia.SilkNet'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Uno'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Dxf'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.CAD'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.CAD.Native'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Wpf.Interop'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Xaml'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Xaml.Roslyn'">true</IsPackable>

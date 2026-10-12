@@ -6,7 +6,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/progpu-framework-projects.sh"
 # separately on macOS, then both groups are verified together before publishing.
 progpu_portable_package_ids=(
   ProGPU.Backend
-  ProGPU.GameEngine
   ProGPU.Native.Sdk
   ProGPU.Backend.Native
   ProGPU.Backend.Dx12
@@ -30,21 +29,12 @@ progpu_portable_package_ids=(
   ProGPU.Fonts.Noto
   ProGPU.Scene
   ProGPU.Scene.Native
-  ProGPU.Voxel
   ProGPU.Layout
   ProGPU.Virtualization
   ProGPU.WinUI
-  ProGPU.Voxel.WinUI
   ProGPU.WinUI.Themes.Fluent
   ProGPU.WinUI.Charts
   ProGPU.WinUI.Designer
-  ProGPU.Hmi
-  ProGPU.WinUI.Hmi
-  ProGPU.WinUI.Hmi.Workplace
-  ProGPU.WinUI.Hmi.Designer
-  ProGPU.Hmi.Modbus
-  ProGPU.Hmi.Mqtt
-  ProGPU.Hmi.OpcUa
   ProGPU.Xaml
   ProGPU.Xaml.Roslyn
   ProGPU.Xaml.SourceGenerator
@@ -53,9 +43,6 @@ progpu_portable_package_ids=(
   ProGPU.Avalonia
   ProGPU.Uno
   ProGPU.Dxf
-  ACadSharp.ProGPU
-  ProGPU.CAD
-  ProGPU.CAD.Native
   ProGPU.SkiaSharp
   ProGPU.BinaryCompatibility
   ProGPU.System.Drawing.Common
@@ -64,7 +51,6 @@ progpu_portable_package_ids=(
 
 progpu_portable_package_projects=(
   src/ProGPU.Backend/ProGPU.Backend.csproj
-  src/ProGPU.GameEngine/ProGPU.GameEngine.csproj
   src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
   src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
@@ -88,21 +74,12 @@ progpu_portable_package_projects=(
   src/ProGPU.Fonts.Noto/ProGPU.Fonts.Noto.csproj
   src/ProGPU.Scene/ProGPU.Scene.csproj
   src/ProGPU.Scene.Native/ProGPU.Scene.Native.csproj
-  src/ProGPU.Voxel/ProGPU.Voxel.csproj
   src/ProGPU.Layout/ProGPU.Layout.csproj
   src/ProGPU.Virtualization/ProGPU.Virtualization.csproj
   src/ProGPU.WinUI/ProGPU.WinUI.csproj
-  src/ProGPU.Voxel.WinUI/ProGPU.Voxel.WinUI.csproj
   src/ProGPU.WinUI.Themes.Fluent/ProGPU.WinUI.Themes.Fluent.csproj
   src/ProGPU.WinUI.Charts/ProGPU.WinUI.Charts.csproj
   src/ProGPU.WinUI.Designer/ProGPU.WinUI.Designer.csproj
-  src/ProGPU.Hmi/ProGPU.Hmi.csproj
-  src/ProGPU.WinUI.Hmi/ProGPU.WinUI.Hmi.csproj
-  src/ProGPU.WinUI.Hmi.Workplace/ProGPU.WinUI.Hmi.Workplace.csproj
-  src/ProGPU.WinUI.Hmi.Designer/ProGPU.WinUI.Hmi.Designer.csproj
-  src/ProGPU.Hmi.Modbus/ProGPU.Hmi.Modbus.csproj
-  src/ProGPU.Hmi.Mqtt/ProGPU.Hmi.Mqtt.csproj
-  src/ProGPU.Hmi.OpcUa/ProGPU.Hmi.OpcUa.csproj
   src/ProGPU.Xaml/ProGPU.Xaml.csproj
   src/ProGPU.Xaml.Roslyn/ProGPU.Xaml.Roslyn.csproj
   src/ProGPU.Xaml.SourceGenerator/ProGPU.Xaml.SourceGenerator.csproj
@@ -111,9 +88,6 @@ progpu_portable_package_projects=(
   src/ProGPU.Avalonia/ProGPU.Avalonia.csproj
   src/ProGPU.Uno/ProGPU.Uno.csproj
   src/ProGPU.Dxf/ProGPU.Dxf.csproj
-  external/ACadSharp/src/ACadSharp/ACadSharp.csproj
-  src/ProGPU.CAD/ProGPU.CAD.csproj
-  src/ProGPU.CAD.Native/ProGPU.CAD.Native.csproj
   src/SkiaSharp/SkiaSharp.csproj
   src/ProGPU.BinaryCompatibility/ProGPU.BinaryCompatibility.csproj
   external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/System.Drawing.Common.csproj
@@ -122,7 +96,6 @@ progpu_portable_package_projects=(
 
 progpu_portable_package_purposes=(
   "WebGPU device, swapchain, Silk.NET windowing, and platform backend services."
-  "Reusable bounded game rendering, scene, and procedural material infrastructure."
   "Exact-version static C++ SDK archives with original private dependency receipts and notices."
   "Experimental typed .NET host plus validated x64/arm64 desktop runtimes for the ProGPU C++ WebGPU renderer."
   "Optional pinned Windows x64/arm64 DXC-capable WebGPU and shader compiler runtime assets."
@@ -146,21 +119,12 @@ progpu_portable_package_purposes=(
   "Official Noto fallback assets and typed accessors for CJK and symbol coverage."
   "Scene graph, compositor commands, retained visuals, effects, and presentation primitives."
   "Typed compiler from immutable managed pictures to the retained native C++ WebGPU scene ABI."
-  "Chunked voxel worlds, greedy meshing, collision, terrain generation, and grid ray casting."
   "Measure/arrange layout substrate shared by higher-level UI adapters."
   "Virtualization helpers for large retained visual and item surfaces."
   "WinUI-shaped controls and app model implemented on ProGPU."
-  "Playable WinUI voxel control with first-person input and retained ProGPU rendering."
   "Source-generated unchanged WinUI Fluent theme resources and inspectable XAML content."
   "Chart controls and chart rendering primitives for the WinUI-shaped layer."
   "Designer/editor controls and diagnostics for ProGPU WinUI surfaces."
-  "Typed HMI documents, equipment templates, alarms and guarded acquisition contracts."
-  "Reusable retained-vector HMI equipment controls and runtime screen views."
-  "Embeddable operator workplace with linked process, faceplate, alarm and trend views."
-  "Shared-canvas HMI authoring, state rules, equipment templates and commissioning UI."
-  "Strict Modbus TCP acquisition and single-attempt absolute commands."
-  "MQTT 5 typed telemetry and non-retained absolute commands with strict TLS."
-  "Certificate-validated OPC UA scalar acquisition, bounded node browsing and session-bound absolute writes."
   "Framework-neutral XAML syntax, schema, diagnostics, and compiler contracts."
   "Roslyn symbol type system and structured C# emitter for the XAML compiler."
   "Incremental XAML source generator plus transitive MSBuild integration."
@@ -169,46 +133,10 @@ progpu_portable_package_purposes=(
   "Avalonia integration and compositor backend adapter."
   "Uno/WinUI integration and compositor backend adapter."
   "DXF import/rendering support for ProGPU vector scenes."
-  "Pinned ProGPU-reviewed ACadSharp fork used by ProGPU.CAD."
-  "ACadSharp-backed DXF/DWG document sessions and retained GPU-accelerated CAD engine foundation."
-  "Optional native C++ scene adapter for immutable ProGPU CAD content."
   "ProGPU-backed portable SkiaSharp compatibility shim used by drawing and imaging adapters."
   "Opt-in official-identity SkiaSharp and Avalonia.Skia runtime/publish compatibility assets."
   "ProGPU-backed portable System.Drawing.Common compatibility shim for LibreWinForms and GDI-style callers."
   "LibreWPF portable interop contracts consumed by the ProGPU/Silk.NET SDK lane."
-)
-
-# Exact runtime dependency closure of ProGPU.CAD. Keep this list topologically
-# ordered so the focused CAD pack can be restored by an isolated consumer
-# without falling back to previously published ProGPU packages. Keep the
-# reviewed fork before ProGPU.CAD so the latter records the same-version package
-# dependency generated from the pinned submodule source.
-progpu_cad_package_ids=(
-  ProGPU.Backend
-  ProGPU.Text.Shaping
-  ProGPU.Transpiler
-  ProGPU.WinRT
-  ProGPU.Vector
-  ProGPU.Text
-  ProGPU.Compute
-  ProGPU.Scene
-  ProGPU.SkiaSharp
-  ACadSharp.ProGPU
-  ProGPU.CAD
-)
-
-progpu_cad_package_projects=(
-  src/ProGPU.Backend/ProGPU.Backend.csproj
-  src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
-  src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
-  src/ProGPU.WinRT/ProGPU.WinRT.csproj
-  src/ProGPU.Vector/ProGPU.Vector.csproj
-  src/ProGPU.Text/ProGPU.Text.csproj
-  src/ProGPU.Compute/ProGPU.Compute.csproj
-  src/ProGPU.Scene/ProGPU.Scene.csproj
-  src/SkiaSharp/SkiaSharp.csproj
-  external/ACadSharp/src/ACadSharp/ACadSharp.csproj
-  src/ProGPU.CAD/ProGPU.CAD.csproj
 )
 
 # Exact runtime dependency closure of the Avalonia renderer and Silk.NET host.
@@ -343,10 +271,6 @@ progpu_nonshipping_projects=(
   src/ProGPU.Avalonia.SkiaSourceCompatibility/ProGPU.Avalonia.SkiaSourceCompatibility.csproj
   src/ProGPU.Avalonia.Skia.BinaryCompatibility/ProGPU.Avalonia.Skia.BinaryCompatibility.csproj
   src/ProGPU.Avalonia.Skia.BinaryCompatibility.V11/ProGPU.Avalonia.Skia.BinaryCompatibility.V11.csproj
-  src/ProGPU.CAD.Benchmarks/ProGPU.CAD.Benchmarks.csproj
-  src/ProGPU.CAD.Sample/ProGPU.CAD.Sample.csproj
-  src/ProGPU.CAD.Sample.Browser/ProGPU.CAD.Sample.Browser.csproj
-  src/ProGPU.CAD.Sample.Desktop/ProGPU.CAD.Sample.Desktop.csproj
   src/ProGPU.Native.Benchmarks/ProGPU.Native.Benchmarks.csproj
   src/ProGPU.Native.ManagedSample/ProGPU.Native.ManagedSample.csproj
   src/ProGPU.Samples.ActivityMonitor/ProGPU.Samples.ActivityMonitor.csproj
@@ -356,18 +280,11 @@ progpu_nonshipping_projects=(
   src/ProGPU.Samples.Desktop/ProGPU.Samples.Desktop.csproj
   src/ProGPU.Samples.Uno/ProGPU.Samples.Uno/ProGPU.Samples.Uno.csproj
   src/ProGPU.Samples.iOS/ProGPU.Samples.iOS.csproj
-  src/ProGPU.Samples.Suntrail.Browser/ProGPU.Samples.Suntrail.Browser.csproj
-  src/ProGPU.Samples.Suntrail.Desktop/ProGPU.Samples.Suntrail.Desktop.csproj
-  src/ProGPU.Samples.Suntrail.iOS/ProGPU.Samples.Suntrail.iOS.csproj
-  src/ProGPU.Samples.Suntrail/ProGPU.Samples.Suntrail.csproj
-  src/ProGPU.Samples.Suntrail.Tests/ProGPU.Samples.Suntrail.Tests.csproj
   src/ProGPU.Samples/ProGPU.Samples.csproj
   external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj
   external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj
-  src/ProGPU.CAD.Tests/ProGPU.CAD.Tests.csproj
   src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj
   src/ProGPU.Tests/ProGPU.Tests.csproj
-  src/ProGPU.Voxel.Tests/ProGPU.Voxel.Tests.csproj
   src/ProGPU.Xaml.Tests/ProGPU.Xaml.Tests.csproj
   external/LibreWPF/src/ProGPU.Compatibility/WindowsBase/WindowsBase.csproj
 )
@@ -378,10 +295,6 @@ progpu_nonshipping_reasons=(
   "Non-shipping source dependency used to validate the ProGPU SkiaSharp contract against Avalonia's ordinary Skia backend."
   "Non-shipping Avalonia.Skia facade shipped inside ProGPU.BinaryCompatibility."
   "Non-shipping Avalonia 11 validation facade for the universal compatibility identity."
-  "ProGPU.CAD immutable snapshot, retained-scene, and spatial-query benchmark."
-  "Shared interactive ProGPU.CAD sample surface."
-  "Standalone browser WebAssembly ProGPU.CAD sample application."
-  "Standalone desktop ProGPU.CAD sample application."
   "Native C++ renderer differential and performance benchmark."
   "Native C++ renderer managed-host sample."
   "Activity Monitor sample application."
@@ -391,18 +304,11 @@ progpu_nonshipping_reasons=(
   "Desktop sample application."
   "Uno sample application."
   "iOS sample application."
-  "Suntrail browser sample application."
-  "Suntrail desktop sample application."
-  "Suntrail iOS sample application."
-  "Shared Suntrail sample application."
-  "Suntrail test project."
   "Shared sample gallery."
   "System.Drawing performance benchmark project."
   "System.Drawing API and behavior test project."
-  "ProGPU.CAD foundation and conformance test project."
   "Headless test project."
   "Test project."
-  "Voxel engine test project."
   "XAML compiler and source-generator test project."
   "Framework implementation shim; shipped through consuming compatibility packages."
 )

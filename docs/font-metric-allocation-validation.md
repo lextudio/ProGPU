@@ -14,8 +14,7 @@ does not prove the cause of this Linux failure. Sampled allocation events also
 cannot prove absence of a 1,024-byte allocation. The original 13 font tests
 passed locally; this was not a deterministic local reproduction.
 
-The revised measurement follows the existing
-[CAD measurement isolation](PROGPU_CAD_ALLOCATION_VALIDATION.md): font loading,
+The revised measurement uses an independent worker: font loading,
 thread/delegate construction and assertions stay outside a dedicated worker's
 non-inlined measurement method. Preserve one warmup of each of the same four
 metric reads, followed by all 1,000 iterations. GC remains enabled, the result

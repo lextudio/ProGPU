@@ -1692,7 +1692,6 @@ jobs:
           python3 eng/test-native-runtime-package.py
           python3 eng/tests/test_framework_sources.py
           python3 eng/test-package-sizes.py
-          python3 eng/test-preview67-readme-recovery.py
           python3 eng/test-native-sdk-cmake.py
 
       # Catch consumer source errors before native packaging; the independent
