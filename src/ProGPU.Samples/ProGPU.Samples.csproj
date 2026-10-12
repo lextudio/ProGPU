@@ -37,8 +37,8 @@
     <ProjectReference Include="..\ProGPU.Fonts.Inter\ProGPU.Fonts.Inter.csproj" />
     <ProjectReference Include="..\ProGPU.Fonts.Noto\ProGPU.Fonts.Noto.csproj" />
     <ProjectReference Include="..\SkiaSharp\SkiaSharp.csproj" />
-    <ProjectReference Include="$(ProGpuDrawingProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
-    <ProjectReference Include="$(ProGpuPresentationCoreProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
+    <ProjectReference Include="$(ProGpuDrawingProject)" />
+    <ProjectReference Include="$(ProGpuPresentationCoreProject)" />
   </ItemGroup>
 
   <!-- This flag selects only this assembly's sample sources. Forwarding it to

@@ -12,6 +12,6 @@
     <Compile Include="../Program.cs" Link="Program.cs" />
     <ProjectReference Include="$(SvgSourceRoot)/Source/Svg.csproj"
                       AdditionalProperties="ManagePackageVersionsCentrally=false;UseProGpuSystemDrawing=true" />
-    <ProjectReference Include="$(ProGpuDrawingProject)" AdditionalProperties="ProGpuSourceRoot=$(ProGpuSourceRoot);LibreWpfSourceRoot=$(LibreWpfSourceRoot);LibreWinFormsSourceRoot=$(LibreWinFormsSourceRoot)" />
+    <ProjectReference Include="$(ProGpuDrawingProject)" />
   </ItemGroup>
 </Project>

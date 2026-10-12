@@ -31,8 +31,11 @@ additional development worktrees. Keep local changes before refreshing them.
 
 Local coordinated development can supply `LibreWpfSourceRoot` and
 `LibreWinFormsSourceRoot` as MSBuild properties, or environment variables for
-the packaging scripts. Moved projects receive the selected `ProGpuSourceRoot`;
-all core dependencies then refer back to that one producer. Direct project builds
+the packaging scripts. Pass an explicit `ProGpuSourceRoot` as a global MSBuild
+property when building against a different producer; paths work with or without
+a trailing separator. All core dependencies refer back to that one producer.
+Project references do not introduce extra global-property variants that would
+build the same core output concurrently. Direct project builds
 also recognize the documented producer sparse-checkout layout. A standalone
 framework checkout uses its own pinned ProGPU submodule.
 
