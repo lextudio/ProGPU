@@ -21,6 +21,7 @@ public sealed unsafe class DawnWebGpuApi :
     IWebGpuApi,
     IWebGpuRenderBundleApi,
     IWebGpuExternalSurfaceApi,
+    IWebGpuExternalSurfacePresentationApi,
     IWebGpuTextureLimitsSource
 {
     private const int MaxDescriptorItems = 256;
@@ -1090,6 +1091,15 @@ public sealed unsafe class DawnWebGpuApi :
     public void UnconfigureExternalSurface(SW.Surface* surface)
     {
         PresentationSurface(surface).UnconfigureExternal();
+    }
+
+    public SW.PresentMode ConfigureExternalSurface(
+        SW.Surface* surface,
+        uint width,
+        uint height,
+        bool vsync)
+    {
+        return PresentationSurface(surface).ConfigureExternal(width, height, vsync);
     }
 
     internal SW.Surface* AttachPresentationSurface(

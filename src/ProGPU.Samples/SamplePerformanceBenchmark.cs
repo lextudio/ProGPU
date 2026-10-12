@@ -140,6 +140,7 @@ internal static class SamplePerformanceBenchmark
         Console.WriteLine(
             $"[SampleBenchmark] page={selectedPage} warmupFrames={s_warmupFrames}" +
             $" measureFrames={s_measureFrames} vsync={AppState._wgpuContext?.VSync}" +
+            $" presentMode={AppState._wgpuContext?.ConfiguredPresentMode?.ToString() ?? "unreported"}" +
             $" scroll={s_scrollWorkload} scrollStep={s_scrollStep:F0}" +
             $" resize={s_resizeWorkload}" +
             $" preconditionPages={string.Join(';', s_preconditionPages)}" +
@@ -448,6 +449,8 @@ internal static class SamplePerformanceBenchmark
 
         Console.WriteLine(
             $"[SampleBenchmark] RESULT page=\"{RequestedPage}\" frames={measuredFrames}" +
+            $" vsync={AppState._wgpuContext?.VSync}" +
+            $" presentMode={AppState._wgpuContext?.ConfiguredPresentMode?.ToString() ?? "unreported"}" +
             $" deltaFps={deltaFps:F2} wallFps={wallFps:F2}" +
             $" compileMs={s_compileMilliseconds / divisor:F4}" +
             $" maxCompileMs={s_maxCompileMilliseconds:F4}" +
