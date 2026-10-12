@@ -4,8 +4,6 @@
 
 namespace progpu::native::execution {
 
-bool create_semantic_3d_pipelines(progpu_native_engine& engine);
-
 progpu_native_status compile_semantic_3d_page(
     progpu_native_engine& engine,
     const std::byte* bytes,

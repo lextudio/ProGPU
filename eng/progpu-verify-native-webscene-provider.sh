@@ -154,6 +154,7 @@ cmake --build "${build_dir}" \
   --parallel
 
 mkdir -p "${sample_dir}"
+evidence="${sample_dir}/progpu-native-webscene-provider.txt"
 python3 "${repo_root}/eng/progpu-webscene-timeout-diagnostics.py" \
   --build-dir "${build_dir}" --sample-dir "${sample_dir}" \
   --provider "${provider_library}"
@@ -166,6 +167,12 @@ fi
 cmake -E copy_if_different "${capture_source}" "${capture}"
 sips -s format png "${capture}" \
   --out "${sample_dir}/progpu-native-webscene-provider.png" >/dev/null
+
+ctest --test-dir "${build_dir}" --build-config Release \
+  --tests-regex '^progpu_native_3d_pipeline_demand_tests$' --output-on-failure \
+  | tee -a "${evidence}"
+cmake -E copy_if_different \
+  "${build_dir}/progpu-native-3d-pipeline-demand.rgba" "${sample_dir}/"
 
 managed_runtime="$(mktemp -d /tmp/progpu-native-dawn-managed.XXXXXX)"
 managed_packages="$(mktemp -d /tmp/progpu-native-dawn-packages.XXXXXX)"
