@@ -5,12 +5,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>Reusable GPU-rendered HMI controls and runtime screen views for ProGPU WinUI.</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>hmi-package-readme.md</PackageReadmeFile>
     <PackageIcon />
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ProGPU.Hmi/ProGPU.Hmi.csproj" />
     <ProjectReference Include="../ProGPU.WinUI/ProGPU.WinUI.csproj" />
-    <None Include="../../docs/hmi-designer.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../docs/hmi-designer.md" Pack="true" PackagePath="hmi-package-readme.md" />
   </ItemGroup>
 </Project>

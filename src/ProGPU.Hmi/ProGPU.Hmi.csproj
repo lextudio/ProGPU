@@ -5,10 +5,10 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>UI-independent HMI documents, typed tags, bounded history, alarms, recipes and deterministic simulation.</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>hmi-package-readme.md</PackageReadmeFile>
     <PackageIcon />
   </PropertyGroup>
   <ItemGroup>
-    <None Include="../../docs/hmi-designer.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../docs/hmi-designer.md" Pack="true" PackagePath="hmi-package-readme.md" />
   </ItemGroup>
 </Project>

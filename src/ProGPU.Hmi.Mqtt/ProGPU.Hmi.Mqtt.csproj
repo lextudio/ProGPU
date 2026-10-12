@@ -5,12 +5,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>MQTT 5 telemetry and explicit, non-retained commands for ProGPU HMI.</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>hmi-package-readme.md</PackageReadmeFile>
     <PackageIcon />
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ProGPU.Hmi/ProGPU.Hmi.csproj" />
     <PackageReference Include="MQTTnet" />
-    <None Include="../../docs/hmi-control-integrations.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../docs/hmi-control-integrations.md" Pack="true" PackagePath="hmi-package-readme.md" />
   </ItemGroup>
 </Project>

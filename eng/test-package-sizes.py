@@ -5,6 +5,8 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import warnings
+import zipfile
 
 
 spec = importlib.util.spec_from_file_location(
@@ -59,6 +61,53 @@ class PackageSizeTests(unittest.TestCase):
         link.symlink_to(self.root / "a/A.1.0.0.nupkg")
         with self.assertRaisesRegex(ValueError, "regular file"):
             sizes.verify_sizes([link.parent])
+
+
+class ArchivePathTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="progpu-package-paths.")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def package(self, name, entries):
+        path = self.root / name
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with zipfile.ZipFile(path, "w") as archive:
+                for entry in entries:
+                    archive.writestr(entry, b"owned archive-path control")
+        return (path, path.stat().st_size)
+
+    def test_distinct_readmes_and_same_basename_in_different_directories(self):
+        inventory = [self.package("A.nupkg", ["README.md", "hmi-package-readme.md",
+                      "lib/net10.0/A.dll", "ref/net10.0/A.dll"])]
+        sizes.verify_archive_paths(inventory)
+
+    def test_duplicate_readmes_and_case_collisions_are_rejected(self):
+        for entries in (["README.md", "README.md"], ["docs/Readme.md", "docs/readme.md"]):
+            with self.subTest(entries=entries):
+                package = self.package("A.nupkg", entries)
+                with self.assertRaisesRegex(ValueError, "Duplicate archive path"):
+                    sizes.verify_archive_paths([package])
+
+    def test_symbol_archives_and_whole_inventory_are_checked(self):
+        inventory = [self.package("A.nupkg", ["README.md"]),
+                     self.package("A.snupkg", ["lib/A.pdb", "lib/A.pdb"]),
+                     self.package("B.nupkg", ["README.md", "README.md"])]
+        with self.assertRaises(ValueError) as rejection:
+            sizes.verify_archive_paths(inventory)
+        self.assertIn("A.snupkg", str(rejection.exception))
+        self.assertIn("B.nupkg", str(rejection.exception))
+
+    def test_ambiguous_paths_and_non_zip_payloads_are_rejected(self):
+        for name in ("/README.md", "../README.md", "docs/../README.md", "./README.md",
+                     "docs//README.md", "docs\\README.md", "C:/README.md"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Invalid archive path"):
+                sizes.verify_archive_paths([self.package("A.nupkg", [name])])
+        path = self.root / "broken.nupkg"
+        path.write_bytes(b"not an archive")
+        with self.assertRaisesRegex(ValueError, "Invalid package archive"):
+            sizes.verify_archive_paths([(path, path.stat().st_size)])
 
 
 if __name__ == "__main__":

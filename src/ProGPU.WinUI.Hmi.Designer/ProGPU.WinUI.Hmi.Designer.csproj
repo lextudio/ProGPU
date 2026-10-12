@@ -5,13 +5,13 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <Description>Embeddable HMI designer using the shared ProGPU WinUI visual-design components.</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile>hmi-package-readme.md</PackageReadmeFile>
     <PackageIcon />
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ProGPU.WinUI.Hmi/ProGPU.WinUI.Hmi.csproj" />
     <ProjectReference Include="../ProGPU.WinUI.Hmi.Workplace/ProGPU.WinUI.Hmi.Workplace.csproj" />
     <ProjectReference Include="../ProGPU.WinUI.Designer/ProGPU.WinUI.Designer.csproj" />
-    <None Include="../../docs/hmi-designer.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../docs/hmi-designer.md" Pack="true" PackagePath="hmi-package-readme.md" />
   </ItemGroup>
 </Project>
