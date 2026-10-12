@@ -1,5 +1,10 @@
 # ProGPU Substrate Framework
 
+Framework-specific projects are maintained in LibreWPF and LibreWinForms. Source
+builds prepare their exact pinned revisions with
+`python3 eng/progpu-prepare-framework-sources.py`; assembly and package identities
+are unchanged. See [framework source ownership](docs/framework-source-ownership.md).
+
 [![Telegram Community](https://img.shields.io/badge/Telegram-Community-26A5E4?logo=telegram&logoColor=white)](https://t.me/+HblJUymBc544ODY0)
 
 ProGPU is a high-performance, GPU-first UI framework and composition substrate for .NET, built on top of Silk.NET and WebGPU (wgpu-native). It provides a lightweight, low-allocation alternative to traditional heavyweight UI frameworks by routing all vector graphics, text layout, and composition operations directly to the GPU using native WebGPU draw pipelines.

@@ -1065,10 +1065,10 @@ The managed compatibility slice also adds typed deferred path boolean operations
 
 ## Quality gates
 
-Focused managed tests live in `src/System.Drawing.Common.Tests`:
+Focused managed tests live in LibreWinForms at `src/ProGPU.Drawing/System.Drawing.Common.Tests`:
 
 ```bash
-dotnet test src/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj -c Release
+dotnet test external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj -c Release
 ```
 
 Every API slice should cover:
@@ -1108,7 +1108,7 @@ fork.
 Allocation-sensitive performance assertions run with the focused test suite. BenchmarkDotNet measurements provide review evidence for latency and allocation changes:
 
 ```bash
-dotnet run --project src/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj \
+dotnet run --project external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj \
   -c Release -- --job short --filter '*'
 ```
 

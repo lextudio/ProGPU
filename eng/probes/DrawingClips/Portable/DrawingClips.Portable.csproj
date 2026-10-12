@@ -9,6 +9,6 @@
   <ItemGroup>
     <Compile Include="../Program.cs" Link="Program.cs" />
     <Compile Include="../MiterJoins.cs" Link="MiterJoins.cs" />
-    <ProjectReference Include="../../../../src/System.Drawing.Common/System.Drawing.Common.csproj" />
+    <ProjectReference Include="$(ProGpuDrawingProject)" />
   </ItemGroup>
 </Project>

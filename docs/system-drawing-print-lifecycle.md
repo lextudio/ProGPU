@@ -29,7 +29,7 @@ document's default settings.
 
 The implementation extends the existing ProGPU-owned `PrintDocument` page loop.
 The [official .NET print-controller contract](https://learn.microsoft.com/en-us/dotnet/api/system.drawing.printing.printcontroller?view=windowsdesktop-10.0)
-and [upstream callback behavior](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/src/System/Drawing/Printing/PrintController.cs)
+and [upstream callback behavior](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/src/System/Drawing/Printing/PrintController.cs)
 were consulted as conformance references. No third-party source was copied or
 ported. Existing managed page-graphics acquisition and disposal remain intact.
 Coordination uses constant per-invocation state and constant work per callback;

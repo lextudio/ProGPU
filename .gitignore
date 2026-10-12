@@ -62,6 +62,10 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# Exact, nonrecursive framework source dependencies from eng/framework-sources.json.
+/external/LibreWPF/
+/external/LibreWinForms/
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 

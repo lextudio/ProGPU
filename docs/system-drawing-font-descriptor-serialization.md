@@ -33,7 +33,7 @@ applicable C++ renderer counterpart because neither renderer implements or consu
 
 The implementation is original ProGPU code over its existing converter. Its
 behavioral reference is the eight original descriptor cases in
-[the pinned upstream test file](https://github.com/dotnet/winforms/blob/b8acee9d29af0ed4c9049cea5f05f80570ecf3b0/src/System.Drawing.Common/tests/System/Drawing/FontConverterTests.cs).
+[the pinned upstream test file](https://github.com/dotnet/winforms/blob/b8acee9d29af0ed4c9049cea5f05f80570ecf3b0/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/FontConverterTests.cs).
 Those tests compare argument counts, invoke the descriptor and compare all font
 values. No upstream converter implementation was copied or translated. The public
 [InstanceDescriptor contract](https://learn.microsoft.com/en-us/dotnet/api/system.componentmodel.design.serialization.instancedescriptor?view=net-10.0)

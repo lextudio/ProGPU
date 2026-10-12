@@ -8,9 +8,9 @@ types and the six `Pen.CompoundArray`, `Pen.CustomStartCap`, and
 reference assembly defines public shape. Observable defaults, validation,
 ownership, disposal, cloning, and nonfinite scalar behavior were checked against
 the source-reused upstream WinForms
-[`CustomLineCapTests`](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/tests/System/Drawing/Drawing2D/CustomLineCapTests.cs),
-[`AdjustableArrowCapTests`](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/tests/System/Drawing/Drawing2D/AdjustableArrowCapTests.cs),
-and [`PenTests`](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/tests/System/Drawing/PenTests.cs).
+[`CustomLineCapTests`](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/Drawing2D/CustomLineCapTests.cs),
+[`AdjustableArrowCapTests`](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/Drawing2D/AdjustableArrowCapTests.cs),
+and [`PenTests`](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/PenTests.cs).
 The portable geometry and rendering implementation is original ProGPU code.
 
 `CustomLineCap` snapshots its fill and stroke paths, stores the four ordinary

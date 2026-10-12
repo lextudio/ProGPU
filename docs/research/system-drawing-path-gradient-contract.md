@@ -8,7 +8,7 @@ This slice restores the complete .NET 10
 constructor defaults, validation, defensive array ownership, cloning,
 transforms, blend curves, preset colors, focus scales, wrap modes, and disposed
 state were checked against the source-reused upstream WinForms
-[`PathGradientBrushTests`](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/tests/System/Drawing/Drawing2D/PathGradientBrushTests.cs).
+[`PathGradientBrushTests`](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/Drawing2D/PathGradientBrushTests.cs).
 The cross-platform material, packing, validation, shader, and rendering
 algorithms are original ProGPU code.
 

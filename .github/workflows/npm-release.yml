@@ -45,6 +45,10 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.21.0
@@ -81,6 +85,10 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.21.0

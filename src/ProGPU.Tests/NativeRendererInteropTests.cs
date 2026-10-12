@@ -215,7 +215,7 @@ public class NativeRendererInteropTests
         string managed = File.ReadAllText(FindRepoFile(
             "src", "ProGPU.Backend.Native", "NativeTextShapingInterop.cs"));
         string portable = File.ReadAllText(FindRepoFile(
-            "src", "ProGPU.Wpf.Interop", "PortableTextFormatting.cs"));
+            "external", "LibreWPF", "src", "ProGPU.Wpf.Interop", "PortableTextFormatting.cs"));
         string nativeExports = File.ReadAllText(FindRepoFile(
             "eng", "progpu-native-exports.txt"));
         string dawnExports = File.ReadAllText(FindRepoFile(

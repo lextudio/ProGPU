@@ -36,6 +36,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Prepare pinned framework sources
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: python3 eng/progpu-prepare-framework-sources.py
       - name: Verify package docs
         run: ./eng/progpu-verify-docs.sh
 

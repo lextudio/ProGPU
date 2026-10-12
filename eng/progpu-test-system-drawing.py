@@ -158,7 +158,7 @@ def finalize_collector(collector, relay=None, deadline=None):
         raise RuntimeError("Collector failed to finalize within 30 seconds; testhost was not terminated.")
 
 
-def run(dotnet, output, required_methods=()):
+def run(dotnet, output, required_methods=(), project="external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj"):
     output.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="run-", dir=output)).resolve()
     # Keep the private Unix socket path below the platform's length limit even
@@ -167,9 +167,10 @@ def run(dotnet, output, required_methods=()):
     socket = Path(socket_directory.name) / "testhost.sock"
     runsettings = settings(directory, socket)
     trace = directory / "testhost-capture.nettrace"
-    command = [dotnet, "test", "src/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj",
+    command = [dotnet, "test", str(project),
                "--configuration", "Release", "--verbosity", "normal", "--settings", str(runsettings),
-               "--logger", "trx;LogFileName=quality.trx", "--results-directory", str(directory)]
+               "--logger", "trx;LogFileName=quality.trx", "--results-directory", str(directory),
+               "-p:ProGpuSourceRoot=" + str(ROOT) + os.sep]
     status = {"schemaVersion": 2, "command": command, "providers": PROVIDERS,
               "circularBufferMiB": 64, "externalCollectorVersion": COLLECTOR_VERSION,
               "additionalRequiredMethods": [{"methodNamespace": owner, "methodName": name}
@@ -340,13 +341,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dotnet", default="dotnet")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/system-drawing-quality")
+    parser.add_argument("--project", type=Path,
+                        default=Path("external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj"),
+                        help="Original Drawing test project in its owning LibreWinForms checkout.")
     parser.add_argument("--require-method", nargs=2, action="append", default=[], metavar=("TYPE", "METHOD"),
                         help="Require exact CLR type/method metadata in addition to the mandatory font method; repeatable.")
     args = parser.parse_args()
     if any(not value.strip() for method in args.require_method for value in method):
         parser.error("--require-method requires nonempty exact CLR type and method names")
     try:
-        return run(args.dotnet, args.output, args.require_method)
+        return run(args.dotnet, args.output, args.require_method, args.project)
     except (OSError, subprocess.SubprocessError) as error:
         diagnostic_print(f"[DrawingTrace] Setup failed: {error}", error=True)
         return 2

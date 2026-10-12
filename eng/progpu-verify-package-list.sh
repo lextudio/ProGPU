@@ -22,7 +22,7 @@ array_contains() {
 project_package_id() {
   local project="$1"
   local package_id
-  package_id="$(sed -nE 's/.*<PackageId>([^<]+)<\/PackageId>.*/\1/p' "${repo_root}/${project}" | head -n 1)"
+  package_id="$(sed -nE 's/.*<PackageId>([^<]+)<\/PackageId>.*/\1/p' "$(progpu_resolve_project "${project}")" | head -n 1)"
   if [[ -z "${package_id}" ]]; then
     package_id="$(basename "${project}" .csproj)"
   fi
@@ -33,7 +33,7 @@ project_is_packable() {
   local project="$1"
   local project_name
   project_name="$(basename "${project}" .csproj)"
-  grep -Fq '<IsPackable>true</IsPackable>' "${repo_root}/${project}" ||
+  grep -Fq '<IsPackable>true</IsPackable>' "$(progpu_resolve_project "${project}")" ||
     grep -Fq "<IsPackable Condition=\"'\$(MSBuildProjectName)' == '${project_name}'\">true</IsPackable>" "${repo_root}/Directory.Build.props"
 }
 
@@ -41,7 +41,7 @@ for index in "${!progpu_package_ids[@]}"; do
   package_id="${progpu_package_ids[$index]}"
   project="${progpu_package_projects[$index]}"
 
-  if [[ ! -f "${repo_root}/${project}" ]]; then
+  if [[ ! -f "$(progpu_resolve_project "${project}")" ]]; then
     echo "Shipping package project does not exist: ${project}" >&2
     exit 1
   fi
@@ -69,7 +69,7 @@ for index in "${!progpu_package_ids[@]}"; do
 done
 
 for project in "${progpu_nonshipping_projects[@]}"; do
-  if [[ ! -f "${repo_root}/${project}" ]]; then
+  if [[ ! -f "$(progpu_resolve_project "${project}")" ]]; then
     echo "Non-shipping project does not exist: ${project}" >&2
     exit 1
   fi
@@ -85,7 +85,7 @@ for project in "${progpu_nonshipping_projects[@]}"; do
 done
 
 for project in "${progpu_integration_lane_projects[@]}"; do
-  if [[ ! -f "${repo_root}/${project}" ]]; then
+  if [[ ! -f "$(progpu_resolve_project "${project}")" ]]; then
     echo "Integration-lane project does not exist: ${project}" >&2
     exit 1
   fi

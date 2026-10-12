@@ -34,8 +34,8 @@ Linux/macOS selection is unchanged and still requires its own settings contract.
 
 ## Design sources
 
-- Microsoft's [SystemFonts implementation](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/src/System/Drawing/SystemFonts.cs)
-  and [Font implementation](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/src/System/Drawing/Font.cs)
+- Microsoft's [SystemFonts implementation](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/src/System/Drawing/SystemFonts.cs)
+  and [Font implementation](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/src/System/Drawing/Font.cs)
   define the role mappings, fallback policy, owned requests and point conversion.
   The [native font API](https://learn.microsoft.com/en-us/windows/win32/gdiplus/-gdiplus-font-flat)
   and [startup lifetime](https://learn.microsoft.com/en-us/windows/win32/api/gdiplusinit/nf-gdiplusinit-gdiplusstartup)

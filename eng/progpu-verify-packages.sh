@@ -72,7 +72,7 @@ is_owned_nonshipping_project_id() {
   local project
   local project_id
   for project in "${progpu_nonshipping_projects[@]}"; do
-    project_id="$(sed -nE 's/.*<PackageId>([^<]+)<\/PackageId>.*/\1/p' "${repo_root}/${project}" | head -n 1)"
+    project_id="$(sed -nE 's/.*<PackageId>([^<]+)<\/PackageId>.*/\1/p' "$(progpu_resolve_project "${project}")" | head -n 1)"
     if [[ -z "${project_id}" ]]; then
       project_id="$(basename "${project}" .csproj)"
     fi

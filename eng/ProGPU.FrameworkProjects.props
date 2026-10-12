@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <ProGpuSourceRoot Condition="'$(ProGpuSourceRoot)' == ''">$(MSBuildThisFileDirectory)../</ProGpuSourceRoot>
+    <ProGpuSourceRoot>$([MSBuild]::NormalizeDirectory('$(ProGpuSourceRoot)'))</ProGpuSourceRoot>
+    <LibreWpfSourceRoot Condition="'$(LibreWpfSourceRoot)' == ''">$(ProGpuSourceRoot)/external/LibreWPF/</LibreWpfSourceRoot>
+    <LibreWinFormsSourceRoot Condition="'$(LibreWinFormsSourceRoot)' == ''">$(ProGpuSourceRoot)/external/LibreWinForms/</LibreWinFormsSourceRoot>
+    <LibreWpfSourceRoot>$([MSBuild]::NormalizeDirectory('$(LibreWpfSourceRoot)'))</LibreWpfSourceRoot>
+    <LibreWinFormsSourceRoot>$([MSBuild]::NormalizeDirectory('$(LibreWinFormsSourceRoot)'))</LibreWinFormsSourceRoot>
+    <ProGpuWpfInteropProject>$(LibreWpfSourceRoot)/src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj</ProGpuWpfInteropProject>
+    <ProGpuWindowsBaseProject>$(LibreWpfSourceRoot)/src/ProGPU.Compatibility/WindowsBase/WindowsBase.csproj</ProGpuWindowsBaseProject>
+    <ProGpuPresentationCoreProject>$(LibreWpfSourceRoot)/src/ProGPU.Compatibility/PresentationCore/PresentationCore.csproj</ProGpuPresentationCoreProject>
+    <ProGpuDrawingProject>$(LibreWinFormsSourceRoot)/src/ProGPU.Drawing/System.Drawing.Common/System.Drawing.Common.csproj</ProGpuDrawingProject>
+  </PropertyGroup>
+</Project>

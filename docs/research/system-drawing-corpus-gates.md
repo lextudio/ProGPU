@@ -209,12 +209,12 @@ performance
 
 ## Official .NET System.Drawing behavior gate
 
-The active [dotnet/winforms `System.Drawing.Common` tests](https://github.com/dotnet/winforms/tree/main/src/System.Drawing.Common/tests)
+The active [dotnet/winforms `System.Drawing.Common` tests](https://github.com/dotnet/winforms/tree/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests)
 are now source-built against ProGPU as a second independent consumer gate. They
 cover precise managed API behavior and
 rendering operations such as
-[`Graphics.DrawLine`](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/tests/System/Drawing/Graphics_DrawLineTests.cs),
-[`Graphics.DrawBezier`](https://github.com/dotnet/winforms/blob/main/src/System.Drawing.Common/tests/System/Drawing/Graphics_DrawBezierTests.cs),
+[`Graphics.DrawLine`](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/Graphics_DrawLineTests.cs),
+[`Graphics.DrawBezier`](https://github.com/dotnet/winforms/blob/main/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/tests/System/Drawing/Graphics_DrawBezierTests.cs),
 bitmap and codec behavior, matrices, paths, regions, fonts, and metafiles. The
 repository is MIT licensed and already includes a `mono` compatibility slice.
 

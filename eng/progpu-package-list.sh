@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+source "$(dirname "${BASH_SOURCE[0]}")/progpu-framework-projects.sh"
+
 # Keep the portable group buildable on Linux. Mobile target frameworks are packed
 # separately on macOS, then both groups are verified together before publishing.
 progpu_portable_package_ids=(
@@ -114,8 +116,8 @@ progpu_portable_package_projects=(
   src/ProGPU.CAD.Native/ProGPU.CAD.Native.csproj
   src/SkiaSharp/SkiaSharp.csproj
   src/ProGPU.BinaryCompatibility/ProGPU.BinaryCompatibility.csproj
-  src/System.Drawing.Common/System.Drawing.Common.csproj
-  src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj
+  external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/System.Drawing.Common.csproj
+  external/LibreWPF/src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj
 )
 
 progpu_portable_package_purposes=(
@@ -289,7 +291,7 @@ progpu_drawing_runtime_package_projects=(
   src/ProGPU.Compute/ProGPU.Compute.csproj
   src/ProGPU.Scene/ProGPU.Scene.csproj
   src/SkiaSharp/SkiaSharp.csproj
-  src/System.Drawing.Common/System.Drawing.Common.csproj
+  external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/System.Drawing.Common.csproj
 )
 
 progpu_drawing_runtime_package_purposes=(
@@ -336,7 +338,7 @@ progpu_package_purposes=("${progpu_portable_package_purposes[@]}" "${progpu_mobi
 # Every owned project under src must be classified as shipping or intentionally
 # non-shipping. The verifier fails when a newly added project is omitted.
 progpu_nonshipping_projects=(
-  src/PresentationCore/PresentationCore.csproj
+  external/LibreWPF/src/ProGPU.Compatibility/PresentationCore/PresentationCore.csproj
   src/ProGPU.Backend.Tests/ProGPU.Backend.Tests.csproj
   src/ProGPU.Avalonia.SkiaSourceCompatibility/ProGPU.Avalonia.SkiaSourceCompatibility.csproj
   src/ProGPU.Avalonia.Skia.BinaryCompatibility/ProGPU.Avalonia.Skia.BinaryCompatibility.csproj
@@ -360,14 +362,14 @@ progpu_nonshipping_projects=(
   src/ProGPU.Samples.Suntrail/ProGPU.Samples.Suntrail.csproj
   src/ProGPU.Samples.Suntrail.Tests/ProGPU.Samples.Suntrail.Tests.csproj
   src/ProGPU.Samples/ProGPU.Samples.csproj
-  src/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj
-  src/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj
+  external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Benchmarks/System.Drawing.Common.Benchmarks.csproj
+  external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common.Tests/System.Drawing.Common.Tests.csproj
   src/ProGPU.CAD.Tests/ProGPU.CAD.Tests.csproj
   src/ProGPU.Tests.Headless/ProGPU.Tests.Headless.csproj
   src/ProGPU.Tests/ProGPU.Tests.csproj
   src/ProGPU.Voxel.Tests/ProGPU.Voxel.Tests.csproj
   src/ProGPU.Xaml.Tests/ProGPU.Xaml.Tests.csproj
-  src/WindowsBase/WindowsBase.csproj
+  external/LibreWPF/src/ProGPU.Compatibility/WindowsBase/WindowsBase.csproj
 )
 
 progpu_nonshipping_reasons=(

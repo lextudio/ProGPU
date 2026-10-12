@@ -32,7 +32,7 @@ generate_package_before='<GeneratePackageOnBuild>true</GeneratePackageOnBuild>'
 generate_package_after='<GeneratePackageOnBuild>false</GeneratePackageOnBuild>'
 net9_constants='<DefineConstants Condition="$(TargetFramework.StartsWith('\''net9'\''))">$(DefineConstants);NETCORE;NETNEXT</DefineConstants>'
 net10_constants='<DefineConstants Condition="$(TargetFramework.StartsWith('\''net10'\''))">$(DefineConstants);NETCORE;NETNEXT</DefineConstants>'
-progpu_reference='<ProjectReference Condition="'\''$(TargetFramework)'\'' == '\''net10.0'\'' and '\''$(UseProGpuSystemDrawing)'\'' == '\''true'\''" Include="$(ProGpuSourceRoot)/src/System.Drawing.Common/System.Drawing.Common.csproj" AdditionalProperties="ManagePackageVersionsCentrally=true" />'
+progpu_reference='<ProjectReference Condition="'\''$(TargetFramework)'\'' == '\''net10.0'\'' and '\''$(UseProGpuSystemDrawing)'\'' == '\''true'\''" Include="$(ProGpuSourceRoot)/external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/System.Drawing.Common.csproj" AdditionalProperties="ManagePackageVersionsCentrally=true" />'
 
 if ! grep -Fq "$target_frameworks_after" "$svg_project"; then
   grep -Fq "$target_frameworks_before" "$svg_project"
