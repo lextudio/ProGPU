@@ -14,25 +14,6 @@
     <ProjectReference Include="..\ProGPU.WinUI\ProGPU.WinUI.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Themes.Fluent\ProGPU.WinUI.Themes.Fluent.csproj" />
     <ProjectReference Include="..\ProGPU.WinUI.Charts\ProGPU.WinUI.Charts.csproj" />
-    <ProjectReference Include="..\ProGPU.WinUI.Designer\ProGPU.WinUI.Designer.csproj"
-                      Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <ProjectReference Include="..\ProGPU.Hmi.Modbus\ProGPU.Hmi.Modbus.csproj" Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <ProjectReference Include="..\ProGPU.Hmi.Mqtt\ProGPU.Hmi.Mqtt.csproj" Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <ProjectReference Include="..\ProGPU.Hmi.OpcUa\ProGPU.Hmi.OpcUa.csproj" Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <ProjectReference Include="..\ProGPU.WinUI.Hmi.Designer\ProGPU.WinUI.Hmi.Designer.csproj"
-                      Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <ProjectReference Include="..\ProGPU.Voxel\ProGPU.Voxel.csproj" />
-    <ProjectReference Include="..\ProGPU.Voxel.WinUI\ProGPU.Voxel.WinUI.csproj" />
-    <ProjectReference Include="..\ProGPU.Xaml\ProGPU.Xaml.csproj" />
-    <ProjectReference Include="..\ProGPU.Xaml.Roslyn\ProGPU.Xaml.Roslyn.csproj"
-                      Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <ProjectReference Include="..\ProGPU.Xaml.Workspaces\ProGPU.Xaml.Workspaces.csproj"
-                      Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <!-- The generator executes on the build host, not the application's target RID. -->
-    <ProjectReference Include="..\ProGPU.Xaml.SourceGenerator\ProGPU.Xaml.SourceGenerator.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers" />
     <ProjectReference Include="..\ProGPU.Dxf\ProGPU.Dxf.csproj" />
     <ProjectReference Include="..\ProGPU.Fonts.Inter\ProGPU.Fonts.Inter.csproj" />
     <ProjectReference Include="..\ProGPU.Fonts.Noto\ProGPU.Fonts.Noto.csproj" />
@@ -42,7 +23,7 @@
   </ItemGroup>
 
   <!-- This flag selects only this assembly's sample sources. Forwarding it to
-       shared runtime/analyzer projects creates a second build identity for the
+       shared runtime projects creates a second build identity for the
        same output files when a mobile host also references those projects. -->
   <ItemGroup>
     <ProjectReference Update="@(ProjectReference)"
@@ -51,23 +32,8 @@
 
   <ItemGroup>
     <PackageReference Include="Silk.NET.Input.Common" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Common"
-                      Condition="'$(ProGpuSamplesMobile)' != 'true'" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp"
-                      Condition="'$(ProGpuSamplesMobile)' != 'true'" />
   </ItemGroup>
 
-  <ItemGroup>
-    <AdditionalFiles Include="Pages\*.xaml"
-                     ProGpuXamlCompile="true"
-                     ProGpuXamlLogicalPath="%(Identity)" />
-    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="ProGpuXamlCompile" />
-    <CompilerVisibleItemMetadata Include="AdditionalFiles" MetadataName="ProGpuXamlLogicalPath" />
-    <!-- Project-reference analyzer dependencies; the NuGet package places the same files
-         together under analyzers/dotnet/cs. -->
-    <Analyzer Include="..\ProGPU.Xaml\bin\$(Configuration)\netstandard2.0\ProGPU.Xaml.dll" />
-    <Analyzer Include="..\ProGPU.Xaml.Roslyn\bin\$(Configuration)\netstandard2.0\ProGPU.Xaml.Roslyn.dll" />
-  </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -84,7 +50,5 @@
 
   <ItemGroup Condition="'$(ProGpuSamplesMobile)' == 'true'">
     <Compile Remove="Pages\MarkdownPage.cs" />
-    <Compile Remove="Pages\VisualDesignerPage.cs" />
-    <Compile Remove="Pages\XamlPlaygroundPage.cs" />
   </ItemGroup>
 </Project>

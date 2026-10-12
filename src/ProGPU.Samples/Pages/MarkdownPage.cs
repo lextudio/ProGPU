@@ -68,26 +68,6 @@ namespace ProGPU.Samples
         public static FrameworkElement Create()
         {
             _benchmarkScrollDirection = 1f;
-            // Code-block editors request the shared TextMate resources only when the preview
-            // actually contains code. They render an immediate plain-text fallback and recolor
-            // in place when the active theme grammar becomes ready.
-            MarkdownParser.CodeBlockFactory = (code, language) =>
-            {
-                var editor = new ProGPU.WinUI.Designer.VirtualizedCodeEditor(
-                    useLightweightSyntaxHighlighting: true)
-                {
-                    Font = AppState.GetFontCourier() ?? AppState.GetFont(),
-                    Margin = new Thickness(0, 4, 0, 12),
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment = VerticalAlignment.Top
-                };
-                editor.SetCode(code);
-
-                var lineCount = code.AsSpan().Count('\n') + 1;
-                editor.HeightConstraint = Math.Clamp(lineCount * 22f + 10f, 60f, 260f);
-                return editor;
-            };
-
             var rootGrid = new Microsoft.UI.Xaml.Controls.Grid();
             rootGrid.RowDefinitions.Add(new GridLength(48f, GridUnitType.Absolute));  // Row 0: File Operations & Presets
             rootGrid.RowDefinitions.Add(new GridLength(48f, GridUnitType.Absolute));  // Row 1: Configurations Toolbar

@@ -4,7 +4,7 @@
     <ProGPUStrongNameKeyFile>$(MSBuildThisFileDirectory)eng/ProGPU.snk</ProGPUStrongNameKeyFile>
     <ProGPUPublicKey>002400000480000094000000060200000024000052534131000400000100010045aa5f537c126e38b67a4e22a49d30ad6424dc66d3e82890c03de2caa8f421736dbe5170b054610320e4a436e808a38b05e02998b776d1ae9133d2bf7197e5eb39e9ba6bee9ed837236a90c151c6d6e154dc8debd4fef44d6597f795ee9e33bf0b2a959915729166099862717525ec4bab3002d4d8f8a81d656b5c25c891cb91</ProGPUPublicKey>
     <VersionPrefix Condition="'$(VersionPrefix)' == ''">0.1.0</VersionPrefix>
-    <VersionSuffix Condition="'$(VersionSuffix)' == ''">preview.67</VersionSuffix>
+    <VersionSuffix Condition="'$(VersionSuffix)' == ''">preview.68</VersionSuffix>
     <Version Condition="'$(Version)' == ''">$(VersionPrefix)-$(VersionSuffix)</Version>
     <PackageVersion Condition="'$(PackageVersion)' == ''">$(Version)</PackageVersion>
     <Description Condition="'$(Description)' == ''">ProGPU runtime package for GPU-accelerated .NET composition, rendering, vector graphics, text, and WebGPU platform integration.</Description>
@@ -21,7 +21,6 @@
     <IsPackable Condition="'$(IsPackable)' == ''">false</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Native.Sdk'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Backend'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.GameEngine'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Backend.Dawn'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Browser'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.DirectX'">true</IsPackable>
@@ -41,8 +40,6 @@
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.iOS'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Scene'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Scene.Native'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Voxel'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Voxel.WinUI'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Layout'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Media'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Media.Editing'">true</IsPackable>
@@ -52,19 +49,12 @@
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.WinUI'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.WinUI.Themes.Fluent'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.WinUI.Charts'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.WinUI.Designer'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Avalonia'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'Avalonia.ProGpu'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'Avalonia.SilkNet'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Uno'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Dxf'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.CAD'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.CAD.Native'">true</IsPackable>
     <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Wpf.Interop'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Xaml'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Xaml.Roslyn'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Xaml.SourceGenerator'">true</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'ProGPU.Xaml.Workspaces'">true</IsPackable>
     <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">0.1.0.0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">0.1.0.0</FileVersion>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>

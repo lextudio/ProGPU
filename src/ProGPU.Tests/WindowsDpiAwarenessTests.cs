@@ -163,11 +163,9 @@ public sealed class WindowsDpiAwarenessTests
     {
         string shaderToy = File.ReadAllText(FindRepoFile("src", "ProGPU.Samples", "Controls", "ShaderToyControl.cs"));
         string viewport3D = File.ReadAllText(FindRepoFile("src", "ProGPU.WinUI", "Controls", "Viewport3D.cs"));
-        string designerCanvas = File.ReadAllText(FindRepoFile("src", "ProGPU.WinUI.Designer", "DesignerCanvas.cs"));
-        string visualDesignerPage = File.ReadAllText(FindRepoFile("src", "ProGPU.Samples", "Pages", "VisualDesignerPage.cs"));
         string compositor = File.ReadAllText(FindRepoFile("src", "ProGPU.Scene", "Compositor.cs"));
 
-        foreach (string source in new[] { shaderToy, viewport3D, designerCanvas, visualDesignerPage, compositor })
+        foreach (string source in new[] { shaderToy, viewport3D, compositor })
         {
             Assert.Contains("DisplayScaleResolver.ResolveWindowDisplayScale", source, StringComparison.Ordinal);
             Assert.DoesNotContain("FramebufferSize.X /", source, StringComparison.Ordinal);

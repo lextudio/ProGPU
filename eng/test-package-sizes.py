@@ -79,7 +79,7 @@ class ArchivePathTests(unittest.TestCase):
         return (path, path.stat().st_size)
 
     def test_distinct_readmes_and_same_basename_in_different_directories(self):
-        inventory = [self.package("A.nupkg", ["README.md", "hmi-package-readme.md",
+        inventory = [self.package("A.nupkg", ["README.md", "specialized-package-readme.md",
                       "lib/net10.0/A.dll", "ref/net10.0/A.dll"])]
         sizes.verify_archive_paths(inventory)
 

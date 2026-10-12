@@ -10,7 +10,7 @@ if [[ ! -x "${dotnet}" ]]; then
 fi
 
 configuration="${PROGPU_CONFIGURATION:-Release}"
-package_version="${PROGPU_PACKAGE_VERSION:-0.1.0-preview.67}"
+package_version="${PROGPU_PACKAGE_VERSION:-0.1.0-preview.68}"
 package_output="${PROGPU_PACKAGE_OUTPUT:-${repo_root}/artifacts/packages/${configuration}}"
 package_group="${PROGPU_PACKAGE_GROUP:-all}"
 
@@ -22,10 +22,6 @@ case "${package_group}" in
   portable)
     selected_package_ids=("${progpu_portable_package_ids[@]}")
     selected_package_projects=("${progpu_portable_package_projects[@]}")
-    ;;
-  cad)
-    selected_package_ids=("${progpu_cad_package_ids[@]}")
-    selected_package_projects=("${progpu_cad_package_projects[@]}")
     ;;
   avalonia-runtime)
     selected_package_ids=("${progpu_avalonia_runtime_package_ids[@]}")
@@ -40,7 +36,7 @@ case "${package_group}" in
     selected_package_projects=("${progpu_mobile_package_projects[@]}")
     ;;
   *)
-    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, cad, avalonia-runtime, drawing-runtime, or mobile." >&2
+    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, or mobile." >&2
     exit 1
     ;;
 esac
@@ -66,22 +62,12 @@ for index in "${!selected_package_ids[@]}"; do
     -p:Version="${package_version}" \
     -p:PackageVersion="${package_version}"
   )
-  if [[ "${package_id}" == "ProGPU.Xaml.SourceGenerator" ||
-        "${package_id}" == "ProGPU.Backend.Dx12" ||
+  if [[ "${package_id}" == "ProGPU.Backend.Dx12" ||
         "${package_id}" == "ProGPU.Native.Sdk" ||
         "${package_id}" == "ProGPU.BinaryCompatibility" ]]; then
     pack_arguments+=(-p:IncludeSymbols=false)
   else
     pack_arguments+=(-p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg)
-  fi
-  if [[ "${package_id}" == "ACadSharp.ProGPU" ]]; then
-    # ACadSharp enables GeneratePackageOnBuild in Release. A direct clean
-    # dotnet pack must disable that build-time pack cycle so Pack builds the
-    # net10.0 fork output before collecting ACadSharp.dll.
-    pack_arguments+=(
-      -p:ProGpuForkPackage=true
-      -p:GeneratePackageOnBuild=false
-    )
   fi
 
   "${dotnet}" pack "$(progpu_resolve_project "${project}")" "${pack_arguments[@]}" \
@@ -98,18 +84,7 @@ if [[ "${package_group}" == "portable" || "${package_group}" == "all" ]]; then
   PROGPU_CONFIGURATION="${configuration}" \
   PROGPU_PACKAGE_VERSION="${package_version}" \
   PROGPU_PACKAGE_OUTPUT="${package_output}" \
-    "${repo_root}/eng/progpu-verify-xaml-package-consumer.sh"
-  PROGPU_CONFIGURATION="${configuration}" \
-  PROGPU_PACKAGE_VERSION="${package_version}" \
-  PROGPU_PACKAGE_OUTPUT="${package_output}" \
     "${repo_root}/eng/progpu-verify-drawing-extension-package-consumer.sh"
-fi
-
-if [[ "${package_group}" == "cad" || "${package_group}" == "portable" || "${package_group}" == "all" ]]; then
-  PROGPU_CONFIGURATION="${configuration}" \
-  PROGPU_PACKAGE_VERSION="${package_version}" \
-  PROGPU_PACKAGE_OUTPUT="${package_output}" \
-    "${repo_root}/eng/progpu-verify-cad-package-consumer.sh"
 fi
 
 echo "ProGPU ${package_group} NuGet package build succeeded for ${package_version}."

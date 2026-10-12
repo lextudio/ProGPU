@@ -2927,9 +2927,9 @@ dotnet publish src/ProGPU.Samples.Desktop/ProGPU.Samples.Desktop.csproj \
   -o artifacts/performance/media-final-qualification-20260730/publish
 ```
 
-Xcode 26 initially made that publish fail while re-stripping three
-package-provided deployment libraries: `libonigwrap.dylib`,
-`libwgpu_native.dylib`, and `libglfw.3.dylib`. The desktop project now marks
+Xcode 26 initially made that publish fail while re-stripping
+package-provided deployment libraries, including `libwgpu_native.dylib`
+and `libglfw.3.dylib`. The desktop project now marks
 only macOS `.dylib` post-processing items with `NoSymbolStrip`; it does not
 disable stripping of the NativeAOT executable. A source-contract regression
 protects both the target ordering and that scope. The republished app passed

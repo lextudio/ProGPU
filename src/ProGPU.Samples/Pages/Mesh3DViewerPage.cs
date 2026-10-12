@@ -1106,7 +1106,7 @@ public static class Mesh3DViewerPage
         {
             try
             {
-                var path = Path.Combine("models", "spacecraft.obj");
+                var path = Path.Combine(ObjModels.SampleDirectory, "spacecraft.obj");
                 _activeLoadedModel = ObjReader.LoadObj(path);
                 _activeMeshGeometry = ObjReader.MergeParts(_activeLoadedModel);
             }
@@ -1120,7 +1120,7 @@ public static class Mesh3DViewerPage
         {
             try
             {
-                var path = Path.Combine("models", "jewel.obj");
+                var path = Path.Combine(ObjModels.SampleDirectory, "jewel.obj");
                 _activeLoadedModel = ObjReader.LoadObj(path);
                 _activeMeshGeometry = ObjReader.MergeParts(_activeLoadedModel);
             }

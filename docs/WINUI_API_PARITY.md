@@ -1969,15 +1969,6 @@ evidence, and ratchet the monotonic baseline. Rendering slices retain the
 mandatory cross-engine research, GPU quality, device-loss, and allocation
 contracts; declaration counts alone are never completion evidence.
 
-The XAML compiler continuation is separately pinned in
-`docs/xaml-compiler/ROADMAP.md`: preview.32 includes the transactional Roslyn
-metadata-delta producer, project watch transport, deterministic topology, and
-bounded performance-budget infrastructure, but the compiler remains pre-MVP.
-The next blocking work is automatic XAML-origin mapping, host capability and
-metadata-update adapters, joint metadata/XAML commit and recovery ordering,
-namescope/resource/template-aware live patching with safe replacement fallback,
-cross-platform quality closure, and published-feed productization evidence.
-
 ## Preview.33 release closure and next parity lane
 
 Preview.33 does not claim additional WinUI declarations. The official NuGet

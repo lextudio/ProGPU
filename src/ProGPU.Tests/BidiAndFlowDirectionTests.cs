@@ -983,7 +983,7 @@ public class BidiAndFlowDirectionTests
     }
 
     [Fact]
-    public void RtlColorSlidersAndVirtualizedEditorMirrorDirectionalChrome()
+    public void RtlColorSlidersMirrorDirectionalChrome()
     {
         static float RenderHueThumbX(FlowDirection direction)
         {
@@ -1000,23 +1000,6 @@ public class BidiAndFlowDirectionTests
 
         Assert.True(RenderHueThumbX(FlowDirection.LeftToRight) < 50f);
         Assert.True(RenderHueThumbX(FlowDirection.RightToLeft) > 50f);
-
-        var editor = new ProGPU.WinUI.Designer.VirtualizedCodeEditor(useLightweightSyntaxHighlighting: true)
-        {
-            FlowDirection = FlowDirection.RightToLeft,
-            Font = InterFontFamily.Regular,
-            Size = new System.Numerics.Vector2(200f, 100f)
-        };
-        editor.SetCode(string.Join('\n', Enumerable.Repeat("line", 20)));
-        var editorDrawing = new DrawingContext();
-        editor.OnRender(editorDrawing);
-        Rect gutter = editorDrawing.Commands.Single(command =>
-            command.Type == RenderCommandType.DrawRect && Math.Abs(command.Rect.Width - 45f) < 0.01f).Rect;
-        Rect scrollbar = editorDrawing.Commands.Single(command =>
-            command.Type == RenderCommandType.DrawRect && Math.Abs(command.Rect.Width - 6f) < 0.01f).Rect;
-
-        Assert.True(gutter.X > 150f);
-        Assert.True(scrollbar.X < 10f);
     }
 
     [Fact]

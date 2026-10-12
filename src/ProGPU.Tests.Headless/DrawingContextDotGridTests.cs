@@ -1,7 +1,6 @@
 using System.Numerics;
 using Microsoft.UI.Xaml;
 using ProGPU.Scene;
-using ProGPU.WinUI.Designer;
 using ProGPU.Vector;
 using Xunit;
 
@@ -143,25 +142,6 @@ public sealed class DrawingContextDotGridTests
             Assert.Equal(5f, vertex.StrokeThickness);
             Assert.Equal(225f, vertex.ShapeType);
         });
-    }
-
-    [Fact]
-    public void DesignerCanvasRecordsExactlyOneGridCommand()
-    {
-        var canvas = new DesignerCanvas
-        {
-            Size = new Vector2(1000f, 800f),
-            GridSize = 10f,
-            ZoomScale = 1f,
-            GetDpiScale = static () => 1f
-        };
-        var context = new DrawingContext();
-
-        canvas.OnRender(context);
-
-        Assert.Single(
-            context.Commands,
-            static command => command.Type == RenderCommandType.DrawDotGrid);
     }
 
     [Theory]

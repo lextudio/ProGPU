@@ -81,8 +81,7 @@ the failure. The cause of this new delta is not established; neither a sampled
 allocation trace nor the separate macOS runtime-counter report would prove it.
 
 The fixture now follows the original ProGPU-owned
-[`FontQualityTests` measurement](font-metric-allocation-validation.md) and
-[CAD isolation](PROGPU_CAD_ALLOCATION_VALIDATION.md). A dedicated worker owns the
+[`FontQualityTests` measurement](font-metric-allocation-validation.md). A dedicated worker owns the
 same stack spans, payload and image/effect values. It performs the original one
 warmup, then a non-inlined helper measures all 10,000 unchanged builder calls.
 Assertions, thread/delegate creation and exception propagation are outside that

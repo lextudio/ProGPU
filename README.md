@@ -14,33 +14,6 @@ Native hosts can explicitly select a WebGPU backend before instance creation wit
 [native backend selection](docs/native-backend-selection.md) for the typed API,
 `WGPU_BACKEND` alias, shared-device rules and qualification limits.
 
-## HMI designer and control-system integrations
-
-The [HMI workbench](docs/hmi-designer.md) reuses the existing designer canvas and ships
-standalone controls, typed tags, alarms, recipes, linked equipment faceplates and
-priority-based equipment states. The [standalone DCS workplace](docs/hmi-dcs-workplace.md)
-adds an ABB System 800xA-inspired operator/engineering workflow with linked object aspects,
-alarms, events and trends. Run `dotnet run --project samples/HmiDcs -c Release`.
-The gallery's **Visual Designer → HMI / DCS** entry points to the standalone app;
-`samples/HmiDesigner` remains the focused engineering-only sample. No ABB product
-compatibility or full vendor feature parity is asserted.
-
-The [control integration guide](docs/hmi-control-integrations.md) covers real Modbus TCP
-and MQTT 5/TLS adapters, editable connection/mapping profiles, explicit read-only
-commissioning and single-use write confirmations. Opening a project never connects to
-an endpoint. External writes additionally require a host-provided authorization policy;
-broker/controller acknowledgements are distinguished from actual process feedback.
-
-## HMI process studio
-
-The [HMI designer](docs/hmi-designer.md) reuses the shared WinUI authoring canvas and exposes **48 retained-vector components**, light/dark/high-contrast palettes, typed faceplates, state rules, alarms, trends, [semantic nozzle routing](docs/hmi-diagram-connections.md), and explicit Modbus TCP, MQTT and OPC UA commissioning.
-
-```sh
-dotnet run --project samples/HmiDesigner/HmiDesigner.csproj -c Release
-```
-
-The shared gallery exposes the same workbench in **Visual Designer → HMI**. The [visual studio guide](docs/hmi-visual-studio.md) documents appearance, layout, real framebuffer/input tests, and the reflection-disabled JSON regression. Industrial commands remain separately reviewed and host-authorized; opening a project never connects to equipment.
-
 ## NuGet Packages
 
 ProGPU runtime packages are built from `eng/progpu-package-list.sh` by the
@@ -58,7 +31,6 @@ Choose the area closest to your application to find the relevant packages.
 | Package | Purpose | NuGet |
 | --- | --- | --- |
 | `ProGPU.Backend` | WebGPU device, swapchain, Silk.NET windowing, and platform backend services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.svg)](https://www.nuget.org/packages/ProGPU.Backend/) |
-| `ProGPU.GameEngine` | Reusable bounded game rendering, scene, and procedural material infrastructure. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.GameEngine.svg)](https://www.nuget.org/packages/ProGPU.GameEngine/) |
 | `ProGPU.Backend.Dx12` | Optional pinned Windows x64/ARM64 DXC-capable WebGPU and compiler assets, with explicit RID/compiler selection. See [runtime packaging](docs/native-dx12-runtime-package.md). | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Dx12.svg)](https://www.nuget.org/packages/ProGPU.Backend.Dx12/) |
 | `ProGPU.Backend.Native` | Experimental typed .NET host and desktop x64/arm64 runtimes for the parallel C++ renderer, including isolated wgpu-native and provider-resolved Dawn binaries. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Backend.Native.svg)](https://www.nuget.org/packages/ProGPU.Backend.Native/) |
 | `ProGPU.Native.Sdk` | Exact-version static C++ SDK archives, private dependency receipts and original notices restored with the native backend. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Native.Sdk.svg)](https://www.nuget.org/packages/ProGPU.Native.Sdk/) |
@@ -81,9 +53,6 @@ Choose the area closest to your application to find the relevant packages.
 | `ProGPU.Scene` | Scene graph, compositor commands, retained visuals, effects, and presentation primitives. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Scene.svg)](https://www.nuget.org/packages/ProGPU.Scene/) |
 | `ProGPU.Scene.Native` | Typed compiler from immutable managed pictures to the retained native C++ WebGPU scene ABI. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Scene.Native.svg)](https://www.nuget.org/packages/ProGPU.Scene.Native/) |
 | `ProGPU.Dxf` | DXF import/rendering support for ProGPU vector scenes. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Dxf.svg)](https://www.nuget.org/packages/ProGPU.Dxf/) |
-| `ACadSharp.ProGPU` | Reviewed net10.0 ACadSharp fork source pinned for exact ProGPU.CAD package behavior. | [![NuGet](https://img.shields.io/nuget/vpre/ACadSharp.ProGPU.svg)](https://www.nuget.org/packages/ACadSharp.ProGPU/) |
-| `ProGPU.CAD` | ACadSharp-backed DXF/DWG sessions, immutable WCS snapshots, spatial indexing, and retained analytic CAD rendering foundations. | [Architecture](docs/PROGPU_CAD_ARCHITECTURE.md) |
-| `ProGPU.CAD.Native` | Optional native C++ scene adapter for immutable ProGPU CAD content. | [Architecture](docs/PROGPU_CAD_ARCHITECTURE.md) |
 
 ### UI framework, controls, and layout
 
@@ -99,33 +68,8 @@ control lifetime/editing, inline objects, anchored blocks and tables remain sepa
 | `ProGPU.Virtualization` | Virtualization helpers for large retained visual and item surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Virtualization.svg)](https://www.nuget.org/packages/ProGPU.Virtualization/) |
 | `ProGPU.Win2D` | Portable source-compatible Win2D Canvas core rendered by the retained native C++ WebGPU engine. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Win2D.svg)](https://www.nuget.org/packages/ProGPU.Win2D/) |
 | `ProGPU.WinUI` | WinUI-shaped controls and app model implemented on ProGPU. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.svg)](https://www.nuget.org/packages/ProGPU.WinUI/) |
-| `ProGPU.WinUI.Themes.Fluent` | Source-generated unchanged WinUI Fluent theme resources and inspectable XAML content. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Themes.Fluent.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Themes.Fluent/) |
+| `ProGPU.WinUI.Themes.Fluent` | Compiled unchanged WinUI Fluent theme resources and inspectable XAML content. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Themes.Fluent.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Themes.Fluent/) |
 | `ProGPU.WinUI.Charts` | Chart controls and chart rendering primitives for the WinUI-shaped layer. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Charts.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Charts/) |
-| `ProGPU.WinUI.Designer` | Designer/editor controls and diagnostics for ProGPU WinUI surfaces. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Designer.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Designer/) |
-
-### HMI and DCS workplaces
-
-See the [standalone DCS workplace and embedding guide](docs/hmi-dcs-workplace.md).
-
-| Package | Purpose | NuGet |
-| --- | --- | --- |
-| `ProGPU.Hmi` | Typed HMI documents, equipment templates, alarms and guarded acquisition contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Hmi.svg)](https://www.nuget.org/packages/ProGPU.Hmi/) |
-| `ProGPU.WinUI.Hmi` | Reusable retained-vector HMI equipment controls and runtime screen views. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Hmi.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Hmi/) |
-| `ProGPU.WinUI.Hmi.Workplace` | Embeddable operator workplace with linked process, faceplate, alarm and trend views. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Hmi.Workplace.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Hmi.Workplace/) |
-| `ProGPU.WinUI.Hmi.Designer` | Shared-canvas HMI authoring, state rules, equipment templates and commissioning UI. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.WinUI.Hmi.Designer.svg)](https://www.nuget.org/packages/ProGPU.WinUI.Hmi.Designer/) |
-| `ProGPU.Hmi.Modbus` | Strict Modbus TCP acquisition and single-attempt absolute commands. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Hmi.Modbus.svg)](https://www.nuget.org/packages/ProGPU.Hmi.Modbus/) |
-| `ProGPU.Hmi.Mqtt` | MQTT 5 typed telemetry and non-retained absolute commands with strict TLS. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Hmi.Mqtt.svg)](https://www.nuget.org/packages/ProGPU.Hmi.Mqtt/) |
-| `ProGPU.Hmi.OpcUa` | Certificate-validated OPC UA scalar acquisition, bounded node browsing and session-bound absolute writes. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Hmi.OpcUa.svg)](https://www.nuget.org/packages/ProGPU.Hmi.OpcUa/) |
-
-### XAML compiler and tooling
-
-| Package | Purpose | NuGet |
-| --- | --- | --- |
-| `ProGPU.Xaml` | Framework-neutral XAML syntax, schema, diagnostics, and compiler contracts. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.svg)](https://www.nuget.org/packages/ProGPU.Xaml/) |
-| `ProGPU.Xaml.Roslyn` | Roslyn symbol type system and structured C# emitter for the XAML compiler. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Roslyn.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Roslyn/) |
-| `ProGPU.Xaml.SourceGenerator` | Incremental XAML source generator plus transitive MSBuild integration. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.SourceGenerator.svg)](https://www.nuget.org/packages/ProGPU.Xaml.SourceGenerator/) |
-| `ProGPU.Xaml.Workspaces` | Roslyn Workspace editing, formatting, and bidirectional XAML services. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Workspaces.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Workspaces/) |
-| `ProGPU.Xaml.Cli` | Standalone XAML compiler and Roslyn/MSBuild workspace command-line tool. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Xaml.Cli.svg)](https://www.nuget.org/packages/ProGPU.Xaml.Cli/) |
 
 ### Framework integrations and compatibility
 
@@ -160,17 +104,10 @@ See the [standalone DCS workplace and embedding guide](docs/hmi-dcs-workplace.md
 | `ProGPU.Android` | Native Android `SurfaceView` host using WebGPU over Vulkan. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Android.svg)](https://www.nuget.org/packages/ProGPU.Android/) |
 | `ProGPU.iOS` | Native UIKit/`CAMetalLayer` host using WebGPU over Metal. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.iOS.svg)](https://www.nuget.org/packages/ProGPU.iOS/) |
 
-### Voxel worlds and controls
-
-| Package | Purpose | NuGet |
-| --- | --- | --- |
-| `ProGPU.Voxel` | Chunked voxel worlds, greedy meshing, collision, terrain generation, and grid ray casting. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Voxel.svg)](https://www.nuget.org/packages/ProGPU.Voxel/) |
-| `ProGPU.Voxel.WinUI` | Playable WinUI voxel control with first-person input and retained ProGPU rendering. | [![NuGet](https://img.shields.io/nuget/vpre/ProGPU.Voxel.WinUI.svg)](https://www.nuget.org/packages/ProGPU.Voxel.WinUI/) |
-
 Local package build:
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.67 ./eng/progpu-pack.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.68 ./eng/progpu-pack.sh
 ```
 
 Pack both Avalonia integration lanes after the portable ProGPU runtime packages:
@@ -197,7 +134,7 @@ contracts. Until native binaries are distributed independently, applications set
 `ProGpuWgpuNativeAndroidRoot` or `ProGpuWgpuNativeXCFramework` to outputs from the
 repository's pinned wgpu-native build scripts before deployment.
 Packing the complete set requires macOS with the Android and iOS workloads;
-`PROGPU_PACKAGE_GROUP=portable` packs the 31 cross-platform packages on Linux.
+`PROGPU_PACKAGE_GROUP=portable` packs the cross-platform package group on Linux.
 
 ## Native iPhone WebGPU sample
 
@@ -230,7 +167,6 @@ and device validation gates are in [`docs/android.md`](docs/android.md).
 
 ## Browser WebGPU sample
 
-[Suntrail](docs/samples/suntrail.md) is an original, playable eight-island platform adventure built with ProGPU.WinUI and a single instanced procedural-art shader. It has a shared game project and thin desktop, iOS, and browser hosts.
 
 The gallery is split into a shared `ProGPU.Samples` library and thin `ProGPU.Samples.Desktop`, `ProGPU.Samples.Browser`, `ProGPU.Samples.iOS`, and `ProGPU.Samples.Android` hosts. The browser host publishes with the .NET WebAssembly SDK, negotiates WebGPU capabilities, sends aligned binary command packets directly from WASM memory, and passes embedded WGSL unchanged to `GPUDevice.createShaderModule`.
 
@@ -443,7 +379,7 @@ Without these headers, `Auto` uses the ordinary OffscreenCanvas worker when avai
 Local publishing reads the API key from `NUGET_API_KEY` without storing it in the repository:
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.67 ./eng/progpu-publish.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.68 ./eng/progpu-publish.sh
 ```
 
 The release workflow validates docs, restores, builds, tests, packs `.nupkg`/`.snupkg` artifacts, and can publish to NuGet.org when `NUGET_API_KEY` is configured. See [docs/release.md](docs/release.md).
@@ -493,8 +429,8 @@ two NuGet package IDs and are distinguished by their package versions:
 
 | Avalonia | Rendering package | Silk.NET package |
 | --- | --- | --- |
-| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.67` | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.67` |
-| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.67` | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.67` |
+| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.68` | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.68` |
+| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.68` | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.68` |
 
 The Avalonia 12 artifacts are built from
 `src/ProGPU.Avalonia.Rendering` and `src/ProGPU.Avalonia.SilkNet`. The Avalonia
@@ -506,11 +442,11 @@ projects, which source-link the shared implementation and define
 Install the Avalonia 12 packages with:
 
 ```bash
-dotnet add package ProGPU.Avalonia.Rendering --version 12.1.1-preview.67
-dotnet add package ProGPU.Avalonia.SilkNet --version 12.1.1-preview.67
+dotnet add package ProGPU.Avalonia.Rendering --version 12.1.1-preview.68
+dotnet add package ProGPU.Avalonia.SilkNet --version 12.1.1-preview.68
 ```
 
-For Avalonia 11, use the same package IDs with `11.3.20-preview.67` and pin all
+For Avalonia 11, use the same package IDs with `11.3.20-preview.68` and pin all
 Avalonia packages to `11.3.20`. Configure the application with
 `UseSilkNet().UseProGpu()` before starting the desktop lifetime. Complete
 startup, API-lease, local packaging, and package-only validation instructions
@@ -742,7 +678,7 @@ Page navigation keeps stable ownership boundaries:
 - Replacing `NavigationView.Content` changes only the `SplitView` content child. The pane and all menu-item visuals remain parented, preserving their layout, theme resources, and cached layer.
 - `SplitView` removes and inserts only the child that changed instead of clearing and rebuilding both children.
 - Reparenting a dependency-object subtree recursively reapplies theme state only when the resolved theme or theme family actually changes. Moving a cached page between parents with the same theme therefore performs an O(H) ancestor-context comparison for tree height H instead of O(N) invalidation over the page subtree.
-- System-font discovery and TextMate grammar loading use one shared background warm-up. Font menu controls are created only when the dropdown is opened. A code editor renders the same source as plain themed runs while grammar loading is pending, then retokenizes on the UI dispatcher with the shared theme grammar. Page activation therefore performs neither a synchronous filesystem font scan nor per-editor grammar initialization.
+- System-font discovery uses shared background warm-up. Font menu controls are created only when the dropdown is opened. Markdown code blocks use the normal themed rich-text renderer.
 
 Large indexed pages remain virtual from source to pixels. `ItemsControl` retains an `IList` source rather than eagerly copying and boxing every item. Attaching a 65,535-glyph source is O(1) time and storage; `UniformVirtualizingGridPanel` realizes and binds only V visible/overscan items in O(V), reuses its recycler-index buffer, and does not allocate a binding closure on each viewport update. Selection and syntax-highlight changes rebind the V active containers in place instead of recycling, reparenting, and remeasuring them. Scrollbar z-order uses an in-parent reorder that invalidates pixels but not layout. The glyph browser represents indices through a read-only computed list, so it allocates neither a 65,535-entry source array nor an internal duplicate. `FontIcon` records the cached raw outline with a public `DrawPath` transform, preserving line, quadratic, cubic, and arc segments without allocating a transformed path per cell or render.
 
@@ -1785,12 +1721,3 @@ GpuSharingInterop.COMHelper.CallUpdateSubresource(context, image.WinTexture2D, 0
 
 ### 6. Graceful Runtime Fallback
 If graphics interop is not supported by the environment (e.g. software rendering, missing drivers, or Linux configurations lacking Vulkan opaque handles), the control gracefully falls back to the **Decoupled Render-Thread Blitting Pipeline** (Phase 2). This ensures 100% functionality and visual parity across all host configurations!
-
-
-### OPC UA HMI commissioning
-
-The optional `ProGPU.Hmi.OpcUa` package adds signed/encrypted OPC UA sessions, typed scalar acquisition, bounded node browsing and session-bound reviewed writes. The shared HMI designer exposes endpoint and mapping editors plus the node browser; opening a project never connects automatically. See [OPC UA commissioning](docs/hmi-opcua.md) and [HMI control integrations](docs/hmi-control-integrations.md).
-
-## Graphic conventions and direct editing
-
-The [graphic conventions guide](docs/hmi-graphic-conventions.md) documents the 48-symbol library, Process/HighPerformance/Schematic profiles, instrument annotations, operating-reference bands, contextual formatting and native F2/double-click caption editing. These conventions are not complete ISA/ISO/IEC certification.

@@ -6,6 +6,13 @@ namespace ProGPU.Samples
 {
     public static class ObjModels
     {
+        // Apple app hosts use the signed Resources directory as their working
+        // directory. Generated sample data belongs in per-user storage.
+        public static string SampleDirectory => OperatingSystem.IsMacOS()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ProGPU", "Samples", "models")
+            : "models";
+
         public static string GenerateSpacecraftObj()
         {
             var sb = new StringBuilder();

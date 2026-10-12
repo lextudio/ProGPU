@@ -5,16 +5,16 @@ Avalonia 11 version lanes:
 
 | Avalonia lane | Package | Assembly | Purpose |
 | --- | --- | --- | --- |
-| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.67` | `Avalonia.ProGpu` | ProGPU/WebGPU rendering backend |
-| 12.1.1 | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.67` | `Avalonia.SilkNet` | Cross-platform Silk.NET windowing backend |
-| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.67` | `Avalonia.ProGpu` | Shared-source ProGPU/WebGPU rendering backend |
-| 11.3.20 | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.67` | `Avalonia.SilkNet` | Shared-source Silk.NET windowing backend |
-| native ABI | `ProGPU.Backend.Native` `0.1.0-preview.67` | `ProGPU.Backend.Native` | Experimental typed C++ renderer host with isolated wgpu-native and provider-resolved Dawn binaries for Linux, macOS, and Windows x64/arm64 |
-| native ABI | `ProGPU.Backend.Dawn` `0.1.0-preview.67` | `ProGPU.Backend.Dawn` | Exact-ABI Dawn device, IOSurface shared memory, and timeline fences |
+| 12.1.1 | `ProGPU.Avalonia.Rendering` `12.1.1-preview.68` | `Avalonia.ProGpu` | ProGPU/WebGPU rendering backend |
+| 12.1.1 | `ProGPU.Avalonia.SilkNet` `12.1.1-preview.68` | `Avalonia.SilkNet` | Cross-platform Silk.NET windowing backend |
+| 11.3.20 | `ProGPU.Avalonia.Rendering` `11.3.20-preview.68` | `Avalonia.ProGpu` | Shared-source ProGPU/WebGPU rendering backend |
+| 11.3.20 | `ProGPU.Avalonia.SilkNet` `11.3.20-preview.68` | `Avalonia.SilkNet` | Shared-source Silk.NET windowing backend |
+| native ABI | `ProGPU.Backend.Native` `0.1.0-preview.68` | `ProGPU.Backend.Native` | Experimental typed C++ renderer host with isolated wgpu-native and provider-resolved Dawn binaries for Linux, macOS, and Windows x64/arm64 |
+| native ABI | `ProGPU.Backend.Dawn` `0.1.0-preview.68` | `ProGPU.Backend.Dawn` | Exact-ABI Dawn device, IOSurface shared memory, and timeline fences |
 
 The Avalonia 12 packages are built against exactly Avalonia `12.1.1`; the
 Avalonia 11 packages are built against exactly Avalonia `11.3.20`. Both lanes
-use ProGPU `0.1.0-preview.67`. They intentionally use `ProGPU.*` package IDs;
+use ProGPU `0.1.0-preview.68`. They intentionally use `ProGPU.*` package IDs;
 no `Avalonia.*` package ID is published by the normal NuGet.org release lane.
 The separately gated private/local replacement lane described below produces
 an exact-identity `Avalonia` package and must never be pushed to NuGet.org.
@@ -46,31 +46,6 @@ to concrete Avalonia API differences. Warning `AVA3001` is expected because the
 backends implement Avalonia platform interfaces that are intentionally private.
 The package dependencies are exact pins, so upgrading Avalonia requires a
 matching integration build.
-
-## ProGPU.CAD dependency package
-
-The portable package lane builds the reviewed ACadSharp submodule feature
-commit as `ACadSharp.ProGPU` before it builds `ProGPU.CAD`. Both artifacts use
-the common ProGPU package version, and the `ProGPU.CAD` nuspec must contain an
-exact dependency on `ACadSharp.ProGPU` with no dependency on upstream
-`ACadSharp`. The distinct identity keeps source and package behavior aligned
-without modifying or impersonating the upstream package. Package verification
-also requires `lib/net10.0/ACadSharp.dll` in the fork artifact.
-
-The ACadSharp fork package is a release artifact, not an ordinary upstream
-replacement. Local validation may pack it into `artifacts/packages`; external
-publication is performed only by the authorized release workflow.
-
-Run the focused paired pack and dependency/content audit with:
-
-```bash
-PROGPU_PACKAGE_GROUP=cad ./eng/progpu-pack.sh
-```
-
-That lane also restores, builds, and runs a clean net10.0 package-only consumer
-in a fresh NuGet cache. The consumer uses both `ProGPU.CAD` and its transitive
-ACadSharp API, and its resolved asset graph must contain `ACadSharp.ProGPU` but
-not upstream `ACadSharp`.
 
 The four integration projects are explicitly packable even though the
 repository defaults new projects to non-packable. Validate the complete
@@ -248,7 +223,7 @@ in
 
 ## Pack locally
 
-Pack the ProGPU `0.1.0-preview.67` portable runtime packages first, then pack
+Pack the ProGPU `0.1.0-preview.68` portable runtime packages first, then pack
 both integration lanes:
 
 ```bash
@@ -352,11 +327,11 @@ unset NUGET_API_KEY
 
 Release order:
 
-1. Tag and publish ProGPU `0.1.0-preview.67`.
+1. Tag and publish ProGPU `0.1.0-preview.68`.
 2. Confirm the required ProGPU packages are available from NuGet.org.
 3. Pack and test both Avalonia integration lanes.
-4. Publish the two `12.1.1-preview.67` packages and the two
-   `11.3.20-preview.67` packages.
+4. Publish the two `12.1.1-preview.68` packages and the two
+   `11.3.20-preview.68` packages.
 
 ## Consume the packages
 
@@ -364,8 +339,8 @@ Release order:
 <ItemGroup>
   <PackageReference Include="Avalonia" Version="12.1.1" />
   <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
-  <PackageReference Include="ProGPU.Avalonia.Rendering" Version="12.1.1-preview.67" />
-  <PackageReference Include="ProGPU.Avalonia.SilkNet" Version="12.1.1-preview.67" />
+  <PackageReference Include="ProGPU.Avalonia.Rendering" Version="12.1.1-preview.68" />
+  <PackageReference Include="ProGPU.Avalonia.SilkNet" Version="12.1.1-preview.68" />
 </ItemGroup>
 ```
 
@@ -402,7 +377,7 @@ lease lifetime and package-facing API contract are documented in
 `docs/progpu-package-readme.md`.
 
 For Avalonia 11 applications, use the same package IDs with
-`11.3.20-preview.67` and pin the Avalonia packages to `11.3.20`.
+`11.3.20-preview.68` and pin the Avalonia packages to `11.3.20`.
 
 The cross-engine design review and validation evidence are recorded in
 `docs/progpu-avalonia-rendering-research.md`.
