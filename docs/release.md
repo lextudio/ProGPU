@@ -16,8 +16,8 @@ See [publication recovery](https://github.com/wieslawsoltes/ProGPU/issues/369).
 The [native SDK package contract](native-sdk-packages.md) describes restoration,
 manual CMake extraction and the unchanged qualification requirements.
 
-The coordinated release uses ProGPU `0.1.0-preview.68`, Avalonia integration
-versions `12.1.1-preview.68` and `11.3.20-preview.68`, and matching LibreWPF and
+The coordinated release uses ProGPU `0.1.0-preview.69`, Avalonia integration
+versions `12.1.1-preview.69` and `11.3.20-preview.69`, and matching LibreWPF and
 LibreWinForms previews. The package manifests, project defaults and consumer
 examples advance together so newly built integration packages do not reuse an
 already published version or depend on an older ProGPU package set.
@@ -132,19 +132,19 @@ pinned in `docs/WINUI_API_PARITY.md` and `docs/SKIASHARP_API_PARITY.md`.
 
 ## Avalonia Integration Packages
 
-- `ProGPU.Avalonia.Rendering` `12.1.1-preview.68`
-- `ProGPU.Avalonia.SilkNet` `12.1.1-preview.68`
-- `ProGPU.Avalonia.Rendering` `11.3.20-preview.68`
-- `ProGPU.Avalonia.SilkNet` `11.3.20-preview.68`
+- `ProGPU.Avalonia.Rendering` `12.1.1-preview.69`
+- `ProGPU.Avalonia.SilkNet` `12.1.1-preview.69`
+- `ProGPU.Avalonia.Rendering` `11.3.20-preview.69`
+- `ProGPU.Avalonia.SilkNet` `11.3.20-preview.69`
 
 These packages are packed on the portable runner and published after the
-`0.1.0-preview.68` runtime package set so their exact ProGPU dependencies are
+`0.1.0-preview.69` runtime package set so their exact ProGPU dependencies are
 available first.
 
 ## Local Package Build
 
 ```bash
-PROGPU_PACKAGE_VERSION=0.1.0-preview.68 ./eng/progpu-pack.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.69 ./eng/progpu-pack.sh
 PROGPU_PACKAGE_OUTPUT=artifacts/packages-avalonia/Release ./scripts/progpu-pack.sh
 ```
 
@@ -162,7 +162,7 @@ release workflow combines and re-verifies both outputs before publishing.
 ```bash
 read -rsp "NuGet API key: " NUGET_API_KEY
 export NUGET_API_KEY
-PROGPU_PACKAGE_VERSION=0.1.0-preview.68 ./eng/progpu-publish.sh
+PROGPU_PACKAGE_VERSION=0.1.0-preview.69 ./eng/progpu-publish.sh
 ./scripts/progpu-publish.sh
 unset NUGET_API_KEY
 ```
@@ -180,7 +180,7 @@ feed.
 - `Release` validates and packs portable packages and the Avalonia integration lanes on Linux, packs mobile packages on macOS, verifies the combined runtime dependency closure, publishes runtime packages followed by Avalonia packages, and creates a tag-driven GitHub Release.
 
 Manual releases use `workflow_dispatch` with a package version. Tag releases use tags named `v*`,
-for example `v0.1.0-preview.68`.
+for example `v0.1.0-preview.69`.
 
 ## NuGet Publishing
 

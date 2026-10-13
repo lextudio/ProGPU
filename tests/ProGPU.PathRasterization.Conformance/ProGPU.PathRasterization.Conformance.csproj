@@ -11,6 +11,9 @@
     <ProjectReference Include="../../src/ProGPU.Vector/ProGPU.Vector.csproj" />
     <PackageReference Include="xunit" />
     <Compile Include="../../src/ProGPU.Tests/SinglePathRasterPipelineTests.cs" Link="SinglePathRasterPipelineTests.cs" />
+    <Compile Include="../../src/ProGPU.Tests/RasterCrossingGlyphTests.cs" Link="RasterCrossingGlyphTests.cs" />
+    <EmbeddedResource Include="../../src/ProGPU.Tests/TestData/RasterCrossingReference/*.wgsl"
+                      LogicalName="RasterCrossingReference.%(Filename)%(Extension)" />
     <Compile Include="../../src/ProGPU.Tests/LinearPathRasterPipelineTests.cs" Link="LinearPathRasterPipelineTests.cs" />
     <Compile Include="../../src/ProGPU.Tests/LinearWindingRasterPipelineTests.cs" Link="LinearWindingRasterPipelineTests.cs" />
   </ItemGroup>

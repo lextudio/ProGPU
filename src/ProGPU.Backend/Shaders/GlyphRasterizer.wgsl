@@ -1,6 +1,8 @@
 // Algorithm: Rasterize glyph coverage with 8x8 supersampling, sharing analytic line, quadratic, and cubic winding intersections across each eight-sample row.
 // Time complexity: O(R*S + A) per texel for R=8 sample rows, A=64 anti-aliasing samples, and S outline segments.
 // Space complexity: O(R) fixed vector-lane winding storage plus O(S) read-only segment bandwidth and one packed u32 output write per four R8 texels; no dynamically indexed private arrays are used.
+// Join opposite crossing directions before accumulation so FXC need not inline
+// the same vector update twice. Original admission and arithmetic stay ordered.
 struct GlyphUniforms {
     xStart: f32,
     yStart: f32,
@@ -198,18 +200,12 @@ fn accumulate_winding_row(
             if (A.y == B.y) {
                 continue;
             }
-            if (A.y <= sample_y) {
-                if (B.y > sample_y) { // Upward crossing
-                    let t = (sample_y - A.y) / (B.y - A.y);
-                    let intersectX = A.x + t * (B.x - A.x);
-                    accumulate_crossing(intersectX, 1, sample_xs, windings);
-                }
-            } else {
-                if (B.y <= sample_y) { // Downward crossing
-                    let t = (sample_y - A.y) / (B.y - A.y);
-                    let intersectX = A.x + t * (B.x - A.x);
-                    accumulate_crossing(intersectX, -1, sample_xs, windings);
-                }
+            let upward = A.y <= sample_y;
+            if (select(B.y <= sample_y, B.y > sample_y, upward)) {
+                let t = (sample_y - A.y) / (B.y - A.y);
+                let intersectX = A.x + t * (B.x - A.x);
+                accumulate_crossing(intersectX, select(-1, 1, upward),
+                    sample_xs, windings);
             }
         } else if (seg.segmentType == 1u) {
             // Quadratic Bezier from A to C with control point B
@@ -251,10 +247,9 @@ fn accumulate_winding_row(
                         let tc = clamp(t, 0.0, 1.0);
                         let omt = 1.0 - tc;
                         let x_t = omt * omt * A.x + 2.0 * omt * tc * B.x + tc * tc * C.x;
-                        if (deriv_y > 0.0) {
-                            accumulate_crossing(x_t, 1, sample_xs, windings);
-                        } else if (deriv_y < 0.0) {
-                            accumulate_crossing(x_t, -1, sample_xs, windings);
+                        if (deriv_y > 0.0 || deriv_y < 0.0) {
+                            accumulate_crossing(x_t, select(-1, 1, deriv_y > 0.0),
+                                sample_xs, windings);
                         }
                     }
                 }
@@ -302,10 +297,9 @@ fn accumulate_winding_row(
                                 + 3.0 * omt * omt * tc * B.x
                                 + 3.0 * omt * tc * tc * C.x
                                 + tc * tc * tc * D_pt.x;
-                        if (deriv_y > 0.0) {
-                            accumulate_crossing(x_t, 1, sample_xs, windings);
-                        } else if (deriv_y < 0.0) {
-                            accumulate_crossing(x_t, -1, sample_xs, windings);
+                        if (deriv_y > 0.0 || deriv_y < 0.0) {
+                            accumulate_crossing(x_t, select(-1, 1, deriv_y > 0.0),
+                                sample_xs, windings);
                         }
                     }
                 }

@@ -485,6 +485,7 @@ struct progpu_native_engine {
     WGPUBindGroupLayout semantic_3d_layout = nullptr;
     WGPUBindGroupLayout semantic_3d_material_layout = nullptr;
     WGPUPipelineLayout semantic_3d_pipeline_layout = nullptr;
+    WGPUPipelineLayout semantic_line_3d_pipeline_layout = nullptr;
     WGPUSampler semantic_3d_material_sampler = nullptr;
     WGPUTexture semantic_3d_sentinel_texture = nullptr;
     WGPUTextureView semantic_3d_sentinel_view = nullptr;
@@ -1084,6 +1085,10 @@ struct progpu_native_engine {
         if (semantic_3d_pipeline_layout != nullptr) {
             wgpuPipelineLayoutRelease(semantic_3d_pipeline_layout);
             semantic_3d_pipeline_layout = nullptr;
+        }
+        if (semantic_line_3d_pipeline_layout != nullptr) {
+            wgpuPipelineLayoutRelease(semantic_line_3d_pipeline_layout);
+            semantic_line_3d_pipeline_layout = nullptr;
         }
         if (semantic_3d_material_layout != nullptr) {
             wgpuBindGroupLayoutRelease(semantic_3d_material_layout);

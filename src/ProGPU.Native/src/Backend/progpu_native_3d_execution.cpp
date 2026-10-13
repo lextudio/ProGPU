@@ -117,7 +117,8 @@ WGPURenderPipeline create_pipeline(
     WGPUCullMode cull_mode = WGPUCullMode_None,
     bool depth_write = true,
     WGPUCompareFunction depth_compare =
-        WGPUCompareFunction_LessEqual) {
+        WGPUCompareFunction_LessEqual,
+    WGPUPipelineLayout pipeline_layout = nullptr) {
     WGPUVertexState vertex{};
     vertex.module = engine.semantic_3d_shader;
     vertex.entryPoint = progpu::native::webgpu::string_view(vertex_entry);
@@ -159,7 +160,8 @@ WGPURenderPipeline create_pipeline(
 
     WGPURenderPipelineDescriptor descriptor{};
     descriptor.label = progpu::native::webgpu::string_view(label);
-    descriptor.layout = engine.semantic_3d_pipeline_layout;
+    descriptor.layout = pipeline_layout != nullptr
+        ? pipeline_layout : engine.semantic_3d_pipeline_layout;
     descriptor.vertex = vertex;
     descriptor.primitive.topology = topology;
     descriptor.primitive.frontFace = WGPUFrontFace_CCW;
@@ -171,18 +173,10 @@ WGPURenderPipeline create_pipeline(
     return wgpuDeviceCreateRenderPipeline(engine.device, &descriptor);
 }
 
-} // namespace
-
-bool create_semantic_3d_pipelines(progpu_native_engine& engine) {
-    if (engine.semantic_line_3d_pipeline != nullptr &&
-        engine.semantic_mesh_3d_pipeline != nullptr &&
-        engine.semantic_mesh_front_3d_pipeline != nullptr &&
-        engine.semantic_mesh_back_3d_pipeline != nullptr &&
-        engine.semantic_mesh_front_strip_3d_pipeline != nullptr &&
-        engine.semantic_mesh_back_strip_3d_pipeline != nullptr &&
-        engine.semantic_mesh_strip_3d_pipeline != nullptr &&
-        engine.semantic_mesh_edge_3d_pipeline != nullptr &&
-        engine.semantic_mesh_occluded_edge_3d_pipeline != nullptr &&
+bool create_semantic_3d_resources(progpu_native_engine& engine) {
+    if (engine.semantic_3d_shader != nullptr &&
+        engine.semantic_3d_layout != nullptr &&
+        engine.semantic_3d_pipeline_layout != nullptr &&
         engine.semantic_3d_material_layout != nullptr &&
         engine.semantic_3d_material_sampler != nullptr &&
         engine.semantic_3d_sentinel_texture != nullptr &&
@@ -315,50 +309,108 @@ bool create_semantic_3d_pipelines(progpu_native_engine& engine) {
             return false;
         }
     }
-    if (engine.semantic_line_3d_pipeline == nullptr) {
+    return true;
+}
+
+struct pipeline_requirements {
+    bool line = false;
+    bool mesh = false;
+    bool front = false;
+    bool back = false;
+    bool strip = false;
+    bool front_strip = false;
+    bool back_strip = false;
+    bool edge = false;
+    bool occluded_edge = false;
+
+    void include_mesh(std::uint32_t topology, std::uint32_t flags) noexcept {
+        if (topology == PROGPU_NATIVE_MESH_3D_EDGE_LIST) {
+            edge = true;
+            occluded_edge |=
+                (flags & PROGPU_NATIVE_MESH_3D_EDGE_DISPLAY_OCCLUDED) != 0U;
+        } else if (topology == PROGPU_NATIVE_MESH_3D_TRIANGLE_STRIP) {
+            if ((flags & PROGPU_NATIVE_MESH_3D_FRONT_FACE) != 0U) {
+                front_strip = true;
+            } else if ((flags & PROGPU_NATIVE_MESH_3D_BACK_FACE) != 0U) {
+                back_strip = true;
+            } else {
+                strip = true;
+            }
+        } else if ((flags & PROGPU_NATIVE_MESH_3D_FRONT_FACE) != 0U) {
+            front = true;
+        } else if ((flags & PROGPU_NATIVE_MESH_3D_BACK_FACE) != 0U) {
+            back = true;
+        } else {
+            mesh = true;
+        }
+    }
+};
+
+bool ensure_semantic_3d_pipelines(
+    progpu_native_engine& engine,
+    const pipeline_requirements& required) {
+    if (required.line && engine.semantic_line_3d_pipeline == nullptr) {
+        if (engine.semantic_line_3d_pipeline_layout == nullptr) {
+            // Lines consume only group zero. Requiring the mesh material group
+            // makes a line-only bundle invalid even though its shader never
+            // reads that group; a preceding mesh draw must not be a prerequisite.
+            WGPUPipelineLayoutDescriptor descriptor{};
+            descriptor.label = progpu::native::webgpu::string_view(
+                "ProGPU native retained 3D line layout");
+            descriptor.bindGroupLayoutCount = 1U;
+            descriptor.bindGroupLayouts = &engine.semantic_3d_layout;
+            engine.semantic_line_3d_pipeline_layout =
+                wgpuDeviceCreatePipelineLayout(engine.device, &descriptor);
+            if (engine.semantic_line_3d_pipeline_layout == nullptr) {
+                return false;
+            }
+        }
         engine.semantic_line_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D line pipeline",
             "vs_line_3d", "fs_line_3d", WGPUPrimitiveTopology_TriangleList,
-            WGPUCullMode_None);
+            WGPUCullMode_None, true, WGPUCompareFunction_LessEqual,
+            engine.semantic_line_3d_pipeline_layout);
     }
-    if (engine.semantic_mesh_3d_pipeline == nullptr) {
+    if (required.mesh && engine.semantic_mesh_3d_pipeline == nullptr) {
         engine.semantic_mesh_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D mesh pipeline",
             "vs_mesh_3d", "fs_mesh_3d", WGPUPrimitiveTopology_TriangleList,
             WGPUCullMode_None);
     }
-    if (engine.semantic_mesh_front_3d_pipeline == nullptr) {
+    if (required.front && engine.semantic_mesh_front_3d_pipeline == nullptr) {
         engine.semantic_mesh_front_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D front-face mesh pipeline",
             "vs_mesh_3d", "fs_mesh_3d", WGPUPrimitiveTopology_TriangleList,
             WGPUCullMode_Back);
     }
-    if (engine.semantic_mesh_back_3d_pipeline == nullptr) {
+    if (required.back && engine.semantic_mesh_back_3d_pipeline == nullptr) {
         engine.semantic_mesh_back_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D back-face mesh pipeline",
             "vs_mesh_3d", "fs_mesh_3d", WGPUPrimitiveTopology_TriangleList,
             WGPUCullMode_Front);
     }
     // All indexed topologies retain independent front/back material culling.
-    if (engine.semantic_mesh_strip_3d_pipeline == nullptr) {
+    if (required.strip && engine.semantic_mesh_strip_3d_pipeline == nullptr) {
         engine.semantic_mesh_strip_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D mesh strip pipeline",
             "vs_mesh_3d", "fs_mesh_3d", WGPUPrimitiveTopology_TriangleStrip,
             WGPUCullMode_None);
     }
-    if (engine.semantic_mesh_front_strip_3d_pipeline == nullptr) {
+    if (required.front_strip &&
+        engine.semantic_mesh_front_strip_3d_pipeline == nullptr) {
         engine.semantic_mesh_front_strip_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D front-face mesh strip pipeline",
             "vs_mesh_3d", "fs_mesh_3d", WGPUPrimitiveTopology_TriangleStrip,
             WGPUCullMode_Back);
     }
-    if (engine.semantic_mesh_back_strip_3d_pipeline == nullptr) {
+    if (required.back_strip &&
+        engine.semantic_mesh_back_strip_3d_pipeline == nullptr) {
         engine.semantic_mesh_back_strip_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained 3D back-face mesh strip pipeline",
             "vs_mesh_3d", "fs_mesh_3d", WGPUPrimitiveTopology_TriangleStrip,
             WGPUCullMode_Front);
     }
-    if (engine.semantic_mesh_edge_3d_pipeline == nullptr) {
+    if (required.edge && engine.semantic_mesh_edge_3d_pipeline == nullptr) {
         engine.semantic_mesh_edge_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained visible mesh edge pipeline",
             "vs_mesh_edge_3d", "fs_mesh_edge_visible_3d",
@@ -367,7 +419,8 @@ bool create_semantic_3d_pipelines(progpu_native_engine& engine) {
             false,
             WGPUCompareFunction_LessEqual);
     }
-    if (engine.semantic_mesh_occluded_edge_3d_pipeline == nullptr) {
+    if (required.occluded_edge &&
+        engine.semantic_mesh_occluded_edge_3d_pipeline == nullptr) {
         engine.semantic_mesh_occluded_edge_3d_pipeline = create_pipeline(
             engine, "ProGPU native retained occluded mesh edge pipeline",
             "vs_mesh_edge_3d", "fs_mesh_edge_occluded_3d",
@@ -376,16 +429,18 @@ bool create_semantic_3d_pipelines(progpu_native_engine& engine) {
             false,
             WGPUCompareFunction_Greater);
     }
-    return engine.semantic_line_3d_pipeline != nullptr &&
-        engine.semantic_mesh_3d_pipeline != nullptr &&
-        engine.semantic_mesh_front_strip_3d_pipeline != nullptr &&
-        engine.semantic_mesh_back_strip_3d_pipeline != nullptr &&
-        engine.semantic_mesh_front_3d_pipeline != nullptr &&
-        engine.semantic_mesh_back_3d_pipeline != nullptr &&
-        engine.semantic_mesh_strip_3d_pipeline != nullptr &&
-        engine.semantic_mesh_edge_3d_pipeline != nullptr &&
-        engine.semantic_mesh_occluded_edge_3d_pipeline != nullptr;
+    return (!required.line || engine.semantic_line_3d_pipeline != nullptr) &&
+        (!required.mesh || engine.semantic_mesh_3d_pipeline != nullptr) &&
+        (!required.front_strip || engine.semantic_mesh_front_strip_3d_pipeline != nullptr) &&
+        (!required.back_strip || engine.semantic_mesh_back_strip_3d_pipeline != nullptr) &&
+        (!required.front || engine.semantic_mesh_front_3d_pipeline != nullptr) &&
+        (!required.back || engine.semantic_mesh_back_3d_pipeline != nullptr) &&
+        (!required.strip || engine.semantic_mesh_strip_3d_pipeline != nullptr) &&
+        (!required.edge || engine.semantic_mesh_edge_3d_pipeline != nullptr) &&
+        (!required.occluded_edge || engine.semantic_mesh_occluded_edge_3d_pipeline != nullptr);
 }
+
+} // namespace
 
 progpu_native_status compile_semantic_3d_page(
     progpu_native_engine& engine,
@@ -406,11 +461,12 @@ progpu_native_status compile_semantic_3d_page(
         upload_bytes = 0U;
         return PROGPU_NATIVE_STATUS_SUCCESS;
     }
-    if (!create_semantic_3d_pipelines(engine)) {
+    if (!create_semantic_3d_resources(engine)) {
         return engine.fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
-            "The native retained 3D pipelines could not be created.");
+            "The native retained 3D resources could not be created.");
     }
 
+    pipeline_requirements required;
     std::vector<progpu::native::three_d::camera_record> cameras;
     std::vector<progpu::native::three_d::line_record> lines;
     std::vector<progpu::native::three_d::mesh_record> meshes;
@@ -504,6 +560,7 @@ progpu_native_status compile_semantic_3d_page(
                 }
                 draws.push_back({command.kind, first,
                     static_cast<std::uint32_t>(count)});
+                required.line = true;
                 continue;
             }
 
@@ -683,6 +740,9 @@ progpu_native_status compile_semantic_3d_page(
                 material_views.push_back(material_view);
                 topologies.push_back(mesh.topology);
                 mesh_flags.push_back(mesh.flags);
+                // Use the compiled topology: source strips have already become
+                // triangle lists. Keep face and occluded-edge passes independent.
+                required.include_mesh(mesh.topology, source.flags);
                 progpu_native_scene_brush material{};
                 material.type = PROGPU_NATIVE_SCENE_BRUSH_SOLID;
                 material.opacity = 1.0F;
@@ -742,6 +802,10 @@ progpu_native_status compile_semantic_3d_page(
     if (draws.size() != expected_draw_count) {
         return engine.fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
             "The native retained 3D draw count changed after preflight.");
+    }
+    if (!ensure_semantic_3d_pipelines(engine, required)) {
+        return engine.fail(PROGPU_NATIVE_STATUS_INTERNAL_ERROR,
+            "The native retained 3D pipelines could not be created.");
     }
 
     release_page_buffers(page);

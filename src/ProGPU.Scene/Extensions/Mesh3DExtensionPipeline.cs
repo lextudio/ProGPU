@@ -2056,7 +2056,11 @@ namespace ProGPU.Scene.Extensions
                 cpuLights[lightIndex] =
                     CreateLightRecord(payload.Lights[lightIndex]);
             }
-            bool hasUnfilterableMaterials = false;
+            bool needsFrontPipeline = false;
+            bool needsBackPipeline = false;
+            bool needsUnfilterableFrontPipeline = false;
+            bool needsUnfilterableBackPipeline = false;
+            bool needsWireframePipeline = false;
             bool hasDynamicTextureSource = false;
             for (int i = 0; i < recordCount; i++)
             {
@@ -2098,8 +2102,29 @@ namespace ProGPU.Scene.Extensions
                     usesUnfilterableMaterial
                         ? (byte)1
                         : (byte)0;
-                hasUnfilterableMaterials |=
-                    usesUnfilterableMaterial;
+                // Use the same drawable records and material selection as the
+                // draw passes, including retained frames without new uploads.
+                if (mesh.Geometry is not null)
+                {
+                    if (payload.RenderMode == RenderMode3D.Solid)
+                    {
+                        if (usesUnfilterableMaterial)
+                        {
+                            needsUnfilterableBackPipeline |= mesh.IsBackFace;
+                            needsUnfilterableFrontPipeline |= !mesh.IsBackFace;
+                        }
+                        else
+                        {
+                            needsBackPipeline |= mesh.IsBackFace;
+                            needsFrontPipeline |= !mesh.IsBackFace;
+                        }
+                    }
+                    else if (payload.RenderMode == RenderMode3D.Wireframe ||
+                             payload.RenderMode == RenderMode3D.SolidWireframe)
+                    {
+                        needsWireframePipeline = true;
+                    }
+                }
                 if (!uploadRecords &&
                     mesh.TextureSource is null)
                 {
@@ -2309,7 +2334,7 @@ namespace ProGPU.Scene.Extensions
                     sampleCount == 1
                         ? _cachedUnfilterableBackFacePipelineSingle
                         : _cachedUnfilterableBackFacePipelineMsaa;
-            if (cachedPipeline == null)
+            if (needsFrontPipeline && cachedPipeline == null)
             {
                 cachedPipeline = CreateMeshPipeline(
                     compositor,
@@ -2329,7 +2354,7 @@ namespace ProGPU.Scene.Extensions
                 else _cachedPipelineMsaa = cachedPipeline;
             }
 
-            if (cachedBackFacePipeline == null)
+            if (needsBackPipeline && cachedBackFacePipeline == null)
             {
                 cachedBackFacePipeline = CreateMeshPipeline(
                     compositor,
@@ -2344,7 +2369,7 @@ namespace ProGPU.Scene.Extensions
                 else _cachedBackFacePipelineMsaa = cachedBackFacePipeline;
             }
 
-            if (hasUnfilterableMaterials &&
+            if (needsUnfilterableFrontPipeline &&
                 cachedUnfilterablePipeline == null)
             {
                 cachedUnfilterablePipeline =
@@ -2370,7 +2395,7 @@ namespace ProGPU.Scene.Extensions
                 }
             }
 
-            if (hasUnfilterableMaterials &&
+            if (needsUnfilterableBackPipeline &&
                 cachedUnfilterableBackFacePipeline == null)
             {
                 cachedUnfilterableBackFacePipeline =
@@ -2397,7 +2422,7 @@ namespace ProGPU.Scene.Extensions
             }
 
             // Create wireframe pipeline if needed (TriangleList with double sided rendering)
-            if (cachedWireframePipeline == null)
+            if (needsWireframePipeline && cachedWireframePipeline == null)
             {
                 cachedWireframePipeline = CreateMeshPipeline(
                     compositor,
@@ -2461,18 +2486,28 @@ namespace ProGPU.Scene.Extensions
                 }
             }
 
+            // Edges share the solid resource layout even in a wireframe scene.
+            bool hasSolidDraws = needsFrontPipeline || needsBackPipeline ||
+                needsUnfilterableFrontPipeline || needsUnfilterableBackPipeline;
+            bool needsSolidBindGroup = hasSolidDraws || renderVisibleEdges;
+
             // 5. Create or get cached BindGroup
             int currentGen = res.DynamicRecordsBuffer.GetHashCode() ^
                 res.UniformsBuffer.GetHashCode() ^
                 res.LightBuffer.GetHashCode() ^
                 res.GradientStopBuffer.GetHashCode();
-            if (res.SolidBindGroup == null ||
-                res.WireframeBindGroup == null ||
+            if ((needsSolidBindGroup && res.SolidBindGroup == null) ||
+                (needsWireframePipeline && res.WireframeBindGroup == null) ||
                 currentGen != res.RecordGen ||
                 res.SampleCount != sampleCount)
             {
-                res.RecordGen = currentGen;
-                res.SampleCount = sampleCount;
+                // Retire both old groups when their buffers/layout change, so
+                // a later mode cannot reuse an unused group from an older frame.
+                if (res.SolidBindGroup != null) wgpu.BindGroupRelease(res.SolidBindGroup);
+                if (res.WireframeBindGroup != null) wgpu.BindGroupRelease(res.WireframeBindGroup);
+                res.SolidBindGroup = null;
+                res.WireframeBindGroup = null;
+                res.RecordGen = -1;
 
                 var bgEntries = stackalloc BindGroupEntry[4];
                 bgEntries[0] = new BindGroupEntry
@@ -2504,43 +2539,47 @@ namespace ProGPU.Scene.Extensions
                     Size = res.GradientStopBuffer.Size
                 };
 
-                // Bind group for Solid Pipeline
-                var bgDesc = new BindGroupDescriptor
+                if (needsSolidBindGroup)
                 {
-                    Layout = _solidBindGroupLayout,
-                    EntryCount = 4,
-                    Entries = bgEntries,
-                    Label = (byte*)SilkMarshal.StringToPtr("Mesh3D 3D BindGroup")
-                };
+                    var bgDesc = new BindGroupDescriptor
+                    {
+                        Layout = _solidBindGroupLayout,
+                        EntryCount = 4,
+                        Entries = bgEntries,
+                        Label = (byte*)SilkMarshal.StringToPtr("Mesh3D 3D BindGroup")
+                    };
 
-                if (res.SolidBindGroup != null) wgpu.BindGroupRelease(res.SolidBindGroup);
-                res.SolidBindGroup = wgpu.DeviceCreateBindGroup(device, &bgDesc);
-                SilkMarshal.Free((nint)bgDesc.Label);
-                if (res.SolidBindGroup == null)
-                {
-                    throw new InvalidOperationException(
-                        "Failed to create the Mesh3D material bind group.");
+                    res.SolidBindGroup = wgpu.DeviceCreateBindGroup(device, &bgDesc);
+                    SilkMarshal.Free((nint)bgDesc.Label);
+                    if (res.SolidBindGroup == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Failed to create the Mesh3D material bind group.");
+                    }
                 }
 
-                // Bind group for Wireframe Pipeline
-                var wireframeLayout = wgpu.RenderPipelineGetBindGroupLayout(cachedWireframePipeline, 0);
-                var wireframeBgDesc = new BindGroupDescriptor
+                if (needsWireframePipeline)
                 {
-                    Layout = wireframeLayout,
-                    EntryCount = 3,
-                    Entries = bgEntries,
-                    Label = (byte*)SilkMarshal.StringToPtr("Mesh3D Wireframe BindGroup")
-                };
+                    var wireframeLayout = wgpu.RenderPipelineGetBindGroupLayout(cachedWireframePipeline, 0);
+                    var wireframeBgDesc = new BindGroupDescriptor
+                    {
+                        Layout = wireframeLayout,
+                        EntryCount = 3,
+                        Entries = bgEntries,
+                        Label = (byte*)SilkMarshal.StringToPtr("Mesh3D Wireframe BindGroup")
+                    };
 
-                if (res.WireframeBindGroup != null) wgpu.BindGroupRelease(res.WireframeBindGroup);
-                res.WireframeBindGroup = wgpu.DeviceCreateBindGroup(device, &wireframeBgDesc);
-                SilkMarshal.Free((nint)wireframeBgDesc.Label);
-                wgpu.BindGroupLayoutRelease(wireframeLayout);
-                if (res.WireframeBindGroup == null)
-                {
-                    throw new InvalidOperationException(
-                        "Failed to create the Mesh3D wireframe bind group.");
+                    res.WireframeBindGroup = wgpu.DeviceCreateBindGroup(device, &wireframeBgDesc);
+                    SilkMarshal.Free((nint)wireframeBgDesc.Label);
+                    wgpu.BindGroupLayoutRelease(wireframeLayout);
+                    if (res.WireframeBindGroup == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Failed to create the Mesh3D wireframe bind group.");
+                    }
                 }
+                res.RecordGen = currentGen;
+                res.SampleCount = sampleCount;
             }
 
             // 6. Begin offscreen WebGPU Render Pass targeting the custom color and depth textures!
@@ -2656,7 +2695,7 @@ namespace ProGPU.Scene.Extensions
             // Draw Passes
             var mode = payload.RenderMode;
 
-            if (mode == RenderMode3D.Solid)
+            if (mode == RenderMode3D.Solid && hasSolidDraws)
             {
                 wgpu.RenderPassEncoderSetBindGroup(pass, 0, res.SolidBindGroup, 0, null);
                 RenderPipeline* activePipeline = null;
@@ -2722,7 +2761,7 @@ namespace ProGPU.Scene.Extensions
                     _frameDrawCallCount++;
                 }
             }
-            else if (mode == RenderMode3D.Wireframe || mode == RenderMode3D.SolidWireframe)
+            else if (needsWireframePipeline)
             {
                 wgpu.RenderPassEncoderSetPipeline(pass, cachedWireframePipeline);
                 wgpu.RenderPassEncoderSetBindGroup(pass, 0, res.WireframeBindGroup, 0, null);

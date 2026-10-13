@@ -6,7 +6,7 @@ on:
       version:
         description: NuGet package version to build.
         required: true
-        default: 0.1.0-preview.68
+        default: 0.1.0-preview.69
       publish:
         description: Build the existing version tag and publish after validation.
         required: true
@@ -233,10 +233,12 @@ jobs:
       - name: Verify exact WebScene provider on Metal
         if: matrix.rid == 'osx-arm64'
         shell: bash
-        run: ./eng/progpu-verify-native-webscene-provider.sh
+        run: |
+          python3 eng/tests/test_webscene_timeout_diagnostics.py -v
+          ./eng/progpu-verify-native-webscene-provider.sh
 
       - name: Upload WebScene provider hardware evidence
-        if: matrix.rid == 'osx-arm64'
+        if: always() && matrix.rid == 'osx-arm64'
         uses: actions/upload-artifact@v7
         with:
           name: progpu-native-webscene-provider-osx-arm64
@@ -246,6 +248,8 @@ jobs:
             artifacts/progpu-native/sample/progpu-native-webscene-provider.txt
             artifacts/progpu-native/sample/progpu-native-managed-dawn.ppm
             artifacts/progpu-native/sample/progpu-native-managed-dawn.png
+            artifacts/progpu-native/sample/progpu-native-3d-pipeline-demand.rgba
+            artifacts/progpu-native/sample/webscene-timeout-diagnostics/**
           if-no-files-found: error
 
       - name: Upload native backend execution evidence
