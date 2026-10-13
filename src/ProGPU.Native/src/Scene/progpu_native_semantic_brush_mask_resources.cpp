@@ -143,7 +143,7 @@ bool create_semantic_brush_mask_binding(
         : parsed.brush.opacity;
     if (target_extent.width == 0U || target_extent.height == 0U ||
         !std::isfinite(dpi_scale) || dpi_scale <= 0.0F ||
-        !create_layer_mask_resources(engine) ||
+        !create_layer_mask_binding_resources(engine) ||
         !create_analytic_brush_mask_pipeline(engine)) {
         return false;
     }

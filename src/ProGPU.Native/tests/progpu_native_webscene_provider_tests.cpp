@@ -3221,8 +3221,14 @@ std::vector<std::uint8_t> render_retained_fixture(const provider_api& api,
 } // namespace
 
 #include "progpu_native_3d_pipeline_demand_fixture.hpp"
+#include "progpu_native_mask_pipeline_demand_fixture.hpp"
 
 int main(int argc, char** argv) {
+    if (argc == 4 && (std::strcmp(argv[2], "--mask-pipelines") == 0 ||
+                     std::strcmp(argv[2], "--mask-pipelines-baseline") == 0)) {
+        return verify_mask_pipeline_demand(argv[1], argv[3],
+            std::strcmp(argv[2], "--mask-pipelines-baseline") == 0);
+    }
     if (argc == 4 && (std::strcmp(argv[2], "--3d-pipelines") == 0 ||
                      std::strcmp(argv[2], "--3d-pipelines-baseline") == 0)) {
         return verify_3d_pipeline_demand(argv[1], argv[3],

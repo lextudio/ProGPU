@@ -177,7 +177,7 @@ bool create_text_masked_pipeline(progpu_native_engine& engine) {
         return true;
     }
     if (!create_text_pipeline(engine) ||
-        !create_layer_mask_resources(engine)) {
+        !create_layer_mask_binding_resources(engine)) {
         return false;
     }
     const std::array<WGPUBindGroupLayout, 3U> layouts{{

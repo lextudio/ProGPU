@@ -97,7 +97,7 @@ bool create_semantic_composite_mask_binding(
     if (source.component_count < 2U ||
         source.component_count > 64U || target_extent.width == 0U ||
         target_extent.height == 0U || !std::isfinite(dpi_scale) ||
-        dpi_scale <= 0.0F || !create_layer_mask_resources(engine) ||
+        dpi_scale <= 0.0F || !create_layer_mask_binding_resources(engine) ||
         !create_sampled_mask_composition_resources(engine)) {
         return false;
     }

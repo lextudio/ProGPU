@@ -113,7 +113,7 @@ bool create_vector_chain_pipeline(progpu_native_engine& engine) {
     }
     if (!create_analytic_pipeline(engine) ||
         !create_analytic_bind_group_layouts(engine) ||
-        !create_layer_mask_resources(engine) ||
+        !create_layer_mask_binding_resources(engine) ||
         !create_chain_layouts(engine)) {
         return false;
     }
@@ -150,7 +150,7 @@ bool create_text_chain_pipeline(progpu_native_engine& engine) {
     if (engine.text_mask_chain_pipeline != nullptr) {
         return true;
     }
-    if (!create_text_pipeline(engine) || !create_layer_mask_resources(engine) ||
+    if (!create_text_pipeline(engine) || !create_layer_mask_binding_resources(engine) ||
         !create_chain_layouts(engine)) {
         return false;
     }

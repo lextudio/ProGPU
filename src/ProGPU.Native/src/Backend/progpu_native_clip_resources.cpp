@@ -65,7 +65,7 @@ bool create_clip_chain_resources(progpu_native_engine& engine) {
         engine.clip_sampler != nullptr) {
         return true;
     }
-    if (!create_layer_mask_resources(engine) ||
+    if (!create_layer_mask_binding_resources(engine) ||
         !create_path_resources(engine) ||
         engine.clip_compose_shader != nullptr ||
         engine.clip_path_pipeline != nullptr ||

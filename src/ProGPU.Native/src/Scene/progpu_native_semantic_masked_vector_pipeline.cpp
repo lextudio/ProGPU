@@ -74,7 +74,7 @@ bool create_analytic_masked_pipeline(progpu_native_engine& engine) {
     if ((engine.analytic_pipeline == nullptr &&
             !create_analytic_pipeline(engine)) ||
         !create_analytic_bind_group_layouts(engine) ||
-        !create_layer_mask_resources(engine)) {
+        !create_layer_mask_binding_resources(engine)) {
         return false;
     }
 
