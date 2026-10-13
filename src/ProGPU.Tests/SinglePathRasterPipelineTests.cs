@@ -13,6 +13,13 @@ public sealed class SinglePathRasterPipelineTests
 
     [Fact]
     public unsafe void SinglePathEntryMatchesEveryOrdinaryCoverageWordAndUntouchedSlot()
+        => CompareEveryCoverageWord(Shaders.PathRasterizerShader);
+
+    [Fact]
+    public unsafe void JoinedCrossingsMatchOriginalPathWordsAndUntouchedSlots()
+        => CompareEveryCoverageWord(RasterCrossingGlyphTests.ReadReference("Path.wgsl"));
+
+    private unsafe void CompareEveryCoverageWord(string referenceSource)
     {
         List<GpuPathRecord> records = [];
         List<GpuPathSegment> segments = [];
@@ -55,6 +62,8 @@ public sealed class SinglePathRasterPipelineTests
         Console.WriteLine($"Path coverage device: provider={context.BackendKind}, backend={context.AdapterBackendType}, adapter={context.AdapterName}");
         using var cache = new RenderPipelineCache(context);
         var shader = cache.GetOrCreateShader("PathDifferential", Shaders.PathRasterizerShader);
+        var referenceShader = referenceSource == Shaders.PathRasterizerShader
+            ? shader : cache.GetOrCreateShader("OriginalPathDifferential", referenceSource);
         uint[] reference = Run("cs_main_ordinary");
         uint[] actual = Run("cs_main_single_path");
         Assert.Equal(reference, actual);
@@ -90,7 +99,8 @@ public sealed class SinglePathRasterPipelineTests
         {
             int pipelinesBefore = cache.ComputePipelineCount;
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
-            var pipeline = cache.GetOrCreateComputePipeline(entryPoint, shader, entryPoint);
+            var pipeline = cache.GetOrCreateComputePipeline(entryPoint,
+                entryPoint == "cs_main_ordinary" ? referenceShader : shader, entryPoint);
             Console.WriteLine(FormattableString.Invariant(
                 $"Path pipeline acquisition: entry={entryPoint}, newPipeline={cache.ComputePipelineCount > pipelinesBefore}, wallMs={System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.000}"));
             using var uniformBuffer = new GpuBuffer(context, checked((uint)(uniforms.Count * 48)), BufferUsage.Storage | BufferUsage.CopyDst);

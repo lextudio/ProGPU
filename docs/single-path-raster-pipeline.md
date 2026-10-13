@@ -185,6 +185,38 @@ remains explicit in the original sample. Curved signed programs, forced executio
 policies, Windows x64/ARM64 CI, final packages and source applications retain their
 own gates. The separate Intel macOS exact UNORM mismatch remains unresolved.
 
+## Shared crossing accumulation
+
+The original Gallery first-frame trace at the preview69 producer showed FXC
+compiling the single-path, analytic, glyph and image pipelines. An exact original
+DLL/PE mapping attributed 13,289 sampled compiler stacks to single-path creation
+and 4,278 to glyph creation. These are sampled CPU observations, not GPU timings.
+
+The shared path and glyph kernels now join upward/downward branches before their
+one crossing accumulator call. This reduces duplicated inlined work in FXC while
+preserving all original crossing predicates, half-open endpoints, zero/NaN
+derivative rejection, root order, arithmetic, integer-plane admission, winding
+updates, samples and packed output. Original ProGPU sources at
+`8bfe5b885ae9a8dcceccdccb19bb9ebeacd487fb` are the sole implementation provenance.
+No compiler/adapter policy, pipeline ownership, ABI, cache key, workgroup, source
+input, upload, fallback, readback or deadline changes. Runtime complexity and
+storage remain the same; both native providers consume these canonical shaders.
+
+An independent fixed baseline/candidate/candidate/baseline observation on Windows
+D3D12/automatic-FXC recorded single-path acquisition times of
+12,281/10,481/10,233/11,858 ms on ARM64 and 8,086/6,655/6,620/7,499 ms on x64.
+Glyph times were 3,978/3,632/3,692/3,878 ms and 2,870/2,639/2,630/2,877 ms.
+These are pipeline API wall times, not a cold driver-cache benchmark or proof
+that Gallery meets its original deadline. The unchanged complete original path
+shader passed every differential word on Metal and both Windows architectures.
+
+The permanent tests embed the complete original shaders independently of the
+candidate. Two additive Windows conformance cases retain their own 120-second
+process limits alongside all seven prior cases. The glyph comparison adds 384
+cases and checks every word and untouched tail; local Metal passes both new
+bodies. Whole Build, both native providers, fragment/RGB and package pixels,
+and the original Gallery application remain required before qualification.
+
 ## Architecture research
 
 These primary references inform boundaries only; no third-party implementation

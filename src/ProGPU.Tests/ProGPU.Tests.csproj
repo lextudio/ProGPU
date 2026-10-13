@@ -19,6 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="TestData/RasterCrossingReference/*.wgsl"
+                      LogicalName="RasterCrossingReference.%(Filename)%(Extension)" />
     <None Update="xunit.runner.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
