@@ -63,6 +63,9 @@ struct progpu_native_engine {
     // from their live parent. Their frame uniforms and every mutable scene
     // resource remain independently owned.
     bool borrows_shared_vector_pipeline = false;
+    // The owning picture parent outlives this child. Its immutable analytic
+    // pipeline and layouts may be borrowed; child resource readiness is separate.
+    WGPURenderPipeline borrowed_analytic_pipeline = nullptr;
     WGPURenderPipeline analytic_pipeline = nullptr;
     WGPURenderPipeline analytic_masked_pipeline = nullptr;
     WGPURenderPipeline analytic_mask_chain_pipeline = nullptr;
@@ -1712,7 +1715,7 @@ struct progpu_native_engine {
     ~progpu_native_engine() {
         const progpu::native::webgpu::dispatch_scope dispatch_scope(
             &webgpu_dispatch);
-        // The child borrows this engine's vector pipeline and layout. Destroy
+        // The child borrows this engine's immutable pipelines and layouts. Destroy
         // it before releasing any parent WebGPU pipeline resources below.
         semantic_picture_child_engine.reset();
         release_glyph_paint_uniform_bindings();
@@ -2185,13 +2188,13 @@ struct progpu_native_engine {
         if (uniform_layout != nullptr && !borrows_shared_vector_pipeline) {
             wgpuBindGroupLayoutRelease(uniform_layout);
         }
-        if (analytic_uniform_layout != nullptr) {
+        if (analytic_uniform_layout != nullptr && borrowed_analytic_pipeline == nullptr) {
             wgpuBindGroupLayoutRelease(analytic_uniform_layout);
         }
-        if (analytic_atlas_layout != nullptr) {
+        if (analytic_atlas_layout != nullptr && borrowed_analytic_pipeline == nullptr) {
             wgpuBindGroupLayoutRelease(analytic_atlas_layout);
         }
-        if (analytic_pipeline != nullptr) {
+        if (analytic_pipeline != nullptr && analytic_pipeline != borrowed_analytic_pipeline) {
             wgpuRenderPipelineRelease(analytic_pipeline);
         }
         if (analytic_masked_pipeline != nullptr) {
