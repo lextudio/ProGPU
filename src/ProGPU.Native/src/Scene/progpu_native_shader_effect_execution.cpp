@@ -48,7 +48,7 @@ std::shared_ptr<semantic_shader_program> program_for(progpu_native_engine& engin
     const progpu_native_scene_shader_effect& descriptor, std::span<const std::byte> bytecode,
     bool final_sample_program = false, bool source_vector_mask = false, bool affine_sample_program = false) {
     if (affine_sample_program && !final_sample_program) return {};
-    if (source_vector_mask && (!final_sample_program || !create_layer_mask_resources(engine))) return {};
+    if (source_vector_mask && (!final_sample_program || !create_layer_mask_binding_resources(engine))) return {};
     for (const auto& program : engine.semantic_shader_programs) {
         if (program->source_sampler == descriptor.source_sampler && program->final_sample_program == final_sample_program &&
             program->affine_sample_program == affine_sample_program &&

@@ -362,7 +362,7 @@ static bool create_semantic_picture_binding(
     if (nested_scene == nullptr || picture.stream_size == 0U ||
         !semantic::try_resolve_semantic_picture_frame(picture, target_extent,
             dpi_scale, presentation, child_frame) ||
-        (image_output == nullptr && !create_layer_mask_resources(engine))) {
+        (image_output == nullptr && !create_layer_mask_binding_resources(engine))) {
         return false;
     }
 

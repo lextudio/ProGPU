@@ -93,6 +93,7 @@ WGPUBindGroup create_image_texture_bind_group(
     WGPUTextureView view,
     const char* label);
 
+bool create_image_binding_resources(progpu_native_engine& engine);
 bool create_image_resources(progpu_native_engine& engine);
 bool create_layer_resources(progpu_native_engine& engine);
 
@@ -103,6 +104,7 @@ WGPUBindGroup create_layer_mask_bind_group(
     const char* label,
     WGPUBuffer uniform_buffer = nullptr);
 
+bool create_layer_mask_binding_resources(progpu_native_engine& engine);
 bool create_layer_mask_resources(progpu_native_engine& engine);
 bool is_advanced_group_blend(std::uint32_t blend_mode) noexcept;
 

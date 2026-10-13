@@ -41,7 +41,7 @@ bool create_semantic_coverage_mask_binding(
     std::array<double, 6U> uv_transform{};
     if (coverage == nullptr || !semantic::try_resolve_semantic_mask_uv(
             source.transform, source.bounds, target_extent, presentation, dpi_scale, uv_transform) ||
-        !create_layer_mask_resources(engine)) {
+        !create_layer_mask_binding_resources(engine)) {
         return false;
     }
 
@@ -151,7 +151,7 @@ bool create_semantic_vector_mask_binding(
     const progpu_native_scene_presentation* presentation) {
     if (target_extent.width == 0U || target_extent.height == 0U ||
         !std::isfinite(dpi_scale) || dpi_scale <= 0.0F ||
-        !create_layer_mask_resources(engine)) {
+        !create_layer_mask_binding_resources(engine)) {
         return false;
     }
 

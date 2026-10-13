@@ -940,7 +940,7 @@ bool create_semantic_layer_mask_binding(
             operation,
             &presentation);
     }
-    if (!create_layer_mask_resources(engine)) {
+    if (!create_layer_mask_binding_resources(engine)) {
         return false;
     }
     const auto create_uniforms_for = [&](

@@ -191,7 +191,7 @@ bool ensure_rgb_mask_pipelines(progpu_native_engine& engine, bool chained)
     const auto index = chained ? 1U : 0U;
     if (owned.masked_composite[index][2] != nullptr) return true;
     const auto create = [&]() {
-        if (!(chained ? create_semantic_mask_chain_layout(engine) : create_layer_mask_resources(engine))) return false;
+        if (!(chained ? create_semantic_mask_chain_layout(engine) : create_layer_mask_binding_resources(engine))) return false;
         if (owned.empty_layout == nullptr) {
             WGPUBindGroupLayoutDescriptor descriptor{};
             owned.empty_layout = wgpuDeviceCreateBindGroupLayout(engine.device, &descriptor);

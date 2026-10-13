@@ -174,6 +174,12 @@ ctest --test-dir "${build_dir}" --build-config Release \
 cmake -E copy_if_different \
   "${build_dir}/progpu-native-3d-pipeline-demand.rgba" "${sample_dir}/"
 
+ctest --test-dir "${build_dir}" --build-config Release \
+  --tests-regex '^progpu_native_mask_pipeline_demand_tests$' --output-on-failure \
+  | tee -a "${evidence}"
+cmake -E copy_if_different \
+  "${build_dir}/progpu-native-mask-pipeline-demand.rgba" "${sample_dir}/"
+
 managed_runtime="$(mktemp -d /tmp/progpu-native-dawn-managed.XXXXXX)"
 managed_packages="$(mktemp -d /tmp/progpu-native-dawn-packages.XXXXXX)"
 managed_package_cache="$(mktemp -d /tmp/progpu-native-dawn-cache.XXXXXX)"

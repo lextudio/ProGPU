@@ -211,6 +211,7 @@ struct progpu_native_engine {
     bool glyph_cache_valid = false;
     bool glyph_gpu_cache_valid = false;
     WGPUShaderModule image_shader = nullptr;
+    bool image_bindings_ready = false;
     WGPURenderPipeline image_pipeline = nullptr;
     WGPURenderPipeline image_mask_pipeline = nullptr;
     WGPURenderPipeline image_straight_mask_pipeline = nullptr;
@@ -288,6 +289,7 @@ struct progpu_native_engine {
         layer_blend_pipelines{};
     std::array<WGPURenderPipeline, PROGPU_NATIVE_BLEND_MODULATE + 1U>
         layer_mask_blend_pipelines{};
+    bool layer_mask_bindings_ready = false;
     WGPUBindGroupLayout layer_mask_layout = nullptr;
     WGPUBuffer layer_mask_uniform_buffer = nullptr;
     WGPUTexture layer_mask_dummy_texture = nullptr;

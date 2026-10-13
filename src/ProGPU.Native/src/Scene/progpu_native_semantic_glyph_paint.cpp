@@ -119,7 +119,7 @@ bool ensure_glyph_paint_pipeline(progpu_native_engine& engine,
     auto& pipeline = pipeline_slot(engine, masked, chained, premultiplied_output);
     if (pipeline != nullptr) return true;
     if (!create_glyph_resources(engine) || !create_analytic_resources(engine) ||
-        !ensure_layouts(engine) || (masked && !create_layer_mask_resources(engine)) ||
+        !ensure_layouts(engine) || (masked && !create_layer_mask_binding_resources(engine)) ||
         (chained && !create_semantic_mask_chain_layout(engine))) return false;
     if (engine.glyph_paint_shader == nullptr) {
         webgpu::wgsl_source source(generated::hinted_glyph_paint_wgsl,
@@ -234,7 +234,7 @@ bool prepare_glyph_paints(progpu_native_engine& engine,
         view = engine.analytic_sentinel_texture_view;
         sampler = engine.analytic_sentinel_sampler;
         if (paint.kind == PROGPU_NATIVE_SCENE_GLYPH_PAINT_TEXTURE) {
-            if (!create_image_resources(engine)) return false;
+            if (!create_image_binding_resources(engine)) return false;
             const auto& resource = page.paint_resources[i];
             const auto* binding = engine.find_semantic_external_image_binding(resource.resource_id, resource.generation);
             if (binding == nullptr || binding->view == nullptr || binding->width == 0U || binding->height == 0U ||

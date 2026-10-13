@@ -124,7 +124,7 @@ bool create_semantic_image_effect_pipelines(
     if (engine.image_effect_pipeline != nullptr) {
         return true;
     }
-    if (!create_image_resources(engine) ||
+    if (!create_image_binding_resources(engine) ||
         !progpu::native::execution::create_image_mask_resources(engine) ||
         engine.image_effect_pipeline != nullptr ||
         engine.image_effect_shader != nullptr ||

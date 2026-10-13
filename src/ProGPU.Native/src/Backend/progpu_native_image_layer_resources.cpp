@@ -41,8 +41,8 @@ WGPUBindGroup create_image_texture_bind_group(
     return wgpuDeviceCreateBindGroup(engine.device, &descriptor);
 }
 
-bool create_image_resources(progpu_native_engine& engine) {
-    if (engine.image_pipeline != nullptr) {
+bool create_image_binding_resources(progpu_native_engine& engine) {
+    if (engine.image_bindings_ready) {
         return true;
     }
     if (engine.image_shader != nullptr ||
@@ -106,6 +106,88 @@ bool create_image_resources(progpu_native_engine& engine) {
         engine.image_texture_layout == nullptr) {
         return false;
     }
+
+    WGPUBufferDescriptor uniform_descriptor{};
+    uniform_descriptor.label = progpu::native::webgpu::string_view("ProGPU native image frame uniforms");
+    uniform_descriptor.usage = WGPUBufferUsage_Uniform |
+        WGPUBufferUsage_CopyDst;
+    uniform_descriptor.size = sizeof(gpu_uniforms);
+    engine.image_uniform_buffer = wgpuDeviceCreateBuffer(
+        engine.device,
+        &uniform_descriptor);
+    WGPUBufferDescriptor vertex_descriptor{};
+    vertex_descriptor.label = progpu::native::webgpu::string_view("ProGPU native retained image vertices");
+    vertex_descriptor.usage = WGPUBufferUsage_Vertex |
+        WGPUBufferUsage_CopyDst;
+    vertex_descriptor.size = sizeof(engine.image_vertices);
+    engine.image_vertex_buffer = wgpuDeviceCreateBuffer(
+        engine.device,
+        &vertex_descriptor);
+    WGPUBufferDescriptor index_descriptor{};
+    index_descriptor.label = progpu::native::webgpu::string_view("ProGPU native retained image indices");
+    index_descriptor.usage = WGPUBufferUsage_Index |
+        WGPUBufferUsage_CopyDst;
+    index_descriptor.size = 6U * sizeof(std::uint32_t);
+    engine.image_index_buffer = wgpuDeviceCreateBuffer(
+        engine.device,
+        &index_descriptor);
+    if (engine.image_uniform_buffer == nullptr ||
+        engine.image_vertex_buffer == nullptr ||
+        engine.image_index_buffer == nullptr) {
+        return false;
+    }
+
+    WGPUBindGroupEntry uniform_entry{};
+    uniform_entry.binding = 0U;
+    uniform_entry.buffer = engine.image_uniform_buffer;
+    uniform_entry.size = sizeof(gpu_uniforms);
+    WGPUBindGroupDescriptor uniform_group_descriptor{};
+    uniform_group_descriptor.label = progpu::native::webgpu::string_view("ProGPU native image uniform bind group");
+    uniform_group_descriptor.layout = engine.image_uniform_layout;
+    uniform_group_descriptor.entryCount = 1U;
+    uniform_group_descriptor.entries = &uniform_entry;
+    engine.image_uniform_bind_group = wgpuDeviceCreateBindGroup(
+        engine.device,
+        &uniform_group_descriptor);
+    if (engine.image_uniform_bind_group == nullptr) {
+        return false;
+    }
+
+    const auto create_sampler = [&](WGPUFilterMode filter) {
+        WGPUSamplerDescriptor descriptor{};
+        descriptor.addressModeU = WGPUAddressMode_ClampToEdge;
+        descriptor.addressModeV = WGPUAddressMode_ClampToEdge;
+        descriptor.addressModeW = WGPUAddressMode_ClampToEdge;
+        descriptor.magFilter = filter;
+        descriptor.minFilter = filter;
+        descriptor.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+        descriptor.lodMinClamp = 0.0F;
+        descriptor.lodMaxClamp = 0.0F;
+        descriptor.maxAnisotropy = 1U;
+        return wgpuDeviceCreateSampler(engine.device, &descriptor);
+    };
+    engine.image_nearest_sampler = create_sampler(WGPUFilterMode_Nearest);
+    engine.image_linear_sampler = create_sampler(WGPUFilterMode_Linear);
+    if (engine.image_nearest_sampler == nullptr ||
+        engine.image_linear_sampler == nullptr) {
+        return false;
+    }
+
+    constexpr std::array<std::uint32_t, 6U> indices{
+        0U, 1U, 2U, 0U, 2U, 3U};
+    wgpuQueueWriteBuffer(
+        engine.queue,
+        engine.image_index_buffer,
+        0U,
+        indices.data(),
+        sizeof(indices));
+    engine.image_bindings_ready = true;
+    return true;
+}
+
+bool create_image_resources(progpu_native_engine& engine) {
+    if (engine.image_pipeline != nullptr) return true;
+    if (!create_image_binding_resources(engine)) return false;
 
     const std::array<WGPUBindGroupLayout, 2U> pipeline_layouts{{
         engine.image_uniform_layout,
@@ -184,80 +266,6 @@ bool create_image_resources(progpu_native_engine& engine) {
         return false;
     }
 
-    WGPUBufferDescriptor uniform_descriptor{};
-    uniform_descriptor.label = progpu::native::webgpu::string_view("ProGPU native image frame uniforms");
-    uniform_descriptor.usage = WGPUBufferUsage_Uniform |
-        WGPUBufferUsage_CopyDst;
-    uniform_descriptor.size = sizeof(gpu_uniforms);
-    engine.image_uniform_buffer = wgpuDeviceCreateBuffer(
-        engine.device,
-        &uniform_descriptor);
-    WGPUBufferDescriptor vertex_descriptor{};
-    vertex_descriptor.label = progpu::native::webgpu::string_view("ProGPU native retained image vertices");
-    vertex_descriptor.usage = WGPUBufferUsage_Vertex |
-        WGPUBufferUsage_CopyDst;
-    vertex_descriptor.size = sizeof(engine.image_vertices);
-    engine.image_vertex_buffer = wgpuDeviceCreateBuffer(
-        engine.device,
-        &vertex_descriptor);
-    WGPUBufferDescriptor index_descriptor{};
-    index_descriptor.label = progpu::native::webgpu::string_view("ProGPU native retained image indices");
-    index_descriptor.usage = WGPUBufferUsage_Index |
-        WGPUBufferUsage_CopyDst;
-    index_descriptor.size = 6U * sizeof(std::uint32_t);
-    engine.image_index_buffer = wgpuDeviceCreateBuffer(
-        engine.device,
-        &index_descriptor);
-    if (engine.image_uniform_buffer == nullptr ||
-        engine.image_vertex_buffer == nullptr ||
-        engine.image_index_buffer == nullptr) {
-        return false;
-    }
-
-    WGPUBindGroupEntry uniform_entry{};
-    uniform_entry.binding = 0U;
-    uniform_entry.buffer = engine.image_uniform_buffer;
-    uniform_entry.size = sizeof(gpu_uniforms);
-    WGPUBindGroupDescriptor uniform_group_descriptor{};
-    uniform_group_descriptor.label = progpu::native::webgpu::string_view("ProGPU native image uniform bind group");
-    uniform_group_descriptor.layout = engine.image_uniform_layout;
-    uniform_group_descriptor.entryCount = 1U;
-    uniform_group_descriptor.entries = &uniform_entry;
-    engine.image_uniform_bind_group = wgpuDeviceCreateBindGroup(
-        engine.device,
-        &uniform_group_descriptor);
-    if (engine.image_uniform_bind_group == nullptr) {
-        return false;
-    }
-
-    const auto create_sampler = [&](WGPUFilterMode filter) {
-        WGPUSamplerDescriptor descriptor{};
-        descriptor.addressModeU = WGPUAddressMode_ClampToEdge;
-        descriptor.addressModeV = WGPUAddressMode_ClampToEdge;
-        descriptor.addressModeW = WGPUAddressMode_ClampToEdge;
-        descriptor.magFilter = filter;
-        descriptor.minFilter = filter;
-        descriptor.mipmapFilter = WGPUMipmapFilterMode_Nearest;
-        descriptor.lodMinClamp = 0.0F;
-        descriptor.lodMaxClamp = 0.0F;
-        descriptor.maxAnisotropy = 1U;
-        return wgpuDeviceCreateSampler(engine.device, &descriptor);
-    };
-    engine.image_nearest_sampler = create_sampler(WGPUFilterMode_Nearest);
-    engine.image_linear_sampler = create_sampler(WGPUFilterMode_Linear);
-    if (engine.image_nearest_sampler == nullptr ||
-        engine.image_linear_sampler == nullptr) {
-        return false;
-    }
-
-    constexpr std::array<std::uint32_t, 6U> indices{
-        0U, 1U, 2U, 0U, 2U, 3U};
-    wgpuQueueWriteBuffer(
-        engine.queue,
-        engine.image_index_buffer,
-        0U,
-        indices.data(),
-        sizeof(indices));
     return true;
 }
 
@@ -265,7 +273,7 @@ bool create_layer_resources(progpu_native_engine& engine) {
     if (engine.layer_composite_pipeline != nullptr) {
         return true;
     }
-    if (!create_image_resources(engine) ||
+    if (!create_image_binding_resources(engine) ||
         engine.layer_uniform_buffer != nullptr ||
         engine.layer_uniform_bind_group != nullptr ||
         engine.layer_vertex_buffer != nullptr ||
@@ -440,11 +448,11 @@ WGPUBindGroup create_layer_mask_bind_group(
     return wgpuDeviceCreateBindGroup(engine.device, &descriptor);
 }
 
-bool create_layer_mask_resources(progpu_native_engine& engine) {
-    if (engine.layer_mask_pipeline != nullptr) {
+bool create_layer_mask_binding_resources(progpu_native_engine& engine) {
+    if (engine.layer_mask_bindings_ready) {
         return true;
     }
-    if (!create_layer_resources(engine) ||
+    if (!create_image_binding_resources(engine) ||
         engine.layer_mask_layout != nullptr ||
         engine.layer_mask_uniform_buffer != nullptr ||
         engine.layer_mask_dummy_texture != nullptr ||
@@ -478,6 +486,58 @@ bool create_layer_mask_resources(progpu_native_engine& engine) {
     if (engine.layer_mask_layout == nullptr) {
         return false;
     }
+
+    WGPUBufferDescriptor buffer_descriptor{};
+    buffer_descriptor.label = progpu::native::webgpu::string_view(
+        "ProGPU native common group mask uniforms");
+    buffer_descriptor.usage = WGPUBufferUsage_Uniform |
+        WGPUBufferUsage_CopyDst;
+    buffer_descriptor.size = sizeof(gpu_mask_sampling_uniforms);
+    engine.layer_mask_uniform_buffer = wgpuDeviceCreateBuffer(
+        engine.device,
+        &buffer_descriptor);
+    if (engine.layer_mask_uniform_buffer == nullptr) {
+        return false;
+    }
+
+    WGPUTextureDescriptor texture_descriptor{};
+    texture_descriptor.label = progpu::native::webgpu::string_view(
+        "ProGPU native analytic group mask sentinel");
+    texture_descriptor.usage = WGPUTextureUsage_TextureBinding;
+    texture_descriptor.dimension = WGPUTextureDimension_2D;
+    texture_descriptor.size = {1U, 1U, 1U};
+    texture_descriptor.format = WGPUTextureFormat_R8Unorm;
+    texture_descriptor.mipLevelCount = 1U;
+    texture_descriptor.sampleCount = 1U;
+    engine.layer_mask_dummy_texture = wgpuDeviceCreateTexture(
+        engine.device,
+        &texture_descriptor);
+    if (engine.layer_mask_dummy_texture == nullptr) {
+        return false;
+    }
+    engine.layer_mask_dummy_view = wgpuTextureCreateView(
+        engine.layer_mask_dummy_texture,
+        nullptr);
+    if (engine.layer_mask_dummy_view == nullptr) {
+        return false;
+    }
+    engine.layer_analytic_mask_bind_group = create_layer_mask_bind_group(
+        engine,
+        engine.image_linear_sampler,
+        engine.layer_mask_dummy_view,
+        "ProGPU native analytic group mask bind group");
+    if (engine.layer_analytic_mask_bind_group == nullptr) {
+        return false;
+    }
+    ++engine.layer_mask_bind_group_generation;
+    engine.layer_mask_bindings_ready = true;
+    return true;
+}
+
+bool create_layer_mask_resources(progpu_native_engine& engine) {
+    if (engine.layer_mask_pipeline != nullptr) return true;
+    if (!create_layer_resources(engine) ||
+        !create_layer_mask_binding_resources(engine)) return false;
 
     const std::array<WGPUBindGroupLayout, 3U> layouts{{
         engine.image_uniform_layout,
@@ -562,49 +622,6 @@ bool create_layer_mask_resources(progpu_native_engine& engine) {
         return false;
     }
 
-    WGPUBufferDescriptor buffer_descriptor{};
-    buffer_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native common group mask uniforms");
-    buffer_descriptor.usage = WGPUBufferUsage_Uniform |
-        WGPUBufferUsage_CopyDst;
-    buffer_descriptor.size = sizeof(gpu_mask_sampling_uniforms);
-    engine.layer_mask_uniform_buffer = wgpuDeviceCreateBuffer(
-        engine.device,
-        &buffer_descriptor);
-    if (engine.layer_mask_uniform_buffer == nullptr) {
-        return false;
-    }
-
-    WGPUTextureDescriptor texture_descriptor{};
-    texture_descriptor.label = progpu::native::webgpu::string_view(
-        "ProGPU native analytic group mask sentinel");
-    texture_descriptor.usage = WGPUTextureUsage_TextureBinding;
-    texture_descriptor.dimension = WGPUTextureDimension_2D;
-    texture_descriptor.size = {1U, 1U, 1U};
-    texture_descriptor.format = WGPUTextureFormat_R8Unorm;
-    texture_descriptor.mipLevelCount = 1U;
-    texture_descriptor.sampleCount = 1U;
-    engine.layer_mask_dummy_texture = wgpuDeviceCreateTexture(
-        engine.device,
-        &texture_descriptor);
-    if (engine.layer_mask_dummy_texture == nullptr) {
-        return false;
-    }
-    engine.layer_mask_dummy_view = wgpuTextureCreateView(
-        engine.layer_mask_dummy_texture,
-        nullptr);
-    if (engine.layer_mask_dummy_view == nullptr) {
-        return false;
-    }
-    engine.layer_analytic_mask_bind_group = create_layer_mask_bind_group(
-        engine,
-        engine.image_linear_sampler,
-        engine.layer_mask_dummy_view,
-        "ProGPU native analytic group mask bind group");
-    if (engine.layer_analytic_mask_bind_group == nullptr) {
-        return false;
-    }
-    ++engine.layer_mask_bind_group_generation;
     return true;
 }
 
