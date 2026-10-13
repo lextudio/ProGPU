@@ -78,6 +78,11 @@ assumption. Its failed output is retained, and the corrected observer counts
 acquired and released references per handle without changing product inputs.
 Whole source/package/application and final packaged profiling gates remain open.
 
+The independent [WebScene release exception](webscene-timeout-diagnostics.md)
+allows 120 seconds for the original full macOS WebScene CTest case with explicit
+owner approval. It does not change this control's 60-second limit, qualify a
+performance improvement or resolve the original cold-start objective in #367.
+
 ## Research boundaries
 
 Primary references were reviewed before implementation on 13 October 2026:

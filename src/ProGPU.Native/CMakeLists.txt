@@ -1441,7 +1441,7 @@ if(NOT EMSCRIPTEN AND PROGPU_NATIVE_DAWN_WEBGPU_INCLUDE_DIR)
                     "${CMAKE_CURRENT_BINARY_DIR}/progpu-native-webscene-provider.ppm")
             set_tests_properties(
                 progpu_native_webscene_provider_tests
-                PROPERTIES TIMEOUT 60)
+                PROPERTIES TIMEOUT 120)
             add_test(
                 NAME progpu_native_3d_pipeline_demand_tests
                 COMMAND progpu_native_webscene_provider_tests
