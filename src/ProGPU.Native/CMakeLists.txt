@@ -1462,6 +1462,15 @@ if(NOT EMSCRIPTEN AND PROGPU_NATIVE_DAWN_WEBGPU_INCLUDE_DIR)
                 progpu_native_mask_pipeline_demand_tests
                 PROPERTIES TIMEOUT 60)
             add_test(
+                NAME progpu_native_layer_pipeline_demand_tests
+                COMMAND progpu_native_webscene_provider_tests
+                    "${PROGPU_NATIVE_WEBSCENE_PROVIDER_LIBRARY}"
+                    --layer-pipelines
+                    "${CMAKE_CURRENT_BINARY_DIR}/progpu-native-layer-pipeline-demand.rgba")
+            set_tests_properties(
+                progpu_native_layer_pipeline_demand_tests
+                PROPERTIES TIMEOUT 60)
+            add_test(
                 NAME progpu_native_picture_pipeline_reuse_tests
                 COMMAND progpu_native_webscene_provider_tests
                     "${PROGPU_NATIVE_WEBSCENE_PROVIDER_LIBRARY}"

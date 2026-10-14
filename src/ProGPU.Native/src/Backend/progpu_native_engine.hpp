@@ -281,6 +281,7 @@ struct progpu_native_engine {
     bool image_uniform_cache_valid = false;
     bool image_cache_valid = false;
     bool image_gpu_cache_valid = false;
+    bool layer_bindings_ready = false;
     WGPURenderPipeline layer_composite_pipeline = nullptr;
     WGPURenderPipeline layer_mask_pipeline = nullptr;
     std::array<WGPURenderPipeline, 4U> layer_coverage_pipelines{};
