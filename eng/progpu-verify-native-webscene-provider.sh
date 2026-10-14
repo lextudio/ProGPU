@@ -181,6 +181,12 @@ cmake -E copy_if_different \
   "${build_dir}/progpu-native-mask-pipeline-demand.rgba" "${sample_dir}/"
 
 ctest --test-dir "${build_dir}" --build-config Release \
+  --tests-regex '^progpu_native_layer_pipeline_demand_tests$' --no-tests=error \
+  --output-on-failure | tee -a "${evidence}"
+cmake -E copy_if_different \
+  "${build_dir}/progpu-native-layer-pipeline-demand.rgba" "${sample_dir}/"
+
+ctest --test-dir "${build_dir}" --build-config Release \
   --tests-regex '^progpu_native_picture_pipeline_reuse_tests$' --output-on-failure \
   | tee -a "${evidence}"
 cmake -E copy_if_different \

@@ -64,6 +64,12 @@ buffers are allocated. A second render must reject the partial owner without
 reallocation or pipeline construction. Engine teardown must release each buffer
 exactly once. Failed submissions are never used as pixel references.
 
+The hosted Metal-provider script explicitly runs the layer-demand CTest under
+its original 60-second bound and rejects an absent test. The hardware-evidence
+artifact retains its complete raw frames alongside the existing 3D, mask and
+picture controls. Registering the test in CMake alone does not select it in
+this script's explicit test list.
+
 Local Release validation passed all 53 configured native CTests, including the
 original full WebScene corpus, Direct2D GPU tests and both provider contract
 suites. The new test's negative control detects eager default compilation in

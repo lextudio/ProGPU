@@ -615,6 +615,9 @@ jobs:
             artifacts/progpu-native/sample/progpu-native-managed-dawn.ppm
             artifacts/progpu-native/sample/progpu-native-managed-dawn.png
             artifacts/progpu-native/sample/progpu-native-3d-pipeline-demand.rgba
+            artifacts/progpu-native/sample/progpu-native-mask-pipeline-demand.rgba
+            artifacts/progpu-native/sample/progpu-native-layer-pipeline-demand.rgba
+            artifacts/progpu-native/sample/progpu-native-picture-pipeline-reuse.rgba
             artifacts/progpu-native/sample/webscene-timeout-diagnostics/**
           if-no-files-found: error
 
