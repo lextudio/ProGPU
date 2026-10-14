@@ -135,6 +135,7 @@ progpu_native_status render_paths(
     bool has_inline_signed_winding = false;
     bool has_inline_path_operation = false;
     bool has_only_linear_segments = true;
+    bool has_only_line_or_cubic_segments = true;
 
     std::vector<gpu_path_uniforms> path_uniforms;
     std::vector<std::vector<gpu_path_uniforms>> split_leaf_uniforms;
@@ -184,6 +185,9 @@ progpu_native_status render_paths(
                 const auto& segment = frame->segments[segment_index];
                 has_only_linear_segments = has_only_linear_segments &&
                     segment.kind == PROGPU_NATIVE_PATH_SEGMENT_LINE;
+                has_only_line_or_cubic_segments = has_only_line_or_cubic_segments &&
+                    (segment.kind == PROGPU_NATIVE_PATH_SEGMENT_LINE ||
+                        segment.kind == PROGPU_NATIVE_PATH_SEGMENT_CUBIC);
                 const bool is_arc =
                     segment.kind == PROGPU_NATIVE_PATH_SEGMENT_ARC;
                 const bool is_rational_quadratic = segment.kind ==
@@ -1064,8 +1068,10 @@ progpu_native_status render_paths(
         const path_raster_pipeline_requirements required{
             .linear_path = !path_uniforms.empty() && !has_inline_path_operation &&
                 has_only_linear_segments,
+            .cubic_path = !path_uniforms.empty() && !has_inline_path_operation &&
+                !has_only_linear_segments && has_only_line_or_cubic_segments,
             .single_path = !path_uniforms.empty() && !has_inline_path_operation &&
-                !has_only_linear_segments,
+                !has_only_line_or_cubic_segments,
             .ordinary = !path_uniforms.empty() && has_inline_path_operation &&
                 !has_inline_signed_winding,
             .inline_signed = !path_uniforms.empty() && has_inline_signed_winding &&
@@ -1240,7 +1246,9 @@ progpu_native_status render_paths(
                         ? engine->path_raster_ordinary_pipeline
                         : has_only_linear_segments
                             ? engine->path_raster_linear_path_pipeline
-                            : engine->path_raster_single_path_pipeline,
+                            : has_only_line_or_cubic_segments
+                                ? engine->path_raster_cubic_path_pipeline
+                                : engine->path_raster_single_path_pipeline,
                 workgroups_x,
                 workgroups_y, size_dispatches.groups)) {
             if (owns_encoder && encoder != nullptr) {

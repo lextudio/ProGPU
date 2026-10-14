@@ -61,6 +61,7 @@ WGPUBindGroup create_semantic_mask_chain_bind_group(
 bool create_path_resources(progpu_native_engine& engine);
 struct path_raster_pipeline_requirements {
     bool linear_path = false;
+    bool cubic_path = false;
     bool single_path = false;
     bool ordinary = false;
     bool inline_signed = false;

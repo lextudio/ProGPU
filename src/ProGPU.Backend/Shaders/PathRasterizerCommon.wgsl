@@ -347,15 +347,17 @@ fn path_sample_x(
 }
 
 // linearOnly is true only behind the complete line-kind admission gate.
-// Both entries retain the original line crossing order, half-open Y endpoints,
+// cubicOnly admits only lines and polynomial cubics after complete kind checks.
+// Every entry retains original crossing order, roots, half-open Y endpoints,
 // sample positions and integer winding; the ordinary wrapper admits all curves.
-fn row_winding_impl(
+fn row_winding_classified(
     pixelX: f32,
     sampleY: f32,
     sampleGrid: u32,
     scaleX: f32,
     record: PathRecord,
-    linearOnly: bool) -> WindingRow {
+    linearOnly: bool,
+    cubicOnly: bool) -> WindingRow {
     let firstSampleX = path_sample_x(
         pixelX,
         0u,
@@ -397,7 +399,7 @@ fn row_winding_impl(
                 add_line_crossing(&winding, samplePositionsX, sampleY, A, B,
                     select(-1, 1, upward));
             }
-        } else if (seg.segmentType == 1u) {
+        } else if (!cubicOnly && seg.segmentType == 1u) {
             let A = seg.p0;
             let B = seg.p1;
             let C = seg.p2;
@@ -449,7 +451,7 @@ fn row_winding_impl(
                     }
                 }
             }
-        } else if (seg.segmentType == 4u) {
+        } else if (!cubicOnly && seg.segmentType == 4u) {
             let A = seg.p0;
             let B = seg.p1;
             let C = seg.p2;
@@ -524,7 +526,7 @@ fn row_winding_impl(
                     }
                 }
             }
-        } else if (seg.segmentType == 2u || seg.segmentType == 5u) {
+        } else if (seg.segmentType == 2u || (!cubicOnly && seg.segmentType == 5u)) {
             let A = seg.p0;
             let B = seg.p1;
             let C = seg.p2;
@@ -533,7 +535,7 @@ fn row_winding_impl(
                 sampleY > max(max(A.y, B.y), max(C.y, D_pt.y))) {
                 continue;
             }
-            let rational = seg.segmentType == 5u;
+            let rational = !cubicOnly && seg.segmentType == 5u;
             let weight1 = select(1.0, bitcast<f32>(seg._pad0), rational);
             let weight2 = select(1.0, bitcast<f32>(seg._pad1), rational);
 
@@ -625,7 +627,7 @@ fn row_winding_impl(
                     }
                 }
             }
-        } else if (seg.segmentType == 3u) {
+        } else if (!cubicOnly && seg.segmentType == 3u) {
             let p0 = seg.p0;
             let p1 = seg.p1;
             let center = seg.p2;
@@ -693,6 +695,13 @@ fn row_winding_impl(
     }
 
     return winding;
+}
+
+fn row_winding_impl(
+    pixelX: f32, sampleY: f32, sampleGrid: u32, scaleX: f32,
+    record: PathRecord, linearOnly: bool) -> WindingRow {
+    return row_winding_classified(pixelX, sampleY, sampleGrid, scaleX,
+        record, linearOnly, false);
 }
 
 fn row_winding(

@@ -613,6 +613,13 @@ rule. Preserve engine/cache ownership, raw GPU differential tails and complete
 package/image gates. Pipeline acquisition time is not application startup proof.
 See docs/single-path-raster-pipeline.md.
 
+Line/cubic raster specialization requires complete original segment-kind admission,
+including later and unused native segments. Preserve original homogeneous cubic
+coefficients, root order and crossing arithmetic; do not approximate rational
+curves or infer kinds from bounds. Keep raw shader rejection, lazy engine/device
+ownership and paired ordinary-path controls. See docs/cubic-path-raster-pipeline.md;
+sampled compiler attribution is not GPU timing or Gallery qualification.
+
 Implicit Windows Font height and pixel/world point conversion use a scoped
 screen DC in the caller's current DPI context; never cache that DPI globally or
 mutate source size. Keep non-Windows 96-DPI policy, explicit Graphics/image/target

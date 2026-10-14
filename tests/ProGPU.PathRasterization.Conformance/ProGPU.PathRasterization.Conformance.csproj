@@ -17,5 +17,6 @@
     <Compile Include="../../src/ProGPU.Tests/LinearPathRasterPipelineTests.cs" Link="LinearPathRasterPipelineTests.cs" />
     <Compile Include="../../src/ProGPU.Tests/LinearWindingRasterPipelineTests.cs" Link="LinearWindingRasterPipelineTests.cs" />
     <Compile Include="../../src/ProGPU.Tests/VerticalPathCrossingTests.cs" Link="VerticalPathCrossingTests.cs" />
+    <Compile Include="../../src/ProGPU.Tests/CubicPathRasterPipelineTests.cs" Link="CubicPathRasterPipelineTests.cs" />
   </ItemGroup>
 </Project>
