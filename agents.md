@@ -1,5 +1,12 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Independent native operation-zero paths and retained clips group actual workgroup
+extents without changing original uniform bytes, output slices or shader math.
+Keep one compute pass/submission sequence, 256-byte binding alignment, exact
+bound ranges and real submission-retirement ownership. Signed/Boolean phases
+retain their ordering. Managed PathAtlas already uses actual-size groups;
+preserve full cold/warm pixel and application gates. See docs/native-path-size-dispatch.md.
+
 Native inline signed-winding batches may select the separate linear kernel only
 after validating the complete original source segment inventory as lines. Keep
 the raw whole-inventory rejection, original signed/Boolean operations, sample

@@ -744,6 +744,7 @@ set(PROGPU_NATIVE_BACKEND_SOURCES
     src/Backend/progpu_native_path_text_resources.cpp
     src/Backend/progpu_native_path_boolean_gpu.hpp
     src/Backend/progpu_native_path_execution.cpp
+    src/Backend/progpu_native_path_dispatch.hpp
     src/Backend/progpu_native_glyph_execution.cpp
     src/Backend/progpu_native_hinted_glyph_execution.cpp
     src/Backend/progpu_native_hinted_glyph_execution.hpp
@@ -2087,6 +2088,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         src/Backend/progpu_native_draw_state.hpp
         src/Backend/progpu_native_buffer_capacity.hpp
         src/Backend/progpu_native_glyph_raster_identity.hpp
+        src/Backend/progpu_native_path_dispatch.hpp
         src/Backend/progpu_native_effect_plan.cpp
         src/Backend/progpu_native_effect_plan.hpp
         src/Backend/progpu_native_geometry_analytic.hpp
