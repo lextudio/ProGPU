@@ -1,5 +1,14 @@
 # Agent Guidelines & Reference Handbook (agents.md)
 
+Exactly vertical path edges may bypass redundant integer half-plane admission
+only with equal original endpoint X and the original floating intersection
+expression. Preserve finite-overflow behavior, strict X comparison, original
+Y/endpoint admission and signed winding. Nonvertical lines keep the canonical
+bounded integer route; no epsilon or rectangular-shape inference is admitted.
+The shared shader covers managed and both native providers. Retain original raw
+lane/curve/Boolean controls and Windows/application gates; see
+docs/vertical-path-crossings.md.
+
 Independent native operation-zero paths and retained clips group actual workgroup
 extents without changing original uniform bytes, output slices or shader math.
 Keep one compute pass/submission sequence, 256-byte binding alignment, exact

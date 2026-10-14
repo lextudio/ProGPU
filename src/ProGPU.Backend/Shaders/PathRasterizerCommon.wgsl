@@ -203,7 +203,7 @@ fn add_crossing(
 // other side, including at an original endpoint. Signed products and their
 // difference fit i32: coordinates are at most 16383, deltas at most 32766.
 // Other mappings retain the ordinary floating-point intersection below.
-fn add_line_crossing(
+fn add_nonvertical_line_crossing(
     winding: ptr<function, WindingRow>,
     samples: SampleRow,
     sampleY: f32,
@@ -247,6 +247,26 @@ fn add_line_crossing(
     let highCrossing = select(samples.high < vec4<f32>(intersectX), crossesHigh, exactAdmitted);
     (*winding).low += select(vec4<i32>(0), vec4<i32>(direction), lowCrossing);
     (*winding).high += select(vec4<i32>(0), vec4<i32>(direction), highCrossing);
+}
+
+fn add_line_crossing(
+    winding: ptr<function, WindingRow>,
+    samples: SampleRow,
+    sampleY: f32,
+    a: vec2<f32>,
+    b: vec2<f32>,
+    direction: i32) {
+    if (a.x == b.x) {
+        // On an exactly vertical edge the admitted integer half-plane is the
+        // same strict X comparison in either direction. Retain the original
+        // floating expression: extreme finite Y coordinates can overflow its
+        // intermediate subtraction, and must not acquire a new crossing.
+        let t = (sampleY - a.y) / (b.y - a.y);
+        let intersectX = a.x + t * (b.x - a.x);
+        add_crossing(winding, samples, intersectX, direction);
+    } else {
+        add_nonvertical_line_crossing(winding, samples, sampleY, a, b, direction);
+    }
 }
 
 fn winding_is_inside(winding: i32, fill_rule: u32) -> bool {
