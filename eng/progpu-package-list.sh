@@ -220,6 +220,62 @@ progpu_drawing_runtime_package_purposes=(
   "Drawing runtime closure: portable System.Drawing.Common implementation."
 )
 
+# Exact local-package closure consumed by OpenDevelop's macOS distribution.
+#
+# This deliberately excludes the Windows-only native/DX packages from the
+# general `portable` group. Those packages validate native payloads for every
+# desktop RID, which is correct for a cross-platform ProGPU release but makes a
+# macOS-only OpenDevelop package depend on Windows staging that it neither
+# ships nor uses. Keep this list topologically ordered: it must be sufficient
+# for a clean NuGet restore using only the freshly built local feed. It is the
+# ProjectReference closure of WinUI, its Fluent theme, the native backend,
+# Media.Scene and the SkiaSharp/System.Drawing shims.
+progpu_opendevelop_macos_package_ids=(
+  ProGPU.Backend
+  ProGPU.Native.Sdk
+  ProGPU.Backend.Native
+  ProGPU.Backend.Dawn
+  ProGPU.Media
+  ProGPU.Media.Scene
+  ProGPU.WinRT
+  ProGPU.Text.Shaping
+  ProGPU.Transpiler
+  ProGPU.Compute
+  ProGPU.Vector
+  ProGPU.Text
+  ProGPU.Scene
+  ProGPU.Layout
+  ProGPU.Virtualization
+  ProGPU.WinUI
+  ProGPU.WinUI.Themes.Fluent
+  ProGPU.SkiaSharp
+  ProGPU.System.Drawing.Common
+  LibreWPF.Interop
+)
+
+progpu_opendevelop_macos_package_projects=(
+  src/ProGPU.Backend/ProGPU.Backend.csproj
+  src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj
+  src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
+  src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
+  src/ProGPU.Media/ProGPU.Media.csproj
+  src/ProGPU.Media.Scene/ProGPU.Media.Scene.csproj
+  src/ProGPU.WinRT/ProGPU.WinRT.csproj
+  src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
+  src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
+  src/ProGPU.Compute/ProGPU.Compute.csproj
+  src/ProGPU.Vector/ProGPU.Vector.csproj
+  src/ProGPU.Text/ProGPU.Text.csproj
+  src/ProGPU.Scene/ProGPU.Scene.csproj
+  src/ProGPU.Layout/ProGPU.Layout.csproj
+  src/ProGPU.Virtualization/ProGPU.Virtualization.csproj
+  src/ProGPU.WinUI/ProGPU.WinUI.csproj
+  src/ProGPU.WinUI.Themes.Fluent/ProGPU.WinUI.Themes.Fluent.csproj
+  src/SkiaSharp/SkiaSharp.csproj
+  external/LibreWinForms/src/ProGPU.Drawing/System.Drawing.Common/System.Drawing.Common.csproj
+  external/LibreWPF/src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj
+)
+
 progpu_mobile_package_ids=(
   ProGPU.Android
   ProGPU.iOS

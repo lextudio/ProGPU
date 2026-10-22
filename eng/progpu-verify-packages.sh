@@ -21,11 +21,14 @@ case "${package_group}" in
   drawing-runtime)
     selected_package_ids=("${progpu_drawing_runtime_package_ids[@]}")
     ;;
+  opendevelop-macos)
+    selected_package_ids=("${progpu_opendevelop_macos_package_ids[@]}")
+    ;;
   mobile)
     selected_package_ids=("${progpu_mobile_package_ids[@]}")
     ;;
   *)
-    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, or mobile." >&2
+    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, opendevelop-macos, or mobile." >&2
     exit 1
     ;;
 esac
@@ -119,20 +122,28 @@ for package_id in "${selected_package_ids[@]}"; do
   fi
 
   if [[ "${package_id}" == "ProGPU.Backend.Native" ]]; then
-    native_entries=(
-      runtimes/win-x64/native/progpu_native.dll \
-      runtimes/win-x64/native/progpu_native_direct2d.dll \
-      runtimes/win-arm64/native/progpu_native.dll \
-      runtimes/win-arm64/native/progpu_native_direct2d.dll \
-      build/native/include/progpu_native.h)
-    if [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" != "1" ]]; then
+    # Each lane claims exactly the native slices its consumers ship:
+    #   PROGPU_PACKAGE_WINDOWS_ONLY=1  win-x64 + win-arm64, including Direct2D
+    #   opendevelop-macos              osx-arm64 only (Apple silicon)
+    #   otherwise                      every desktop RID
+    windows_entries=(
+      runtimes/win-x64/native/progpu_native.dll
+      runtimes/win-x64/native/progpu_native_direct2d.dll
+      runtimes/win-arm64/native/progpu_native.dll
+      runtimes/win-arm64/native/progpu_native_direct2d.dll)
+    if [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" == "1" ]]; then
+      native_entries=("${windows_entries[@]}")
+    elif [[ "${package_group}" == "opendevelop-macos" ]]; then
+      native_entries=(runtimes/osx-arm64/native/libprogpu_native.dylib)
+    else
       native_entries=(
         runtimes/linux-x64/native/libprogpu_native.so
         runtimes/linux-arm64/native/libprogpu_native.so
         runtimes/osx-x64/native/libprogpu_native.dylib
         runtimes/osx-arm64/native/libprogpu_native.dylib
-        "${native_entries[@]}")
+        "${windows_entries[@]}")
     fi
+    native_entries+=(build/native/include/progpu_native.h)
     for native_entry in "${native_entries[@]}"; do
       if ! unzip -Z1 "${package}" | grep -Fx "${native_entry}" >/dev/null; then
         echo "${package_id} is missing ${native_entry}." >&2
@@ -148,7 +159,7 @@ for package_id in "${selected_package_ids[@]}"; do
         echo "${package_id} depends on ${dependency_id} ${dependency_version}, expected ${package_version}." >&2
         exit 1
       fi
-      if [[ "${package_group}" == "avalonia-runtime" || "${package_group}" == "drawing-runtime" ]] && ! is_selected_package_id "${dependency_id}"; then
+      if [[ "${package_group}" == "avalonia-runtime" || "${package_group}" == "drawing-runtime" || "${package_group}" == "opendevelop-macos" ]] && ! is_selected_package_id "${dependency_id}"; then
         echo "${package_id} depends on ${dependency_id}, which is missing from the isolated ${package_group} package closure." >&2
         exit 1
       fi
