@@ -90,9 +90,9 @@ for index in "${!selected_package_ids[@]}"; do
     pack_arguments+=(-p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg)
   fi
 
-  if [[ "${package_id}" == "ProGPU.Backend.Native" && "${package_group}" == "opendevelop-macos" ]]; then
-    # The macOS release feed needs the managed/native backend package, while
-    # Windows-only Direct2D staging is intentionally not part of this lane.
+  if [[ ( "${package_id}" == "ProGPU.Backend.Native" || "${package_id}" == "ProGPU.Native.Sdk" ) && "${package_group}" == "opendevelop-macos" ]]; then
+    # The final package assembly checks the staged Windows and macOS payloads.
+    # Skip this generic every-desktop-RID gate because Linux is deliberately absent.
     pack_arguments+=(-p:ProGpuNativeSkipRuntimeValidation=true)
   fi
 

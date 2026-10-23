@@ -110,6 +110,30 @@ for package_id in "${selected_package_ids[@]}"; do
       echo "Static-SDK-assets-only package must not produce an empty symbol package: ${symbols}" >&2
       exit 1
     fi
+    if [[ "${package_group}" == "opendevelop-macos" ]]; then
+      # This final assembly is built on macOS but contains the downloaded Windows
+      # SDK payloads as well. Linux and osx-x64 are intentionally absent.
+      package_entries="$(unzip -Z1 "${package}")"
+      for sdk_rid in win-x64 win-arm64 osx-arm64; do
+        if ! grep -E "^runtimes/${sdk_rid}/native/sdk/.+" <<<"${package_entries}" >/dev/null; then
+          echo "${package_id} is missing SDK payloads for ${sdk_rid}." >&2
+          exit 1
+        fi
+      done
+      for excluded_rid in linux-x64 linux-arm64 osx-x64; do
+        if grep -E "^runtimes/${excluded_rid}/" <<<"${package_entries}" >/dev/null; then
+          echo "${package_id} unexpectedly contains ${excluded_rid} payloads." >&2
+          exit 1
+        fi
+      done
+      (
+        package_root="$(mktemp -d)"
+        trap 'rm -rf "${package_root}"' EXIT
+        unzip -q "${package}" -d "${package_root}"
+        python3 "${repo_root}/eng/progpu-verify-freetype.py" --package-root "${package_root}" --require --rids win-x64 win-arm64 osx-arm64
+        python3 "${repo_root}/eng/progpu-edit-word-icu-dependency.py" verify-package --package-root "${package_root}" --require --rids win-x64 win-arm64 osx-arm64
+      )
+    fi
   elif [[ "${package_id}" == "ProGPU.Backend.Dx12" ]]; then
     if [[ -f "${symbols}" ]]; then
       echo "Native-assets-only package must not produce an empty symbol package: ${symbols}" >&2
@@ -124,17 +148,22 @@ for package_id in "${selected_package_ids[@]}"; do
   if [[ "${package_id}" == "ProGPU.Backend.Native" ]]; then
     # Each lane claims exactly the native slices its consumers ship:
     #   PROGPU_PACKAGE_WINDOWS_ONLY=1  win-x64 + win-arm64, including Direct2D
-    #   opendevelop-macos              osx-arm64 only (Apple silicon)
+    #   opendevelop-macos              win-x64 + win-arm64 + osx-arm64
     #   otherwise                      every desktop RID
     windows_entries=(
       runtimes/win-x64/native/progpu_native.dll
+      runtimes/win-x64/native/progpu_native_dawn.dll
       runtimes/win-x64/native/progpu_native_direct2d.dll
       runtimes/win-arm64/native/progpu_native.dll
+      runtimes/win-arm64/native/progpu_native_dawn.dll
       runtimes/win-arm64/native/progpu_native_direct2d.dll)
     if [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" == "1" ]]; then
       native_entries=("${windows_entries[@]}")
     elif [[ "${package_group}" == "opendevelop-macos" ]]; then
-      native_entries=(runtimes/osx-arm64/native/libprogpu_native.dylib)
+      native_entries=(
+        "${windows_entries[@]}"
+        runtimes/osx-arm64/native/libprogpu_native.dylib
+        runtimes/osx-arm64/native/libprogpu_native_dawn.dylib)
     else
       native_entries=(
         runtimes/linux-x64/native/libprogpu_native.so
@@ -150,6 +179,15 @@ for package_id in "${selected_package_ids[@]}"; do
         exit 1
       fi
     done
+    if [[ "${package_group}" == "opendevelop-macos" ]]; then
+      package_entries="$(unzip -Z1 "${package}")"
+      for excluded_rid in linux-x64 linux-arm64 osx-x64; do
+        if grep -E "^runtimes/${excluded_rid}/" <<<"${package_entries}" >/dev/null; then
+          echo "${package_id} unexpectedly contains ${excluded_rid} payloads." >&2
+          exit 1
+        fi
+      done
+    fi
   fi
 
   while IFS=$'\t' read -r dependency_id dependency_version; do

@@ -247,9 +247,9 @@ def validate_staged(destination_value, rid):
     return {"rid": rid, "sha256": metadata["sha256"]}
 
 
-def validate_package(root_value, require):
+def validate_package(root_value, require, rids):
     root = canonical(root_value, directory=True)
-    destinations = [(rid, root / "runtimes" / rid / "native") for rid in PREPARE.RID_MACHINES]
+    destinations = [(rid, root / "runtimes" / rid / "native") for rid in rids]
     present = any((destination / "sdk/progpu-native-font-dependency.json").exists() or
                   (destination / "licenses/freetype").exists() or
                   (destination / "sdk" / ("progpu_native_freetype.lib" if rid.startswith("win-") else "libprogpu_native_freetype.a")).exists()
@@ -262,6 +262,7 @@ def main():
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--manifest")
     inputs.add_argument("--package-root")
+    parser.add_argument("--rids", nargs="+", choices=PREPARE.RID_MACHINES)
     parser.add_argument("--rid", choices=PREPARE.RID_MACHINES)
     parser.add_argument("--native-destination")
     parser.add_argument("--build-directory")
@@ -271,7 +272,7 @@ def main():
     if args.package_root:
         if args.rid or args.native_destination or args.metadata_only or args.build_directory:
             parser.error("Package admission does not accept producer arguments")
-        result = validate_package(args.package_root, args.require)
+        result = validate_package(args.package_root, args.require, args.rids or PREPARE.RID_MACHINES)
     else:
         if not args.rid or args.require or (args.native_destination and args.metadata_only):
             parser.error("Producer admission requires an exact RID and one output mode")

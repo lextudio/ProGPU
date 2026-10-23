@@ -223,19 +223,19 @@ def stage(args):
     shutil.copyfile(binary / MARKER, targets[1])
 
 
-def verify_package(root, required):
+def verify_package(root, required, rids):
     root = canonical(root, directory=True)
     pin = read_json(PIN)
     present = []
-    for rid in RIDS:
+    for rid in rids:
         native = root / "runtimes" / rid / "native"
         present.append(any(path.exists() for path in (native / "sdk" / MARKER,
                        native / "sdk" / library_name(rid), native / "licenses/edit-word-icu")))
     if not required and not any(present):
         return
     if not all(present):
-        raise ValueError("Private ICU package requires complete inputs for all six desktop RIDs")
-    for rid in RIDS:
+        raise ValueError("Private ICU package requires complete inputs for every selected RID")
+    for rid in rids:
         native = root / "runtimes" / rid / "native"
         validate_payload(read_json(native / "sdk" / MARKER), rid, pin,
                          native / "sdk" / library_name(rid), native / "licenses/edit-word-icu/LICENSE")
@@ -260,13 +260,14 @@ def main():
     package = commands.add_parser("verify-package")
     package.add_argument("--package-root", required=True)
     package.add_argument("--require", action="store_true")
+    package.add_argument("--rids", nargs="+", choices=RIDS)
     args = parser.parse_args()
     if args.command == "record":
         record(args)
     elif args.command == "stage":
         stage(args)
     else:
-        verify_package(args.package_root, args.require)
+        verify_package(args.package_root, args.require, args.rids or RIDS)
 
 
 if __name__ == "__main__":
