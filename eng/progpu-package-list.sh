@@ -220,21 +220,19 @@ progpu_drawing_runtime_package_purposes=(
   "Drawing runtime closure: portable System.Drawing.Common implementation."
 )
 
-# Exact local-package closure consumed by OpenDevelop's macOS distribution.
+# Exact local-package closure assembled by OpenDevelop's macOS packaging job.
 #
-# This deliberately excludes the Windows-only native/DX packages from the
-# general `portable` group. Those packages validate native payloads for every
-# desktop RID, which is correct for a cross-platform ProGPU release but makes a
-# macOS-only OpenDevelop package depend on Windows staging that it neither
-# ships nor uses. Keep this list topologically ordered: it must be sufficient
+# The final job receives Windows x64/ARM64 native and DX12 payloads before it
+# adds macOS ARM64. Keep this list topologically ordered: it must be sufficient
 # for a clean NuGet restore using only the freshly built local feed. It is the
-# ProjectReference closure of WinUI, its Fluent theme, the native backend,
+# ProjectReference closure of WinUI, its Fluent theme, the native/DX backends,
 # Media.Scene and the SkiaSharp/System.Drawing shims.
 progpu_opendevelop_macos_package_ids=(
   ProGPU.Backend
   ProGPU.Native.Sdk
   ProGPU.Backend.Native
   ProGPU.Backend.Dawn
+  ProGPU.Backend.Dx12
   ProGPU.Media
   ProGPU.Media.Scene
   ProGPU.WinRT
@@ -258,6 +256,7 @@ progpu_opendevelop_macos_package_projects=(
   src/ProGPU.Native.Sdk/ProGPU.Native.Sdk.csproj
   src/ProGPU.Backend.Native/ProGPU.Backend.Native.csproj
   src/ProGPU.Backend.Dawn/ProGPU.Backend.Dawn.csproj
+  src/ProGPU.Backend.Dx12/ProGPU.Backend.Dx12.csproj
   src/ProGPU.Media/ProGPU.Media.csproj
   src/ProGPU.Media.Scene/ProGPU.Media.Scene.csproj
   src/ProGPU.WinRT/ProGPU.WinRT.csproj
