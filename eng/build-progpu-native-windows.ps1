@@ -120,6 +120,13 @@ function Resolve-VsTool([string] $ToolName) {
         Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\$DevCmdArchitecture\$ToolName" } |
         Select-Object -First 1 -ExpandProperty FullName
     if (-not $Tool) {
+        # dumpbin/lib are host executables; VS 2026 does not always place a
+        # copy in the requested cross-target directory. Keep the lookup inside
+        # the vswhere-selected installation, but use any available copy there.
+        $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $Tool) {
         throw "$ToolName was not found in the selected Visual Studio C++ tools."
     }
     return $Tool
