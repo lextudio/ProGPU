@@ -94,6 +94,12 @@ target_compile_definitions(progpu_native_edit_icu PUBLIC
     UCONFIG_NO_IDNA=1 UCONFIG_NO_LEGACY_CONVERSION=1
     UCONFIG_NO_FILTERED_BREAK_ITERATION=1)
 target_compile_definitions(progpu_native_edit_icu PRIVATE U_COMMON_IMPLEMENTATION=1)
+if(MSVC)
+    # ICU's sources are UTF-8 with non-ASCII character literals; without /utf-8
+    # MSVC reads them in the ANSI code page and fails with C2015 (ICU's own
+    # Windows projects set the same option).
+    target_compile_options(progpu_native_edit_icu PRIVATE /utf-8)
+endif()
 set_target_properties(progpu_native_edit_icu PROPERTIES
     POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES INTERPROCEDURAL_OPTIMIZATION OFF)
