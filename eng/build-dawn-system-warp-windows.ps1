@@ -122,7 +122,7 @@ Checkout-Original $pin.jinjaRepository $pin.jinjaRevision $jinja
 Checkout-Original $pin.markupSafeRepository $pin.markupSafeRevision $markup
 
 $archive = Join-Path $build 'original-release.zip'
-Invoke-WebRequest -Uri $runtime.url -OutFile $archive
+Invoke-WebRequest -Uri $runtime.url -OutFile $archive -MaximumRetryCount 5 -RetryIntervalSec 10
 if ((Get-Item -LiteralPath $archive).Length -ne $runtime.archiveBytes) { throw 'Original ZIP length mismatch.' }
 Assert-Hash $archive $runtime.archiveSha256
 $release = Join-Path $build 'original-release'
