@@ -154,8 +154,8 @@ void verify_hinted_paragraph_glyph_rendering(Render render, Require require) {
                     variant == 1U ? 23U : 0U, {}}, units}}};
             progpu_native_text_shape_request shaping{};
             shaping.struct_size = sizeof(shaping); shaping.abi_version = PROGPU_NATIVE_ABI_VERSION;
-            shaping.input = input.data(); shaping.input_count = input.size();
-            shaping.features = features.data(); shaping.feature_count = features.size();
+            shaping.input = input.data(); shaping.input_count = static_cast<std::uint32_t>(input.size());
+            shaping.features = features.data(); shaping.feature_count = static_cast<std::uint32_t>(features.size());
             shaping.direction = variant == 1U ? PROGPU_NATIVE_TEXT_DIRECTION_RIGHT_TO_LEFT : PROGPU_NATIVE_TEXT_DIRECTION_LEFT_TO_RIGHT;
             progpu_native_text_layout_options layout{};
             layout.struct_size = sizeof(layout); layout.scale = 1.0F; layout.direction = shaping.direction;
