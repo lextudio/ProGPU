@@ -127,7 +127,12 @@ for package_id in "${selected_package_ids[@]}"; do
         fi
       done
       (
-        package_root="$(mktemp -d)"
+        # macOS' default mktemp directory is /var/folders, which resolves to
+        # /private/var/folders. The dependency verifier intentionally rejects
+        # that non-canonical path, so create the transient extraction tree
+        # under the canonical repository artifacts directory instead.
+        mkdir -p "${repo_root}/artifacts"
+        package_root="$(mktemp -d "${repo_root}/artifacts/progpu-package-verify.XXXXXX")"
         trap 'rm -rf "${package_root}"' EXIT
         unzip -q "${package}" -d "${package_root}"
         python3 "${repo_root}/eng/progpu-verify-freetype.py" --package-root "${package_root}" --require --rids win-x64 win-arm64 osx-arm64
