@@ -567,14 +567,14 @@ void nominal_metric_controls() {
         std::array<progpu_native_hinted_source_glyph_offset, 2U> copied{{{77.0, 78.0}, {79.0, 80.0}}};
         const auto copied_before = copied;
         require(progpu_native_hinted_glyph_resource_copy_source_offsets(ordinary.value, &selected, 1U,
-            em, copied.data(), copied.size()) == PROGPU_NATIVE_STATUS_UNSUPPORTED && same_bytes(copied, copied_before));
+            em, copied.data(), static_cast<std::uint32_t>(copied.size())) == PROGPU_NATIVE_STATUS_UNSUPPORTED && same_bytes(copied, copied_before));
         require(progpu_native_hinted_glyph_resource_copy_source_offsets(resource.value, &selected, 1U,
-            em, copied.data(), copied.size()) == PROGPU_NATIVE_STATUS_SUCCESS &&
+            em, copied.data(), static_cast<std::uint32_t>(copied.size())) == PROGPU_NATIVE_STATUS_SUCCESS &&
             same_bytes(copied[0], offset) && same_bytes(copied[1], copied_before[1]));
         const auto admitted_copy = copied;
         const std::array<std::uint32_t, 2U> invalid_selection{{selected, original.counts.positioned_glyph_count}};
         require(progpu_native_hinted_glyph_resource_copy_source_offsets(resource.value, invalid_selection.data(), 2U,
-            em, copied.data(), copied.size()) == PROGPU_NATIVE_STATUS_INVALID_ARGUMENT && same_bytes(copied, admitted_copy));
+            em, copied.data(), static_cast<std::uint32_t>(copied.size())) == PROGPU_NATIVE_STATUS_INVALID_ARGUMENT && same_bytes(copied, admitted_copy));
         require(progpu_native_hinted_glyph_resource_copy_source_offsets(resource.value, &selected, 1U,
             em, reinterpret_cast<progpu_native_hinted_source_glyph_offset*>(const_cast<std::uint8_t*>(original.font_bytes)), 1U) ==
             PROGPU_NATIVE_STATUS_INVALID_ARGUMENT);
