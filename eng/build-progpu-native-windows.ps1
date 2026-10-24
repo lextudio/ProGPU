@@ -110,9 +110,23 @@ if (-not $VsInstall) {
 Import-Module (Join-Path $VsInstall "Common7/Tools/Microsoft.VisualStudio.DevShell.dll")
 Enter-VsDevShell -VsInstallPath $VsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=$DevCmdArchitecture -host_arch=$DevCmdHostArchitecture" | Out-Null
 
+# VS 2026's developer shell can provide cl.exe and link.exe without adding
+# dumpbin.exe to PATH. Resolve the export-inspection tool from the selected VS
+# installation as a fallback so the package gate keeps auditing the binaries.
+$DumpBin = Get-Command dumpbin.exe -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty Source
+if (-not $DumpBin) {
+    $VsToolsRoot = Join-Path $VsInstall "VC/Tools/MSVC"
+    $DumpBin = Get-ChildItem -Path $VsToolsRoot -Filter dumpbin.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $DumpBin) {
+    throw "dumpbin.exe was not found in the selected Visual Studio C++ tools."
+}
+
 $DefFile = Join-Path $RuntimeDir "wgpu_native.def"
 $ImportLibrary = Join-Path $RuntimeDir "wgpu_native.lib"
-$Exports = & dumpbin.exe /nologo /exports $WgpuDll |
+$Exports = & $DumpBin /nologo /exports $WgpuDll |
     ForEach-Object {
         if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+([A-Za-z_][A-Za-z0-9_@?$]*)') {
             $Matches[1]
@@ -247,14 +261,14 @@ $ExpectedNativeExports = Get-Content (Join-Path $RepoRoot "eng/progpu-native-exp
     Sort-Object -Unique
 foreach ($FontExportLibrary in @($NativeDll, $DawnDll, $Direct2DDll)) {
     if (Test-Path $FontExportLibrary) {
-        $FontExportRows = & dumpbin.exe /nologo /exports $FontExportLibrary
+        $FontExportRows = & $DumpBin /nologo /exports $FontExportLibrary
         if ($LASTEXITCODE -ne 0) { throw "Font export inspection failed: $FontExportLibrary" }
         if ($FontExportRows | Select-String -Pattern '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(?:(?:FT_|ft_)|\S*_progpu_edit\S*|progpu_edit_icu_data)') {
             throw "The native provider leaked private text dependency symbols: $FontExportLibrary"
         }
     }
 }
-$ActualNativeExports = & dumpbin.exe /nologo /exports $NativeDll |
+$ActualNativeExports = & $DumpBin /nologo /exports $NativeDll |
     ForEach-Object {
         if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(progpu_native_[A-Za-z0-9_]+)') {
             $Matches[1]
@@ -269,7 +283,7 @@ if ($ExportDifference) {
 $ExpectedDirect2DExports = Get-Content (Join-Path $RepoRoot "eng/progpu-native-direct2d-exports.txt") |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
     Sort-Object -Unique
-$ActualDirect2DExports = & dumpbin.exe /nologo /exports $Direct2DDll |
+$ActualDirect2DExports = & $DumpBin /nologo /exports $Direct2DDll |
     ForEach-Object {
         if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(progpu_native_direct2d_[A-Za-z0-9_]+)') {
             $Matches[1]
@@ -288,7 +302,7 @@ if (-not $SkipExtendedIntegration) {
     $ExpectedDawnExports = Get-Content (Join-Path $RepoRoot "eng/progpu-native-dawn-exports.txt") |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
         Sort-Object -Unique
-    $ActualDawnExports = & dumpbin.exe /nologo /exports $DawnDll |
+    $ActualDawnExports = & $DumpBin /nologo /exports $DawnDll |
         ForEach-Object {
             if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(progpu_native_[A-Za-z0-9_]+)') {
                 $Matches[1]
@@ -300,7 +314,7 @@ if (-not $SkipExtendedIntegration) {
         $DawnExportDifference | Format-Table | Out-String | Write-Error
         throw "The ProGPU Dawn adapter exported-symbol surface changed."
     }
-    $DawnImports = & dumpbin.exe /nologo /imports $DawnDll
+    $DawnImports = & $DumpBin /nologo /imports $DawnDll
     if ($DawnImports | Select-String -Pattern '\bwgpu[A-Z]' -CaseSensitive) {
         throw "The ProGPU Dawn adapter imports WebGPU procedures directly."
     }
