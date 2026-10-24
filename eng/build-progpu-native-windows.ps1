@@ -111,18 +111,25 @@ Import-Module (Join-Path $VsInstall "Common7/Tools/Microsoft.VisualStudio.DevShe
 Enter-VsDevShell -VsInstallPath $VsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=$DevCmdArchitecture -host_arch=$DevCmdHostArchitecture" | Out-Null
 
 # VS 2026's developer shell can provide cl.exe and link.exe without adding
-# dumpbin.exe to PATH. Resolve the export-inspection tool from the selected VS
-# installation as a fallback so the package gate keeps auditing the binaries.
-$DumpBin = Get-Command dumpbin.exe -CommandType Application -ErrorAction SilentlyContinue |
-    Select-Object -First 1 -ExpandProperty Source
-if (-not $DumpBin) {
-    $VsToolsRoot = Join-Path $VsInstall "VC/Tools/MSVC"
-    $DumpBin = Get-ChildItem -Path $VsToolsRoot -Filter dumpbin.exe -File -Recurse -ErrorAction SilentlyContinue |
-        Select-Object -First 1 -ExpandProperty FullName
+# dumpbin.exe or lib.exe to PATH. Resolve these package-gate tools from the
+# selected VS installation as a fallback, for the requested host and target.
+$VsToolsRoot = Join-Path $VsInstall "VC/Tools/MSVC"
+function Resolve-VsTool([string] $ToolName) {
+    $Tool = Get-Command $ToolName -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty Source
+    if (-not $Tool) {
+        $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\$DevCmdArchitecture\$ToolName" } |
+            Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $Tool) {
+        throw "$ToolName was not found in the selected Visual Studio C++ tools."
+    }
+    return $Tool
 }
-if (-not $DumpBin) {
-    throw "dumpbin.exe was not found in the selected Visual Studio C++ tools."
-}
+
+$DumpBin = Resolve-VsTool "dumpbin.exe"
+$Lib = Resolve-VsTool "lib.exe"
 
 $DefFile = Join-Path $RuntimeDir "wgpu_native.def"
 $ImportLibrary = Join-Path $RuntimeDir "wgpu_native.lib"
@@ -137,7 +144,7 @@ if (-not $Exports -or $Exports.Count -lt 100) {
     throw "Could not recover the wgpu-native export table."
 }
 [System.IO.File]::WriteAllLines($DefFile, @("LIBRARY wgpu_native", "EXPORTS") + $Exports)
-& lib.exe /nologo "/def:$DefFile" "/machine:$LibraryMachine" "/out:$ImportLibrary"
+& $Lib /nologo "/def:$DefFile" "/machine:$LibraryMachine" "/out:$ImportLibrary"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $ImportLibrary)) {
     throw "Failed to generate the pinned wgpu-native import library."
 }
