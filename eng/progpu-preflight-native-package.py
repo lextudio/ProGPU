@@ -20,6 +20,12 @@ for rid in args.rids:
             errors.append(f"{rid}: missing FreeType SDK input {name}")
     if not (native / "licenses" / "freetype" / "NOTICE.txt").is_file():
         errors.append(f"{rid}: missing FreeType notices")
+    icu_library = "progpu_native_edit_icu.lib" if rid.startswith("win-") else "libprogpu_native_edit_icu.a"
+    for name in ("progpu-native-edit-word-dependency.json", icu_library):
+        if not (native / "sdk" / name).is_file():
+            errors.append(f"{rid}: missing private ICU SDK input {name}")
+    if not (native / "licenses" / "edit-word-icu" / "LICENSE").is_file():
+        errors.append(f"{rid}: missing private ICU notice")
     if rid.startswith("win-"):
         for name in ("wgpu_native.dll", "dxcompiler.dll", "dxil.dll", "progpu-dx12-runtime.json"):
             if not (dx12 / name).is_file() or (dx12 / name).stat().st_size == 0:
