@@ -129,10 +129,18 @@ foreach ($Entry in $VsEnvironment) {
     }
 }
 
-# Resolve every C++ build and package-gate executable from the vswhere-selected
-# installation.  CMake receives full paths for the compiler/linker/archive
-# tools, so another installed VS cannot win through PATH ordering.
-$VsToolsRoot = Join-Path $VsInstall "VC/Tools/MSVC"
+# Resolve every C++ build and package-gate executable from the exact MSVC
+# toolset selected by VsDevCmd.  Multiple toolsets can coexist in one VS
+# install; choosing the first recursive result can otherwise pair an old cl.exe
+# with newer STL headers and fail during compilation.
+$VsToolsRoot = $env:VCToolsInstallDir
+if (-not $VsToolsRoot -or -not (Test-Path -LiteralPath $VsToolsRoot)) {
+    throw "VsDevCmd.bat did not select a usable VCToolsInstallDir."
+}
+$VsToolsRoot = $VsToolsRoot.TrimEnd('\\', '/')
+if (-not $VsToolsRoot.StartsWith($VsInstall, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "VsDevCmd.bat selected a C++ toolset outside the selected Visual Studio installation: $VsToolsRoot"
+}
 function Resolve-VsTool([string] $ToolName, [switch] $RequireRequestedTarget) {
     $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\$DevCmdArchitecture\$ToolName" } |
