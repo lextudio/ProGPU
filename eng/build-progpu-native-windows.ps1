@@ -111,17 +111,14 @@ Import-Module (Join-Path $VsInstall "Common7/Tools/Microsoft.VisualStudio.DevShe
 Enter-VsDevShell -VsInstallPath $VsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=$DevCmdArchitecture -host_arch=$DevCmdHostArchitecture" | Out-Null
 
 # VS 2026's developer shell can provide cl.exe and link.exe without adding
-# dumpbin.exe or lib.exe to PATH. Resolve these package-gate tools from the
-# selected VS installation as a fallback, for the requested host and target.
+# dumpbin.exe or lib.exe to PATH. Always resolve these package-gate tools from
+# the selected VS installation, for the requested host and target, so a stale
+# tool from another VS installation cannot generate the package artifacts.
 $VsToolsRoot = Join-Path $VsInstall "VC/Tools/MSVC"
 function Resolve-VsTool([string] $ToolName) {
-    $Tool = Get-Command $ToolName -CommandType Application -ErrorAction SilentlyContinue |
-        Select-Object -First 1 -ExpandProperty Source
-    if (-not $Tool) {
-        $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\$DevCmdArchitecture\$ToolName" } |
-            Select-Object -First 1 -ExpandProperty FullName
-    }
+    $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\$DevCmdArchitecture\$ToolName" } |
+        Select-Object -First 1 -ExpandProperty FullName
     if (-not $Tool) {
         throw "$ToolName was not found in the selected Visual Studio C++ tools."
     }
