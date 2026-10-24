@@ -47,7 +47,10 @@ switch ($Rid) {
     "win-arm64" {
         $CMakeArchitecture = "ARM64"
         $DevCmdArchitecture = "arm64"
-        $DevCmdHostArchitecture = "arm64"
+        # GitHub's Windows ARM64 lane runs on an x64 hosted runner.  It can
+        # cross-compile to ARM64, but cannot execute ARM64-hosted compiler
+        # tools, so initialize the x64 host toolchain explicitly.
+        $DevCmdHostArchitecture = "x64"
         $ToolComponent = "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
         $LibraryMachine = "ARM64"
         $ClangTarget = "aarch64-pc-windows-msvc"
