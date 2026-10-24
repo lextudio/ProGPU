@@ -110,23 +110,40 @@ $VsInstall = (& $VsWhere -latest -products * -requires $ToolComponent -property 
 if (-not $VsInstall) {
     throw "Visual Studio C++ build tools were not found."
 }
-Import-Module (Join-Path $VsInstall "Common7/Tools/Microsoft.VisualStudio.DevShell.dll")
-Enter-VsDevShell -VsInstallPath $VsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=$DevCmdArchitecture -host_arch=$DevCmdHostArchitecture" | Out-Null
+# Use Visual Studio's own batch entry point, rather than assuming the PowerShell
+# DevShell module has propagated every tool path into this process.  In
+# particular, the VS 2026 ARM64 cross environment on GitHub's x64 runner can
+# otherwise omit cl.exe from PATH.
+$VsDevCmd = Join-Path $VsInstall "Common7/Tools/VsDevCmd.bat"
+if (-not (Test-Path -LiteralPath $VsDevCmd)) {
+    throw "The selected Visual Studio installation has no VsDevCmd.bat: $VsDevCmd"
+}
+$VsEnvironment = & cmd.exe /d /s /c "call `"$VsDevCmd`" -no_logo -arch=$DevCmdArchitecture -host_arch=$DevCmdHostArchitecture >nul && set"
+if ($LASTEXITCODE -ne 0) {
+    throw "VsDevCmd.bat failed for the selected Visual Studio installation."
+}
+foreach ($Entry in $VsEnvironment) {
+    $Separator = $Entry.IndexOf('=')
+    if ($Separator -gt 0) {
+        [Environment]::SetEnvironmentVariable($Entry.Substring(0, $Separator), $Entry.Substring($Separator + 1), "Process")
+    }
+}
 
-# VS 2026's developer shell can provide cl.exe and link.exe without adding
-# dumpbin.exe or lib.exe to PATH. Always resolve these package-gate tools from
-# the selected VS installation, for the requested host and target, so a stale
-# tool from another VS installation cannot generate the package artifacts.
+# Resolve every C++ build and package-gate executable from the vswhere-selected
+# installation.  CMake receives full paths for the compiler/linker/archive
+# tools, so another installed VS cannot win through PATH ordering.
 $VsToolsRoot = Join-Path $VsInstall "VC/Tools/MSVC"
-function Resolve-VsTool([string] $ToolName) {
+function Resolve-VsTool([string] $ToolName, [switch] $RequireRequestedTarget) {
     $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\$DevCmdArchitecture\$ToolName" } |
         Select-Object -First 1 -ExpandProperty FullName
-    if (-not $Tool) {
+    if (-not $Tool -and -not $RequireRequestedTarget) {
         # dumpbin/lib are host executables; VS 2026 does not always place a
         # copy in the requested cross-target directory. Keep the lookup inside
-        # the vswhere-selected installation, but use any available copy there.
+        # the vswhere-selected installation and the requested host architecture,
+        # but accept any target-directory copy.
         $Tool = Get-ChildItem -Path $VsToolsRoot -Filter $ToolName -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\bin\Host$DevCmdHostArchitecture\*\$ToolName" } |
             Select-Object -First 1 -ExpandProperty FullName
     }
     if (-not $Tool) {
@@ -135,8 +152,11 @@ function Resolve-VsTool([string] $ToolName) {
     return $Tool
 }
 
+$Cl = Resolve-VsTool "cl.exe" -RequireRequestedTarget
+$Link = Resolve-VsTool "link.exe" -RequireRequestedTarget
 $DumpBin = Resolve-VsTool "dumpbin.exe"
 $Lib = Resolve-VsTool "lib.exe"
+Write-Host "Selected Visual Studio C++ tools: cl=$Cl; link=$Link; lib=$Lib; dumpbin=$DumpBin"
 
 $DefFile = Join-Path $RuntimeDir "wgpu_native.def"
 $ImportLibrary = Join-Path $RuntimeDir "wgpu_native.lib"
@@ -170,7 +190,10 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $ImportLibrary)) {
             "-DCMAKE_CXX_COMPILER=clang-cl",
             "-DCMAKE_CXX_COMPILER_TARGET=$ClangTarget")
     } else {
-        @("-DCMAKE_CXX_COMPILER=cl")
+        @(
+            "-DCMAKE_CXX_COMPILER:FILEPATH=$Cl",
+            "-DCMAKE_LINKER:FILEPATH=$Link",
+            "-DCMAKE_AR:FILEPATH=$Lib")
     }
 } elseif ($Compiler -eq "ClangCL") {
     @("-T", "ClangCL")
