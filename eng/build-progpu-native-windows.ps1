@@ -137,7 +137,7 @@ $VsToolsRoot = $env:VCToolsInstallDir
 if (-not $VsToolsRoot -or -not (Test-Path -LiteralPath $VsToolsRoot)) {
     throw "VsDevCmd.bat did not select a usable VCToolsInstallDir."
 }
-$VsToolsRoot = $VsToolsRoot.TrimEnd('\\', '/')
+$VsToolsRoot = $VsToolsRoot.TrimEnd('/', '\')
 if (-not $VsToolsRoot.StartsWith($VsInstall, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "VsDevCmd.bat selected a C++ toolset outside the selected Visual Studio installation: $VsToolsRoot"
 }
