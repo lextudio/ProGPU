@@ -162,7 +162,22 @@ for package_id in "${selected_package_ids[@]}"; do
       runtimes/win-arm64/native/progpu_native.dll
       runtimes/win-arm64/native/progpu_native_dawn.dll
       runtimes/win-arm64/native/progpu_native_direct2d.dll)
-    if [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" == "1" ]]; then
+    if [[ -n "${ProGpuNativePackageRids:-}" ]]; then
+      # An explicit closure (the same list the MSBuild package validation uses)
+      # names its RIDs; this lets e.g. drawing-runtime ship without Linux.
+      native_entries=()
+      for native_rid in ${ProGpuNativePackageRids}; do
+        case "${native_rid}" in
+          win-*) native_entries+=(runtimes/${native_rid}/native/progpu_native.dll
+                   runtimes/${native_rid}/native/progpu_native_dawn.dll
+                   runtimes/${native_rid}/native/progpu_native_direct2d.dll) ;;
+          osx-*) native_entries+=(runtimes/${native_rid}/native/libprogpu_native.dylib
+                   runtimes/${native_rid}/native/libprogpu_native_dawn.dylib) ;;
+          linux-*) native_entries+=(runtimes/${native_rid}/native/libprogpu_native.so) ;;
+          *) echo "Unknown RID '${native_rid}' in ProGpuNativePackageRids." >&2; exit 1 ;;
+        esac
+      done
+    elif [[ "${PROGPU_PACKAGE_WINDOWS_ONLY:-0}" == "1" ]]; then
       native_entries=("${windows_entries[@]}")
     elif [[ "${package_group}" == "opendevelop-macos" ]]; then
       native_entries=(
