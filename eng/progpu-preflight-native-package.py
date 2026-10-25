@@ -12,7 +12,16 @@ errors = []
 for rid in args.rids:
     native = args.root / "progpu-native" / "package" / "runtimes" / rid / "native"
     dx12 = args.root / "progpu-dx12" / "package" / rid / "native"
-    for name in ("progpu_native.dll", "progpu_native_dawn.dll", "progpu_native_direct2d.dll") if rid.startswith("win-") else ("libprogpu_native.dylib", "libprogpu_native_dawn.dylib"):
+    if rid.startswith("win-"):
+        native_libraries = ("progpu_native.dll", "progpu_native_dawn.dll", "progpu_native_direct2d.dll")
+    elif rid.startswith("linux-"):
+        native_libraries = ("libprogpu_native.so", "libprogpu_native_dawn.so")
+    elif rid.startswith("osx-"):
+        native_libraries = ("libprogpu_native.dylib", "libprogpu_native_dawn.dylib")
+    else:
+        errors.append(f"{rid}: unsupported native package RID")
+        continue
+    for name in native_libraries:
         if not (native / name).is_file() or (native / name).stat().st_size == 0:
             errors.append(f"{rid}: missing native payload {name}")
     for name in ("progpu-native-font-dependency.json", "progpu_native_freetype.lib" if rid.startswith("win-") else "libprogpu_native_freetype.a"):

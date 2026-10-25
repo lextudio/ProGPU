@@ -35,12 +35,16 @@ case "${package_group}" in
     selected_package_ids=("${progpu_opendevelop_macos_package_ids[@]}")
     selected_package_projects=("${progpu_opendevelop_macos_package_projects[@]}")
     ;;
+  opendevelop-crossdesktop)
+    selected_package_ids=("${progpu_opendevelop_crossdesktop_package_ids[@]}")
+    selected_package_projects=("${progpu_opendevelop_crossdesktop_package_projects[@]}")
+    ;;
   mobile)
     selected_package_ids=("${progpu_mobile_package_ids[@]}")
     selected_package_projects=("${progpu_mobile_package_projects[@]}")
     ;;
   *)
-    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, opendevelop-macos, or mobile." >&2
+    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, opendevelop-macos, opendevelop-crossdesktop, or mobile." >&2
     exit 1
     ;;
 esac

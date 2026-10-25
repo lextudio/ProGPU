@@ -24,11 +24,14 @@ case "${package_group}" in
   opendevelop-macos)
     selected_package_ids=("${progpu_opendevelop_macos_package_ids[@]}")
     ;;
+  opendevelop-crossdesktop)
+    selected_package_ids=("${progpu_opendevelop_crossdesktop_package_ids[@]}")
+    ;;
   mobile)
     selected_package_ids=("${progpu_mobile_package_ids[@]}")
     ;;
   *)
-    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, opendevelop-macos, or mobile." >&2
+    echo "Unknown PROGPU_PACKAGE_GROUP '${package_group}'. Expected all, portable, avalonia-runtime, drawing-runtime, opendevelop-macos, opendevelop-crossdesktop, or mobile." >&2
     exit 1
     ;;
 esac
@@ -110,17 +113,25 @@ for package_id in "${selected_package_ids[@]}"; do
       echo "Static-SDK-assets-only package must not produce an empty symbol package: ${symbols}" >&2
       exit 1
     fi
-    if [[ "${package_group}" == "opendevelop-macos" ]]; then
-      # This final assembly is built on macOS but contains the downloaded Windows
-      # SDK payloads as well. Linux and osx-x64 are intentionally absent.
+    if [[ "${package_group}" == "opendevelop-macos" || "${package_group}" == "opendevelop-crossdesktop" ]]; then
+      # This final assembly is built on macOS and contains the downloaded native
+      # SDK payloads. The cross-desktop closure adds Linux; neither lane ships
+      # the unsupported osx-x64 slice.
       package_entries="$(unzip -Z1 "${package}")"
-      for sdk_rid in win-x64 win-arm64 osx-arm64; do
+      if [[ "${package_group}" == "opendevelop-crossdesktop" ]]; then
+        sdk_rids=(win-x64 win-arm64 linux-x64 linux-arm64 osx-arm64)
+        excluded_rids=(osx-x64)
+      else
+        sdk_rids=(win-x64 win-arm64 osx-arm64)
+        excluded_rids=(linux-x64 linux-arm64 osx-x64)
+      fi
+      for sdk_rid in "${sdk_rids[@]}"; do
         if ! grep -E "^runtimes/${sdk_rid}/native/sdk/.+" <<<"${package_entries}" >/dev/null; then
           echo "${package_id} is missing SDK payloads for ${sdk_rid}." >&2
           exit 1
         fi
       done
-      for excluded_rid in linux-x64 linux-arm64 osx-x64; do
+      for excluded_rid in "${excluded_rids[@]}"; do
         if grep -E "^runtimes/${excluded_rid}/" <<<"${package_entries}" >/dev/null; then
           echo "${package_id} unexpectedly contains ${excluded_rid} payloads." >&2
           exit 1
@@ -135,8 +146,8 @@ for package_id in "${selected_package_ids[@]}"; do
         package_root="$(mktemp -d "${repo_root}/artifacts/progpu-package-verify.XXXXXX")"
         trap 'rm -rf "${package_root}"' EXIT
         unzip -q "${package}" -d "${package_root}"
-        python3 "${repo_root}/eng/progpu-verify-freetype.py" --package-root "${package_root}" --require --rids win-x64 win-arm64 osx-arm64
-        python3 "${repo_root}/eng/progpu-edit-word-icu-dependency.py" verify-package --package-root "${package_root}" --require --rids win-x64 win-arm64 osx-arm64
+        python3 "${repo_root}/eng/progpu-verify-freetype.py" --package-root "${package_root}" --require --rids "${sdk_rids[@]}"
+        python3 "${repo_root}/eng/progpu-edit-word-icu-dependency.py" verify-package --package-root "${package_root}" --require --rids "${sdk_rids[@]}"
       )
     fi
   elif [[ "${package_id}" == "ProGPU.Backend.Dx12" ]]; then
@@ -154,6 +165,7 @@ for package_id in "${selected_package_ids[@]}"; do
     # Each lane claims exactly the native slices its consumers ship:
     #   PROGPU_PACKAGE_WINDOWS_ONLY=1  win-x64 + win-arm64, including Direct2D
     #   opendevelop-macos              win-x64 + win-arm64 + osx-arm64
+    #   opendevelop-crossdesktop       win-x64 + win-arm64 + linux-x64 + linux-arm64 + osx-arm64
     #   otherwise                      every desktop RID
     windows_entries=(
       runtimes/win-x64/native/progpu_native.dll
@@ -173,7 +185,8 @@ for package_id in "${selected_package_ids[@]}"; do
                    runtimes/${native_rid}/native/progpu_native_direct2d.dll) ;;
           osx-*) native_entries+=(runtimes/${native_rid}/native/libprogpu_native.dylib
                    runtimes/${native_rid}/native/libprogpu_native_dawn.dylib) ;;
-          linux-*) native_entries+=(runtimes/${native_rid}/native/libprogpu_native.so) ;;
+          linux-*) native_entries+=(runtimes/${native_rid}/native/libprogpu_native.so
+                     runtimes/${native_rid}/native/libprogpu_native_dawn.so) ;;
           *) echo "Unknown RID '${native_rid}' in ProGpuNativePackageRids." >&2; exit 1 ;;
         esac
       done
@@ -199,9 +212,14 @@ for package_id in "${selected_package_ids[@]}"; do
         exit 1
       fi
     done
-    if [[ "${package_group}" == "opendevelop-macos" ]]; then
+    if [[ "${package_group}" == "opendevelop-macos" || "${package_group}" == "opendevelop-crossdesktop" ]]; then
       package_entries="$(unzip -Z1 "${package}")"
-      for excluded_rid in linux-x64 linux-arm64 osx-x64; do
+      if [[ "${package_group}" == "opendevelop-crossdesktop" ]]; then
+        excluded_rids=(osx-x64)
+      else
+        excluded_rids=(linux-x64 linux-arm64 osx-x64)
+      fi
+      for excluded_rid in "${excluded_rids[@]}"; do
         if grep -E "^runtimes/${excluded_rid}/" <<<"${package_entries}" >/dev/null; then
           echo "${package_id} unexpectedly contains ${excluded_rid} payloads." >&2
           exit 1
@@ -217,7 +235,7 @@ for package_id in "${selected_package_ids[@]}"; do
         echo "${package_id} depends on ${dependency_id} ${dependency_version}, expected ${package_version}." >&2
         exit 1
       fi
-      if [[ "${package_group}" == "avalonia-runtime" || "${package_group}" == "drawing-runtime" || "${package_group}" == "opendevelop-macos" ]] && ! is_selected_package_id "${dependency_id}"; then
+      if [[ "${package_group}" == "avalonia-runtime" || "${package_group}" == "drawing-runtime" || "${package_group}" == "opendevelop-macos" || "${package_group}" == "opendevelop-crossdesktop" ]] && ! is_selected_package_id "${dependency_id}"; then
         echo "${package_id} depends on ${dependency_id}, which is missing from the isolated ${package_group} package closure." >&2
         exit 1
       fi

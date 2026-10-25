@@ -275,6 +275,12 @@ progpu_opendevelop_macos_package_projects=(
   external/LibreWPF/src/ProGPU.Wpf.Interop/ProGPU.Wpf.Interop.csproj
 )
 
+# Cross-desktop OpenDevelop uses the same managed closure as macOS, but its
+# native package closure also includes the two Linux slices. Keep a distinct
+# group so the macOS-only lane continues to reject Linux payloads.
+progpu_opendevelop_crossdesktop_package_ids=("${progpu_opendevelop_macos_package_ids[@]}")
+progpu_opendevelop_crossdesktop_package_projects=("${progpu_opendevelop_macos_package_projects[@]}")
+
 progpu_mobile_package_ids=(
   ProGPU.Android
   ProGPU.iOS
