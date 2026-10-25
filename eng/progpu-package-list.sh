@@ -242,6 +242,7 @@ progpu_opendevelop_macos_package_ids=(
   ProGPU.Vector
   ProGPU.Text
   ProGPU.Scene
+  ProGPU.Scene.Native
   ProGPU.Layout
   ProGPU.Virtualization
   ProGPU.WinUI
@@ -266,6 +267,7 @@ progpu_opendevelop_macos_package_projects=(
   src/ProGPU.Vector/ProGPU.Vector.csproj
   src/ProGPU.Text/ProGPU.Text.csproj
   src/ProGPU.Scene/ProGPU.Scene.csproj
+  src/ProGPU.Scene.Native/ProGPU.Scene.Native.csproj
   src/ProGPU.Layout/ProGPU.Layout.csproj
   src/ProGPU.Virtualization/ProGPU.Virtualization.csproj
   src/ProGPU.WinUI/ProGPU.WinUI.csproj
