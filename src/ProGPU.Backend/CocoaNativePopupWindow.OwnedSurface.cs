@@ -153,7 +153,9 @@ internal static unsafe partial class CocoaNativePopupWindow
             GetOwnedBool(panel, "becomesKeyOnlyIfNeeded\0"u8) &&
             !GetOwnedBool(panel, "isReleasedWhenClosed\0"u8) &&
             !GetOwnedBool(panel, "canBecomeKeyWindow\0"u8) && !GetOwnedBool(panel, "canBecomeMainWindow\0"u8) &&
-            OwnedMessageUnsigned(panel, Selector("styleMask\0"u8)) == NonactivatingPanelStyle;
+            // AppKit reports the nonactivating bit as cleared once the panel is ordered in as a child window
+            // (macOS 27.0.1 and the macos-15 runner), so only reject style bits the panel was never given.
+            (OwnedMessageUnsigned(panel, Selector("styleMask\0"u8)) & ~NonactivatingPanelStyle) == 0;
 
         public bool BindOwner(NativeWindowHandle owner)
         {
