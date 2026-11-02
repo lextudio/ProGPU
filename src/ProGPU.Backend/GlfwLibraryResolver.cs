@@ -18,27 +18,33 @@ namespace ProGPU.Backend;
 /// </remarks>
 public static class GlfwLibraryResolver
 {
-    private static int s_registered;
+    private static readonly object s_gate = new();
+    private static bool s_registered;
 
     /// <summary>
     /// Adds the portable <c>runtimes/linux-&lt;arch&gt;/native</c> folders to Silk.NET's default library search, after
-    /// its own candidates. Does nothing outside Linux, and only the first call has an effect.
+    /// its own candidates. Does nothing outside Linux. The resolver is added once; a call that could not add it
+    /// leaves the next call free to try again.
     /// </summary>
     public static void EnsureRegistered()
     {
-        if (!OperatingSystem.IsLinux() || Interlocked.Exchange(ref s_registered, 1) != 0)
+        if (!OperatingSystem.IsLinux())
             return;
 
-        if (PathResolver.Default is not DefaultPathResolver resolver)
-            return;
+        lock (s_gate)
+        {
+            if (s_registered || PathResolver.Default is not DefaultPathResolver resolver)
+                return;
 
-        string? assemblyDirectory = Path.GetDirectoryName(typeof(GlfwLibraryResolver).Assembly.Location);
-        resolver.Resolvers.Add(name => EnumerateCandidates(
-            name,
-            RuntimeInformation.ProcessArchitecture,
-            File.Exists,
-            AppContext.BaseDirectory,
-            assemblyDirectory));
+            string? assemblyDirectory = Path.GetDirectoryName(typeof(GlfwLibraryResolver).Assembly.Location);
+            resolver.Resolvers.Add(name => EnumerateCandidates(
+                name,
+                RuntimeInformation.ProcessArchitecture,
+                File.Exists,
+                AppContext.BaseDirectory,
+                assemblyDirectory));
+            s_registered = true;
+        }
     }
 
     /// <summary>
