@@ -88,6 +88,7 @@ public static class SilkNetPlatform
 
     internal static void RegisterNativeBackends()
     {
+        global::ProGPU.Backend.GlfwLibraryResolver.EnsureRegistered();
         GlfwWindowing.RegisterPlatform();
         GlfwInput.RegisterPlatform();
     }

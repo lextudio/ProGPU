@@ -478,6 +478,7 @@ public class Window : DependencyObject
             _ => _canResize ? WindowBorder.Resizable : WindowBorder.Fixed
         };
 
+        global::ProGPU.Backend.GlfwLibraryResolver.EnsureRegistered();
         _silkWindow = Silk.NET.Windowing.Window.Create(options);
         _windowController = new SilkWindowController(_silkWindow);
         _silkWindow.Load += OnLoad;
