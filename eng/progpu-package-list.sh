@@ -226,7 +226,9 @@ progpu_drawing_runtime_package_purposes=(
 # adds macOS ARM64. Keep this list topologically ordered: it must be sufficient
 # for a clean NuGet restore using only the freshly built local feed. It is the
 # ProjectReference closure of WinUI, its Fluent theme, the native/DX backends,
-# Media.Scene and the SkiaSharp/System.Drawing shims.
+# Media.Scene and the SkiaSharp/System.Drawing shims, plus ProGPU.Media.Editing and
+# ProGPU.Fonts.*, which the mobile group (ProGPU.Android/iOS/Apple.Media) depends on:
+# OpenDevelop restores every ProGPU package from this published closure, none from nuget.org.
 progpu_opendevelop_macos_package_ids=(
   ProGPU.Backend
   ProGPU.Native.Sdk
@@ -236,11 +238,14 @@ progpu_opendevelop_macos_package_ids=(
   ProGPU.Media
   ProGPU.Media.Scene
   ProGPU.WinRT
+  ProGPU.Media.Editing
   ProGPU.Text.Shaping
   ProGPU.Transpiler
   ProGPU.Compute
   ProGPU.Vector
   ProGPU.Text
+  ProGPU.Fonts.Inter
+  ProGPU.Fonts.Noto
   ProGPU.Scene
   ProGPU.Scene.Native
   ProGPU.Layout
@@ -261,11 +266,14 @@ progpu_opendevelop_macos_package_projects=(
   src/ProGPU.Media/ProGPU.Media.csproj
   src/ProGPU.Media.Scene/ProGPU.Media.Scene.csproj
   src/ProGPU.WinRT/ProGPU.WinRT.csproj
+  src/ProGPU.Media.Editing/ProGPU.Media.Editing.csproj
   src/ProGPU.Text.Shaping/ProGPU.Text.Shaping.csproj
   src/ProGPU.Transpiler/ProGPU.Transpiler.csproj
   src/ProGPU.Compute/ProGPU.Compute.csproj
   src/ProGPU.Vector/ProGPU.Vector.csproj
   src/ProGPU.Text/ProGPU.Text.csproj
+  src/ProGPU.Fonts.Inter/ProGPU.Fonts.Inter.csproj
+  src/ProGPU.Fonts.Noto/ProGPU.Fonts.Noto.csproj
   src/ProGPU.Scene/ProGPU.Scene.csproj
   src/ProGPU.Scene.Native/ProGPU.Scene.Native.csproj
   src/ProGPU.Layout/ProGPU.Layout.csproj
