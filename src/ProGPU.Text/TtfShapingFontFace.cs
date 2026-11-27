@@ -76,4 +76,19 @@ public sealed class TtfShapingFontFace : IShapingFontFace
 
     public float GetLayoutVariationDelta(ushort outerIndex, ushort innerIndex) =>
         Font.GetLayoutVariationDelta(outerIndex, innerIndex);
+
+    public bool HasGlyphOutline(uint glyphId) =>
+        glyphId <= ushort.MaxValue && Font.GetFlippedGlyphOutline((ushort)glyphId) is not null;
+
+    public float GetHorizontalAdvanceScaled(uint glyphId, float emSize) =>
+        glyphId > ushort.MaxValue ? 0f : Font.GetAdvanceWidth((ushort)glyphId, emSize);
+
+    public float GetVerticalAdvanceScaled(uint glyphId, float emSize) =>
+        glyphId > ushort.MaxValue ? 0f : Font.GetAdvanceHeight((ushort)glyphId, emSize);
+
+    public float GetVerticalOriginScaled(uint glyphId, float emSize) =>
+        glyphId > ushort.MaxValue ? 0f : Font.GetVerticalOriginY((ushort)glyphId, emSize);
+
+    public bool TryGetTableByName(string tag, out ReadOnlyMemory<byte> table) =>
+        Font.TryGetTable(tag, out table);
 }

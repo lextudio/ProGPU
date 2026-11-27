@@ -269,6 +269,21 @@ public interface IShapingFontFace
     bool HasActiveVariations { get; }
     bool TryGetNormalizedVariationCoordinate(uint axisIndex, out short coordinate);
     float GetLayoutVariationDelta(ushort outerIndex, ushort innerIndex);
+
+    /// <summary>True when the glyph has drawable outline data. Faces without outline access may keep the default.</summary>
+    bool HasGlyphOutline(uint glyphId) => true;
+
+    /// <summary>Horizontal advance scaled to <paramref name="emSize"/> without intermediate rounding (keeps fractional HVAR deltas).</summary>
+    float GetHorizontalAdvanceScaled(uint glyphId, float emSize) => GetHorizontalAdvance(glyphId) * emSize / UnitsPerEm;
+
+    /// <summary>Vertical advance scaled to <paramref name="emSize"/> without intermediate rounding.</summary>
+    float GetVerticalAdvanceScaled(uint glyphId, float emSize) => GetVerticalAdvance(glyphId) * emSize / UnitsPerEm;
+
+    /// <summary>Vertical origin (Y) scaled to <paramref name="emSize"/> without intermediate rounding.</summary>
+    float GetVerticalOriginScaled(uint glyphId, float emSize) => GetVerticalOrigin(glyphId) * emSize / UnitsPerEm;
+
+    /// <summary>Table lookup by four-character name; faces that key tables by string can avoid a tag round-trip.</summary>
+    bool TryGetTableByName(string tag, out ReadOnlyMemory<byte> table) => TryGetTable(OpenTypeTag.Parse(tag), out table);
 }
 
 /// <summary>

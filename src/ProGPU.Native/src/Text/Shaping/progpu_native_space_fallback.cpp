@@ -8,7 +8,7 @@
 #include <limits>
 
 // Exact bounded port of the ProGPU-owned special-space fallback and metrics
-// stages in ProGPU.Text/OpenTypeTextShaper.cs at repository checkpoint
+// stages in ProGPU.Text.Shaping/OpenTypeTextShaper.cs at repository checkpoint
 // 17fa9643. Work is O(1) per glyph except the fixed ten-digit figure-space
 // probe, uses caller-owned variation scratch, and performs no allocation.
 

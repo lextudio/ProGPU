@@ -18,13 +18,6 @@ public sealed class CpuOpenTypeShaper : IOpenTypeShaper
     {
         ArgumentNullException.ThrowIfNull(font);
         ArgumentNullException.ThrowIfNull(buffer);
-        if (font is not TtfShapingFontFace ttfFace)
-        {
-            throw new ArgumentException(
-                $"{nameof(CpuOpenTypeShaper)} requires a {nameof(TtfShapingFontFace)} so the parsed, immutable font tables can be reused.",
-                nameof(font));
-        }
-
         ReadOnlySpan<ShapingFeature> requestedFeatures = request.Features.Span;
         var globalOverrides = new List<OpenTypeFeatureSetting>(requestedFeatures.Length);
         var explicitTags = new HashSet<string>(StringComparer.Ordinal);
@@ -60,7 +53,7 @@ public sealed class CpuOpenTypeShaper : IOpenTypeShaper
 
         OpenTypeTextShaper.ShapeDesignUnits(
             text.ToString(),
-            ttfFace.Font,
+            font,
             options,
             buffer,
             request.PreContext,

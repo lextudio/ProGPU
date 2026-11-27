@@ -330,7 +330,7 @@ public static class OpenTypeTextShaper
     private const int MaximumLookupNestingDepth = 64;
     private const int ShapingPlanCacheLimit = 64;
 
-    private static readonly ConditionalWeakTable<TtfFont, FontShapingPlanCache> s_shapingPlanCaches = new();
+    private static readonly ConditionalWeakTable<IShapingFontFace, FontShapingPlanCache> s_shapingPlanCaches = new();
 
     private readonly record struct ShapingPlanKey(
         string UnicodeScript,
@@ -348,7 +348,7 @@ public static class OpenTypeTextShaper
         private readonly CachedShapingPlan?[] _hotPlans = new CachedShapingPlan?[HotPlanSlotCount];
 
         public ShapingPlan GetOrCreate(
-            TtfFont font,
+            IShapingFontFace font,
             string unicodeScript,
             TextShapingOptions options)
         {
@@ -386,7 +386,7 @@ public static class OpenTypeTextShaper
     internal static bool IsDefaultIgnorableCodePoint(uint codePoint) =>
         GlyphSubstitutionBuffer.IsDefaultIgnorable(codePoint);
 
-    public static IReadOnlyList<string> GetFeatureTags(TtfFont font)
+    public static IReadOnlyList<string> GetFeatureTags(IShapingFontFace font)
     {
         ArgumentNullException.ThrowIfNull(font);
         var tags = new HashSet<string>(StringComparer.Ordinal);
@@ -397,7 +397,7 @@ public static class OpenTypeTextShaper
         return result;
     }
 
-    private static void AddRawFeatureTags(TtfFont font, string tableTag, HashSet<string> tags)
+    private static void AddRawFeatureTags(IShapingFontFace font, string tableTag, HashSet<string> tags)
     {
         if (!font.TryGetTable(tableTag, out ReadOnlyMemory<byte> memory)) return;
         ReadOnlySpan<byte> data = memory.Span;
@@ -415,7 +415,7 @@ public static class OpenTypeTextShaper
 
     public static IReadOnlyList<ShapedGlyph> Shape(
         string text,
-        TtfFont font,
+        IShapingFontFace font,
         float fontSize,
         TextShapingOptions? options = null,
         ReadOnlyMemory<char> preContext = default,
@@ -474,7 +474,7 @@ public static class OpenTypeTextShaper
 
     internal static void ShapeDesignUnits(
         string text,
-        TtfFont font,
+        IShapingFontFace font,
         TextShapingOptions options,
         ShapingBuffer destination,
         ReadOnlyMemory<char> preContext = default,
@@ -509,7 +509,7 @@ public static class OpenTypeTextShaper
 
     private static ShapingResult ShapeCore(
         string text,
-        TtfFont font,
+        IShapingFontFace font,
         TextShapingOptions options,
         ReadOnlyMemory<char> preContext = default,
         ReadOnlyMemory<char> postContext = default)
@@ -718,7 +718,7 @@ public static class OpenTypeTextShaper
 
     private static void VerifyShapeResult(
         string text,
-        TtfFont font,
+        IShapingFontFace font,
         TextShapingOptions requestedOptions,
         string unicodeScript,
         ReadOnlyMemory<char> preContext,
@@ -917,7 +917,7 @@ public static class OpenTypeTextShaper
     }
 
     private static ShapingPlan CreateShapingPlan(
-        TtfFont font,
+        IShapingFontFace font,
         string unicodeScript,
         TextShapingOptions requestedOptions)
     {
@@ -1109,7 +1109,7 @@ public static class OpenTypeTextShaper
     }
 
     private static SubstitutionPlan CreateSubstitutionPlan(
-        TtfFont font,
+        IShapingFontFace font,
         GSUB? table,
         TextShapingOptions options,
         string script)
@@ -1133,7 +1133,7 @@ public static class OpenTypeTextShaper
     }
 
     private static void ApplySubstitutions(
-        TtfFont font,
+        IShapingFontFace font,
         SubstitutionPlan plan,
         GlyphSubstitutionBuffer glyphs,
         TextShapingOptions options,
@@ -1440,7 +1440,7 @@ public static class OpenTypeTextShaper
     }
 
     private static List<EnabledLookup> GetRawEnabledLookupIndices(
-        TtfFont font,
+        IShapingFontFace font,
         ReadOnlySpan<byte> data,
         IReadOnlyList<OpenTypeFeatureSetting> settings,
         string script,
@@ -1567,7 +1567,7 @@ public static class OpenTypeTextShaper
         }
     }
 
-    private static Dictionary<ushort, int>? GetFeatureVariationSubstitutions(TtfFont font, ReadOnlySpan<byte> data)
+    private static Dictionary<ushort, int>? GetFeatureVariationSubstitutions(IShapingFontFace font, ReadOnlySpan<byte> data)
     {
         if (!CanRead(data, 0, 14) || ReadU16(data, 0) != 1 || ReadU16(data, 2) < 1)
         {
@@ -1641,7 +1641,7 @@ public static class OpenTypeTextShaper
         return null;
     }
 
-    private static bool MatchesFeatureVariationConditions(TtfFont font, ReadOnlySpan<byte> data, int conditionSet)
+    private static bool MatchesFeatureVariationConditions(IShapingFontFace font, ReadOnlySpan<byte> data, int conditionSet)
     {
         if (!CanRead(data, conditionSet, 2)) return false;
         ushort conditionCount = ReadU16(data, conditionSet);
@@ -1653,7 +1653,7 @@ public static class OpenTypeTextShaper
             int condition = conditionSet + (int)conditionRelative;
             if (!CanRead(data, condition, 8) || ReadU16(data, condition) != 1) return false;
             int axisIndex = ReadU16(data, condition + 2);
-            if (!font.TryGetNormalizedVariationCoordinate(axisIndex, out short coordinate)) return false;
+            if (!font.TryGetNormalizedVariationCoordinate((uint)axisIndex, out short coordinate)) return false;
             short minimum = ReadI16(data, condition + 4);
             short maximum = ReadI16(data, condition + 6);
             if (coordinate < minimum || coordinate > maximum) return false;
@@ -1870,7 +1870,7 @@ public static class OpenTypeTextShaper
     }
 
     private static void ApplyAlternateLookup(
-        TtfFont font,
+        IShapingFontFace font,
         GlyphSubstitutionBuffer glyphs,
         ushort lookupIndex,
         int featureValue,
@@ -2192,7 +2192,7 @@ public static class OpenTypeTextShaper
     }
 
     private static void ApplyUnsupportedChainingLookup(
-        TtfFont font,
+        IShapingFontFace font,
         GlyphSubstitutionBuffer glyphs,
         ushort lookupIndex)
     {
@@ -2798,7 +2798,7 @@ public static class OpenTypeTextShaper
     private static bool CanRead(ReadOnlySpan<byte> data, int offset, int length) =>
         offset >= 0 && length >= 0 && offset <= data.Length - length;
 
-    private static int GetTableLength(TtfFont font, string tag) =>
+    private static int GetTableLength(IShapingFontFace font, string tag) =>
         font.TryGetTable(tag, out ReadOnlyMemory<byte> table) ? table.Length : 0;
 
     private static ushort ReadU16(ReadOnlySpan<byte> data, int offset) =>
@@ -3291,7 +3291,7 @@ public static class OpenTypeTextShaper
     }
 
     private static PositioningPlan CreatePositioningPlan(
-        TtfFont font,
+        IShapingFontFace font,
         GPOS? table,
         TextShapingOptions options,
         string script)
@@ -3328,7 +3328,7 @@ public static class OpenTypeTextShaper
     }
 
     private static bool ApplyPositions(
-        TtfFont font,
+        IShapingFontFace font,
         PositioningPlan plan,
         GlyphPositionBuffer glyphs,
         TextShapingOptions options)
@@ -4103,12 +4103,12 @@ public static class OpenTypeTextShaper
     }
 
     private static void ApplyPositionVariations(
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         EnabledLookup enabled,
         TextShapingOptions options)
     {
-        if (!font.HasActiveFontVariations ||
+        if (!font.HasActiveVariations ||
             !font.TryGetTable("GPOS", out ReadOnlyMemory<byte> tableMemory))
         {
             return;
@@ -4182,7 +4182,7 @@ public static class OpenTypeTextShaper
 
     private static void ApplySinglePositionVariations(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         int offset)
     {
@@ -4214,7 +4214,7 @@ public static class OpenTypeTextShaper
 
     private static void ApplyPairPositionVariations(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         int lookupOffset,
         ushort lookupType,
@@ -4268,7 +4268,7 @@ public static class OpenTypeTextShaper
 
     private static bool TryApplyPairPositionVariationAt(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         int offset,
         int position,
@@ -4325,7 +4325,7 @@ public static class OpenTypeTextShaper
 
     private static void ApplyMarkToBaseVariations(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         int offset)
     {
@@ -4360,7 +4360,7 @@ public static class OpenTypeTextShaper
 
     private static void ApplyMarkToMarkVariations(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         int offset)
     {
@@ -4393,7 +4393,7 @@ public static class OpenTypeTextShaper
 
     private static void ApplyValueVariation(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         GlyphPositionBuffer glyphs,
         int glyphIndex,
         int recordOffset,
@@ -4417,7 +4417,7 @@ public static class OpenTypeTextShaper
 
     private static float ReadDeviceVariation(
         ReadOnlySpan<byte> data,
-        TtfFont font,
+        IShapingFontFace font,
         int baseOffset,
         ref int cursor)
     {
@@ -4427,7 +4427,7 @@ public static class OpenTypeTextShaper
         return relative == 0 ? 0f : ReadVariationIndex(data, font, baseOffset + relative);
     }
 
-    private static Vector2 GetAnchorVariation(ReadOnlySpan<byte> data, TtfFont font, int anchorOffset)
+    private static Vector2 GetAnchorVariation(ReadOnlySpan<byte> data, IShapingFontFace font, int anchorOffset)
     {
         if (!CanRead(data, anchorOffset, 10) || ReadU16(data, anchorOffset) != 3) return Vector2.Zero;
         ushort xRelative = ReadU16(data, anchorOffset + 6);
@@ -4437,7 +4437,7 @@ public static class OpenTypeTextShaper
             yRelative == 0 ? 0f : ReadVariationIndex(data, font, anchorOffset + yRelative));
     }
 
-    private static float ReadVariationIndex(ReadOnlySpan<byte> data, TtfFont font, int offset)
+    private static float ReadVariationIndex(ReadOnlySpan<byte> data, IShapingFontFace font, int offset)
     {
         if (!CanRead(data, offset, 6) || ReadU16(data, offset + 4) != 0x8000) return 0f;
         return font.GetLayoutVariationDelta(ReadU16(data, offset), ReadU16(data, offset + 2));
@@ -4716,7 +4716,7 @@ public static class OpenTypeTextShaper
         return "DFLT";
     }
 
-    private static bool ResolveLayoutScript(TtfFont font, string unicodeScript, out string layoutScript)
+    private static bool ResolveLayoutScript(IShapingFontFace font, string unicodeScript, out string layoutScript)
     {
         string? thirdGenerationTag = unicodeScript switch
         {
@@ -4775,7 +4775,7 @@ public static class OpenTypeTextShaper
     private static bool IsIndicShaperScript(string script) => script is
         "beng" or "deva" or "gujr" or "guru" or "knda" or "mlym" or "orya" or "taml" or "telu";
 
-    private static bool HasOpenTypeScript(TtfFont font, string tableTag, string scriptTag)
+    private static bool HasOpenTypeScript(IShapingFontFace font, string tableTag, string scriptTag)
     {
         if (!font.TryGetTable(tableTag, out ReadOnlyMemory<byte> memory)) return false;
         ReadOnlySpan<byte> data = memory.Span;
@@ -4836,7 +4836,7 @@ public static class OpenTypeTextShaper
         ];
 
         private readonly List<GlyphRecord> _glyphs;
-        private readonly TtfFont _font;
+        private readonly IShapingFontFace _font;
         private readonly ReadOnlyMemory<byte> _gdefTable;
         private readonly ShapingClusterLevel _clusterLevel;
         private readonly ShapingBufferFlags _bufferFlags;
@@ -4854,7 +4854,7 @@ public static class OpenTypeTextShaper
 
         private GlyphSubstitutionBuffer(
             List<GlyphRecord> glyphs,
-            TtfFont font,
+            IShapingFontFace font,
             ShapingClusterLevel clusterLevel = ShapingClusterLevel.MonotoneGraphemes,
             ShapingBufferFlags bufferFlags = ShapingBufferFlags.None,
             ReadOnlyMemory<char> preContext = default,
@@ -5344,7 +5344,7 @@ public static class OpenTypeTextShaper
             }
         }
 
-        public void PrepareHangulShaping(bool enabled, TtfFont font)
+        public void PrepareHangulShaping(bool enabled, IShapingFontFace font)
         {
             if (!enabled) return;
             for (var index = 0; index < _glyphs.Count; index++)
@@ -5461,7 +5461,7 @@ public static class OpenTypeTextShaper
         }
 
         public void ApplyDirectionalCodePointFallback(
-            TtfFont font,
+            IShapingFontFace font,
             ShapingDirection direction,
             bool hasVerticalSubstitution)
         {
@@ -7623,7 +7623,7 @@ public static class OpenTypeTextShaper
 
         public static GlyphSubstitutionBuffer Create(
             string text,
-            TtfFont font,
+            IShapingFontFace font,
             string script,
             ShapingClusterLevel clusterLevel,
             ShapingBufferFlags bufferFlags,
@@ -7755,9 +7755,9 @@ public static class OpenTypeTextShaper
                     if (IsVariationSelector(rune.Value) && glyphs.Count > 0)
                     {
                         GlyphRecord previous = glyphs[^1];
-                        if (font.TryGetVariationGlyph(previous.CodePoint, (uint)rune.Value, out ushort variationGlyph))
+                        if (font.TryGetVariationGlyph(previous.CodePoint, (uint)rune.Value, out uint variationGlyphId))
                         {
-                            previous.GlyphIndex = variationGlyph;
+                            previous.GlyphIndex = (ushort)variationGlyphId;
                             glyphs[^1] = previous;
                             index += consumed;
                             continue;
@@ -7836,7 +7836,7 @@ public static class OpenTypeTextShaper
 
         private static bool TryAppendIndicSplitMatra(
             List<GlyphRecord> glyphs,
-            TtfFont font,
+            IShapingFontFace font,
             Rune rune,
             int cluster,
             string script)
@@ -7864,7 +7864,7 @@ public static class OpenTypeTextShaper
 
         private static void AppendNormalizedRune(
             List<GlyphRecord> glyphs,
-            TtfFont font,
+            IShapingFontFace font,
             Rune rune,
             int cluster)
         {
@@ -7894,7 +7894,7 @@ public static class OpenTypeTextShaper
 
         private static void AppendMappedRune(
             List<GlyphRecord> glyphs,
-            TtfFont font,
+            IShapingFontFace font,
             Rune rune,
             int cluster)
         {
@@ -8033,7 +8033,7 @@ public static class OpenTypeTextShaper
 
         public GlyphPositionBuffer(
             GlyphSubstitutionBuffer substitutions,
-            TtfFont font,
+            IShapingFontFace font,
             ShapingDirection direction,
             bool zeroMarkAdvancesEarly,
             ShapingClusterLevel clusterLevel,
@@ -8188,7 +8188,7 @@ public static class OpenTypeTextShaper
             }
         }
 
-        private static ushort GetVisibleDefaultIgnorableGlyph(TtfFont font)
+        private static ushort GetVisibleDefaultIgnorableGlyph(IShapingFontFace font)
         {
             ReadOnlySpan<uint> representatives = [0x25A1, 0x25CC, 0xFFFD, (uint)'?'];
             for (int index = 0; index < representatives.Length; index++)
@@ -8203,7 +8203,7 @@ public static class OpenTypeTextShaper
             return 0;
         }
 
-        private static bool HasVisibleOutline(TtfFont font, ushort glyphIndex) =>
+        private static bool HasVisibleOutline(IShapingFontFace font, ushort glyphIndex) =>
             font.TryGetGlyphBounds(
                 glyphIndex,
                 out short xMin,
@@ -8212,9 +8212,9 @@ public static class OpenTypeTextShaper
                 out short yMax) &&
             xMax > xMin &&
             yMax > yMin &&
-            font.GetFlippedGlyphOutline(glyphIndex) is not null;
+            font.HasGlyphOutline(glyphIndex);
 
-        private static void ApplySpaceFallback(TtfFont font, bool vertical, ref GlyphRecord record)
+        private static void ApplySpaceFallback(IShapingFontFace font, bool vertical, ref GlyphRecord record)
         {
             int sign = vertical ? -1 : 1;
             int advance = vertical ? record.AdvanceY : record.AdvanceX;
@@ -8594,7 +8594,7 @@ public static class OpenTypeTextShaper
             }
         }
 
-        public void ApplyFallbackMarkPositioning(TtfFont font)
+        public void ApplyFallbackMarkPositioning(IShapingFontFace font)
         {
             int clusterStart = 0;
             for (var index = 1; index < _count; index++)
@@ -8607,7 +8607,7 @@ public static class OpenTypeTextShaper
             PositionFallbackCluster(font, clusterStart, _count);
         }
 
-        public void ApplyLegacyKern(TtfFont font)
+        public void ApplyLegacyKern(IShapingFontFace font)
         {
             if (!font.TryGetTable("kern", out ReadOnlyMemory<byte> memory)) return;
             ReadOnlySpan<byte> data = memory.Span;
@@ -8770,7 +8770,7 @@ public static class OpenTypeTextShaper
                 : 0;
         }
 
-        private void PositionFallbackCluster(TtfFont font, int start, int end)
+        private void PositionFallbackCluster(IShapingFontFace font, int start, int end)
         {
             if (end - start < 2) return;
             for (var baseIndex = start; baseIndex < end; baseIndex++)
@@ -8786,7 +8786,7 @@ public static class OpenTypeTextShaper
             }
         }
 
-        private void PositionFallbackMarksAroundBase(TtfFont font, int baseIndex, int end)
+        private void PositionFallbackMarksAroundBase(IShapingFontFace font, int baseIndex, int end)
         {
             if (!TryGetGlyphExtents(font, _glyphs[baseIndex].GlyphIndex, out GlyphExtents baseExtents))
                 return;
@@ -8867,7 +8867,7 @@ public static class OpenTypeTextShaper
         }
 
         private void PositionFallbackMark(
-            TtfFont font,
+            IShapingFontFace font,
             int index,
             int combiningClass,
             ref GlyphExtents baseExtents)
@@ -8934,7 +8934,7 @@ public static class OpenTypeTextShaper
             return yOffset;
         }
 
-        private static bool TryGetGlyphExtents(TtfFont font, ushort glyph, out GlyphExtents extents)
+        private static bool TryGetGlyphExtents(IShapingFontFace font, ushort glyph, out GlyphExtents extents)
         {
             if (font.TryGetGlyphBounds(glyph, out short xMin, out short yMin, out short xMax, out short yMax))
             {
@@ -9091,7 +9091,7 @@ public static class OpenTypeTextShaper
             }
         }
 
-        public void ApplyArabicStretch(TtfFont font, bool rightToLeft)
+        public void ApplyArabicStretch(IShapingFontFace font, bool rightToLeft)
         {
             var hasStretchAction = false;
             for (var index = 0; index < _count; index++)

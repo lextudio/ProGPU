@@ -155,18 +155,18 @@ def pack_tag(value: str) -> int:
 
 
 def generate(root: Path) -> str:
-    script_path = root / "src/ProGPU.Text/UnicodeScriptData.Generated.cs"
-    combining_path = root / "src/ProGPU.Text/UnicodeCombiningClassData.Generated.cs"
+    script_path = root / "src/ProGPU.Text.Shaping/UnicodeScriptData.Generated.cs"
+    combining_path = root / "src/ProGPU.Text.Shaping/UnicodeCombiningClassData.Generated.cs"
     bidi_path = root / "src/ProGPU.Text/Bidi/UnicodeBidiData.Generated.cs"
-    grapheme_path = root / "src/ProGPU.Text/UnicodeGraphemeData.Generated.cs"
-    arabic_path = root / "src/ProGPU.Text/ArabicJoiningData.Generated.cs"
-    joining_fallback_path = root / "src/ProGPU.Text/UnicodeJoiningFallbackData.Generated.cs"
-    directional_path = root / "src/ProGPU.Text/UnicodeDirectionalData.Generated.cs"
-    arabic_fallback_path = root / "src/ProGPU.Text/ArabicFallbackData.Generated.cs"
-    vowel_constraint_path = root / "src/ProGPU.Text/VowelConstraintData.Generated.cs"
-    line_break_path = root / "src/ProGPU.Text/UnicodeLineBreakData.Generated.cs"
-    indic_shaping_path = root / "src/ProGPU.Text/IndicShapingData.Generated.cs"
-    use_shaping_path = root / "src/ProGPU.Text/UseShapingData.Generated.cs"
+    grapheme_path = root / "src/ProGPU.Text.Shaping/UnicodeGraphemeData.Generated.cs"
+    arabic_path = root / "src/ProGPU.Text.Shaping/ArabicJoiningData.Generated.cs"
+    joining_fallback_path = root / "src/ProGPU.Text.Shaping/UnicodeJoiningFallbackData.Generated.cs"
+    directional_path = root / "src/ProGPU.Text.Shaping/UnicodeDirectionalData.Generated.cs"
+    arabic_fallback_path = root / "src/ProGPU.Text.Shaping/ArabicFallbackData.Generated.cs"
+    vowel_constraint_path = root / "src/ProGPU.Text.Shaping/VowelConstraintData.Generated.cs"
+    line_break_path = root / "src/ProGPU.Text.Shaping/UnicodeLineBreakData.Generated.cs"
+    indic_shaping_path = root / "src/ProGPU.Text.Shaping/IndicShapingData.Generated.cs"
+    use_shaping_path = root / "src/ProGPU.Text.Shaping/UseShapingData.Generated.cs"
     script_source = script_path.read_text(encoding="utf-8")
     combining_source = combining_path.read_text(encoding="utf-8")
     bidi_source = bidi_path.read_text(encoding="utf-8")

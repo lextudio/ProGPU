@@ -680,7 +680,7 @@ struct unicode_normalization_requirements final {
 };
 
 /*
- * Borrowed view over ProGPU.Text/UnicodeNormalizationData.bin. The format is
+ * Borrowed view over ProGPU.Text.Shaping/UnicodeNormalizationData.bin. The format is
  * shared with UnicodeNormalizationPlan.cs and contains fully decomposed FormD
  * scalars plus canonical FormC pairs. Construction validates the complete
  * little-endian resource and retains no ownership.

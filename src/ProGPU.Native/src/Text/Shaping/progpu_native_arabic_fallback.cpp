@@ -11,7 +11,7 @@
 #include <span>
 
 // Exact allocation-free port of ProGPU-owned Arabic presentation-form and
-// required-ligature fallback in ProGPU.Text/OpenTypeTextShaper.cs at repository
+// required-ligature fallback in ProGPU.Text.Shaping/OpenTypeTextShaper.cs at repository
 // checkpoint b24aabb3. Generated tables come from ArabicFallbackData.Generated.cs.
 // Form replacement is O(G); the bounded fallback ligature scan is O(G * R)
 // for G glyphs and fixed generated row count R, with O(1) internal storage.

@@ -3,8 +3,15 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>true</IsPackable>
     <PackageId>ProGPU.Text.Shaping</PackageId>
-    <Description>Standalone, AOT-safe OpenType shaping contracts and execution primitives for ProGPU.</Description>
+    <Description>Standalone, AOT-safe OpenType shaping engine and contracts for ProGPU. Depends only on managed font-face tables, not on the renderer.</Description>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenFontSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="UnicodeNormalizationData.bin" LogicalName="ProGPU.Text.UnicodeNormalizationData.bin" />
+  </ItemGroup>
 </Project>

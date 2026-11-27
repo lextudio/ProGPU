@@ -139,7 +139,7 @@ set(PROGPU_NATIVE_HIT_TEST_READBACK_SHADER
     "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/HitTestReadback.wgsl"
     CACHE FILEPATH "Browser-native retained GPU hit-test readback shader source")
 set(PROGPU_NATIVE_UNICODE_NORMALIZATION_DATA
-    "${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Text/UnicodeNormalizationData.bin"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Text.Shaping/UnicodeNormalizationData.bin"
     CACHE FILEPATH "Shared ProGPU Unicode normalization data")
 option(PROGPU_NATIVE_BUILD_SAMPLE "Build the live headless WebGPU sample" ON)
 option(PROGPU_NATIVE_BUILD_WGPU_TARGET
@@ -2076,7 +2076,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         "PROGPU_NATIVE_TEST_INTER_FONT=\"${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Fonts.Inter/Fonts/Inter-Medium.ttf\""
         "PROGPU_NATIVE_TEST_INTER_VARIABLE_FONT=\"${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Fonts.Inter/Fonts/InterVariable.ttf\""
         "PROGPU_NATIVE_TEST_NOTO_CFF_FONT=\"${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Fonts.Noto/Fonts/NotoSansCJKjp-Regular.otf\""
-        "PROGPU_NATIVE_TEST_UNICODE_NORMALIZATION_DATA=\"${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Text/UnicodeNormalizationData.bin\"")
+        "PROGPU_NATIVE_TEST_UNICODE_NORMALIZATION_DATA=\"${CMAKE_CURRENT_SOURCE_DIR}/../ProGPU.Text.Shaping/UnicodeNormalizationData.bin\"")
     progpu_native_enable_warnings(progpu_native_text_tests)
     progpu_native_enable_sanitizers(progpu_native_text_tests)
     add_test(NAME progpu_native_text_tests COMMAND progpu_native_text_tests)

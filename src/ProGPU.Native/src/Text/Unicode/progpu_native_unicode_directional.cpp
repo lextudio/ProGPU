@@ -7,7 +7,7 @@
 #include <span>
 
 // Exact allocation-free port of the ProGPU-owned
-// ProGPU.Text/UnicodeDirectionalData.Generated.cs at repository checkpoint
+// ProGPU.Text.Shaping/UnicodeDirectionalData.Generated.cs at repository checkpoint
 // 2d4dba69. The packed pairs are generated from that source and searched in
 // O(log P) time with O(1) storage for P directional mappings.
 
