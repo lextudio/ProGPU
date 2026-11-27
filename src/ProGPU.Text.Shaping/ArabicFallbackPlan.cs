@@ -9,6 +9,8 @@ public static class ArabicFallbackPlan
     public const uint FirstCodePoint = ArabicFallbackData.FirstCodePoint;
     public const uint LastCodePoint = ArabicFallbackData.LastCodePoint;
     public static ReadOnlySpan<ushort> ShapingForms => ArabicFallbackData.ShapingForms;
+    public static ReadOnlySpan<ushort> SimplifiedPuaMappings => ArabicFallbackData.SimplifiedPuaMappings;
+    public static ReadOnlySpan<ushort> TraditionalPuaMappings => ArabicFallbackData.TraditionalPuaMappings;
     public static ReadOnlySpan<ushort> ThreeComponentLigatures => ArabicFallbackData.ThreeComponentLigatures;
     public static ReadOnlySpan<ushort> TwoComponentLigatures => ArabicFallbackData.TwoComponentLigatures;
     public static ReadOnlySpan<ushort> MarkLigatures => ArabicFallbackData.MarkLigatures;

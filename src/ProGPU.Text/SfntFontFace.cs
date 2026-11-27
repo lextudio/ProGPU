@@ -461,8 +461,8 @@ sealed class SfntFontFace
     {
         ReadOnlySpan<ushort> mappings = _legacyFontPage switch
         {
-            0xB200 => ArabicFallbackData.SimplifiedPuaMappings,
-            0xB300 => ArabicFallbackData.TraditionalPuaMappings,
+            0xB200 => ArabicFallbackPlan.SimplifiedPuaMappings,
+            0xB300 => ArabicFallbackPlan.TraditionalPuaMappings,
             _ => default
         };
         if (!mappings.IsEmpty && TryFindLegacyMapping(mappings, codePoint, out remapped))
