@@ -49,4 +49,36 @@ public sealed class NativeDesktopPointerTests
             new CocoaMenuRect(primaryX, primaryY, primaryWidth, primaryHeight),
             out _));
     }
+
+    [Theory]
+    [InlineData(0, 1117, 0, 0, 1728, 1117, 864, 559)]
+    [InlineData(0, 1117, 0, 1117, 2560, 1440, 1280, -720)]
+    [InlineData(0, 1117, -2560, 0, 2560, 1440, -1280, 397)]
+    public void AScreensCenterMapsToTopLeftDesktopCoordinates(
+        double primaryX,
+        double primaryHeight,
+        double screenX,
+        double screenY,
+        double screenWidth,
+        double screenHeight,
+        int expectedX,
+        int expectedY)
+    {
+        var screen = new CocoaMenuRect(screenX, screenY, screenWidth, screenHeight);
+        var primary = new CocoaMenuRect(primaryX, 0, 1728, primaryHeight);
+
+        Assert.True(CocoaNativeDesktopPointer.TryMapToDesktop(
+            CocoaNativeDesktopPointer.ScreenCenter(screen),
+            primary,
+            out NativeWindowPoint point));
+        Assert.Equal((expectedX, expectedY), (point.X, point.Y));
+    }
+
+    [Fact]
+    public void UnsupportedDesktopScreenPlatformsDoNotGuess()
+    {
+        Assert.False(NativeDesktopScreen.TryGetFocusedScreenCenter(NativeWindowKind.Wayland, out _));
+        Assert.False(NativeDesktopScreen.TryGetFocusedScreenCenter(NativeWindowKind.Unknown, out _));
+        Assert.False(NativeDesktopScreen.TryGetFocusedScreenCenter(NativeWindowKind.X11, out _));
+    }
 }

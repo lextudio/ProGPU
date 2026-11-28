@@ -47,6 +47,67 @@ internal static unsafe partial class CocoaNativeDesktopPointer
         }
     }
 
+    /// <summary>
+    /// The desktop point at the center of <c>NSScreen.mainScreen</c> (the screen with keyboard focus,
+    /// else the screen with the menu bar). macOS opens a new window on that screen, not where the
+    /// pointer happens to be.
+    /// </summary>
+    internal static bool TryGetFocusedScreenCenter(out NativeWindowPoint position)
+    {
+        position = default;
+        // Reads screen frames only, so unlike the pointer query it does not need the main thread
+        // (the caller creates its window on the UI thread, but tests read it from theirs).
+        if (RuntimeInformation.ProcessArchitecture is not (Architecture.Arm64 or Architecture.X64) ||
+            typeof(CocoaNativeDesktopPointer).IsCollectible)
+            return false;
+
+        // A windowed process already has AppKit; a launcher or test host may not.
+        if (!NativeLibrary.TryLoad("/System/Library/Frameworks/AppKit.framework/AppKit", out _))
+            return false;
+
+        nint poolClass = Class("NSAutoreleasePool\0"u8);
+        nint screenClass = Class("NSScreen\0"u8);
+        if (poolClass == 0 || screenClass == 0)
+            return false;
+
+        nint pool = Send(Send(poolClass, "alloc\0"u8), "init\0"u8);
+        if (pool == 0)
+            return false;
+
+        try
+        {
+            nint screens = Send(screenClass, "screens\0"u8);
+            nint primary = Send(screens, "firstObject\0"u8);
+            nint main = Send(screenClass, "mainScreen\0"u8);
+            if (primary == 0 || main == 0)
+                return false;
+
+            nint frameSelector = Selector("frame\0"u8);
+            CocoaMenuRect primaryFrame;
+            CocoaMenuRect mainFrame;
+            if (RuntimeInformation.ProcessArchitecture == Architecture.X64)
+            {
+                MessageRectStret(out primaryFrame, primary, frameSelector);
+                MessageRectStret(out mainFrame, main, frameSelector);
+            }
+            else
+            {
+                primaryFrame = MessageRect(primary, frameSelector);
+                mainFrame = MessageRect(main, frameSelector);
+            }
+
+            return TryMapToDesktop(ScreenCenter(mainFrame), primaryFrame, out position);
+        }
+        finally
+        {
+            MessageVoid(pool, Selector("release\0"u8));
+        }
+    }
+
+    /// <summary>The AppKit bottom-left point at the center of a screen frame.</summary>
+    internal static CocoaMenuPoint ScreenCenter(CocoaMenuRect frame) =>
+        new(frame.X + frame.Width / 2d, frame.Y + frame.Height / 2d);
+
     internal static bool TryMapToDesktop(
         CocoaMenuPoint nativePoint,
         CocoaMenuRect primaryFrame,
